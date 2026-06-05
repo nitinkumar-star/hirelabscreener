@@ -79,10 +79,11 @@ for d in [DATA_DIR, CV_DIR, BAK_DIR]:
     os.makedirs(d, exist_ok=True)
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, timeout=60, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')
-    conn.execute('PRAGMA busy_timeout=30000')
+    conn.execute('PRAGMA busy_timeout=60000')
+    conn.execute('PRAGMA synchronous=NORMAL')
     return conn
 
 def ts():
@@ -265,6 +266,31 @@ def index():
     return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html'))
 
 
+
+
+@app.route('/api/db-status')
+def db_status():
+    """Check DB health — useful for debugging Railway/Render issues."""
+    try:
+        conn = get_db()
+        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        table_names = [t['name'] for t in tables]
+        counts = {}
+        for t in table_names:
+            try:
+                counts[t] = conn.execute(f'SELECT COUNT(*) as c FROM {t}').fetchone()['c']
+            except Exception:
+                counts[t] = -1
+        conn.close()
+        return jsonify({
+            'ok': True,
+            'db_path': DB_PATH,
+            'data_dir': DATA_DIR,
+            'tables': table_names,
+            'counts': counts
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e), 'db_path': DB_PATH, 'data_dir': DATA_DIR}), 500
 
 @app.route('/api/health')
 def health():
@@ -1395,7 +1421,13 @@ def export_data():
 @app.route('/api/import', methods=['POST'])
 def import_data():
     import time
-    for _attempt in range(3):
+    # Ensure DB is initialized before import
+    try:
+        init_db()
+    except Exception:
+        pass
+
+    for _attempt in range(5):
         try:
             data = request.json or {}
             if not data.get('mandates') and not data.get('candidates'):
@@ -1442,10 +1474,10 @@ def import_data():
             conn.commit(); conn.close()
             return jsonify({'ok': True, 'mandates': m_done, 'candidates': cand_done, 'history': hist_done})
         except sqlite3.OperationalError as e:
-            if 'locked' in str(e).lower() and _attempt < 2:
-                time.sleep(1)
+            if 'locked' in str(e).lower() and _attempt < 4:
+                time.sleep(2)
                 continue
-            return jsonify({'error': 'Database busy. Please try again in a moment.'}), 503
+            return jsonify({'error': 'Database busy after retries. Please wait 10 seconds and try again.'}), 503
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     return jsonify({'error': 'Import failed after retries'}), 500
@@ -1534,6 +1566,14 @@ def db_stats():
     conn.close()
     return jsonify({'total': total, 'with_cv': with_cv, 'with_phone': with_phone, 'placed': placed})
 
+
+# ── Startup: runs both with gunicorn AND python server.py ──────────────────────
+# This ensures DB tables exist regardless of how the app is started
+try:
+    migrate_old()
+    init_db()
+except Exception as _startup_err:
+    print(f'Startup init warning: {_startup_err}')
 
 if __name__ == '__main__':
     migrate_old()
