@@ -2696,6 +2696,10 @@ async function importAll(input){
     if(r.ok){
       setSt('&#10003; Imported');
       setTimeout(()=>setSt(''),4000);
+      // Safety net: claim any data that ended up without an owner (admin only)
+      if(S.currentUser && S.currentUser.role==='admin'){
+        try{ await req('POST','/admin/claim-orphans',{}); }catch(e){}
+      }
       toast('OK','Import complete — '+r.mandates+' mandates, '+r.candidates+' candidates');
       await loadMandates();
     } else {

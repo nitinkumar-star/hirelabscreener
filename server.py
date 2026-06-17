@@ -270,6 +270,21 @@ def delete_user(uid):
     return jsonify({'ok': True})
 
 
+@app.route('/api/admin/claim-orphans', methods=['POST'])
+@admin_required
+def claim_orphans():
+    """Assign any data with owner_id=0/NULL (e.g. imported before multi-user, or
+    imported without an owner) to the current admin so it shows up in their workspace."""
+    uid = current_user()['id']
+    conn = get_db(); c = conn.cursor()
+    n_m = c.execute('UPDATE mandates SET owner_id=? WHERE owner_id IS NULL OR owner_id=0', (uid,)).rowcount
+    n_c = c.execute('UPDATE candidates SET owner_id=? WHERE owner_id IS NULL OR owner_id=0', (uid,)).rowcount
+    n_r = c.execute('UPDATE reminders SET owner_id=? WHERE owner_id IS NULL OR owner_id=0', (uid,)).rowcount
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'mandates': n_m, 'candidates': n_c, 'reminders': n_r})
+
+
+
 # ── Admin: view-as (impersonate a user's workspace) ───────────────────────
 @app.route('/api/admin/view-as', methods=['POST'])
 @admin_required
@@ -2677,6 +2692,7 @@ def export_data():
                     headers={'Content-Disposition': 'attachment; filename=' + fname})
 
 @app.route('/api/import', methods=['POST'])
+@login_required
 def import_data():
     import time
     # Ensure DB is initialized before import
@@ -2696,11 +2712,11 @@ def import_data():
                 c.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (k, str(v)))
             for m in (data.get('mandates') or []):
                 old_id = m.get('id')
-                c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,sop_text,sop_version,sop_changelog,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,sop_text,sop_version,sop_changelog,status,created_at,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                           (m.get('client',''), m.get('role',''), m.get('location',''), m.get('division',''),
                            float(m.get('ctc_min') or 0), float(m.get('ctc_max') or 0), m.get('jd',''),
                            m.get('sop_text',''), m.get('sop_version', 1), m.get('sop_changelog', '[]'),
-                           m.get('status', 'active'), m.get('created_at') or n))
+                           m.get('status', 'active'), m.get('created_at') or n, effective_user_id()))
                 mid_map[old_id] = c.lastrowid; m_done += 1
             for cand in (data.get('candidates') or []):
                 old_id = cand.get('id')
