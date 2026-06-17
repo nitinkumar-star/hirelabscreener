@@ -765,10 +765,7 @@ def shorten_jd():
     if not text:
         return jsonify({'error': 'No text provided'}), 400
 
-    conn = get_db()
-    row = conn.execute("SELECT value FROM settings WHERE key='deepseek_api_key'").fetchone()
-    conn.close()
-    ds_key = (row['value'] if row else '') or ''
+    ds_key = get_setting('deepseek_api_key')
     if not ds_key:
         return jsonify({'error': 'DeepSeek API key not set. Go to Settings.'}), 400
 
@@ -1092,6 +1089,12 @@ GEMINI_EMBED_URL = ('https://generativelanguage.googleapis.com/v1beta/'
                     'models/gemini-embedding-001:embedContent')
 
 def get_setting(key, default=''):
+    # Env var takes priority for sensitive keys (see _ENV_KEY_MAP)
+    env_name = _ENV_KEY_MAP.get(key)
+    if env_name:
+        env_val = os.environ.get(env_name, '').strip()
+        if env_val:
+            return env_val
     conn = get_db()
     row = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
     conn.close()
@@ -1849,7 +1852,7 @@ def delete_candidate(cid):
 @app.route('/api/parse-naukri', methods=['POST'])
 def parse_naukri():
     d = request.json or {}
-    key = d.get('deepseek_api_key', '')
+    key = get_setting('deepseek_api_key') or d.get('deepseek_api_key', '')
     raw = d.get('raw', '').strip()
     if not key: return jsonify({'error': 'DeepSeek API key not set. Go to Settings.'}), 400
     if not raw: return jsonify({'error': 'No text provided'}), 400
@@ -1907,7 +1910,7 @@ def parse_resume():
     if 'resume' not in request.files:
         return jsonify({'error': 'No file uploaded'}), 400
     f = request.files['resume']
-    ds_key = request.form.get('deepseek_api_key', '')
+    ds_key = get_setting('deepseek_api_key') or request.form.get('deepseek_api_key', '')
     if not ds_key:
         return jsonify({'error': 'DeepSeek API key required. Add in Settings.'}), 400
 
@@ -1952,7 +1955,7 @@ def parse_resume():
 @app.route('/api/parse-naukri-bulk', methods=['POST'])
 def parse_naukri_bulk():
     d = request.json or {}
-    ds_key = d.get('deepseek_api_key', '')
+    ds_key = get_setting('deepseek_api_key') or d.get('deepseek_api_key', '')
     raw = d.get('raw', '').strip()
     if not ds_key: return jsonify({'error': 'DeepSeek API key required'}), 400
     if not raw:    return jsonify({'error': 'No content provided'}), 400
@@ -2033,13 +2036,10 @@ os.makedirs(CALL_DIR, exist_ok=True)
 
 @app.route('/api/candidates/<int:cid>/analyse-call', methods=['POST'])
 def analyse_call(cid):
-    groq_key    = request.form.get('groq_api_key', '').strip()
-    claude_key  = request.form.get('claude_api_key', '').strip()
     language    = request.form.get('language', 'hi')   # hi = Hindi, en = English
-
-    # Fall back to env var, then server-stored Groq key, if none sent from frontend
-    if not groq_key:
-        groq_key = get_setting('groq_api_key', '')
+    # Server keys (env var first, then DB) take priority over anything from frontend
+    groq_key    = get_setting('groq_api_key') or request.form.get('groq_api_key', '').strip()
+    claude_key  = get_setting('claude_api_key') or request.form.get('claude_api_key', '').strip()
 
     if not groq_key: return jsonify({'error': 'Groq API key required (for transcription). Add in Settings.'}), 400
     if not claude_key: return jsonify({'error': 'Claude API key required (for analysis). Add in Settings.'}), 400
@@ -2431,10 +2431,7 @@ def public_parse_resume():
     text, err = extract_text_from_file(f.read(), f.filename)
     if err or not text:
         return jsonify({'error': err or 'Cannot extract text'}), 400
-    conn = get_db()
-    row = conn.execute("SELECT value FROM settings WHERE key='deepseek_api_key'").fetchone()
-    conn.close()
-    ds_key = (row['value'] if row else '') or ''
+    ds_key = get_setting('deepseek_api_key')
     if not ds_key:
         return jsonify({'error': 'Resume parsing not configured. Please fill manually.'}), 400
     sys_msg = ('Extract candidate details. Return ONLY JSON: name, phone, email, company, designation, '
