@@ -40,7 +40,31 @@ from functools import wraps
 from flask import session, redirect as flask_redirect
 import hashlib, secrets
 
-app.secret_key = os.environ.get('SECRET_KEY', 'hirelab-2024-secret-' + hashlib.md5(b'hirelab').hexdigest())
+def _get_secret_key():
+    # 1) Prefer env var (set SECRET_KEY in Render for best security)
+    env_secret = os.environ.get('SECRET_KEY', '').strip()
+    if env_secret:
+        return env_secret
+    # 2) Else use/create a random secret stored on the persistent disk so login
+    #    sessions survive restarts. This is far safer than a hardcoded fallback.
+    try:
+        secret_path = os.path.join(DATA_DIR, '.secret_key')
+        if os.path.exists(secret_path):
+            with open(secret_path) as f:
+                v = f.read().strip()
+                if v:
+                    return v
+        import secrets as _secrets
+        v = _secrets.token_hex(32)
+        with open(secret_path, 'w') as f:
+            f.write(v)
+        return v
+    except Exception:
+        # 3) Last resort (ephemeral) — sessions reset on restart, but never hardcoded
+        import secrets as _secrets
+        return _secrets.token_hex(32)
+
+app.secret_key = _get_secret_key()
 
 # ─────────────────────────────────────────────────────────────────────────
 #  AUTH HELPERS (multi-user)
@@ -525,9 +549,9 @@ def init_db():
     defaults = [
         ('recruiter_name', 'Nitin Kumar'),
         ('company_name', 'HireLab'),
-        ('claude_api_key', ''),
-        ('deepseek_api_key', ''),
-        ('groq_api_key', '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'),
+        ('claude_api_key', os.environ.get('CLAUDE_API_KEY', '')),
+        ('deepseek_api_key', os.environ.get('DEEPSEEK_API_KEY', '')),
+        ('groq_api_key', os.environ.get('GROQ_API_KEY', '')),
         ('fu1_hours', '8'),
         ('fu2_hours', '24'),
         ('template_msg1', 'Hi {Name}, this is {RecruiterName} from HireLab. I wanted to speak about a {Position} opportunity at {Location}.\n\nIf you are interested, please suggest the best time to connect.'),
@@ -671,7 +695,23 @@ def parse_json(text):
                 except Exception: pass
     return None
 
+# Map sensitive setting keys to environment variable names. If the env var is
+# set (e.g. on Render), it OVERRIDES whatever is stored in the DB. This lets API
+# keys live safely in the host environment instead of in code or the database.
+_ENV_KEY_MAP = {
+    'groq_api_key': 'GROQ_API_KEY',
+    'claude_api_key': 'CLAUDE_API_KEY',
+    'deepseek_api_key': 'DEEPSEEK_API_KEY',
+    'gemini_api_key': 'GEMINI_API_KEY',
+}
+
 def get_setting(key, default=''):
+    # Env var takes priority for sensitive keys
+    env_name = _ENV_KEY_MAP.get(key)
+    if env_name:
+        env_val = os.environ.get(env_name, '').strip()
+        if env_val:
+            return env_val
     conn = get_db()
     r = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
     conn.close()
@@ -1997,12 +2037,9 @@ def analyse_call(cid):
     claude_key  = request.form.get('claude_api_key', '').strip()
     language    = request.form.get('language', 'hi')   # hi = Hindi, en = English
 
-    # Fall back to server-stored Groq key if none sent from frontend
+    # Fall back to env var, then server-stored Groq key, if none sent from frontend
     if not groq_key:
-        conn = get_db()
-        row = conn.execute("SELECT value FROM settings WHERE key='groq_api_key'").fetchone()
-        conn.close()
-        groq_key = (row['value'] if row else '') or ''
+        groq_key = get_setting('groq_api_key', '')
 
     if not groq_key: return jsonify({'error': 'Groq API key required (for transcription). Add in Settings.'}), 400
     if not claude_key: return jsonify({'error': 'Claude API key required (for analysis). Add in Settings.'}), 400
