@@ -155,10 +155,14 @@ def auth_setup():
                  (username, hash_password(password), display, 'admin', ts()))
     conn.commit()
     uid = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()['id']
-    # Assign all existing ownerless data to this first admin
-    conn.execute('UPDATE mandates SET owner_id=? WHERE owner_id=0 OR owner_id IS NULL', (uid,))
-    conn.execute('UPDATE candidates SET owner_id=? WHERE owner_id=0 OR owner_id IS NULL', (uid,))
-    conn.execute('UPDATE reminders SET owner_id=? WHERE owner_id=0 OR owner_id IS NULL', (uid,))
+    # This is the FIRST admin (no users existed before this). Any data already in
+    # the DB therefore belongs to a previous, now-deleted user (e.g. after a reset
+    # that cleared the users table). Claim ALL of it for this first admin, not just
+    # owner_id=0 — otherwise imported data tied to an old user-id would be orphaned
+    # and invisible. Safe because this branch only runs when no users existed.
+    conn.execute('UPDATE mandates SET owner_id=?', (uid,))
+    conn.execute('UPDATE candidates SET owner_id=?', (uid,))
+    conn.execute('UPDATE reminders SET owner_id=?', (uid,))
     conn.commit(); conn.close()
     session['user_id'] = uid
     return jsonify({'ok': True})
@@ -2774,6 +2778,27 @@ try:
     init_db()
 except Exception as _startup_err:
     print(f'Startup init warning: {_startup_err}')
+
+# ── SAFE DATA RESET (controlled by env var) ────────────────────────────────────
+# Set RESET_DATA=yes in the host environment (e.g. Render) to wipe all mandates,
+# candidates, reminders, work history and stage history on the next start.
+# IMPORTANT: remove the variable again right after, so it does not wipe on every
+# restart. User accounts are preserved unless RESET_DATA=all is used.
+try:
+    _reset = (os.environ.get('RESET_DATA') or '').strip().lower()
+    if _reset in ('yes', 'all', '1', 'true'):
+        _conn = get_db(); _c = _conn.cursor()
+        for _tbl in ['candidates', 'mandates', 'reminders', 'work_history',
+                     'stage_history', 'submissions', 'activity_log']:
+            try: _c.execute(f'DELETE FROM {_tbl}')
+            except Exception: pass
+        if _reset == 'all':
+            try: _c.execute('DELETE FROM users')
+            except Exception: pass
+        _conn.commit(); _conn.close()
+        print(f'*** RESET_DATA={_reset} executed — data cleared. REMOVE the env var now! ***')
+except Exception as _reset_err:
+    print(f'Reset warning: {_reset_err}')
 
 if __name__ == '__main__':
     migrate_old()
