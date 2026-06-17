@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Job Application</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI",sans-serif;background:#f5f5f5;color:#1a1a1a;min-height:100vh}
+.header{background:#0a2540;padding:20px;text-align:center;color:#fff}
+.header h1{font-size:20px;font-weight:700;color:#1D9E75}
+.header p{font-size:13px;opacity:.7;margin-top:4px}
+.container{max-width:580px;margin:24px auto;padding:0 16px 40px}
+.card{background:#fff;border-radius:10px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+.upload-zone{border:2px dashed #ccc;border-radius:8px;padding:24px;text-align:center;margin-bottom:20px;cursor:pointer;transition:all .2s}
+.upload-zone:hover{border-color:#1D9E75;background:#f0fdf8}
+.upload-zone.done{background:#E1F5EE;border-color:#1D9E75}
+.upload-icon{font-size:32px;margin-bottom:8px}
+.upload-title{font-size:14px;font-weight:600;color:#333}
+.upload-sub{font-size:12px;color:#888;margin-top:4px}
+.upload-btn{display:inline-block;margin-top:12px;padding:8px 20px;background:#1D9E75;color:#fff;border-radius:6px;font-size:13px;cursor:pointer;border:none;font-family:inherit}
+#parse-status{margin-top:10px;font-size:12px;padding:8px 12px;border-radius:6px;display:none}
+.divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:#aaa;font-size:12px}
+.divider::before,.divider::after{content:"";flex:1;height:0.5px;background:#e8e8e8}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.fg{margin-bottom:14px}
+.fg label{display:block;font-size:12px;font-weight:500;color:#555;margin-bottom:5px}
+.fg input,.fg textarea,.fg select{width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:inherit;outline:none;transition:border-color .2s}
+.fg input:focus,.fg textarea:focus,.fg select:focus{border-color:#1D9E75}
+.tag-box{display:flex;flex-wrap:wrap;gap:5px;padding:6px 10px;border:1px solid #ddd;border-radius:6px;min-height:38px;cursor:text}
+.tag-box:focus-within{border-color:#1D9E75}
+.tag{background:#E1F5EE;color:#0F6E56;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500;display:inline-flex;align-items:center;gap:4px}
+.tag-x{cursor:pointer;font-size:15px;opacity:.6;border:none;background:none;color:inherit;padding:0;line-height:1}
+.tag-inp{border:none;outline:none;font-size:12px;background:transparent;min-width:80px;flex:1}
+.submit-btn{width:100%;padding:13px;background:#1D9E75;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;margin-top:8px;font-family:inherit;transition:opacity .2s}
+.submit-btn:hover{opacity:.9}
+.submit-btn:disabled{opacity:.5;cursor:not-allowed}
+.success{text-align:center;padding:40px 20px;display:none}
+.success-icon{font-size:56px;margin-bottom:16px}
+.success h2{font-size:22px;font-weight:700;color:#0a2540;margin-bottom:10px}
+.success p{font-size:14px;color:#666;line-height:1.8}
+.flash-f{animation:fl .6s 2}
+@keyframes fl{0%,100%{border-color:#ddd}50%{border-color:#1D9E75;background:#f0fdf8}}
+.custom-fields{border-top:0.5px solid #f0f0f0;padding-top:14px;margin-top:4px}
+@media(max-width:480px){.g2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1 id="form-title">Job Application Form</h1>
+  <p id="form-desc">Upload your resume for instant auto-fill &bull; All fields are confidential</p>
+</div>
+
+<div class="container">
+<div class="card" id="form-card">
+
+  <!-- Resume Upload -->
+  <div class="upload-zone" id="upload-zone">
+    <div class="upload-icon">&#128196;</div>
+    <div class="upload-title">Upload Your Resume (Recommended)</div>
+    <div class="upload-sub">PDF or DOCX &mdash; AI auto-fills all fields instantly</div>
+    <label class="upload-btn" for="resume-inp">&#128206; Choose File</label>
+    <input type="file" id="resume-inp" accept=".pdf,.docx" style="display:none">
+  </div>
+  <div id="parse-status"></div>
+
+  <div class="divider">fill manually</div>
+
+  <!-- Standard Fields -->
+  <div class="g2">
+    <div class="fg"><label>Full Name *</label><input id="f-name" type="text" placeholder="Rahul Sharma"></div>
+    <div class="fg"><label>Phone Number *</label><input id="f-phone" type="tel" placeholder="+91 98100 12345"></div>
+  </div>
+  <div class="fg"><label>Email Address *</label><input id="f-email" type="email" placeholder="you@email.com"></div>
+  <div class="g2">
+    <div class="fg"><label>Current Company *</label><input id="f-company" type="text" placeholder="Company name"></div>
+    <div class="fg"><label>Current Designation</label><input id="f-designation" type="text" placeholder="Job title"></div>
+  </div>
+  <div class="g2">
+    <div class="fg"><label>Total Experience (years)</label><input id="f-exp" type="number" step="0.5" min="0" placeholder="5"></div>
+    <div class="fg"><label>Current Location</label><input id="f-location" type="text" placeholder="Delhi, Mumbai..."></div>
+  </div>
+  <div class="g2">
+    <div class="fg"><label>Current CTC (LPA)</label><input id="f-ctc" type="number" step="0.5" min="0" placeholder="12"></div>
+    <div class="fg"><label>Expected CTC (LPA)</label><input id="f-ectc" type="number" step="0.5" min="0" placeholder="18"></div>
+  </div>
+  <div class="fg"><label>Notice Period (days)</label><input id="f-notice" type="number" min="0" placeholder="30"></div>
+
+  <!-- Key Skills Tag Input -->
+  <div class="fg">
+    <label>Key Skills <span style="font-size:10px;color:#aaa">(type skill &amp; press Enter or comma)</span></label>
+    <div class="tag-box" id="skill-box">
+      <input class="tag-inp" id="skill-inp" placeholder="e.g. LV Switchgear, Channel Sales, SAP...">
+    </div>
+    <input type="hidden" id="f-skills">
+  </div>
+
+  <!-- Custom fields injected here -->
+  <div class="custom-fields" id="custom-fields-container" style="display:none"></div>
+
+  <button class="submit-btn" id="sub-btn">Submit Application &#8594;</button>
+</div>
+
+<div class="success" id="success-card">
+  <div class="success-icon">&#9989;</div>
+  <h2>Application Submitted!</h2>
+  <p>Thank you for your interest.<br>Our team will review your profile and get in touch with you shortly.</p>
+  <p style="margin-top:16px;font-size:12px;color:#aaa">You can close this page now.</p>
+</div>
+</div>
+
+<script>
+var skillTags = [];
+var uploadedResume = null;
+
+// Load form config
+async function loadConfig() {
+  try {
+    var r = await fetch('/api/form-config');
+    var data = await r.json();
+    var cfg = data.config || {};
+    if (cfg.form_title) document.getElementById('form-title').textContent = cfg.form_title;
+    if (cfg.form_desc)  document.getElementById('form-desc').textContent  = cfg.form_desc;
+    if (cfg.primary_color) {
+      var c = cfg.primary_color;
+      document.querySelectorAll('.upload-btn,.submit-btn').forEach(function(el){ el.style.background = c; });
+    }
+    // Inject custom fields
+    var cfs = cfg.custom_fields || [];
+    if (cfs.length) {
+      var container = document.getElementById('custom-fields-container');
+      container.style.display = '';
+      cfs.forEach(function(cf) {
+        var div = document.createElement('div');
+        div.className = 'fg';
+        var label = cf.label + (cf.required ? ' *' : '');
+        var inp = '';
+        if (cf.type === 'textarea') {
+          inp = '<textarea name="cf_' + cf.id + '" rows="3"' + (cf.required?' required':'') + '></textarea>';
+        } else if (cf.type === 'select') {
+          var opts = (cf.options||'').split(',').map(function(o){ return '<option value="'+o.trim()+'">'+o.trim()+'</option>'; }).join('');
+          inp = '<select name="cf_' + cf.id + '">' + opts + '</select>';
+        } else {
+          inp = '<input type="' + (cf.type||'text') + '" name="cf_' + cf.id + '"' + (cf.required?' required':'') + '>';
+        }
+        div.innerHTML = '<label>' + label + '</label>' + inp;
+        container.appendChild(div);
+      });
+    }
+  } catch(e) {}
+}
+loadConfig();
+
+// Skill tags
+document.getElementById('skill-box').addEventListener('click', function(){ document.getElementById('skill-inp').focus(); });
+document.getElementById('skill-inp').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' || e.key === ',') {
+    e.preventDefault();
+    var v = this.value.trim().replace(/,$/, '');
+    if (v && !skillTags.includes(v)) { skillTags.push(v); renderTags(); }
+    this.value = '';
+  }
+});
+function renderTags() {
+  var box = document.getElementById('skill-box');
+  var inp = document.getElementById('skill-inp');
+  box.innerHTML = '';
+  skillTags.forEach(function(t, i) {
+    var s = document.createElement('span'); s.className = 'tag';
+    var x = document.createElement('button'); x.className = 'tag-x'; x.innerHTML = '&times;';
+    x.onclick = function(e){ e.preventDefault(); skillTags.splice(i,1); renderTags(); };
+    s.textContent = t; s.appendChild(x); box.appendChild(s);
+  });
+  box.appendChild(inp);
+  document.getElementById('f-skills').value = JSON.stringify(skillTags);
+}
+
+// Resume parse
+document.getElementById('resume-inp').addEventListener('change', async function() {
+  if (!this.files || !this.files[0]) return;
+  var file = this.files[0];
+  var st = document.getElementById('parse-status');
+  var zone = document.getElementById('upload-zone');
+  st.style.display = 'block'; st.style.background = '#f9f9f9';
+  st.style.border = '1px solid #e8e8e8'; st.style.color = '#666';
+  st.innerHTML = '&#128260; Parsing ' + file.name + ' with AI...';
+  var fd = new FormData(); fd.append('resume', file);
+  try {
+    var r = await fetch('/api/public/parse-resume', {method:'POST', body:fd});
+    var data = await r.json(); this.value = '';
+    if (!data.ok) {
+      st.style.background='#FCEBEB'; st.style.border='1px solid #f09595'; st.style.color='#A32D2D';
+      st.innerHTML = '&#9888; ' + (data.error || 'Parse failed. Please fill manually.'); return;
+    }
+    var d = data.data || {};
+    function fill(id, val) {
+      var el = document.getElementById(id);
+      if (el && val != null && val !== '' && val !== 0) {
+        el.value = val; el.classList.add('flash-f');
+        setTimeout(function(){ el.classList.remove('flash-f'); }, 1200);
+      }
+    }
+    fill('f-name',d.name); fill('f-phone',d.phone); fill('f-email',d.email);
+    fill('f-company',d.company); fill('f-designation',d.designation);
+    fill('f-exp',d.experience); fill('f-ctc',d.ctc_current);
+    fill('f-ectc',d.ctc_expected); fill('f-notice',d.notice_period);
+    fill('f-location',d.location);
+    if (d.key_skills && d.key_skills.length) { skillTags = d.key_skills.slice(0,8); renderTags(); }
+    st.style.background='#E1F5EE'; st.style.border='1px solid #9FE1CB'; st.style.color='#0F6E56';
+    st.innerHTML = '&#10003; Resume parsed! Please review details below and submit.';
+    zone.className = 'upload-zone done';
+    zone.innerHTML = '<div style="font-size:20px">&#10003;</div><div style="font-weight:600;margin-top:4px">' + file.name + '</div><div style="font-size:11px;opacity:.7;margin-top:2px">Resume uploaded successfully</div>';
+    uploadedResume = file;
+  } catch(e) {
+    st.style.background='#FCEBEB'; st.style.color='#A32D2D';
+    st.innerHTML = '&#9888; Error: ' + e.message;
+  }
+});
+
+// Submit
+document.getElementById('sub-btn').addEventListener('click', async function() {
+  var name=document.getElementById('f-name').value.trim();
+  var phone=document.getElementById('f-phone').value.trim();
+  var email=document.getElementById('f-email').value.trim();
+  var company=document.getElementById('f-company').value.trim();
+  if (!name||!phone||!email||!company) { alert('Please fill: Name, Phone, Email, and Current Company'); return; }
+  this.textContent = 'Submitting...'; this.disabled = true;
+  var fd = new FormData();
+  fd.append('name',name); fd.append('phone',phone);
+  fd.append('email',email); fd.append('company',company);
+  fd.append('designation', document.getElementById('f-designation').value||'');
+  fd.append('experience',  document.getElementById('f-exp').value||'0');
+  fd.append('ctc_current', document.getElementById('f-ctc').value||'0');
+  fd.append('ctc_expected',document.getElementById('f-ectc').value||'0');
+  fd.append('notice_period',document.getElementById('f-notice').value||'0');
+  fd.append('location',    document.getElementById('f-location').value||'');
+  fd.append('key_skills',  JSON.stringify(skillTags));
+  var cf = {};
+  document.querySelectorAll('[name^="cf_"]').forEach(function(el){ cf[el.name]=el.value; });
+  fd.append('custom_fields', JSON.stringify(cf));
+  if (uploadedResume) fd.append('resume', uploadedResume);
+  try {
+    var r = await fetch('/api/submit', {method:'POST', body:fd});
+    var data = await r.json();
+    if (data.ok) {
+      document.getElementById('form-card').style.display='none';
+      document.getElementById('success-card').style.display='block';
+    } else {
+      alert('Error: '+(data.error||'Submission failed'));
+      this.textContent='Submit Application'; this.disabled=false;
+    }
+  } catch(e) {
+    alert('Error: '+e.message); this.textContent='Submit Application'; this.disabled=false;
+  }
+});
+</script>
+</body>
+</html>

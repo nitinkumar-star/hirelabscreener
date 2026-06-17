@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, send_file, Response
 from flask_cors import CORS
-import sqlite3, json, os, datetime, requests, shutil, io
+import sqlite3, json, os, datetime, requests, shutil, io, re
 from pathlib import Path
 try:
     import pdfplumber
@@ -15,51 +15,310 @@ except ImportError:
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)
+app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024  # 64MB max upload
+
+@app.after_request
+def add_cors_headers(resp):
+    # Allow the Chrome extension (running on naukri.com) to call these APIs.
+    # Because the extension sends the session cookie (credentials), we must
+    # echo the specific Origin and allow credentials — '*' is not permitted
+    # with credentialed requests.
+    origin = request.headers.get('Origin')
+    if origin:
+        resp.headers['Access-Control-Allow-Origin'] = origin
+        resp.headers['Access-Control-Allow-Credentials'] = 'true'
+        resp.headers['Vary'] = 'Origin'
+    else:
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+    resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return resp
+
 
 # ── Login Protection ──────────────────────────────────────────────────────────
 from functools import wraps
 from flask import session, redirect as flask_redirect
+import hashlib, secrets
 
-app.secret_key = os.environ.get('SECRET_KEY', 'hirelab-2024-secret')
-APP_PASSWORD   = os.environ.get('APP_PASSWORD', '')
+app.secret_key = os.environ.get('SECRET_KEY', 'hirelab-2024-secret-' + hashlib.md5(b'hirelab').hexdigest())
+
+# ─────────────────────────────────────────────────────────────────────────
+#  AUTH HELPERS (multi-user)
+# ─────────────────────────────────────────────────────────────────────────
+def hash_password(pw, salt=None):
+    if salt is None:
+        salt = secrets.token_hex(16)
+    h = hashlib.sha256((salt + pw).encode()).hexdigest()
+    return salt + '$' + h
+
+def verify_password(pw, stored):
+    try:
+        salt, h = stored.split('$', 1)
+        return hashlib.sha256((salt + pw).encode()).hexdigest() == h
+    except Exception:
+        return False
+
+def any_users_exist():
+    conn = get_db()
+    n = conn.execute('SELECT COUNT(*) n FROM users').fetchone()['n']
+    conn.close()
+    return n > 0
+
+def current_user():
+    """The logged-in user. If admin is 'viewing as' another user, the
+    EFFECTIVE workspace user is view_as_id, but real identity stays admin."""
+    uid = session.get('user_id')
+    if not uid:
+        return None
+    conn = get_db()
+    u = conn.execute('SELECT * FROM users WHERE id=?', (uid,)).fetchone()
+    conn.close()
+    return dict(u) if u else None
+
+def effective_user_id():
+    """Which user's DATA we operate on. Admin can impersonate via view_as."""
+    va = session.get('view_as_id')
+    if va:
+        return va
+    return session.get('user_id')
+
+def is_admin():
+    u = current_user()
+    return u and u.get('role') == 'admin'
+
+def log_activity(action, detail=''):
+    try:
+        u = current_user()
+        conn = get_db()
+        conn.execute('INSERT INTO activity_log (user_id,username,action,detail,created_at) VALUES (?,?,?,?,?)',
+                     (u['id'] if u else 0, u['username'] if u else 'system', action, detail, ts()))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
 
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if APP_PASSWORD and not session.get('logged_in'):
+        # API calls return 401 JSON; page loads redirect to /login
+        if not session.get('user_id'):
+            if request.path.startswith('/api/'):
+                return jsonify({'error': 'auth_required'}), 401
             return flask_redirect('/login')
         return f(*args, **kwargs)
     return decorated
 
-@app.route('/login', methods=['GET', 'POST'])
-def login_page():
-    err = ''
-    if request.method == 'POST':
-        if request.form.get('password') == APP_PASSWORD:
-            session['logged_in'] = True
-            return flask_redirect('/')
-        err = 'Wrong password'
-    return (
-        '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>HireLab Login</title>'
-        '<style>body{font-family:sans-serif;background:#0a2540;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}'
-        '.b{background:#fff;padding:32px;border-radius:10px;width:300px;text-align:center}'
-        'h2{color:#0a2540;margin-bottom:4px;font-size:20px}'
-        'h2 span{color:#1D9E75}'
-        'p{color:#888;font-size:12px;margin-bottom:20px}'
-        'input{width:100%;padding:9px;border:1px solid #ddd;border-radius:5px;font-size:13px;margin-bottom:12px;box-sizing:border-box}'
-        'button{width:100%;padding:10px;background:#1D9E75;color:#fff;border:none;border-radius:5px;font-size:14px;cursor:pointer}'
-        '.e{color:red;font-size:12px;margin-bottom:8px}</style></head>'
-        '<body><div class="b">'
-        '<h2>Hire<span>Lab</span></h2><p>Internal Recruitment Tool</p>'
-        + ('<div class="e">' + err + '</div>' if err else '') +
-        '<form method="post"><input type="password" name="password" placeholder="Password" autofocus>'
-        '<button>Login</button></form></div></body></html>'
-    )
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('user_id'):
+            return jsonify({'error': 'auth_required'}), 401
+        if not is_admin():
+            return jsonify({'error': 'Admin access required'}), 403
+        return f(*args, **kwargs)
+    return decorated
 
-@app.route('/logout')
-def logout():
+
+@app.route('/api/auth/status')
+def auth_status():
+    """Tells the frontend whether to show: first-run admin setup, login, or app."""
+    if not any_users_exist():
+        return jsonify({'state': 'setup'})
+    u = current_user()
+    if not u:
+        return jsonify({'state': 'login'})
+    va = session.get('view_as_id')
+    viewing = None
+    if va:
+        conn = get_db()
+        vu = conn.execute('SELECT id,username,display_name FROM users WHERE id=?', (va,)).fetchone()
+        conn.close()
+        viewing = dict(vu) if vu else None
+    return jsonify({'state': 'app', 'user': {
+        'id': u['id'], 'username': u['username'], 'display_name': u['display_name'],
+        'role': u['role']
+    }, 'viewing_as': viewing})
+
+
+@app.route('/api/auth/setup', methods=['POST'])
+def auth_setup():
+    """First-run: create the first admin. Only works if no users exist."""
+    if any_users_exist():
+        return jsonify({'error': 'Setup already complete'}), 400
+    d = request.json or {}
+    username = (d.get('username') or '').strip()
+    password = d.get('password') or ''
+    display = (d.get('display_name') or username).strip()
+    if not username or len(password) < 4:
+        return jsonify({'error': 'Username required and password min 4 chars'}), 400
+    conn = get_db()
+    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at) VALUES (?,?,?,?,?)',
+                 (username, hash_password(password), display, 'admin', ts()))
+    conn.commit()
+    uid = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()['id']
+    # Assign all existing ownerless data to this first admin
+    conn.execute('UPDATE mandates SET owner_id=? WHERE owner_id=0 OR owner_id IS NULL', (uid,))
+    conn.execute('UPDATE candidates SET owner_id=? WHERE owner_id=0 OR owner_id IS NULL', (uid,))
+    conn.execute('UPDATE reminders SET owner_id=? WHERE owner_id=0 OR owner_id IS NULL', (uid,))
+    conn.commit(); conn.close()
+    session['user_id'] = uid
+    return jsonify({'ok': True})
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    d = request.json or {}
+    username = (d.get('username') or '').strip()
+    password = d.get('password') or ''
+    conn = get_db()
+    u = conn.execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
+    if not u or not verify_password(password, u['password_hash']):
+        conn.close()
+        return jsonify({'error': 'Invalid username or password'}), 401
+    conn.execute('UPDATE users SET last_login=? WHERE id=?', (ts(), u['id']))
+    conn.commit(); conn.close()
+    session['user_id'] = u['id']
+    session.pop('view_as_id', None)
+    log_activity('login', username)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def auth_logout():
+    log_activity('logout')
     session.clear()
-    return flask_redirect('/login')
+    return jsonify({'ok': True})
+
+
+@app.route('/api/users', methods=['GET'])
+@admin_required
+def list_users():
+    conn = get_db()
+    rows = conn.execute('SELECT id, username, display_name, role, created_at, last_login FROM users ORDER BY id').fetchall()
+    # attach quick counts per user
+    out = []
+    for u in rows:
+        d = dict(u)
+        d['mandate_count'] = conn.execute('SELECT COUNT(*) n FROM mandates WHERE owner_id=?', (u['id'],)).fetchone()['n']
+        d['candidate_count'] = conn.execute('SELECT COUNT(*) n FROM candidates WHERE owner_id=?', (u['id'],)).fetchone()['n']
+        out.append(d)
+    conn.close()
+    return jsonify({'ok': True, 'users': out})
+
+@app.route('/api/users', methods=['POST'])
+@admin_required
+def create_user():
+    d = request.json or {}
+    username = (d.get('username') or '').strip()
+    password = d.get('password') or ''
+    display = (d.get('display_name') or username).strip()
+    role = d.get('role') if d.get('role') in ('admin', 'user') else 'user'
+    if not username or len(password) < 4:
+        return jsonify({'error': 'Username required and password min 4 chars'}), 400
+    conn = get_db()
+    exists = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
+    if exists:
+        conn.close()
+        return jsonify({'error': 'Username already taken'}), 400
+    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at) VALUES (?,?,?,?,?)',
+                 (username, hash_password(password), display, role, ts()))
+    conn.commit(); conn.close()
+    log_activity('create_user', username + ' (' + role + ')')
+    return jsonify({'ok': True})
+
+@app.route('/api/users/<int:uid>/password', methods=['POST'])
+@admin_required
+def reset_user_password(uid):
+    d = request.json or {}
+    password = d.get('password') or ''
+    if len(password) < 4:
+        return jsonify({'error': 'Password min 4 chars'}), 400
+    conn = get_db()
+    u = conn.execute('SELECT username FROM users WHERE id=?', (uid,)).fetchone()
+    if not u:
+        conn.close()
+        return jsonify({'error': 'User not found'}), 404
+    conn.execute('UPDATE users SET password_hash=? WHERE id=?', (hash_password(password), uid))
+    conn.commit(); conn.close()
+    log_activity('reset_password', u['username'])
+    return jsonify({'ok': True})
+
+@app.route('/api/users/<int:uid>', methods=['DELETE'])
+@admin_required
+def delete_user(uid):
+    me = current_user()
+    if me and me['id'] == uid:
+        return jsonify({'error': "You can't delete your own account"}), 400
+    conn = get_db()
+    u = conn.execute('SELECT username, role FROM users WHERE id=?', (uid,)).fetchone()
+    if not u:
+        conn.close()
+        return jsonify({'error': 'User not found'}), 404
+    # Safety: don't allow deleting the last admin
+    if u['role'] == 'admin':
+        admins = conn.execute("SELECT COUNT(*) n FROM users WHERE role='admin'").fetchone()['n']
+        if admins <= 1:
+            conn.close()
+            return jsonify({'error': 'Cannot delete the only admin'}), 400
+    # What happens to their data? Reassign to the requesting admin so nothing is lost.
+    keep = current_user()['id']
+    conn.execute('UPDATE mandates SET owner_id=? WHERE owner_id=?', (keep, uid))
+    conn.execute('UPDATE candidates SET owner_id=? WHERE owner_id=?', (keep, uid))
+    conn.execute('UPDATE reminders SET owner_id=? WHERE owner_id=?', (keep, uid))
+    conn.execute('DELETE FROM users WHERE id=?', (uid,))
+    conn.commit(); conn.close()
+    log_activity('delete_user', u['username'] + ' (data reassigned to you)')
+    return jsonify({'ok': True})
+
+
+# ── Admin: view-as (impersonate a user's workspace) ───────────────────────
+@app.route('/api/admin/view-as', methods=['POST'])
+@admin_required
+def admin_view_as():
+    d = request.json or {}
+    uid = d.get('user_id')
+    conn = get_db()
+    if uid:
+        u = conn.execute('SELECT username FROM users WHERE id=?', (uid,)).fetchone()
+        conn.close()
+        if not u:
+            return jsonify({'error': 'User not found'}), 404
+        session['view_as_id'] = uid
+        log_activity('view_as', u['username'])
+    else:
+        conn.close()
+        session.pop('view_as_id', None)
+        log_activity('view_as', 'exited')
+    return jsonify({'ok': True})
+
+
+# ── Admin: cross-user summary + activity ──────────────────────────────────
+@app.route('/api/admin/summary', methods=['GET'])
+@admin_required
+def admin_summary():
+    conn = get_db()
+    users = conn.execute('SELECT id, username, display_name, role, last_login FROM users ORDER BY id').fetchall()
+    summary = []
+    for u in users:
+        uid = u['id']
+        mand = conn.execute('SELECT COUNT(*) n FROM mandates WHERE owner_id=?', (uid,)).fetchone()['n']
+        active_mand = conn.execute("SELECT COUNT(*) n FROM mandates WHERE owner_id=? AND status='active'", (uid,)).fetchone()['n']
+        cands = conn.execute('SELECT COUNT(*) n FROM candidates WHERE owner_id=?', (uid,)).fetchone()['n']
+        placed = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND stage='Placed'", (uid,)).fetchone()['n']
+        summary.append({
+            'id': uid, 'username': u['username'], 'display_name': u['display_name'],
+            'role': u['role'], 'last_login': u['last_login'],
+            'mandates': mand, 'active_mandates': active_mand,
+            'candidates': cands, 'placed': placed,
+        })
+    recent = conn.execute('SELECT username, action, detail, created_at FROM activity_log ORDER BY id DESC LIMIT 50').fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'summary': summary, 'recent_activity': [dict(r) for r in recent]})
+
+
+@app.route('/login')
+def login_page():
+    # Single-page app handles login UI; just serve the app which checks auth_status
+    return flask_redirect('/')
 
 
 # Data lives in user home — survives app updates
@@ -89,9 +348,47 @@ def get_db():
 def ts():
     return datetime.datetime.now().isoformat(timespec='seconds')
 
+def html_to_text(html):
+    """Convert JD rich-text HTML to clean plain text for AI prompts / exports."""
+    if not html:
+        return ''
+    import re as _re
+    txt = html
+    # Lists: prefix items with bullet/number markers before stripping tags
+    txt = _re.sub(r'<li[^>]*>', '\n- ', txt, flags=_re.I)
+    # Block-level tags -> newlines
+    txt = _re.sub(r'</(p|div|h[1-6]|li|ul|ol)>', '\n', txt, flags=_re.I)
+    txt = _re.sub(r'<br\s*/?>', '\n', txt, flags=_re.I)
+    # Strip remaining tags
+    txt = _re.sub(r'<[^>]+>', '', txt)
+    # Decode common HTML entities
+    txt = (txt.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+              .replace('&quot;', '"').replace('&#039;', "'").replace('&nbsp;', ' '))
+    # Collapse excess blank lines/spaces
+    txt = _re.sub(r'\n[ \t]+', '\n', txt)
+    txt = _re.sub(r'\n{3,}', '\n\n', txt)
+    return txt.strip()
+
 def init_db():
     conn = get_db(); c = conn.cursor()
     c.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            display_name TEXT DEFAULT '',
+            role TEXT DEFAULT 'user',
+            created_at TEXT,
+            last_login TEXT
+        );
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT DEFAULT '',
+            action TEXT DEFAULT '',
+            detail TEXT DEFAULT '',
+            created_at TEXT
+        );
         CREATE TABLE IF NOT EXISTS mandates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             client TEXT NOT NULL DEFAULT '',
@@ -141,9 +438,56 @@ def init_db():
             wa_response TEXT DEFAULT '',
             wa_response_note TEXT DEFAULT '',
             wa_response_at TEXT DEFAULT '',
+            key_skill_tags TEXT DEFAULT '[]',
+            domain_tags TEXT DEFAULT '[]',
             created_at TEXT DEFAULT '',
             updated_at TEXT DEFAULT '',
             FOREIGN KEY (mandate_id) REFERENCES mandates(id)
+        );
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_id INTEGER NOT NULL,
+            mandate_id INTEGER,
+            candidate_name TEXT DEFAULT '',
+            mandate_label TEXT DEFAULT '',
+            note TEXT DEFAULT '',
+            due_at TEXT NOT NULL,
+            done INTEGER DEFAULT 0,
+            created_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS work_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_id INTEGER NOT NULL,
+            company TEXT DEFAULT '',
+            designation TEXT DEFAULT '',
+            start_date TEXT DEFAULT '',
+            end_date TEXT DEFAULT '',
+            is_current INTEGER DEFAULT 0,
+            description TEXT DEFAULT '',
+            sort_order INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT DEFAULT '',
+            phone TEXT DEFAULT '',
+            email TEXT DEFAULT '',
+            company TEXT DEFAULT '',
+            designation TEXT DEFAULT '',
+            experience REAL DEFAULT 0,
+            ctc_current REAL DEFAULT 0,
+            ctc_expected REAL DEFAULT 0,
+            notice_period INTEGER DEFAULT 0,
+            location TEXT DEFAULT '',
+            key_skills TEXT DEFAULT '[]',
+            domain_tags TEXT DEFAULT '[]',
+            custom_fields TEXT DEFAULT '{}',
+            cv_path TEXT DEFAULT '',
+            cv_original_name TEXT DEFAULT '',
+            resume_parsed INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'new',
+            notes TEXT DEFAULT '',
+            created_at TEXT
         );
         CREATE TABLE IF NOT EXISTS stage_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -164,7 +508,7 @@ def init_db():
         ('company_name', 'HireLab'),
         ('claude_api_key', ''),
         ('deepseek_api_key', ''),
-        ('openai_api_key', ''),
+        ('groq_api_key', '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'),
         ('fu1_hours', '8'),
         ('fu2_hours', '24'),
         ('template_msg1', 'Hi {Name}, this is {RecruiterName} from HireLab. I wanted to speak about a {Position} opportunity at {Location}.\n\nIf you are interested, please suggest the best time to connect.'),
@@ -173,6 +517,64 @@ def init_db():
     ]
     for k, v in defaults:
         c.execute('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)', (k, v))
+    # Migrate: add owner_id to mandates, candidates, reminders (multi-user)
+    for tbl in ['mandates', 'candidates', 'reminders']:
+        try:
+            c.execute(f'ALTER TABLE {tbl} ADD COLUMN owner_id INTEGER DEFAULT 0')
+        except sqlite3.OperationalError:
+            pass
+    # Add created_by to candidates/mandates for tracking
+    for tbl in ['mandates', 'candidates']:
+        try:
+            c.execute(f'ALTER TABLE {tbl} ADD COLUMN created_by TEXT DEFAULT ""')
+        except sqlite3.OperationalError:
+            pass
+
+    # Trigger: a candidate inherits its mandate's owner_id automatically, so
+    # every insert path (manual, extension, bulk, central-db, import) is covered
+    # without touching each one. Only fills when owner_id is 0/NULL.
+    try:
+        c.execute('''CREATE TRIGGER IF NOT EXISTS candidate_inherit_owner
+                     AFTER INSERT ON candidates
+                     FOR EACH ROW WHEN (NEW.owner_id IS NULL OR NEW.owner_id=0)
+                     BEGIN
+                       UPDATE candidates SET owner_id =
+                         (SELECT owner_id FROM mandates WHERE id = NEW.mandate_id)
+                       WHERE id = NEW.id;
+                     END''')
+    except sqlite3.OperationalError:
+        pass
+
+    # Migrate: add embedding columns to candidates for semantic search
+    for col, typ in [('embedding', 'TEXT'), ('embedding_text', 'TEXT'), ('embedded_at', 'TEXT')]:
+        try:
+            c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {typ} DEFAULT ""')
+        except sqlite3.OperationalError:
+            pass  # already exists
+
+    # Migrate: add reminders table if not exists
+    c.execute('''CREATE TABLE IF NOT EXISTS reminders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        candidate_id INTEGER NOT NULL,
+        mandate_id INTEGER,
+        candidate_name TEXT DEFAULT '',
+        mandate_label TEXT DEFAULT '',
+        note TEXT DEFAULT '',
+        due_at TEXT NOT NULL,
+        done INTEGER DEFAULT 0,
+        created_at TEXT
+    )''')
+
+    # Migrate: add new tag columns to existing DBs
+    for col, defn in [
+        ('product_handles', 'TEXT DEFAULT "[]"'),
+        ('function_tags', 'TEXT DEFAULT "[]"'),
+    ]:
+        try:
+            c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {defn}')
+        except Exception:
+            pass
+
     conn.commit(); conn.close()
 
 def migrate_old():
@@ -261,7 +663,6 @@ def get_setting(key, default=''):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @app.route('/')
-@login_required
 def index():
     return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html'))
 
@@ -292,6 +693,800 @@ def db_status():
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e), 'db_path': DB_PATH, 'data_dir': DATA_DIR}), 500
 
+
+@app.route('/api/shorten-jd', methods=['POST'])
+def shorten_jd():
+    """Use DeepSeek to shorten a long JD/role-description text so it fits
+    within Gmail's compose-URL length limit, while keeping it useful for
+    a candidate outreach email (role purpose + 4-6 key responsibilities/
+    highlights, in plain text, no markdown)."""
+    d = request.json or {}
+    text = (d.get('text') or '').strip()
+    max_chars = int(d.get('max_chars') or 1200)
+    if not text:
+        return jsonify({'error': 'No text provided'}), 400
+
+    conn = get_db()
+    row = conn.execute("SELECT value FROM settings WHERE key='deepseek_api_key'").fetchone()
+    conn.close()
+    ds_key = (row['value'] if row else '') or ''
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not set. Go to Settings.'}), 400
+
+    system_msg = (
+        "You are condensing a long job description into a well-formatted, "
+        f"recruiter-friendly summary, under roughly {max_chars} characters total. "
+        "Be thoughtful — preserve the most important and specific information "
+        "(role purpose, key responsibilities, must-have requirements) and cut "
+        "only repetitive, generic, or low-value detail. Do not cut sentences "
+        "mid-way; every section and bullet must be complete and make sense.\n\n"
+        "Output format (plain text, using these exact markers so it can be "
+        "converted to formatted HTML):\n"
+        "- A line starting with '## ' is a section heading (use short ones like "
+        "'## Job Purpose', '## Key Responsibilities', '## Requirements').\n"
+        "- A line starting with '- ' is a bullet point.\n"
+        "- Any other non-empty line is a normal paragraph.\n"
+        "- Separate sections/paragraphs/bullet-groups with a single blank line.\n\n"
+        "Structure: 1 short 'Job Purpose' paragraph, then a 'Key Responsibilities' "
+        "section with 4-7 bullets, then (if relevant) a short 'Requirements' "
+        "section with 2-4 bullets. Do NOT use markdown bold/italic (**, *, _). "
+        "Output ONLY the formatted text, nothing else."
+    )
+
+    try:
+        resp = requests.post('https://api.deepseek.com/chat/completions',
+            headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
+            json={'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 900,
+                  'messages': [{'role': 'system', 'content': system_msg},
+                                {'role': 'user', 'content': text[:12000]}]},
+            timeout=60)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    if resp.status_code != 200:
+        try: err = resp.json().get('error', {}).get('message', 'DeepSeek API error')
+        except Exception: err = resp.text[:200]
+        return jsonify({'error': err}), 500
+
+    shortened = resp.json()['choices'][0]['message']['content'].strip()
+    return jsonify({'ok': True, 'shortened': shortened})
+
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  REMINDERS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@app.route('/api/reminders', methods=['GET'])
+@login_required
+def get_reminders():
+    conn = get_db()
+    rows = conn.execute(
+        'SELECT * FROM reminders WHERE done=0 AND owner_id=? ORDER BY due_at ASC',
+        (effective_user_id(),)
+    ).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'reminders': [dict(r) for r in rows]})
+
+@app.route('/api/reminders', methods=['POST'])
+@login_required
+def add_reminder():
+    d = request.json or {}
+    cid   = d.get('candidate_id')
+    note  = (d.get('note') or '').strip()
+    due   = (d.get('due_at') or '').strip()
+    if not cid or not due:
+        return jsonify({'error': 'candidate_id and due_at required'}), 400
+
+    conn = get_db()
+    cand = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not cand:
+        conn.close()
+        return jsonify({'error': 'Candidate not found'}), 404
+
+    mandate = conn.execute('SELECT * FROM mandates WHERE id=?', (cand['mandate_id'],)).fetchone()
+    mandate_label = (mandate['role'] + ' — ' + mandate['client']) if mandate else ''
+
+    conn.execute(
+        'INSERT INTO reminders (candidate_id,mandate_id,candidate_name,mandate_label,note,due_at,done,created_at,owner_id) '
+        'VALUES (?,?,?,?,?,?,0,?,?)',
+        (cid, cand['mandate_id'], cand['name'] or '', mandate_label, note, due, ts(), effective_user_id())
+    )
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/reminders/<int:rid>/done', methods=['POST'])
+def mark_reminder_done(rid):
+    conn = get_db()
+    conn.execute('UPDATE reminders SET done=1 WHERE id=?', (rid,))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/reminders/<int:rid>', methods=['DELETE'])
+def delete_reminder(rid):
+    conn = get_db()
+    conn.execute('DELETE FROM reminders WHERE id=?', (rid,))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/dashboard-tasks')
+@login_required
+def dashboard_tasks():
+    """Aggregate all tasks for the dashboard:
+    1. Manual reminders (due today or overdue)
+    2. WA messages sent but no response logged (any stage)
+    3. New submissions from public form (today)
+    """
+    conn = get_db()
+    now  = datetime.datetime.now()
+    today_str = now.strftime('%Y-%m-%d')
+
+    # ── 1. Manual reminders (pending) — exclude hold/closed mandates ────────
+    rem_rows = conn.execute(
+        "SELECT r.* FROM reminders r "
+        "LEFT JOIN mandates m ON m.id = r.mandate_id "
+        "WHERE r.done=0 AND r.owner_id=? "
+        "  AND (m.id IS NULL OR m.status NOT IN ('hold','closed')) "
+        "ORDER BY r.due_at ASC",
+        (effective_user_id(),)
+    ).fetchall()
+    reminders = []
+    for r in rem_rows:
+        d = dict(r)
+        try:
+            due = datetime.datetime.fromisoformat(d['due_at'])
+            d['overdue'] = due < now
+            d['due_today'] = due.date() == now.date()
+        except Exception:
+            d['overdue'] = False; d['due_today'] = False
+        reminders.append(d)
+
+    # ── 2. WA sent but no response (any mandate, any stage) ─────────────────
+    wa_pending = []
+    cands = conn.execute(
+        "SELECT c.*, m.role, m.client FROM candidates c "
+        "LEFT JOIN mandates m ON m.id=c.mandate_id "
+        "WHERE (c.msg1_sent_at!='' OR c.fu1_sent_at!='' OR c.fu2_sent_at!='') "
+        "  AND (c.wa_response IS NULL OR c.wa_response='') "
+        "  AND c.owner_id=? "
+        "  AND (m.id IS NULL OR m.status NOT IN ('hold','closed')) "
+        "ORDER BY c.updated_at DESC",
+        (effective_user_id(),)
+    ).fetchall()
+    for c in cands:
+        d = dict(c)
+        # Calculate days since last WA message
+        last_sent = d.get('fu2_sent_at') or d.get('fu1_sent_at') or d.get('msg1_sent_at') or ''
+        days_ago = None
+        if last_sent:
+            try:
+                sent_dt = datetime.datetime.fromisoformat(last_sent)
+                days_ago = (now - sent_dt).days
+            except Exception:
+                pass
+        d['days_since_wa'] = days_ago
+        d['mandate_label'] = (d.get('role','') + ' — ' + d.get('client','')) if d.get('role') else ''
+        wa_pending.append(d)
+
+    # ── 3. New submissions today ─────────────────────────────────────────────
+    sub_rows = conn.execute(
+        "SELECT * FROM submissions WHERE status='new' AND created_at LIKE ? ORDER BY created_at DESC",
+        (today_str + '%',)
+    ).fetchall()
+    new_submissions = [dict(r) for r in sub_rows]
+
+    conn.close()
+    return jsonify({
+        'ok': True,
+        'reminders': reminders,
+        'wa_pending': wa_pending,
+        'new_submissions': new_submissions,
+        'counts': {
+            'reminders': len(reminders),
+            'wa_pending': len(wa_pending),
+            'new_submissions': len(new_submissions),
+        }
+    })
+
+def _save_wh_for(conn, cid, items):
+    """Replace work_history for a candidate from extension data."""
+    if not isinstance(items, list) or not items:
+        return
+    conn.execute('DELETE FROM work_history WHERE candidate_id=?', (cid,))
+    for i, it in enumerate(items):
+        conn.execute(
+            'INSERT INTO work_history (candidate_id,company,designation,start_date,end_date,is_current,description,sort_order) '
+            'VALUES (?,?,?,?,?,?,?,?)',
+            (cid, (it.get('company') or '').strip(), (it.get('designation') or '').strip(),
+             (it.get('start_date') or '').strip(), (it.get('end_date') or '').strip(),
+             1 if it.get('is_current') else 0, (it.get('description') or '').strip(), i)
+        )
+
+@app.route('/api/extension/push', methods=['POST', 'OPTIONS'])
+def extension_push():
+    """Receive a candidate pushed from the Naukri Chrome extension.
+    - Requires phone OR email present (locked profiles without contact are rejected by the extension).
+    - If a candidate with the same phone exists in the SAME mandate -> UPDATE it.
+    - Otherwise INSERT a new candidate into the chosen mandate at 'Screening' stage.
+    """
+    if request.method == 'OPTIONS':
+        return ('', 204)
+
+    if not session.get('user_id'):
+        return jsonify({'error': 'auth_required', 'message': 'Please log into HireLab in this browser first.'}), 401
+
+    d = request.json or {}
+    mid = d.get('mandate_id')
+    name = (d.get('name') or '').strip()
+    phone = (d.get('phone') or '').strip()
+    email = (d.get('email') or '').strip()
+
+    if not mid:
+        return jsonify({'error': 'Please select a mandate'}), 400
+
+    # Verify the mandate belongs to the current (effective) user
+    _conn = get_db()
+    _own = _conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
+    _conn.close()
+    if not _own or _own['owner_id'] != effective_user_id():
+        return jsonify({'error': 'That mandate is not in your workspace'}), 403
+    if not name:
+        return jsonify({'error': 'Candidate name missing'}), 400
+    if not phone and not email:
+        return jsonify({'error': 'Profile appears locked (no phone/email). Unlock it on Naukri first.'}), 400
+
+    def fnum(v):
+        try: return float(v or 0)
+        except: return 0.0
+    def inum(v):
+        try: return int(float(v or 0))
+        except: return 0
+
+    skills = d.get('key_skills') or []
+    if isinstance(skills, str):
+        skills = [s.strip() for s in skills.split(',') if s.strip()]
+    skills_json = json.dumps(skills)
+
+    conn = get_db(); c = conn.cursor()
+
+    # ── Duplicate detection by EMAIL ──────────────────────────────────────
+    # Same email in the SAME mandate  -> UPDATE the CV/profile fields, but
+    #   NEVER touch the stage, journey (stage_history) or comments.
+    # Same email in a DIFFERENT mandate -> still create a NEW entry here
+    #   (each mandate has its own pipeline); we just tell the user it exists
+    #   elsewhere so they have context.
+    existing = None
+    other_mandates = []
+    if email:
+        existing = c.execute(
+            'SELECT * FROM candidates WHERE mandate_id=? AND LOWER(email)=LOWER(?) LIMIT 1',
+            (mid, email)
+        ).fetchone()
+        # Find this person in OTHER mandates owned by the same user (for info)
+        rows = c.execute(
+            'SELECT c.id, m.role, m.client FROM candidates c '
+            'JOIN mandates m ON m.id = c.mandate_id '
+            'WHERE LOWER(c.email)=LOWER(?) AND c.mandate_id!=? AND m.owner_id=?',
+            (email, mid, effective_user_id())
+        ).fetchall()
+        other_mandates = [ (r['role'] + ' @ ' + r['client']) for r in rows ]
+
+    if existing:
+        # UPDATE profile/CV fields ONLY. Do NOT modify stage, stage_history,
+        # recruiter_feedback, client_feedback, general_comments, wa_response.
+        c.execute(
+            'UPDATE candidates SET name=?,company=?,designation=?,experience=?,ctc_current=?,'
+            'ctc_expected=?,notice_period=?,location=?,phone=?,key_skills=?,updated_at=? WHERE id=?',
+            (name, d.get('company',''), d.get('designation',''), fnum(d.get('experience')),
+             fnum(d.get('ctc_current')), fnum(d.get('ctc_expected')), inum(d.get('notice_period')),
+             d.get('location',''), phone or existing['phone'], skills_json, ts(), existing['id'])
+        )
+        _save_wh_for(conn, existing['id'], d.get('work_history'))
+        conn.commit(); conn.close()
+        return jsonify({'ok': True, 'action': 'updated', 'candidate_id': existing['id'],
+                        'name': name, 'preserved': True,
+                        'message': 'CV & details updated. Stage, journey and comments preserved.'})
+
+    c.execute(
+        'INSERT INTO candidates (mandate_id,name,company,designation,experience,ctc_current,'
+        'ctc_expected,notice_period,location,phone,email,career_summary,key_skills,'
+        'screening_decision,ai_reasoning,stage,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        (mid, name, d.get('company',''), d.get('designation',''), fnum(d.get('experience')),
+         fnum(d.get('ctc_current')), fnum(d.get('ctc_expected')), inum(d.get('notice_period')),
+         d.get('location',''), phone, email, d.get('career_summary',''), skills_json,
+         'worth_opening', 'Pushed from Naukri', 'Screening', ts(), ts())
+    )
+    cid = c.lastrowid
+    c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
+              (cid, '', 'Screening', 'Pushed from Naukri extension', ts()))
+    _save_wh_for(conn, cid, d.get('work_history'))
+    conn.commit(); conn.close()
+    embed_candidate_async(cid)  # auto-index for semantic search
+    resp = {'ok': True, 'action': 'added', 'candidate_id': cid, 'name': name}
+    if other_mandates:
+        resp['also_in'] = other_mandates
+        resp['message'] = 'Added here. This person also exists in: ' + ', '.join(other_mandates)
+    return jsonify(resp)
+
+@app.route('/api/extension/mandates', methods=['GET', 'OPTIONS'])
+def extension_mandates():
+    """Lightweight mandate list for the extension dropdown (active only).
+    Login-aware: shows only the logged-in user's own active mandates."""
+    if request.method == 'OPTIONS':
+        return ('', 204)
+    if not session.get('user_id'):
+        return jsonify({'error': 'auth_required', 'message': 'Please log into HireLab in this browser first.'}), 401
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, role, client, location FROM mandates WHERE status='active' AND owner_id=? ORDER BY created_at DESC",
+        (effective_user_id(),)
+    ).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'mandates': [dict(r) for r in rows]})
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  AI INSIGHTS — Semantic Search (embeddings) + Stats (SQL + LLM summary)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+import math
+
+GEMINI_EMBED_URL = ('https://generativelanguage.googleapis.com/v1beta/'
+                    'models/gemini-embedding-001:embedContent')
+
+def get_setting(key, default=''):
+    conn = get_db()
+    row = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+    conn.close()
+    return (row['value'] if row else '') or default
+
+def gemini_embed(text, api_key):
+    """Return a list[float] embedding for the given text via Gemini, or None."""
+    text = (text or '').strip()
+    if not text:
+        return None
+    try:
+        resp = requests.post(
+            GEMINI_EMBED_URL + '?key=' + api_key,
+            headers={'Content-Type': 'application/json'},
+            json={'model': 'models/gemini-embedding-001',
+                  'content': {'parts': [{'text': text[:8000]}]}},
+            timeout=30)
+        if resp.status_code != 200:
+            return {'error': resp.json().get('error', {}).get('message', resp.text[:200])}
+        return resp.json()['embedding']['values']
+    except Exception as e:
+        return {'error': str(e)}
+
+def candidate_embed_text(c):
+    """Build the text blob we embed for a candidate. Mandate-agnostic on
+    purpose so a candidate can surface for ANY role they fit."""
+    try:
+        skills = json.loads(c['key_skills'] or '[]')
+    except Exception:
+        skills = []
+    if isinstance(skills, list):
+        skills = ', '.join(str(s) for s in skills)
+    parts = [
+        c['name'] or '',
+        (c['designation'] or '') + (' at ' + c['company'] if c['company'] else ''),
+        'Experience: ' + str(c['experience'] or 0) + ' years',
+        'Location: ' + (c['location'] or ''),
+        'Skills: ' + str(skills),
+        c['career_summary'] or '',
+    ]
+    # Include product/function tags if present
+    for col in ('product_handles', 'function_tags'):
+        try:
+            v = c[col]
+            if v:
+                tags = json.loads(v) if v.strip().startswith('[') else v
+                if isinstance(tags, list): tags = ', '.join(tags)
+                if tags: parts.append(str(tags))
+        except Exception:
+            pass
+    return '\n'.join(p for p in parts if p and p.strip())
+
+def cosine(a, b):
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+@app.route('/api/candidates/<int:cid>/rate', methods=['POST'])
+def rate_candidate(cid):
+    """Rate a candidate against their mandate's JD using DeepSeek.
+    Returns AI suitability % + selection probability % + reasoning."""
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
+
+    conn = get_db()
+    c = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not c:
+        conn.close()
+        return jsonify({'error': 'Candidate not found'}), 404
+    m = conn.execute('SELECT * FROM mandates WHERE id=?', (c['mandate_id'],)).fetchone()
+    if not m:
+        conn.close()
+        return jsonify({'error': 'Mandate not found'}), 404
+
+    try:
+        skills = json.loads(c['key_skills'] or '[]')
+        if isinstance(skills, list): skills = ', '.join(str(s) for s in skills)
+    except Exception:
+        skills = ''
+
+    jd_text = html_to_text(m['jd']) if m['jd'] else ''
+    role_ctx = (f"Role: {m['role']} at {m['client']}\n"
+                f"Location: {m['location']}\n"
+                f"CTC band: {m['ctc_min']}-{m['ctc_max']} LPA\n"
+                + (f"Job Description:\n{jd_text}" if jd_text.strip() else "Job Description: (not provided)"))
+
+    cand_ctx = (f"Name: {c['name']}\n"
+                f"Current: {c['designation']} at {c['company']}\n"
+                f"Experience: {c['experience']} years\n"
+                f"Location: {c['location']}\n"
+                f"Current CTC: {c['ctc_current']} LPA, Expected: {c['ctc_expected']} LPA\n"
+                f"Notice period: {c['notice_period']} days\n"
+                f"Skills: {skills}\n"
+                f"Summary: {c['career_summary'] or ''}")
+
+    prompt = ("You are an expert recruiter evaluating how well a candidate fits a role. "
+              "Score strictly and realistically.\n\n"
+              "=== ROLE ===\n" + role_ctx + "\n\n=== CANDIDATE ===\n" + cand_ctx + "\n\n"
+              "Return ONLY a JSON object (no markdown, no extra text) with exactly these keys:\n"
+              '{"suitability": <0-100 integer: how well candidate matches the role requirements>, '
+              '"selection_probability": <0-100 integer: realistic chance of being shortlisted by the client>, '
+              '"reasoning": "<2-3 concise sentences: key strengths and gaps for THIS role>"}')
+
+    try:
+        rr = requests.post('https://api.deepseek.com/chat/completions',
+            headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
+            json={'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 400,
+                  'messages': [{'role': 'user', 'content': prompt}]},
+            timeout=60)
+        if rr.status_code != 200:
+            err = rr.json().get('error', {}).get('message', rr.text[:200])
+            conn.close()
+            return jsonify({'error': 'DeepSeek error: ' + err}), 500
+        raw = rr.json()['choices'][0]['message']['content'].strip()
+        # Strip code fences if present
+        raw = re.sub(r'^```(json)?|```$', '', raw, flags=re.MULTILINE).strip()
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        conn.close()
+        return jsonify({'error': 'Could not parse AI response. Try again.'}), 500
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': str(e)}), 500
+
+    suit = max(0, min(100, int(data.get('suitability', 0))))
+    prob = max(0, min(100, int(data.get('selection_probability', 0))))
+    reasoning = '[Rated vs JD] ' + (data.get('reasoning', '') or '')
+
+    conn.execute('UPDATE candidates SET ai_score=?, ai_reasoning=?, updated_at=? WHERE id=?',
+                 (suit, reasoning, ts(), cid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'suitability': suit, 'selection_probability': prob,
+                    'reasoning': data.get('reasoning', '')})
+
+def embed_candidate_async(cid):
+    """Best-effort: embed a single candidate right after creation. Failures are
+    silent so they never block the main add flow; reindex can catch them later."""
+    try:
+        api_key = get_setting('gemini_api_key')
+        if not api_key:
+            return
+        conn = get_db()
+        c = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+        if not c:
+            conn.close(); return
+        txt = candidate_embed_text(c)
+        if not txt.strip():
+            conn.close(); return
+        vec = gemini_embed(txt, api_key)
+        if isinstance(vec, list) and vec:
+            conn.execute('UPDATE candidates SET embedding=?, embedding_text=?, embedded_at=? WHERE id=?',
+                         (json.dumps(vec), txt, ts(), cid))
+            conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+@app.route('/api/ai/index-status', methods=['GET'])
+@login_required
+def ai_index_status():
+    conn = get_db()
+    total = conn.execute('SELECT COUNT(*) n FROM candidates').fetchone()['n']
+    done = conn.execute("SELECT COUNT(*) n FROM candidates WHERE embedding!='' AND embedding IS NOT NULL").fetchone()['n']
+    conn.close()
+    has_key = bool(get_setting('gemini_api_key'))
+    return jsonify({'ok': True, 'total': total, 'indexed': done,
+                    'pending': total - done, 'has_gemini_key': has_key})
+
+
+@app.route('/api/ai/reindex', methods=['POST'])
+@login_required
+def ai_reindex():
+    """Embed a BATCH of un-embedded candidates per call (default 25). The
+    frontend calls this repeatedly until pending=0, so a single HTTP request
+    never runs long enough to time out, and progress is visible."""
+    d = request.json or {}
+    force = bool(d.get('force'))
+    batch = int(d.get('batch') or 25)
+    api_key = get_setting('gemini_api_key')
+    if not api_key:
+        return jsonify({'error': 'Gemini API key not set. Add it in Settings.'}), 400
+
+    conn = get_db()
+    if force:
+        rows = conn.execute('SELECT * FROM candidates ORDER BY id LIMIT ?', (batch,)).fetchall()
+        # For force, also clear so they re-embed; but simplest: process those
+        # without embedding first; force re-embeds everything across calls by
+        # clearing embeddings up front on the first force call.
+        if d.get('reset'):
+            conn.execute("UPDATE candidates SET embedding=''")
+            conn.commit()
+            rows = conn.execute('SELECT * FROM candidates ORDER BY id LIMIT ?', (batch,)).fetchall()
+    rows = conn.execute("SELECT * FROM candidates WHERE embedding='' OR embedding IS NULL ORDER BY id LIMIT ?", (batch,)).fetchall()
+
+    done, failed, skipped = 0, 0, 0
+    first_error = ''
+    for c in rows:
+        txt = candidate_embed_text(c)
+        if not txt.strip():
+            # mark as embedded-empty so we don't loop forever on blanks
+            conn.execute("UPDATE candidates SET embedding='[]', embedded_at=? WHERE id=?", (ts(), c['id']))
+            conn.commit()
+            skipped += 1
+            continue
+        vec = gemini_embed(txt, api_key)
+        if isinstance(vec, dict) and vec.get('error'):
+            failed += 1
+            first_error = vec['error']
+            if 'API key' in vec['error'] or 'PERMISSION' in vec['error'].upper() or 'API_KEY' in vec['error'].upper():
+                conn.close()
+                return jsonify({'error': 'Gemini error: ' + vec['error'],
+                                'indexed': done, 'failed': failed}), 400
+            continue
+        if not vec:
+            failed += 1
+            continue
+        conn.execute('UPDATE candidates SET embedding=?, embedding_text=?, embedded_at=? WHERE id=?',
+                     (json.dumps(vec), txt, ts(), c['id']))
+        conn.commit()
+        done += 1
+
+    # remaining count
+    pending = conn.execute("SELECT COUNT(*) n FROM candidates WHERE embedding='' OR embedding IS NULL").fetchone()['n']
+    conn.close()
+    return jsonify({'ok': True, 'indexed': done, 'failed': failed, 'skipped': skipped,
+                    'pending': pending, 'first_error': first_error})
+
+
+@app.route('/api/ai/search', methods=['POST'])
+@login_required
+def ai_search():
+    """Semantic talent search across ALL candidates (ignores mandate
+    boundaries) so someone saved under one role surfaces for another."""
+    d = request.json or {}
+    query = (d.get('query') or '').strip()
+    top_k = int(d.get('top_k') or 10)
+    if not query:
+        return jsonify({'error': 'Empty query'}), 400
+
+    api_key = get_setting('gemini_api_key')
+    if not api_key:
+        return jsonify({'error': 'Gemini API key not set. Add it in Settings.'}), 400
+
+    qvec = gemini_embed(query, api_key)
+    if isinstance(qvec, dict) and qvec.get('error'):
+        return jsonify({'error': 'Gemini error: ' + qvec['error']}), 400
+    if not qvec:
+        return jsonify({'error': 'Could not embed query'}), 400
+
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT c.*, m.role AS mandate_role, m.client AS mandate_client, m.status AS mandate_status "
+        "FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
+        "WHERE c.embedding!='' AND c.embedding IS NOT NULL"
+    ).fetchall()
+
+    scored = []
+    for c in rows:
+        try:
+            vec = json.loads(c['embedding'])
+        except Exception:
+            continue
+        sim = cosine(qvec, vec)
+        scored.append((sim, c))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    results = []
+    for sim, c in scored[:top_k]:
+        try:
+            skills = json.loads(c['key_skills'] or '[]')
+        except Exception:
+            skills = []
+        results.append({
+            'id': c['id'], 'name': c['name'], 'designation': c['designation'],
+            'company': c['company'], 'experience': c['experience'],
+            'location': c['location'], 'ctc_current': c['ctc_current'],
+            'ctc_expected': c['ctc_expected'], 'notice_period': c['notice_period'],
+            'phone': c['phone'], 'email': c['email'],
+            'key_skills': skills,
+            'mandate_id': c['mandate_id'], 'mandate_role': c['mandate_role'],
+            'mandate_client': c['mandate_client'], 'mandate_status': c['mandate_status'],
+            'stage': c['stage'],
+            'score': round(sim * 100, 1),
+        })
+
+    # Optional AI reasoning over the top results (why they fit)
+    explain = bool(d.get('explain'))
+    reasoning = ''
+    if explain and results:
+        ds_key = get_setting('deepseek_api_key')
+        if ds_key:
+            cand_lines = []
+            for r in results[:6]:
+                cand_lines.append(f"- {r['name']} ({r['designation']} at {r['company']}, "
+                                  f"{r['experience']}y, {r['location']}, skills: {', '.join(r['key_skills'][:6])}) "
+                                  f"[currently in mandate: {r['mandate_role'] or 'N/A'}]")
+            prompt = ("A recruiter searched their candidate pool for: \"" + query + "\".\n\n"
+                      "Here are the top matches:\n" + '\n'.join(cand_lines) + "\n\n"
+                      "In 3-5 short bullet points, explain which candidates fit best and WHY "
+                      "(note if someone saved for a different role is still a strong fit). "
+                      "Be concise and practical. Plain text, start each line with '- '.")
+            try:
+                rr = requests.post('https://api.deepseek.com/chat/completions',
+                    headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
+                    json={'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 400,
+                          'messages': [{'role': 'user', 'content': prompt}]},
+                    timeout=60)
+                if rr.status_code == 200:
+                    reasoning = rr.json()['choices'][0]['message']['content'].strip()
+            except Exception:
+                pass
+
+    conn.close()
+    return jsonify({'ok': True, 'results': results, 'reasoning': reasoning,
+                    'searched': len(scored)})
+
+
+@app.route('/api/ai/stats', methods=['POST'])
+@login_required
+def ai_stats():
+    """Approach B: answer counting/analytics questions. We pull a compact,
+    structured snapshot of all candidates+mandates and let DeepSeek reason
+    over it (no embeddings needed). Good for 'how many', 'which', 'average'."""
+    d = request.json or {}
+    question = (d.get('question') or '').strip()
+    if not question:
+        return jsonify({'error': 'Empty question'}), 400
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
+
+    conn = get_db()
+    mandates = conn.execute('SELECT id, role, client, location, status, ctc_min, ctc_max FROM mandates').fetchall()
+    cands = conn.execute('SELECT name, company, designation, experience, ctc_current, '
+                         'ctc_expected, notice_period, location, key_skills, stage, mandate_id '
+                         'FROM candidates').fetchall()
+    conn.close()
+
+    m_lines = []
+    for m in mandates:
+        m_lines.append(f"Mandate#{m['id']}: {m['role']} @ {m['client']} | loc:{m['location']} | "
+                       f"status:{m['status']} | CTC {m['ctc_min']}-{m['ctc_max']}L")
+    c_lines = []
+    for c in cands:
+        try:
+            sk = ', '.join(json.loads(c['key_skills'] or '[]')[:6])
+        except Exception:
+            sk = ''
+        c_lines.append(f"{c['name']} | {c['designation']} @ {c['company']} | exp:{c['experience']}y | "
+                       f"CTC cur:{c['ctc_current']} exp:{c['ctc_expected']} | NP:{c['notice_period']}d | "
+                       f"loc:{c['location']} | stage:{c['stage']} | mandate:{c['mandate_id']} | skills:{sk}")
+
+    # Keep prompt within limits; if too many candidates, note truncation
+    MAX = 400
+    truncated = len(c_lines) > MAX
+    snapshot = ("MANDATES:\n" + '\n'.join(m_lines) + "\n\nCANDIDATES (" +
+                str(len(c_lines)) + " total" + (", showing first 400" if truncated else "") + "):\n" +
+                '\n'.join(c_lines[:MAX]))
+
+    prompt = ("You are a recruitment data analyst for HireLab. Answer the recruiter's "
+              "question using ONLY the data snapshot below. Be precise with numbers, "
+              "and list relevant candidate names when useful. If the data is truncated "
+              "and you can't be exact, say so. Keep it concise and practical.\n\n"
+              "DATA:\n" + snapshot + "\n\nQUESTION: " + question + "\n\nANSWER:")
+
+    try:
+        rr = requests.post('https://api.deepseek.com/chat/completions',
+            headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
+            json={'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 800,
+                  'messages': [{'role': 'user', 'content': prompt}]},
+            timeout=90)
+        if rr.status_code != 200:
+            err = rr.json().get('error', {}).get('message', rr.text[:200])
+            return jsonify({'error': 'DeepSeek error: ' + err}), 500
+        answer = rr.json()['choices'][0]['message']['content'].strip()
+        return jsonify({'ok': True, 'answer': answer, 'candidate_count': len(c_lines),
+                        'truncated': truncated})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tags/<tag_type>')
+def get_tag_suggestions(tag_type):
+    """Return distinct tags used across all candidates for autocomplete.
+    tag_type: 'product' (Product Handles) or 'function' (Function)
+    """
+    col_map = {'product': 'product_handles', 'function': 'function_tags'}
+    col = col_map.get(tag_type)
+    if not col:
+        return jsonify({'ok': False, 'error': 'Invalid tag type'}), 400
+
+    defaults_map = {
+        'product': [
+            'Electrical Wires & Cables', 'Switches & Sockets', 'Low Voltage Switchgear',
+            'Medium Voltage Switchgear', 'Circuit Breakers', 'Distribution Boards',
+            'Lighting', 'Solar Inverters', 'Solar Panels', 'Energy Storage / BESS',
+            'Transformers', 'Motors & Drives', 'Automation & Controls', 'Cable Management',
+            'HVAC', 'Building Management Systems', 'EV Charging', 'Renewable Energy',
+            'Industrial Automation', 'Power Distribution', 'Wiring Devices', 'MCCBs', 'ACBs',
+            'Busbar Systems', 'UPS Systems', 'Genset / DG Sets'
+        ],
+        'function': [
+            'Sales', 'Marketing', 'Business Development', 'Channel Sales',
+            'Key Account Management', 'Product Management', 'Pre-Sales',
+            'Technical Sales', 'Operations', 'Supply Chain', 'Procurement',
+            'Project Management', 'Engineering', 'R&D', 'Quality',
+            'Service & Support', 'After Sales Service', 'Finance', 'HR',
+            'General Management', 'Strategy', 'Application Engineering', 'Design'
+        ]
+    }
+
+    conn = get_db()
+    rows = conn.execute(f'SELECT {col} FROM candidates WHERE {col} IS NOT NULL AND {col} != "" AND {col} != "[]"').fetchall()
+    conn.close()
+
+    used = set()
+    for r in rows:
+        try:
+            for t in json.loads(r[col] or '[]'):
+                if t and t.strip():
+                    used.add(t.strip())
+        except Exception:
+            pass
+
+    all_tags = sorted(used) + [d for d in defaults_map.get(tag_type, []) if d not in used]
+    return jsonify({'ok': True, 'tags': all_tags})
+
+
+@app.route('/api/candidates/<int:cid>/tags', methods=['POST'])
+def save_candidate_tags(cid):
+    """Save Product Handles or Function tags for a candidate."""
+    d = request.json or {}
+    tag_type = d.get('tag_type')
+    tags = d.get('tags', [])
+    col_map = {'product': 'product_handles', 'function': 'function_tags'}
+    col = col_map.get(tag_type)
+    if not col:
+        return jsonify({'ok': False, 'error': 'Invalid tag type'}), 400
+    if not isinstance(tags, list):
+        return jsonify({'ok': False, 'error': 'tags must be a list'}), 400
+    tags = [str(t).strip() for t in tags if str(t).strip()]
+    conn = get_db()
+    conn.execute(f'UPDATE candidates SET {col}=?, updated_at=? WHERE id=?', (json.dumps(tags), ts(), cid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'tags': tags})
+
 @app.route('/api/health')
 def health():
     return jsonify({'ok': True, 'data_dir': DATA_DIR, 'db': DB_PATH})
@@ -314,207 +1509,50 @@ def save_settings():
 
 # Mandates
 @app.route('/api/mandates', methods=['GET'])
+@login_required
 def list_mandates():
     conn = get_db()
-    rows = conn.execute('SELECT * FROM mandates ORDER BY created_at DESC').fetchall()
+    rows = conn.execute('SELECT * FROM mandates WHERE owner_id=? ORDER BY created_at DESC',
+                        (effective_user_id(),)).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/mandates', methods=['POST'])
+@login_required
 def create_mandate():
     d = request.json or {}
     if not d.get('client') or not d.get('role'):
         return jsonify({'error': 'Client and Role required'}), 400
     conn = get_db(); c = conn.cursor()
-    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,status,created_at,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
               (d['client'], d['role'], d.get('location',''), d.get('division',''),
-               float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('jd',''), 'active', ts()))
+               float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('jd',''), 'active', ts(), effective_user_id()))
     mid = c.lastrowid; conn.commit(); conn.close()
+    log_activity('create_mandate', d['role'] + ' @ ' + d['client'])
     return jsonify({'ok': True, 'id': mid})
 
 @app.route('/api/mandates/<int:mid>', methods=['GET'])
+@login_required
 def get_mandate(mid):
     conn = get_db()
-    r = conn.execute('SELECT * FROM mandates WHERE id=?', (mid,)).fetchone()
+    r = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?', (mid, effective_user_id())).fetchone()
     conn.close()
     return jsonify(dict(r)) if r else (jsonify({'error': 'Not found'}), 404)
 
 @app.route('/api/mandates/<int:mid>', methods=['PUT'])
+@login_required
 def update_mandate(mid):
     d = request.json or {}
     conn = get_db()
+    own = conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
+    if not own or own['owner_id'] != effective_user_id():
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,jd=?,status=? WHERE id=?',
                  (d.get('client',''), d.get('role',''), d.get('location',''), d.get('division',''),
                   float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('jd',''), d.get('status','active'), mid))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
-@app.route('/api/mandates/<int:mid>/sop', methods=['PUT'])
-def update_sop(mid):
-    d = request.json or {}
-    conn = get_db()
-    m = conn.execute('SELECT * FROM mandates WHERE id=?', (mid,)).fetchone()
-    if not m: conn.close(); return jsonify({'error': 'Not found'}), 404
-    v = (m['sop_version'] or 1) + 1
-    log = json.loads(m['sop_changelog'] or '[]')
-    log.append({'version': v, 'date': datetime.datetime.now().strftime('%d %b %Y %H:%M'), 'change': d.get('changelog_entry', 'Updated')})
-    conn.execute('UPDATE mandates SET sop_text=?,sop_version=?,sop_changelog=? WHERE id=?',
-                 (d.get('sop_text', ''), v, json.dumps(log), mid))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True, 'version': v})
-
-# SOP Chat
-@app.route('/api/mandates/<int:mid>/sop/chat', methods=['POST'])
-def sop_chat(mid):
-    d = request.json or {}
-    api_key = d.get('api_key', '')
-    if not api_key: return jsonify({'error': 'Claude API key not set. Add it in Settings.'}), 400
-    conn = get_db()
-    m = conn.execute('SELECT * FROM mandates WHERE id=?', (mid,)).fetchone()
-    conn.close()
-    if not m: return jsonify({'error': 'Mandate not found'}), 404
-
-    system_msg = (
-        "You are helping a recruiter create a Screening Operating Procedure (SOP).\n"
-        "Mandate: Role={role}, Client={client}, Location={location}, CTC={ctc_min}-{ctc_max} LPA\n"
-        "JD: {jd}\n\n"
-        "Step 1: Ask focused questions ONE AT A TIME (must-haves, deal-breakers, preferred companies, notice period limit).\n"
-        "Step 2: After getting answers, generate the SOP.\n\n"
-        "IMPORTANT: When generating the final SOP, respond with ONLY this JSON and nothing else:\n"
-        '{{"sop_ready":true,"sop_text":"write full SOP here","changelog_entry":"Initial SOP created"}}'
-    ).format(
-        role=m['role'], client=m['client'], location=m['location'],
-        ctc_min=m['ctc_min'], ctc_max=m['ctc_max'], jd=(m['jd'] or 'Not provided')
-    )
-
-    resp = call_claude(api_key, system_msg, d.get('messages', []), max_tokens=1500)
-    if resp.status_code != 200:
-        try: err = resp.json().get('error', {}).get('message', 'Claude API error')
-        except: err = resp.text[:200]
-        return jsonify({'error': err}), 500
-
-    text = resp.json()['content'][0]['text']
-    parsed = parse_json(text)
-
-    if parsed and parsed.get('sop_ready'):
-        return jsonify({'type': 'sop_ready', 'sop_data': parsed})
-
-    # Fallback: detect SOP in plain text
-    kws = ['must-have', 'must have', 'deal-breaker', 'notice period', 'experience', 'preferred']
-    if len(text) > 200 and sum(1 for k in kws if k.lower() in text.lower()) >= 2:
-        return jsonify({'type': 'sop_ready', 'sop_data': {'sop_ready': True, 'sop_text': text, 'changelog_entry': 'Initial SOP created via Q&A'}})
-
-    return jsonify({'type': 'question', 'text': text})
-
-# SOP Refine
-@app.route('/api/mandates/<int:mid>/sop/refine', methods=['POST'])
-def refine_sop(mid):
-    d = request.json or {}
-    api_key = d.get('api_key', '')
-    if not api_key: return jsonify({'error': 'No API key'}), 400
-    conn = get_db()
-    m = conn.execute('SELECT * FROM mandates WHERE id=?', (mid,)).fetchone()
-    conn.close()
-    if not m: return jsonify({'error': 'Not found'}), 404
-    system_msg = 'Refine a recruitment SOP based on rejection patterns. Respond ONLY with JSON: {"changelog_entry":"...","updated_sop":"...","pattern_found":"..."}'
-    user_msg = 'Current SOP:\n' + (m['sop_text'] or '') + '\n\nRejections:\n' + json.dumps(d.get('rejections', []))
-    resp = call_claude(api_key, system_msg, [{'role': 'user', 'content': user_msg}], max_tokens=2000)
-    if resp.status_code != 200: return jsonify({'error': 'Claude error'}), 500
-    text = resp.json()['content'][0]['text']
-    parsed = parse_json(text)
-    return jsonify({'ok': True, **(parsed or {}), 'raw': text})
-
-# Batch Screen
-@app.route('/api/mandates/<int:mid>/screen', methods=['POST'])
-def screen_batch(mid):
-    d = request.json or {}
-    paste = d.get('paste', '').strip()
-    api_key = d.get('api_key', '')
-    if not paste: return jsonify({'error': 'Nothing pasted'}), 400
-    if not api_key: return jsonify({'error': 'Claude API key missing. Add in Settings.'}), 400
-
-    conn = get_db(); c = conn.cursor()
-    m = conn.execute('SELECT * FROM mandates WHERE id=?', (mid,)).fetchone()
-    if not m: conn.close(); return jsonify({'error': 'Mandate not found'}), 404
-
-    existing = set()
-    for r in conn.execute('SELECT name,company FROM candidates WHERE mandate_id=?', (mid,)).fetchall():
-        existing.add((r['name'].lower().strip(), r['company'].lower().strip()))
-
-    # Use SOP → JD → mandate info as screening criteria (in priority order)
-    if m['sop_text'] and m['sop_text'].strip():
-        criteria = m['sop_text'].strip()
-        criteria_type = 'SOP'
-    elif m['jd'] and m['jd'].strip():
-        criteria = m['jd'].strip()
-        criteria_type = 'JD'
-    else:
-        criteria = (
-            'Role: ' + m['role'] + '\n'
-            'Client: ' + m['client'] + '\n'
-            'Location: ' + (m['location'] or 'Not specified') + '\n'
-            'CTC Budget: Rs ' + str(int(m['ctc_min'])) + '-' + str(int(m['ctc_max'])) + ' LPA\n'
-            'Screen for relevant experience, skills, and CTC fit.'
-        )
-        criteria_type = 'Role Requirements'
-
-    system_msg = (
-        'You are an expert recruiter. Screen each candidate against this ' + criteria_type + ':\n\n'
-        + criteria + '\n\n'
-        'Mandate: ' + m['role'] + ' at ' + m['client'] + ', ' + (m['location'] or '') +
-        ', CTC ' + str(m['ctc_min']) + '-' + str(m['ctc_max']) + ' LPA\n\n'
-        'Give ai_score 0-100 based on fit. 100=perfect match, 0=unsuitable.\n\n'
-        'Return ONLY a valid JSON array. No markdown, no explanation. Each object:\n'
-        'name, decision (worth_opening OR skip), ai_score (int 0-100), reasoning (max 2 sentences),\n'
-        'company, designation, experience (float), ctc_current (float LPA), ctc_expected (float LPA),\n'
-        'notice_period (int days), location, qualification, key_skills (array max 5),\n'
-        'secondary_skills (array), career_summary (string), is_mnc (bool), industry_background (string)'
-    )
-    resp = call_claude(api_key, system_msg, [{'role': 'user', 'content': 'Screen these candidates:\n\n' + paste}])
-    if resp.status_code != 200:
-        conn.close()
-        try: err = resp.json().get('error', {}).get('message', 'Claude API error')
-        except: err = resp.text[:300]
-        return jsonify({'error': err}), 500
-
-    text = resp.json()['content'][0]['text']
-    parsed = parse_json(text)
-    if not isinstance(parsed, list):
-        conn.close()
-        return jsonify({'error': 'Could not parse Claude response. Try again.', 'raw': text[:300]}), 500
-
-    saved = []; dups = []; worth = skip = dup_count = 0
-    for cd in parsed:
-        name = str(cd.get('name') or '').strip()
-        company = str(cd.get('company') or '').strip()
-        key = (name.lower(), company.lower())
-        if key in existing:
-            dup_count += 1; dups.append({**cd, 'is_duplicate': True}); continue
-        existing.add(key)
-        c.execute(
-            'INSERT INTO candidates (mandate_id,name,company,designation,experience,ctc_current,'
-            'ctc_expected,notice_period,location,qualification,key_skills,secondary_skills,'
-            'career_summary,industry_background,is_mnc,screening_decision,ai_score,ai_reasoning,'
-            'stage,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            (mid, name, company, cd.get('designation',''), float(cd.get('experience') or 0),
-             float(cd.get('ctc_current') or 0), float(cd.get('ctc_expected') or 0),
-             int(cd.get('notice_period') or 0), cd.get('location',''), cd.get('qualification',''),
-             json.dumps(cd.get('key_skills') or []), json.dumps(cd.get('secondary_skills') or []),
-             cd.get('career_summary',''), cd.get('industry_background',''), 1 if cd.get('is_mnc') else 0,
-             cd.get('decision','skip'), float(cd.get('ai_score') or 0), '[Rated vs '+criteria_type+'] '+(cd.get('reasoning') or ''),
-             'Screening' if cd.get('decision') == 'worth_opening' else 'Screened-Out', ts(), ts()))
-        cid = c.lastrowid
-        if cd.get('decision') == 'worth_opening':
-            worth += 1
-            c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
-                      (cid, '', 'Screening', 'AI ' + str(cd.get('ai_score',0)) + '% — Worth Opening', ts()))
-        else: skip += 1
-        saved.append({**cd, 'id': cid, 'is_duplicate': False})
-    conn.commit(); conn.close()
-    return jsonify({'ok': True, 'total': len(parsed), 'worth': worth, 'skip': skip,
-                    'duplicates': dup_count, 'candidates': saved, 'duplicate_list': dups})
-
-# Candidates
 @app.route('/api/mandates/<int:mid>/candidates')
 def list_candidates(mid):
     check_timers()
@@ -543,6 +1581,8 @@ def get_candidate(cid):
     except: d['secondary_skills'] = []
     hist = conn.execute('SELECT * FROM stage_history WHERE candidate_id=? ORDER BY created_at', (cid,)).fetchall()
     d['history'] = [dict(h) for h in hist]
+    wh = conn.execute('SELECT * FROM work_history WHERE candidate_id=? ORDER BY is_current DESC, sort_order ASC, id ASC', (cid,)).fetchall()
+    d['work_history'] = [dict(w) for w in wh]
     conn.close()
     return jsonify(d)
 
@@ -609,34 +1649,6 @@ def move_stage(cid):
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
-@app.route('/api/candidates/<int:cid>/mark-sent', methods=['POST'])
-def mark_sent(cid):
-    d = request.json or {}
-    t = d.get('type', 'msg1')
-    field = {'msg1': 'msg1_sent_at', 'fu1': 'fu1_sent_at', 'fu2': 'fu2_sent_at'}.get(t, 'msg1_sent_at')
-    label = {'msg1': 'Message 1 sent via WhatsApp', 'fu1': 'Follow Up 1 sent', 'fu2': 'Follow Up 2 sent'}.get(t, 'Message sent')
-    n = ts()
-    conn = get_db()
-    r = conn.execute('SELECT stage FROM candidates WHERE id=?', (cid,)).fetchone()
-    if not r: conn.close(); return jsonify({'error': 'Not found'}), 404
-    conn.execute('UPDATE candidates SET ' + field + '=?,updated_at=? WHERE id=?', (n, n, cid))
-    conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
-                 (cid, r['stage'], r['stage'], label, n))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True, 'sent_at': n})
-
-@app.route('/api/candidates/<int:cid>/not-contacted', methods=['POST'])
-def not_contacted(cid):
-    d = request.json or {}
-    conn = get_db()
-    r = conn.execute('SELECT stage FROM candidates WHERE id=?', (cid,)).fetchone()
-    if not r: conn.close(); return jsonify({'error': 'Not found'}), 404
-    conn.execute("UPDATE candidates SET stage='Not Contacted',updated_at=? WHERE id=?", (ts(), cid))
-    conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
-                 (cid, r['stage'], 'Not Contacted', 'Not reachable: ' + d.get('reason',''), ts()))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
-
 @app.route('/api/mandates/<int:mid>/candidates/manual', methods=['POST'])
 def add_manual(mid):
     d = request.json or {}
@@ -658,8 +1670,12 @@ def add_manual(mid):
     return jsonify({'ok': True, 'id': cid})
 
 # CV
-@app.route('/api/candidates/<int:cid>/cv', methods=['POST'])
+@app.route('/api/candidates/<int:cid>/cv', methods=['POST', 'OPTIONS'])
 def upload_cv(cid):
+    if request.method == 'OPTIONS':
+        return ('', 204)
+    if not session.get('user_id'):
+        return jsonify({'error': 'auth_required', 'message': 'Please log into HireLab first.'}), 401
     if 'cv' not in request.files: return jsonify({'error': 'No file uploaded'}), 400
     f = request.files['cv']
     ext = Path(f.filename).suffix.lower()
@@ -682,6 +1698,38 @@ def serve_cv(filename):
     fp = os.path.join(CV_DIR, filename)
     return send_file(fp) if os.path.exists(fp) else (jsonify({'error': 'Not found'}), 404)
 
+
+@app.route('/api/cv-view/<path:filename>')
+def view_cv_html(filename):
+    """Render a .docx CV as HTML so it can be shown inline in the browser
+    (browsers can show PDF in an iframe natively, but not Word files)."""
+    fp = os.path.join(CV_DIR, filename)
+    if not os.path.exists(fp):
+        return ('<p style="font-family:sans-serif;padding:20px;color:#888">CV file not found.</p>', 404)
+    ext = os.path.splitext(filename)[1].lower()
+    if ext != '.docx':
+        return ('<p style="font-family:sans-serif;padding:20px;color:#888">Preview only supports .docx. Please download to view.</p>', 200)
+    try:
+        import mammoth
+        with open(fp, 'rb') as f:
+            result = mammoth.convert_to_html(f)
+        body = result.value or '<p style="color:#888">(Empty document)</p>'
+        page = (
+            '<!doctype html><html><head><meta charset="utf-8">'
+            '<style>'
+            'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;'
+            'line-height:1.6;color:#222;max-width:800px;margin:0 auto;padding:28px 32px;background:#fff}'
+            'h1,h2,h3{color:#0E2A47;margin:16px 0 8px} p{margin:6px 0} '
+            'table{border-collapse:collapse;width:100%;margin:10px 0} '
+            'td,th{border:1px solid #ddd;padding:6px 8px;font-size:12px} '
+            'ul,ol{margin:6px 0 6px 22px} img{max-width:100%}'
+            '</style></head><body>' + body + '</body></html>'
+        )
+        return (page, 200, {'Content-Type': 'text/html; charset=utf-8'})
+    except Exception as e:
+        return ('<p style="font-family:sans-serif;padding:20px;color:#C0522B">Could not render this Word file: '
+                + str(e) + '. Please download to view.</p>', 200)
+
 @app.route('/api/candidates/<int:cid>/cv', methods=['DELETE'])
 def delete_cv(cid):
     conn = get_db()
@@ -698,6 +1746,30 @@ def delete_cv(cid):
 
 
 # Delete candidate
+@app.route('/api/candidates/<int:cid>/work-history', methods=['POST'])
+@login_required
+def save_work_history(cid):
+    """Replace the full work-history list for a candidate."""
+    d = request.json or {}
+    items = d.get('items', [])
+    conn = get_db()
+    # ownership check
+    own = conn.execute('SELECT owner_id FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not own or own['owner_id'] != effective_user_id():
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    conn.execute('DELETE FROM work_history WHERE candidate_id=?', (cid,))
+    for i, it in enumerate(items):
+        conn.execute(
+            'INSERT INTO work_history (candidate_id,company,designation,start_date,end_date,is_current,description,sort_order) '
+            'VALUES (?,?,?,?,?,?,?,?)',
+            (cid, (it.get('company') or '').strip(), (it.get('designation') or '').strip(),
+             (it.get('start_date') or '').strip(), (it.get('end_date') or '').strip(),
+             1 if it.get('is_current') else 0, (it.get('description') or '').strip(), i)
+        )
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'count': len(items)})
+
+
 @app.route('/api/candidates/<int:cid>', methods=['DELETE'])
 def delete_candidate(cid):
     conn = get_db()
@@ -902,11 +1974,18 @@ os.makedirs(CALL_DIR, exist_ok=True)
 
 @app.route('/api/candidates/<int:cid>/analyse-call', methods=['POST'])
 def analyse_call(cid):
-    openai_key  = request.form.get('openai_api_key', '').strip()
+    groq_key    = request.form.get('groq_api_key', '').strip()
     claude_key  = request.form.get('claude_api_key', '').strip()
     language    = request.form.get('language', 'hi')   # hi = Hindi, en = English
 
-    if not openai_key: return jsonify({'error': 'OpenAI API key required (for transcription). Add in Settings.'}), 400
+    # Fall back to server-stored Groq key if none sent from frontend
+    if not groq_key:
+        conn = get_db()
+        row = conn.execute("SELECT value FROM settings WHERE key='groq_api_key'").fetchone()
+        conn.close()
+        groq_key = (row['value'] if row else '') or ''
+
+    if not groq_key: return jsonify({'error': 'Groq API key required (for transcription). Add in Settings.'}), 400
     if not claude_key: return jsonify({'error': 'Claude API key required (for analysis). Add in Settings.'}), 400
     if 'recording' not in request.files: return jsonify({'error': 'No recording file uploaded'}), 400
 
@@ -932,10 +2011,10 @@ def analyse_call(cid):
         }.get(ext, 'audio/mpeg')
 
         whisper_resp = requests.post(
-            'https://api.openai.com/v1/audio/transcriptions',
-            headers={'Authorization': 'Bearer ' + openai_key},
+            'https://api.groq.com/openai/v1/audio/transcriptions',
+            headers={'Authorization': 'Bearer ' + groq_key},
             files={'file': (f.filename, file_bytes, mime)},
-            data={'model': 'whisper-1', 'language': language,
+            data={'model': 'whisper-large-v3', 'language': language,
                   'prompt': 'This is a recruiter call with a candidate discussing a job opportunity. '
                             'The conversation may be in Hindi, English, or Hinglish.'},
             timeout=120
@@ -946,13 +2025,13 @@ def analyse_call(cid):
         return jsonify({'error': 'Transcription error: ' + str(e)}), 500
 
     if whisper_resp.status_code == 401:
-        return jsonify({'error': 'Invalid OpenAI API key'}), 401
+        return jsonify({'error': 'Invalid Groq API key'}), 401
     if whisper_resp.status_code != 200:
         try:
             err = whisper_resp.json().get('error', {}).get('message', whisper_resp.text[:200])
         except Exception:
             err = whisper_resp.text[:200]
-        return jsonify({'error': 'Whisper error: ' + err}), 500
+        return jsonify({'error': 'Groq transcription error: ' + err}), 500
 
     transcript = whisper_resp.json().get('text', '').strip()
     if not transcript:
@@ -983,7 +2062,7 @@ def analyse_call(cid):
             except Exception:
                 pass
 
-    jd_or_sop = (mandate['sop_text'] or mandate['jd'] or '') if mandate else ''
+    jd_or_sop = (mandate['sop_text'] or html_to_text(mandate['jd']) or '') if mandate else ''
     cand_name  = cand['name'] or 'Candidate'
     role       = mandate['role'] if mandate else 'the position'
     client     = mandate['client'] if mandate else ''
@@ -1084,6 +2163,7 @@ def get_or_create_central_mandate():
     return mid
 
 @app.route('/api/central-db/search')
+@login_required
 def central_search():
     q        = request.args.get('q', '').strip().lower()
     location = request.args.get('location', '').strip().lower()
@@ -1278,6 +2358,201 @@ def wa_queue(mid):
     return jsonify({'ok': True, 'queue': fu_due, 'count': len(fu_due)})
 
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  CANDIDATE SUBMISSION FORM
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@app.route('/apply')
+def apply_form():
+    return send_file('apply.html')
+
+@app.route('/api/public/parse-resume', methods=['POST'])
+def public_parse_resume():
+    if 'resume' not in request.files:
+        return jsonify({'error': 'No file'}), 400
+    f = request.files['resume']
+    text, err = extract_text_from_file(f.read(), f.filename)
+    if err or not text:
+        return jsonify({'error': err or 'Cannot extract text'}), 400
+    conn = get_db()
+    row = conn.execute("SELECT value FROM settings WHERE key='deepseek_api_key'").fetchone()
+    conn.close()
+    ds_key = (row['value'] if row else '') or ''
+    if not ds_key:
+        return jsonify({'error': 'Resume parsing not configured. Please fill manually.'}), 400
+    sys_msg = ('Extract candidate details. Return ONLY JSON: name, phone, email, company, designation, '
+               'experience (float), ctc_current (float LPA), ctc_expected (float LPA), '
+               'notice_period (int days), location, key_skills (array max 8). '
+               'null for missing strings, 0 for missing numbers.')
+    try:
+        resp = requests.post('https://api.deepseek.com/chat/completions',
+            headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
+            json={'model': 'deepseek-chat', 'temperature': 0, 'max_tokens': 800,
+                  'messages': [{'role': 'system', 'content': sys_msg},
+                                {'role': 'user', 'content': 'Extract:\n\n' + text[:8000]}],
+                  'response_format': {'type': 'json_object'}},
+            timeout=45)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    if resp.status_code != 200:
+        return jsonify({'error': 'Parse unavailable. Fill manually.'}), 500
+    parsed = parse_json(resp.json()['choices'][0]['message']['content'])
+    return jsonify({'ok': True, 'data': parsed}) if parsed else (jsonify({'error': 'Parse failed'}), 500)
+
+@app.route('/api/submit', methods=['POST'])
+def submit_form():
+    name    = request.form.get('name', '').strip()
+    phone   = request.form.get('phone', '').strip()
+    email   = request.form.get('email', '').strip()
+    company = request.form.get('company', '').strip()
+    if not name or not phone or not email or not company:
+        return jsonify({'error': 'Required fields missing'}), 400
+    cv_path = ''; cv_name = ''
+    if 'resume' in request.files:
+        f = request.files['resume']
+        if f.filename:
+            ext  = Path(f.filename).suffix.lower()
+            safe = str(int(datetime.datetime.now().timestamp())) + '_sub' + ext
+            f.save(os.path.join(CV_DIR, safe))
+            cv_path = safe; cv_name = f.filename
+    conn = get_db(); c = conn.cursor()
+    c.execute('INSERT INTO submissions (name,phone,email,company,designation,experience,'
+              'ctc_current,ctc_expected,notice_period,location,key_skills,custom_fields,'
+              'cv_path,cv_original_name,resume_parsed,status,created_at) '
+              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        (name, phone, email, company,
+         request.form.get('designation', ''),
+         float(request.form.get('experience') or 0),
+         float(request.form.get('ctc_current') or 0),
+         float(request.form.get('ctc_expected') or 0),
+         int(request.form.get('notice_period') or 0),
+         request.form.get('location', ''),
+         request.form.get('key_skills', '[]'),
+         request.form.get('custom_fields', '{}'),
+         cv_path, cv_name, 1 if cv_path else 0, 'new', ts()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/submissions')
+def get_submissions():
+    q        = request.args.get('q', '').strip().lower()
+    sf       = request.args.get('status', '')
+    exp_r    = request.args.get('exp', '')      # e.g. "3-6"
+    ctc_r    = request.args.get('ctc', '')      # e.g. "10-15"
+    notice_r = request.args.get('notice', '')   # e.g. "1-30"
+    loc_f    = request.args.get('loc', '').strip().lower()
+    page     = int(request.args.get('page', 1)); per = 30
+
+    conn  = get_db()
+    rows  = conn.execute('SELECT * FROM submissions ORDER BY created_at DESC').fetchall()
+    conn.close()
+
+    def parse_range(s):
+        try: lo, hi = s.split('-'); return float(lo), float(hi)
+        except: return None, None
+
+    results = []
+    for r in rows:
+        d = dict(r)
+        try: d['key_skills'] = json.loads(d.get('key_skills') or '[]')
+        except: d['key_skills'] = []
+        try: d['custom_fields'] = json.loads(d.get('custom_fields') or '{}')
+        except: d['custom_fields'] = {}
+
+        # Status filter
+        if sf and d.get('status') != sf: continue
+
+        # Experience filter
+        if exp_r:
+            lo, hi = parse_range(exp_r)
+            if lo is not None:
+                exp = float(d.get('experience') or 0)
+                if not (lo <= exp <= hi): continue
+
+        # CTC filter
+        if ctc_r:
+            lo, hi = parse_range(ctc_r)
+            if lo is not None:
+                ctc = float(d.get('ctc_current') or 0)
+                if not (lo <= ctc <= hi): continue
+
+        # Notice period filter
+        if notice_r:
+            lo, hi = parse_range(notice_r)
+            if lo is not None:
+                notice = float(d.get('notice_period') or 0)
+                if not (lo <= notice <= hi): continue
+
+        # Location filter
+        if loc_f and loc_f not in (d.get('location') or '').lower(): continue
+
+        # Boolean text search
+        if q:
+            blob = ' '.join([d.get('name',''), d.get('company',''), d.get('designation',''),
+                             d.get('location',''), d.get('email',''),
+                             ' '.join(d.get('key_skills',[]))]).lower()
+            if ' or ' in q:
+                if not any(t.strip() in blob for t in q.split(' or ')): continue
+            elif ' and ' in q:
+                if not all(t.strip() in blob for t in q.split(' and ')): continue
+            else:
+                if q not in blob: continue
+
+        results.append(d)
+
+    total = len(results)
+    return jsonify({'ok': True, 'total': total, 'page': page,
+                    'submissions': results[(page-1)*per : page*per]})
+
+@app.route('/api/submissions/<int:sid>', methods=['PUT'])
+def update_submission(sid):
+    d = request.json or {}
+    conn = get_db()
+    if 'status' in d:     conn.execute('UPDATE submissions SET status=? WHERE id=?',     (d['status'], sid))
+    if 'notes' in d:      conn.execute('UPDATE submissions SET notes=? WHERE id=?',      (d['notes'], sid))
+    if 'domain_tags' in d: conn.execute('UPDATE submissions SET domain_tags=? WHERE id=?', (json.dumps(d['domain_tags']), sid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/submissions/<int:sid>/add-to-pipeline', methods=['POST'])
+def add_submission_to_pipeline(sid):
+    d   = request.json or {}
+    mid = d.get('mandate_id')
+    if not mid: return jsonify({'error': 'mandate_id required'}), 400
+    conn = get_db()
+    sub  = conn.execute('SELECT * FROM submissions WHERE id=?', (sid,)).fetchone()
+    if not sub: conn.close(); return jsonify({'error': 'Not found'}), 404
+    c = conn.cursor()
+    c.execute('INSERT INTO candidates (mandate_id,name,company,designation,experience,ctc_current,'
+              'ctc_expected,notice_period,location,phone,email,key_skills,screening_decision,'
+              'ai_reasoning,stage,cv_path,cv_original_name,created_at,updated_at) '
+              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        (mid, sub['name'], sub['company'], sub['designation'], sub['experience'],
+         sub['ctc_current'], sub['ctc_expected'], sub['notice_period'], sub['location'],
+         sub['phone'], sub['email'], sub['key_skills'],
+         'worth_opening', 'Added from submission form', 'Screening',
+         sub['cv_path'], sub['cv_original_name'], ts(), ts()))
+    cid = c.lastrowid
+    c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) '
+              'VALUES (?,?,?,?,?)', (cid, '', 'Screening', 'Added from submission form', ts()))
+    conn.execute('UPDATE submissions SET status=? WHERE id=?', ('added_to_pipeline', sid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'candidate_id': cid})
+
+@app.route('/api/form-config', methods=['GET', 'POST'])
+def form_config():
+    conn = get_db()
+    if request.method == 'POST':
+        conn.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)',
+                     ('form_config', json.dumps(request.json or {})))
+        conn.commit(); conn.close()
+        return jsonify({'ok': True})
+    r = conn.execute("SELECT value FROM settings WHERE key='form_config'").fetchone()
+    conn.close()
+    return jsonify({'ok': True, 'config': json.loads(r['value'] if r else '{}')})
+
+
 # Intelligence
 
 # Client Submission Sheet
@@ -1386,23 +2661,6 @@ def client_submission(mid):
     return Response(html, mimetype='text/html')
 
 
-@app.route('/api/intelligence/market')
-def market_intel():
-    conn = get_db()
-    s = conn.execute('SELECT AVG(ctc_expected) a, AVG(notice_period) b, COUNT(*) c, '
-                     'SUM(CASE WHEN screening_decision="worth_opening" THEN 1 ELSE 0 END) w '
-                     'FROM candidates WHERE ctc_expected>0').fetchone()
-    cos = conn.execute('SELECT company, COUNT(*) s, '
-                       'SUM(CASE WHEN screening_decision="worth_opening" THEN 1 ELSE 0 END) c, '
-                       'SUM(CASE WHEN stage="Placed" THEN 1 ELSE 0 END) p '
-                       'FROM candidates WHERE company!="" GROUP BY lower(company) ORDER BY s DESC LIMIT 10').fetchall()
-    conn.close()
-    total = max(s['c'] or 1, 1)
-    return jsonify({'avg_expected_ctc': round(s['a'] or 0, 1), 'avg_notice_period': round(s['b'] or 0, 1),
-                    'total_screened': s['c'] or 0, 'batch_conversion': round((s['w'] or 0) / total * 100, 1),
-                    'source_companies': [dict(c) for c in cos]})
-
-# Export / Import
 @app.route('/api/export')
 def export_data():
     conn = get_db()
@@ -1457,7 +2715,9 @@ def import_data():
                      float(cand.get('experience') or 0), float(cand.get('ctc_current') or 0),
                      float(cand.get('ctc_expected') or 0), int(cand.get('notice_period') or 0),
                      cand.get('location',''), cand.get('phone',''), cand.get('email',''), cand.get('qualification',''),
-                     cand.get('key_skills','[]'), cand.get('secondary_skills','[]'), cand.get('career_summary',''),
+                     json.dumps(cand.get('key_skills') if isinstance(cand.get('key_skills'), list) else json.loads(cand.get('key_skills') or '[]')),
+                     json.dumps(cand.get('secondary_skills') if isinstance(cand.get('secondary_skills'), list) else json.loads(cand.get('secondary_skills') or '[]')),
+                     cand.get('career_summary',''),
                      cand.get('industry_background',''), cand.get('is_mnc', 0), cand.get('screening_decision',''),
                      float(cand.get('ai_score') or 0), cand.get('ai_reasoning',''), cand.get('stage','Screening'),
                      cand.get('recruiter_feedback',''), cand.get('client_feedback',''), cand.get('general_comments',''),
@@ -1477,10 +2737,11 @@ def import_data():
             if 'locked' in str(e).lower() and _attempt < 4:
                 time.sleep(2)
                 continue
-            return jsonify({'error': 'Database busy after retries. Please wait 10 seconds and try again.'}), 503
+            return jsonify({'error': 'DB locked: ' + str(e)}), 503
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
-    return jsonify({'error': 'Import failed after retries'}), 500
+            import traceback
+            return jsonify({'error': str(e), 'detail': traceback.format_exc()[-500:]}), 500
+    return jsonify({'error': 'Import failed after 5 retries'}), 500
 
 
 
@@ -1488,83 +2749,6 @@ def import_data():
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  CENTRAL DATABASE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-@app.route('/api/database/search')
-def db_search():
-    q        = request.args.get('q', '').strip()
-    phone    = request.args.get('phone', '').strip()
-    ctc_min  = float(request.args.get('ctc_min', 0) or 0)
-    ctc_max  = float(request.args.get('ctc_max', 0) or 0)
-    location = request.args.get('location', '').strip()
-    skills   = request.args.get('skills', '').strip()
-    mid      = request.args.get('mandate_id', '').strip()
-    stage    = request.args.get('stage', '').strip()
-    exp_min  = float(request.args.get('exp_min', 0) or 0)
-    exp_max  = float(request.args.get('exp_max', 0) or 0)
-
-    conn = get_db()
-    sql = (
-        'SELECT c.*, m.client, m.role as mandate_role, m.location as mandate_loc '
-        'FROM candidates c LEFT JOIN mandates m ON c.mandate_id = m.id WHERE 1=1'
-    )
-    params = []
-
-    if q:
-        sql += ' AND (c.name LIKE ? OR c.company LIKE ? OR c.designation LIKE ? OR c.key_skills LIKE ? OR c.career_summary LIKE ?)'
-        p = '%' + q + '%'
-        params += [p, p, p, p, p]
-    if phone:
-        sql += ' AND c.phone LIKE ?'
-        params.append('%' + phone + '%')
-    if ctc_min > 0:
-        sql += ' AND c.ctc_current >= ?'
-        params.append(ctc_min)
-    if ctc_max > 0:
-        sql += ' AND c.ctc_current <= ?'
-        params.append(ctc_max)
-    if exp_min > 0:
-        sql += ' AND c.experience >= ?'
-        params.append(exp_min)
-    if exp_max > 0:
-        sql += ' AND c.experience <= ?'
-        params.append(exp_max)
-    if location:
-        sql += ' AND c.location LIKE ?'
-        params.append('%' + location + '%')
-    if skills:
-        sql += ' AND c.key_skills LIKE ?'
-        params.append('%' + skills + '%')
-    if mid:
-        sql += ' AND c.mandate_id = ?'
-        params.append(int(mid))
-    if stage:
-        sql += ' AND c.stage = ?'
-        params.append(stage)
-
-    sql += ' ORDER BY c.created_at DESC LIMIT 300'
-
-    rows = conn.execute(sql, params).fetchall()
-    conn.close()
-
-    out = []
-    for r in rows:
-        d = dict(r)
-        try:    d['key_skills'] = json.loads(d['key_skills'] or '[]')
-        except: d['key_skills'] = []
-        out.append(d)
-
-    return jsonify({'ok': True, 'candidates': out, 'total': len(out)})
-
-
-@app.route('/api/database/stats')
-def db_stats():
-    conn = get_db()
-    total    = conn.execute('SELECT COUNT(*) FROM candidates').fetchone()[0]
-    with_cv  = conn.execute("SELECT COUNT(*) FROM candidates WHERE cv_path!=''").fetchone()[0]
-    with_phone = conn.execute("SELECT COUNT(*) FROM candidates WHERE phone!=''").fetchone()[0]
-    placed   = conn.execute("SELECT COUNT(*) FROM candidates WHERE stage='Placed'").fetchone()[0]
-    conn.close()
-    return jsonify({'total': total, 'with_cv': with_cv, 'with_phone': with_phone, 'placed': placed})
 
 
 # ── Startup: runs both with gunicorn AND python server.py ──────────────────────
