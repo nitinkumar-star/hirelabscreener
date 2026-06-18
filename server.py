@@ -142,6 +142,29 @@ def admin_required(f):
     return decorated
 
 
+@app.route('/api/diag')
+def diag():
+    """Diagnostic: shows whether the persistent disk and data are intact.
+    Helps debug 'data disappeared / logged out' issues."""
+    info = {'data_dir': DATA_DIR, 'db_path': DB_PATH}
+    try:
+        info['db_exists'] = os.path.exists(DB_PATH)
+        info['data_dir_writable'] = os.access(DATA_DIR, os.W_OK)
+        info['secret_key_file_exists'] = os.path.exists(os.path.join(DATA_DIR, '.secret_key'))
+        info['reset_marker'] = os.path.exists(os.path.join(DATA_DIR, '.last_reset'))
+        info['reset_data_env'] = bool(os.environ.get('RESET_DATA'))
+        info['secret_key_env'] = bool(os.environ.get('SECRET_KEY'))
+        conn = get_db(); c = conn.cursor()
+        for t in ['users', 'mandates', 'candidates']:
+            try: info[t + '_count'] = c.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
+            except Exception as e: info[t + '_count'] = f'err: {e}'
+        conn.close()
+    except Exception as e:
+        info['error'] = str(e)
+    return jsonify(info)
+
+
+
 @app.route('/api/auth/status')
 def auth_status():
     """Tells the frontend whether to show: first-run admin setup, login, or app."""
@@ -2821,16 +2844,36 @@ except Exception as _startup_err:
 try:
     _reset = (os.environ.get('RESET_DATA') or '').strip().lower()
     if _reset in ('yes', 'all', '1', 'true'):
-        _conn = get_db(); _c = _conn.cursor()
-        for _tbl in ['candidates', 'mandates', 'reminders', 'work_history',
-                     'stage_history', 'submissions', 'activity_log']:
-            try: _c.execute(f'DELETE FROM {_tbl}')
+        # SAFETY: only run a given reset value ONCE, ever. We record which reset
+        # token was last executed in a marker file on disk. If the env var still
+        # holds the same value on the next restart, we SKIP it — so forgetting to
+        # remove the variable can never wipe data again.
+        _marker = os.path.join(DATA_DIR, '.last_reset')
+        _already = ''
+        try:
+            if os.path.exists(_marker):
+                with open(_marker) as _f: _already = _f.read().strip()
+        except Exception: pass
+        # Build a unique token: value + a user-supplied tag so the same 'yes' won't
+        # re-run unless the user changes RESET_TAG too.
+        _tag = (os.environ.get('RESET_TAG') or '').strip()
+        _token = _reset + '|' + _tag
+        if _token == _already:
+            print(f'*** RESET_DATA={_reset} SKIPPED — already executed (token unchanged). Safe. ***')
+        else:
+            _conn = get_db(); _c = _conn.cursor()
+            for _tbl in ['candidates', 'mandates', 'reminders', 'work_history',
+                         'stage_history', 'submissions', 'activity_log']:
+                try: _c.execute(f'DELETE FROM {_tbl}')
+                except Exception: pass
+            if _reset == 'all':
+                try: _c.execute('DELETE FROM users')
+                except Exception: pass
+            _conn.commit(); _conn.close()
+            try:
+                with open(_marker, 'w') as _f: _f.write(_token)
             except Exception: pass
-        if _reset == 'all':
-            try: _c.execute('DELETE FROM users')
-            except Exception: pass
-        _conn.commit(); _conn.close()
-        print(f'*** RESET_DATA={_reset} executed — data cleared. REMOVE the env var now! ***')
+            print(f'*** RESET_DATA={_reset} executed ONCE — data cleared. Will NOT repeat. ***')
 except Exception as _reset_err:
     print(f'Reset warning: {_reset_err}')
 
