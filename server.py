@@ -2740,14 +2740,29 @@ def client_submission(mid):
 @app.route('/api/export')
 def export_data():
     conn = get_db()
+    candidates = [dict(r) for r in conn.execute('SELECT * FROM candidates').fetchall()]
     data = {
-        'exported_at': ts(), 'app': 'HireLab Screener', 'version': '2.0',
+        'exported_at': ts(), 'app': 'HireLab Screener', 'version': '2.1',
         'mandates':   [dict(r) for r in conn.execute('SELECT * FROM mandates').fetchall()],
-        'candidates': [dict(r) for r in conn.execute('SELECT * FROM candidates').fetchall()],
+        'candidates': candidates,
         'history':    [dict(r) for r in conn.execute('SELECT * FROM stage_history').fetchall()],
         'settings':   {r['key']: r['value'] for r in conn.execute('SELECT * FROM settings').fetchall()},
     }
     conn.close()
+    # Include actual CV files (PDF/Word) as base64 so they transfer with the backup.
+    import base64 as _b64
+    cv_files = {}
+    for cand in candidates:
+        cvp = cand.get('cv_path')
+        if cvp:
+            fpath = os.path.join(CV_DIR, cvp)
+            if os.path.exists(fpath):
+                try:
+                    with open(fpath, 'rb') as _cf:
+                        cv_files[cvp] = _b64.b64encode(_cf.read()).decode('ascii')
+                except Exception:
+                    pass
+    data['cv_files'] = cv_files
     fname = 'hirelab_' + str(datetime.date.today()) + '.json'
     return Response(json.dumps(data, indent=2, ensure_ascii=False), mimetype='application/json',
                     headers={'Content-Disposition': 'attachment; filename=' + fname})
@@ -2809,7 +2824,23 @@ def import_data():
                               (new_cid, h.get('from_stage',''), h.get('to_stage',''), h.get('note',''), h.get('created_at') or n))
                     hist_done += 1
             conn.commit(); conn.close()
-            return jsonify({'ok': True, 'mandates': m_done, 'candidates': cand_done, 'history': hist_done})
+            # Restore CV files (PDF/Word) that were embedded in the backup as base64.
+            cv_restored = 0
+            cv_files = data.get('cv_files') or {}
+            if cv_files:
+                import base64 as _b64
+                os.makedirs(CV_DIR, exist_ok=True)
+                for _fname, _b64data in cv_files.items():
+                    try:
+                        _dest = os.path.join(CV_DIR, _fname)
+                        if not os.path.exists(_dest):   # don't overwrite existing
+                            with open(_dest, 'wb') as _wf:
+                                _wf.write(_b64.b64decode(_b64data))
+                        cv_restored += 1
+                    except Exception:
+                        pass
+            return jsonify({'ok': True, 'mandates': m_done, 'candidates': cand_done,
+                            'history': hist_done, 'cvs': cv_restored})
         except sqlite3.OperationalError as e:
             if 'locked' in str(e).lower() and _attempt < 4:
                 time.sleep(2)
