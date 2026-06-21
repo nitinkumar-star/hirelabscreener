@@ -543,7 +543,7 @@ button,input,textarea,select{font-family:inherit}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:28px;height:28px;border-radius:6px;background:#FBEDE4;display:flex;align-items:center;justify-content:center;font-size:14px">&#128202;</div>
-        <div><div style="font-size:14px;font-weight:600">Team Overview</div><div style="font-size:11px;color:#888;margin-top:1px">Per-user summary, activity &amp; view-as</div></div>
+        <div><div style="font-size:14px;font-weight:600">Super Admin Panel</div><div style="font-size:11px;color:#888;margin-top:1px">Team overview, account approvals &amp; view-as</div></div>
       </div>
       <div style="margin-left:auto"><button class="btn btn-o" onclick="closeAdmin()">&#10005; Close</button></div>
     </div>
@@ -927,7 +927,7 @@ async function req(method,path,body){
     }
     return r.json();
   }catch(e){
-    return{error:'Server not reachable. Make sure Start.bat window is open. ('+e.message+')'};
+    return{error:'Server not reachable. Check your internet connection and try again. ('+e.message+')'};
   }
 }
 async function reqFile(path,fd){
@@ -1149,6 +1149,7 @@ async function init(){
   // state === 'app' — logged in
   S.currentUser = status.user || null;
   S.viewingAs = status.viewing_as || null;
+  S.pendingCount = status.pending_count || 0;
 
   let settings = await req('GET','/settings');
   S.settings = settings || {};
@@ -1172,6 +1173,8 @@ function showAuthScreen(mode) {
   if (existing) existing.remove();
 
   var isSetup = (mode === 'setup');
+  var isSignup = (mode === 'signup');
+  var title = isSetup ? 'Create your admin account' : (isSignup ? 'Request an account' : 'Sign in to continue');
   var ov = document.createElement('div');
   ov.id = 'auth-overlay';
   ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:linear-gradient(135deg,#0E2A47,#16395E);display:flex;align-items:center;justify-content:center;padding:20px';
@@ -1179,18 +1182,26 @@ function showAuthScreen(mode) {
     '<div style="background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);width:100%;max-width:380px;padding:32px">'
     + '<div style="text-align:center;margin-bottom:24px">'
     + '<div style="font-size:22px;font-weight:800;color:#0E2A47;letter-spacing:-0.5px">HireLab Screener</div>'
-    + '<div style="font-size:12px;color:#8A92A0;margin-top:4px">' + (isSetup ? 'Create your admin account' : 'Sign in to continue') + '</div>'
+    + '<div style="font-size:12px;color:#8A92A0;margin-top:4px">' + title + '</div>'
     + '</div>'
     + (isSetup ? '<input class="inp" id="auth-display" placeholder="Your name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
+    + (isSignup ? '<input class="inp" id="auth-display" placeholder="Your name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
+    + (isSignup ? '<input class="inp" id="auth-company" placeholder="Agency / company name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
     + '<input class="inp" id="auth-user" placeholder="Username" autocomplete="username" style="margin-bottom:10px;width:100%;box-sizing:border-box">'
-    + '<input class="inp" id="auth-pass" type="password" placeholder="Password" autocomplete="' + (isSetup?'new-password':'current-password') + '" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;'+mode+'&#39;)">'
-    + (isSetup ? '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">Password must be at least 4 characters</div>' : '<div style="height:14px"></div>')
-    + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="submitAuth(&#39;'+mode+'&#39;)">' + (isSetup ? 'Create Admin & Continue' : 'Sign In') + '</button>'
+    + '<input class="inp" id="auth-pass" type="password" placeholder="Password" autocomplete="' + (isSetup||isSignup?'new-password':'current-password') + '" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;'+mode+'&#39;)">'
+    + ((isSetup||isSignup) ? '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">Password must be at least 4 characters</div>' : '<div style="height:14px"></div>')
+    + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="submitAuth(&#39;'+mode+'&#39;)">' + (isSetup ? 'Create Admin & Continue' : (isSignup ? 'Request Account' : 'Sign In')) + '</button>'
     + '<div id="auth-err" style="color:#C0522B;font-size:12px;margin-top:12px;text-align:center;min-height:16px"></div>'
     + (isSetup ? '<div style="font-size:10.5px;color:#A0A0A0;margin-top:16px;text-align:center;line-height:1.5">This is the first account. It will be the <b>admin</b> and own all existing data. You can add team members later.</div>' : '')
+    + (!isSetup ? ('<div style="text-align:center;margin-top:14px;font-size:12px;color:#8A92A0">'
+        + (isSignup
+            ? 'Already have an account? <a href="#" onclick="showAuthScreen(&#39;login&#39;);return false" style="color:#13A37E;font-weight:600;text-decoration:none">Sign in</a>'
+            : 'New here? <a href="#" onclick="showAuthScreen(&#39;signup&#39;);return false" style="color:#13A37E;font-weight:600;text-decoration:none">Request an account</a>')
+        + '</div>') : '')
+    + (isSignup ? '<div style="font-size:10.5px;color:#A0A0A0;margin-top:12px;text-align:center;line-height:1.5">Your request will be reviewed by an admin. You will be able to sign in once approved.</div>' : '')
     + '</div>';
   document.body.appendChild(ov);
-  setTimeout(function(){ var f=document.getElementById(isSetup?'auth-display':'auth-user'); if(f) f.focus(); }, 100);
+  setTimeout(function(){ var f=document.getElementById(isSetup||isSignup?'auth-display':'auth-user'); if(f) f.focus(); }, 100);
 }
 
 async function submitAuth(mode) {
@@ -1204,11 +1215,29 @@ async function submitAuth(mode) {
   if (mode === 'setup') {
     payload.display_name = (document.getElementById('auth-display').value || '').trim();
     endpoint = '/auth/setup';
+  } else if (mode === 'signup') {
+    payload.display_name = (document.getElementById('auth-display').value || '').trim();
+    var compEl = document.getElementById('auth-company');
+    payload.company_name = compEl ? (compEl.value || '').trim() : '';
+    endpoint = '/auth/signup';
   }
   err.textContent = 'Please wait...';
   var r = await req('POST', endpoint, payload);
   if (r.ok) {
-    var o = document.getElementById('auth-overlay'); if (o) o.remove();
+    if (mode === 'signup' && r.pending) {
+      var o = document.getElementById('auth-overlay');
+      if (o) {
+        o.querySelector('div').innerHTML =
+          '<div style="text-align:center;padding:8px 0">'
+          + '<div style="font-size:36px;margin-bottom:10px">&#9203;</div>'
+          + '<div style="font-size:16px;font-weight:700;color:#0E2A47;margin-bottom:8px">Request submitted</div>'
+          + '<div style="font-size:12.5px;color:#8A92A0;line-height:1.5;margin-bottom:20px">Your account is awaiting admin approval. You will be able to sign in as soon as it is approved.</div>'
+          + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="showAuthScreen(&#39;login&#39;)">Back to Sign In</button>'
+          + '</div>';
+      }
+      return;
+    }
+    var o2 = document.getElementById('auth-overlay'); if (o2) o2.remove();
     await init();
   } else {
     err.textContent = r.error || 'Failed';
@@ -1218,13 +1247,25 @@ async function submitAuth(mode) {
 function renderUserBar() {
   // Show/hide admin-only sidebar button
   var adminBtn = document.getElementById('sb-admin');
-  if (adminBtn) adminBtn.style.display = (S.currentUser && S.currentUser.role==='admin' && !S.viewingAs) ? 'flex' : 'none';
+  if (adminBtn) {
+    adminBtn.style.display = (S.currentUser && S.currentUser.role==='admin' && !S.viewingAs) ? 'flex' : 'none';
+    var existingBadge = adminBtn.querySelector('.pending-badge');
+    if (existingBadge) existingBadge.remove();
+    if (S.pendingCount > 0) {
+      adminBtn.style.position = 'relative';
+      var badge = document.createElement('span');
+      badge.className = 'pending-badge';
+      badge.textContent = S.pendingCount > 9 ? '9+' : String(S.pendingCount);
+      badge.style.cssText = 'position:absolute;top:-3px;right:-3px;background:#C0522B;color:#fff;font-size:9px;font-weight:700;line-height:1;padding:2px 4px;border-radius:8px;min-width:14px;text-align:center';
+      adminBtn.appendChild(badge);
+    }
+  }
   // Shows logged-in user + logout in the top bar
   var bar = document.getElementById('user-bar');
   if (!bar) return;
   var u = S.currentUser || {};
   var name = u.display_name || u.username || 'User';
-  var roleLabel = u.role === 'admin' ? 'Admin' : 'User';
+  var roleLabel = u.role === 'admin' ? 'Super Admin' : 'User';
   var h = '';
   if (S.viewingAs) {
     h += '<div style="display:flex;align-items:center;gap:8px;background:#FBEDE4;border:0.5px solid #E8C4A8;border-radius:7px;padding:4px 10px">'
@@ -1254,20 +1295,15 @@ function showConnError(msg) {
   document.getElementById('content').innerHTML = 
     '<div style="padding:40px;text-align:center;max-width:480px;margin:0 auto">'
     +'<div style="font-size:40px;margin-bottom:16px">🔌</div>'
-    +'<div style="font-size:16px;font-weight:600;color:#E24B4A;margin-bottom:10px">Server not running</div>'
+    +'<div style="font-size:16px;font-weight:600;color:#E24B4A;margin-bottom:10px">Cannot connect to server</div>'
     +'<div style="font-size:13px;color:#666;line-height:1.7;margin-bottom:20px">'
-    +'Please:<br><br>'
-    +'1. Close this browser tab<br>'
-    +'2. Run <strong>Start.bat</strong> as Administrator<br>'
-    +'3. Wait for the black window to say <strong>"Running on http://localhost:5000"</strong><br>'
-    +'4. Open browser → <strong>http://localhost:5000</strong><br><br>'
-    +'<span style="font-size:11px;color:#aaa">Error: '+msg+'</span>'
+    +'This usually means:<br><br>'
+    +'• Your internet connection dropped, or<br>'
+    +'• The server is waking up after being idle (can take 30-60 seconds on the free tier)<br><br>'
+    +'<span style="font-size:11px;color:#aaa">Error: '+esc(msg)+'</span>'
     +'</div>'
     +'<button class="btn btn-g" onclick="location.reload()" style="font-size:13px;padding:10px 24px">🔄 Try Again</button>'
     +'</div>';
-}
-function showConnError(msg){
-  document.getElementById('content').innerHTML='<div style="padding:40px;text-align:center"><div style="font-size:32px;margin-bottom:12px">⚠️</div><div style="font-size:14px;font-weight:500;color:#E24B4A;margin-bottom:8px">Cannot connect to server</div><div style="font-size:12px;color:#888;max-width:300px;margin:0 auto;line-height:1.6">'+esc(msg)+'<br><br>Please run <strong>Start.bat</strong> first, then refresh this page.</div></div>';
 }
 async function loadMandates(){
   const data=await req('GET','/mandates');
@@ -1859,7 +1895,7 @@ async function renderPipeline(el){
 }
 async function openProfile(cid){S.selectedCandidateId=cid;await switchTab('Candidate Profiles');}
 function openSubmissionSheet(){
-  window.open('http://localhost:5000/api/mandates/'+S.activeMandate.id+'/submission?stage=Shared+with+Client','_blank','width=1100,height=800,scrollbars=yes');
+  window.open(API+'/mandates/'+S.activeMandate.id+'/submission?stage=Shared+with+Client','_blank','width=1100,height=800,scrollbars=yes');
 }
 
 // ── CANDIDATE PROFILES ─────────────────────────────────────────────────────
@@ -2696,10 +2732,6 @@ async function importAll(input){
     if(r.ok){
       setSt('&#10003; Imported');
       setTimeout(()=>setSt(''),4000);
-      // Safety net: claim any data that ended up without an owner (admin only)
-      if(S.currentUser && S.currentUser.role==='admin'){
-        try{ await req('POST','/admin/claim-orphans',{}); }catch(e){}
-      }
       toast('OK','Import complete — '+r.mandates+' mandates, '+r.candidates+' candidates');
       await loadMandates();
     } else {
@@ -4734,12 +4766,32 @@ async function loadAdminSummary() {
     body.innerHTML = '<div style="color:#C0522B;padding:14px">' + esc(r.error||'Failed to load') + '</div>';
     return;
   }
+  var pr = await req('GET', '/admin/pending-users');
+  var pending = (pr && pr.ok) ? pr.pending : [];
 
   // Totals across team
   var totMandates=0, totCands=0, totPlaced=0, totActive=0;
   r.summary.forEach(function(u){ totMandates+=u.mandates; totCands+=u.candidates; totPlaced+=u.placed; totActive+=u.active_mandates; });
 
   var h = '<div style="max-width:920px;margin:0 auto">';
+
+  // Pending approvals (only shown when there's something to approve)
+  if (pending && pending.length) {
+    h += '<div style="background:#FFF3E6;border:1px solid #F0C078;border-radius:10px;overflow:hidden;margin-bottom:18px">'
+      + '<div style="padding:12px 16px;border-bottom:1px solid #F0C078;font-size:13px;font-weight:700;color:#9A6A1F;display:flex;align-items:center;gap:8px">&#9203; Pending Account Requests <span style="background:#C0522B;color:#fff;font-size:10px;padding:1px 7px;border-radius:8px">' + pending.length + '</span></div>';
+    pending.forEach(function(p){
+      h += '<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid #F5DCAE" id="pend-row-' + p.id + '">'
+        + avatarHtml(p.display_name||p.username, 36)
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(p.display_name||p.username) + '</div>'
+        + '<div style="font-size:11px;color:var(--muted)">@' + esc(p.username) + (p.company_name?(' &middot; ' + esc(p.company_name)):'') + ' &middot; requested ' + fmtDateTime(p.requested_at) + '</div>'
+        + '</div>'
+        + '<button class="btn btn-g" style="font-size:11px;padding:6px 12px;background:#13A37E" onclick="decidePendingUser(' + p.id + ',&quot;approve&quot;)">&#10003; Approve</button>'
+        + '<button class="btn btn-o" style="font-size:11px;padding:6px 12px;margin-left:8px;color:#C0522B" onclick="decidePendingUser(' + p.id + ',&quot;reject&quot;)">&#10005; Decline</button>'
+        + '</div>';
+    });
+    h += '</div>';
+  }
 
   // Top stat cards
   h += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">'
@@ -4810,6 +4862,22 @@ function fmtDateTime(s) {
     var d = new Date(s);
     return d.toLocaleDateString('en-IN',{day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
   } catch(e) { return s||''; }
+}
+
+async function decidePendingUser(uid, action) {
+  var label = action === 'approve' ? 'approve' : 'decline';
+  if (!confirm('Are you sure you want to ' + label + ' this account request?')) return;
+  var r = await req('POST', '/admin/pending-users/' + uid + '/' + action, {});
+  if (r.ok) {
+    toast('OK', action === 'approve' ? 'Account approved — they can now sign in' : 'Request declined');
+    // Refresh pending badge count + admin panel
+    var st = await req('GET', '/auth/status');
+    if (st && st.state === 'app') S.pendingCount = st.pending_count || 0;
+    renderUserBar();
+    loadAdminSummary();
+  } else {
+    toast('ERR', r.error || 'Failed');
+  }
 }
 
 async function viewAsUser(uid, name) {

@@ -158,21 +158,6 @@ def diag():
         for t in ['users', 'mandates', 'candidates']:
             try: info[t + '_count'] = c.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
             except Exception as e: info[t + '_count'] = f'err: {e}'
-        # CV diagnostics
-        try:
-            rows = c.execute("SELECT cv_path FROM candidates WHERE cv_path IS NOT NULL AND cv_path != ''").fetchall()
-            info['candidates_with_cv_path'] = len(rows)
-            exists = 0
-            for r in rows:
-                if os.path.exists(os.path.join(CV_DIR, r['cv_path'])):
-                    exists += 1
-            info['cv_files_on_disk'] = exists
-            info['cv_dir'] = CV_DIR
-            info['cv_dir_exists'] = os.path.exists(CV_DIR)
-            if os.path.exists(CV_DIR):
-                info['cv_dir_file_count'] = len([f for f in os.listdir(CV_DIR) if os.path.isfile(os.path.join(CV_DIR, f))])
-        except Exception as e:
-            info['cv_diag_error'] = str(e)
         conn.close()
     except Exception as e:
         info['error'] = str(e)
@@ -195,10 +180,15 @@ def auth_status():
         vu = conn.execute('SELECT id,username,display_name FROM users WHERE id=?', (va,)).fetchone()
         conn.close()
         viewing = dict(vu) if vu else None
+    pending_count = 0
+    if u.get('role') == 'admin':
+        conn = get_db()
+        pending_count = conn.execute("SELECT COUNT(*) n FROM users WHERE status='pending'").fetchone()['n']
+        conn.close()
     return jsonify({'state': 'app', 'user': {
         'id': u['id'], 'username': u['username'], 'display_name': u['display_name'],
         'role': u['role']
-    }, 'viewing_as': viewing})
+    }, 'viewing_as': viewing, 'pending_count': pending_count})
 
 
 @app.route('/api/auth/setup', methods=['POST'])
@@ -230,6 +220,74 @@ def auth_setup():
     return jsonify({'ok': True})
 
 
+@app.route('/api/auth/signup', methods=['POST'])
+def auth_signup():
+    """Public self-signup. Creates the account as 'pending' — it cannot log
+    in until a super-admin approves it. (If no users exist yet at all, this
+    is the very first account, so it is created as an approved admin instead
+    — see auth_setup for that bootstrap path.)"""
+    if not any_users_exist():
+        return jsonify({'error': 'No admin account exists yet. Use the initial setup screen instead.'}), 400
+    d = request.json or {}
+    username = (d.get('username') or '').strip().lower()
+    password = d.get('password') or ''
+    display = (d.get('display_name') or username).strip()
+    company = (d.get('company_name') or '').strip()
+    if not username or len(password) < 4:
+        return jsonify({'error': 'Username required and password min 4 chars'}), 400
+    if not re.match(r'^[a-z0-9._-]{3,40}$', username):
+        return jsonify({'error': 'Username can only contain letters, numbers, dots, dashes and underscores'}), 400
+    conn = get_db()
+    exists = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
+    if exists:
+        conn.close()
+        return jsonify({'error': 'Username already taken'}), 400
+    conn.execute('''INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,requested_at)
+                     VALUES (?,?,?,?,?,?,?,?)''',
+                 (username, hash_password(password), display, 'user', ts(), 'pending', company, ts()))
+    conn.commit(); conn.close()
+    log_activity('signup_requested', username + (' (' + company + ')' if company else ''))
+    return jsonify({'ok': True, 'pending': True})
+
+
+@app.route('/api/admin/pending-users', methods=['GET'])
+@admin_required
+def list_pending_users():
+    conn = get_db()
+    rows = conn.execute('''SELECT id, username, display_name, company_name, requested_at
+                            FROM users WHERE status='pending' ORDER BY id''').fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'pending': [dict(r) for r in rows]})
+
+
+@app.route('/api/admin/pending-users/<int:uid>/approve', methods=['POST'])
+@admin_required
+def approve_pending_user(uid):
+    conn = get_db()
+    u = conn.execute('SELECT username, status FROM users WHERE id=?', (uid,)).fetchone()
+    if not u:
+        conn.close()
+        return jsonify({'error': 'User not found'}), 404
+    conn.execute("UPDATE users SET status='approved' WHERE id=?", (uid,))
+    conn.commit(); conn.close()
+    log_activity('approve_user', u['username'])
+    return jsonify({'ok': True})
+
+
+@app.route('/api/admin/pending-users/<int:uid>/reject', methods=['POST'])
+@admin_required
+def reject_pending_user(uid):
+    conn = get_db()
+    u = conn.execute('SELECT username, status FROM users WHERE id=?', (uid,)).fetchone()
+    if not u:
+        conn.close()
+        return jsonify({'error': 'User not found'}), 404
+    conn.execute("UPDATE users SET status='rejected' WHERE id=?", (uid,))
+    conn.commit(); conn.close()
+    log_activity('reject_user', u['username'])
+    return jsonify({'ok': True})
+
+
 @app.route('/api/auth/login', methods=['POST'])
 def auth_login():
     d = request.json or {}
@@ -240,6 +298,12 @@ def auth_login():
     if not u or not verify_password(password, u['password_hash']):
         conn.close()
         return jsonify({'error': 'Invalid username or password'}), 401
+    if u['status'] == 'pending':
+        conn.close()
+        return jsonify({'error': 'Your account is awaiting admin approval. You will be able to sign in once approved.'}), 403
+    if u['status'] == 'rejected':
+        conn.close()
+        return jsonify({'error': 'This account request was declined. Contact your admin for access.'}), 403
     conn.execute('UPDATE users SET last_login=? WHERE id=?', (ts(), u['id']))
     conn.commit(); conn.close()
     session['user_id'] = u['id']
@@ -259,7 +323,7 @@ def auth_logout():
 @admin_required
 def list_users():
     conn = get_db()
-    rows = conn.execute('SELECT id, username, display_name, role, created_at, last_login FROM users ORDER BY id').fetchall()
+    rows = conn.execute('SELECT id, username, display_name, role, created_at, last_login, status, company_name FROM users ORDER BY id').fetchall()
     # attach quick counts per user
     out = []
     for u in rows:
@@ -377,7 +441,7 @@ def admin_view_as():
 @admin_required
 def admin_summary():
     conn = get_db()
-    users = conn.execute('SELECT id, username, display_name, role, last_login FROM users ORDER BY id').fetchall()
+    users = conn.execute("SELECT id, username, display_name, role, last_login FROM users WHERE status='approved' ORDER BY id").fetchall()
     summary = []
     for u in users:
         uid = u['id']
@@ -421,12 +485,16 @@ for d in [DATA_DIR, CV_DIR, BAK_DIR]:
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=60, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    # DELETE journal mode (not WAL): every commit writes directly to the main
-    # .db file. On cloud disks (Render) a separate WAL file can fail to flush on
-    # restart, which loses recent data — DELETE mode avoids that entirely.
+    # IMPORTANT: DELETE journal mode + FULL sync (not WAL+NORMAL).
+    # WAL keeps recent writes in a separate -wal file that can fail to flush
+    # into the main DB file on a cloud-host restart/redeploy — this was the
+    # root cause of a critical bug where the users table (and other recent
+    # writes) appeared empty after a restart, forcing a fresh "Create Admin"
+    # setup and orphaning the previous data. DELETE+FULL writes every change
+    # straight into the main database file, so there is no separate WAL file
+    # that can be lost.
     conn.execute('PRAGMA journal_mode=DELETE')
     conn.execute('PRAGMA busy_timeout=60000')
-    # FULL synchronous = safest: data is physically written before commit returns.
     conn.execute('PRAGMA synchronous=FULL')
     return conn
 
@@ -464,7 +532,10 @@ def init_db():
             display_name TEXT DEFAULT '',
             role TEXT DEFAULT 'user',
             created_at TEXT,
-            last_login TEXT
+            last_login TEXT,
+            status TEXT DEFAULT 'approved',
+            company_name TEXT DEFAULT '',
+            requested_at TEXT
         );
         CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -660,7 +731,41 @@ def init_db():
         except Exception:
             pass
 
+    # Migrate: add signup-approval + company columns to existing 'users' table
+    for col, defn in [
+        ('status', "TEXT DEFAULT 'approved'"),
+        ('company_name', "TEXT DEFAULT ''"),
+        ('requested_at', 'TEXT'),
+    ]:
+        try:
+            c.execute(f'ALTER TABLE users ADD COLUMN {col} {defn}')
+        except Exception:
+            pass
+    # Backfill: any pre-existing user (created before this column existed)
+    # must default to 'approved' so nobody already in the system gets locked
+    # out by the new approval gate.
+    try:
+        c.execute("UPDATE users SET status='approved' WHERE status IS NULL OR status=''")
+    except Exception:
+        pass
+
     conn.commit(); conn.close()
+
+    # One-time safety migration: if this DB file still has a pending -wal file
+    # on disk from before the journal-mode fix, force a full checkpoint so
+    # those writes land in the main DB file before we proceed. Harmless no-op
+    # if the DB was already in DELETE mode (no -wal file exists).
+    try:
+        wal_path = DB_PATH + '-wal'
+        if os.path.exists(wal_path):
+            _c2 = sqlite3.connect(DB_PATH, timeout=60)
+            _c2.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            _c2.execute('PRAGMA journal_mode=DELETE')
+            _c2.close()
+            print('*** One-time WAL checkpoint completed: pending writes flushed to main DB file ***')
+    except Exception as _wal_err:
+        print(f'WAL checkpoint warning (non-fatal): {_wal_err}')
+
 
 def migrate_old():
     if os.path.exists(DB_PATH):
@@ -2858,7 +2963,6 @@ def import_data():
                         cv_restored += 1
                     except Exception:
                         pass
-            _auto_json_backup()   # snapshot after import (safety)
             return jsonify({'ok': True, 'mandates': m_done, 'candidates': cand_done,
                             'history': hist_done, 'cvs': cv_restored})
         except sqlite3.OperationalError as e:
@@ -2879,81 +2983,11 @@ def import_data():
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
-
-def _auto_json_backup():
-    """Write a full JSON snapshot (incl CV files) to disk after key changes.
-    Kept on the persistent disk so data can be restored if the DB is ever reset."""
-    try:
-        conn = get_db()
-        cands = [dict(r) for r in conn.execute('SELECT * FROM candidates').fetchall()]
-        snap = {
-            'mandates':   [dict(r) for r in conn.execute('SELECT * FROM mandates').fetchall()],
-            'candidates': cands,
-            'history':    [dict(r) for r in conn.execute('SELECT * FROM stage_history').fetchall()],
-            'settings':   {r['key']: r['value'] for r in conn.execute('SELECT * FROM settings').fetchall()},
-            'saved_at': ts(),
-        }
-        conn.close()
-        os.makedirs(BAK_DIR, exist_ok=True)
-        path = os.path.join(BAK_DIR, 'autosnap.json')
-        tmp = path + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(snap, f, ensure_ascii=False)
-        os.replace(tmp, path)   # atomic
-    except Exception as _e:
-        print(f'auto-backup warning: {_e}')
-
-
-def _auto_restore_if_empty():
-    """On startup: if the DB has NO candidates but an autosnap backup exists,
-    restore from it. This recovers data if a restart/disk issue wiped the DB."""
-    try:
-        conn = get_db()
-        try:
-            n = conn.execute('SELECT COUNT(*) FROM candidates').fetchone()[0]
-            nusers = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-        except Exception:
-            conn.close(); return
-        path = os.path.join(BAK_DIR, 'autosnap.json')
-        if n == 0 and os.path.exists(path):
-            with open(path, encoding='utf-8') as f:
-                snap = json.load(f)
-            if not snap.get('candidates') and not snap.get('mandates'):
-                conn.close(); return
-            c = conn.cursor()
-            n2 = ts(); mid_map = {}
-            for k, v in (snap.get('settings') or {}).items():
-                c.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (k, str(v)))
-            for m in (snap.get('mandates') or []):
-                c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,sop_text,sop_version,sop_changelog,status,created_at,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                          (m.get('client',''), m.get('role',''), m.get('location',''), m.get('division',''),
-                           float(m.get('ctc_min') or 0), float(m.get('ctc_max') or 0), m.get('jd',''),
-                           m.get('sop_text',''), m.get('sop_version',1), m.get('sop_changelog','[]'),
-                           m.get('status','active'), m.get('created_at') or n2, m.get('owner_id') or 0))
-                mid_map[m.get('id')] = c.lastrowid
-            for cand in (snap.get('candidates') or []):
-                new_mid = mid_map.get(cand.get('mandate_id'), cand.get('mandate_id'))
-                cols = [k for k in cand.keys() if k != 'id']
-                cols2 = [k for k in cols if k != 'mandate_id']
-                placeholders = ','.join(['?'] * (len(cols2) + 1))
-                vals = [new_mid] + [cand.get(k) for k in cols2]
-                try:
-                    c.execute('INSERT INTO candidates (mandate_id,' + ','.join(cols2) + ') VALUES (' + placeholders + ')', vals)
-                except Exception:
-                    pass
-            conn.commit()
-            print(f'*** AUTO-RESTORE: recovered {len(snap.get("candidates") or [])} candidates from autosnap backup ***')
-        conn.close()
-    except Exception as _e:
-        print(f'auto-restore warning: {_e}')
-
-
 # ── Startup: runs both with gunicorn AND python server.py ──────────────────────
 # This ensures DB tables exist regardless of how the app is started
 try:
     migrate_old()
     init_db()
-    _auto_restore_if_empty()   # recover data if DB was wiped but backup exists
 except Exception as _startup_err:
     print(f'Startup init warning: {_startup_err}')
 
