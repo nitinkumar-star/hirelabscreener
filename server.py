@@ -158,6 +158,21 @@ def diag():
         for t in ['users', 'mandates', 'candidates']:
             try: info[t + '_count'] = c.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
             except Exception as e: info[t + '_count'] = f'err: {e}'
+        # CV diagnostics
+        try:
+            rows = c.execute("SELECT cv_path FROM candidates WHERE cv_path IS NOT NULL AND cv_path != ''").fetchall()
+            info['candidates_with_cv_path'] = len(rows)
+            exists = 0
+            for r in rows:
+                if os.path.exists(os.path.join(CV_DIR, r['cv_path'])):
+                    exists += 1
+            info['cv_files_on_disk'] = exists
+            info['cv_dir'] = CV_DIR
+            info['cv_dir_exists'] = os.path.exists(CV_DIR)
+            if os.path.exists(CV_DIR):
+                info['cv_dir_file_count'] = len([f for f in os.listdir(CV_DIR) if os.path.isfile(os.path.join(CV_DIR, f))])
+        except Exception as e:
+            info['cv_diag_error'] = str(e)
         conn.close()
     except Exception as e:
         info['error'] = str(e)
@@ -406,9 +421,13 @@ for d in [DATA_DIR, CV_DIR, BAK_DIR]:
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=60, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA journal_mode=WAL')
+    # DELETE journal mode (not WAL): every commit writes directly to the main
+    # .db file. On cloud disks (Render) a separate WAL file can fail to flush on
+    # restart, which loses recent data — DELETE mode avoids that entirely.
+    conn.execute('PRAGMA journal_mode=DELETE')
     conn.execute('PRAGMA busy_timeout=60000')
-    conn.execute('PRAGMA synchronous=NORMAL')
+    # FULL synchronous = safest: data is physically written before commit returns.
+    conn.execute('PRAGMA synchronous=FULL')
     return conn
 
 def ts():
@@ -2839,6 +2858,7 @@ def import_data():
                         cv_restored += 1
                     except Exception:
                         pass
+            _auto_json_backup()   # snapshot after import (safety)
             return jsonify({'ok': True, 'mandates': m_done, 'candidates': cand_done,
                             'history': hist_done, 'cvs': cv_restored})
         except sqlite3.OperationalError as e:
@@ -2859,11 +2879,81 @@ def import_data():
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
+
+def _auto_json_backup():
+    """Write a full JSON snapshot (incl CV files) to disk after key changes.
+    Kept on the persistent disk so data can be restored if the DB is ever reset."""
+    try:
+        conn = get_db()
+        cands = [dict(r) for r in conn.execute('SELECT * FROM candidates').fetchall()]
+        snap = {
+            'mandates':   [dict(r) for r in conn.execute('SELECT * FROM mandates').fetchall()],
+            'candidates': cands,
+            'history':    [dict(r) for r in conn.execute('SELECT * FROM stage_history').fetchall()],
+            'settings':   {r['key']: r['value'] for r in conn.execute('SELECT * FROM settings').fetchall()},
+            'saved_at': ts(),
+        }
+        conn.close()
+        os.makedirs(BAK_DIR, exist_ok=True)
+        path = os.path.join(BAK_DIR, 'autosnap.json')
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(snap, f, ensure_ascii=False)
+        os.replace(tmp, path)   # atomic
+    except Exception as _e:
+        print(f'auto-backup warning: {_e}')
+
+
+def _auto_restore_if_empty():
+    """On startup: if the DB has NO candidates but an autosnap backup exists,
+    restore from it. This recovers data if a restart/disk issue wiped the DB."""
+    try:
+        conn = get_db()
+        try:
+            n = conn.execute('SELECT COUNT(*) FROM candidates').fetchone()[0]
+            nusers = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+        except Exception:
+            conn.close(); return
+        path = os.path.join(BAK_DIR, 'autosnap.json')
+        if n == 0 and os.path.exists(path):
+            with open(path, encoding='utf-8') as f:
+                snap = json.load(f)
+            if not snap.get('candidates') and not snap.get('mandates'):
+                conn.close(); return
+            c = conn.cursor()
+            n2 = ts(); mid_map = {}
+            for k, v in (snap.get('settings') or {}).items():
+                c.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (k, str(v)))
+            for m in (snap.get('mandates') or []):
+                c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,sop_text,sop_version,sop_changelog,status,created_at,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                          (m.get('client',''), m.get('role',''), m.get('location',''), m.get('division',''),
+                           float(m.get('ctc_min') or 0), float(m.get('ctc_max') or 0), m.get('jd',''),
+                           m.get('sop_text',''), m.get('sop_version',1), m.get('sop_changelog','[]'),
+                           m.get('status','active'), m.get('created_at') or n2, m.get('owner_id') or 0))
+                mid_map[m.get('id')] = c.lastrowid
+            for cand in (snap.get('candidates') or []):
+                new_mid = mid_map.get(cand.get('mandate_id'), cand.get('mandate_id'))
+                cols = [k for k in cand.keys() if k != 'id']
+                cols2 = [k for k in cols if k != 'mandate_id']
+                placeholders = ','.join(['?'] * (len(cols2) + 1))
+                vals = [new_mid] + [cand.get(k) for k in cols2]
+                try:
+                    c.execute('INSERT INTO candidates (mandate_id,' + ','.join(cols2) + ') VALUES (' + placeholders + ')', vals)
+                except Exception:
+                    pass
+            conn.commit()
+            print(f'*** AUTO-RESTORE: recovered {len(snap.get("candidates") or [])} candidates from autosnap backup ***')
+        conn.close()
+    except Exception as _e:
+        print(f'auto-restore warning: {_e}')
+
+
 # ── Startup: runs both with gunicorn AND python server.py ──────────────────────
 # This ensures DB tables exist regardless of how the app is started
 try:
     migrate_old()
     init_db()
+    _auto_restore_if_empty()   # recover data if DB was wiped but backup exists
 except Exception as _startup_err:
     print(f'Startup init warning: {_startup_err}')
 
