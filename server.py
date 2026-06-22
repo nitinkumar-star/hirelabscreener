@@ -89,8 +89,8 @@ def any_users_exist():
     return n > 0
 
 def current_user():
-    """The logged-in user. If admin is 'viewing as' another user, the
-    EFFECTIVE workspace user is view_as_id, but real identity stays admin."""
+    """The logged-in user. If admin is 'viewing as' another tenant, the
+    EFFECTIVE workspace is that tenant, but real identity stays admin."""
     uid = session.get('user_id')
     if not uid:
         return None
@@ -99,12 +99,26 @@ def current_user():
     conn.close()
     return dict(u) if u else None
 
+def current_company_id():
+    """The company (tenant) of the logged-in user, ignoring any view-as."""
+    u = current_user()
+    return u.get('company_id') if u else None
+
 def effective_user_id():
-    """Which user's DATA we operate on. Admin can impersonate via view_as."""
-    va = session.get('view_as_id')
+    """TENANT-ID this request operates on. Historically named for the
+    single-user era; it now returns the effective COMPANY (tenant) id, which
+    is what every data row's owner_id column stores. A super-admin can
+    impersonate another tenant via 'view_as_company'. Kept under the old name
+    so all existing `WHERE owner_id = effective_user_id()` filters keep working
+    and enforce tenant isolation automatically."""
+    va = session.get('view_as_company')
     if va:
         return va
-    return session.get('user_id')
+    return current_company_id()
+
+# Clearer alias for new code.
+def effective_company_id():
+    return effective_user_id()
 
 def is_admin():
     u = current_user()
@@ -173,21 +187,24 @@ def auth_status():
     u = current_user()
     if not u:
         return jsonify({'state': 'login'})
-    va = session.get('view_as_id')
+    va = session.get('view_as_company')
     viewing = None
+    conn = get_db()
     if va:
-        conn = get_db()
-        vu = conn.execute('SELECT id,username,display_name FROM users WHERE id=?', (va,)).fetchone()
-        conn.close()
-        viewing = dict(vu) if vu else None
+        vc = conn.execute('SELECT id,name FROM companies WHERE id=?', (va,)).fetchone()
+        viewing = {'id': vc['id'], 'name': vc['name']} if vc else None
+    # The user's own company name (for the top bar)
+    own_company = None
+    if u.get('company_id'):
+        oc = conn.execute('SELECT id,name FROM companies WHERE id=?', (u['company_id'],)).fetchone()
+        own_company = {'id': oc['id'], 'name': oc['name']} if oc else None
     pending_count = 0
     if u.get('role') == 'admin':
-        conn = get_db()
         pending_count = conn.execute("SELECT COUNT(*) n FROM users WHERE status='pending'").fetchone()['n']
-        conn.close()
+    conn.close()
     return jsonify({'state': 'app', 'user': {
         'id': u['id'], 'username': u['username'], 'display_name': u['display_name'],
-        'role': u['role']
+        'role': u['role'], 'company': own_company
     }, 'viewing_as': viewing, 'pending_count': pending_count})
 
 
@@ -203,18 +220,21 @@ def auth_setup():
     if not username or len(password) < 4:
         return jsonify({'error': 'Username required and password min 4 chars'}), 400
     conn = get_db()
-    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at) VALUES (?,?,?,?,?)',
-                 (username, hash_password(password), display, 'admin', ts()))
+    display_company = (d.get('company_name') or 'HireLab').strip() or 'HireLab'
+    conn.execute("INSERT INTO companies (name,status,plan,created_at) VALUES (?,?,?,?)",
+                 (display_company, 'active', 'owner', ts()))
+    company_id = conn.execute('SELECT id FROM companies ORDER BY id DESC LIMIT 1').fetchone()['id']
+    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,company_id) VALUES (?,?,?,?,?,?,?,?)',
+                 (username, hash_password(password), display, 'admin', ts(), 'approved', display_company, company_id))
     conn.commit()
     uid = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()['id']
     # This is the FIRST admin (no users existed before this). Any data already in
-    # the DB therefore belongs to a previous, now-deleted user (e.g. after a reset
-    # that cleared the users table). Claim ALL of it for this first admin, not just
-    # owner_id=0 — otherwise imported data tied to an old user-id would be orphaned
-    # and invisible. Safe because this branch only runs when no users existed.
-    conn.execute('UPDATE mandates SET owner_id=?', (uid,))
-    conn.execute('UPDATE candidates SET owner_id=?', (uid,))
-    conn.execute('UPDATE reminders SET owner_id=?', (uid,))
+    # the DB therefore belongs to a previous, now-deleted user. Claim ALL of it
+    # for this admin's COMPANY (tenant), so imported data is visible. Safe because
+    # this branch only runs when no users existed.
+    conn.execute('UPDATE mandates SET owner_id=?', (company_id,))
+    conn.execute('UPDATE candidates SET owner_id=?', (company_id,))
+    conn.execute('UPDATE reminders SET owner_id=?', (company_id,))
     conn.commit(); conn.close()
     session['user_id'] = uid
     return jsonify({'ok': True})
@@ -242,9 +262,18 @@ def auth_signup():
     if exists:
         conn.close()
         return jsonify({'error': 'Username already taken'}), 400
-    conn.execute('''INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,requested_at)
-                     VALUES (?,?,?,?,?,?,?,?)''',
-                 (username, hash_password(password), display, 'user', ts(), 'pending', company, ts()))
+    # Create the agency's company (tenant) up front, in 'pending' status. It is
+    # activated when the super-admin approves the user. New signups are regular
+    # 'user' accounts within their own company — they get full access to their
+    # own workspace but NOT the platform-level super-admin panel (which is
+    # reserved for the platform owner).
+    company_label = company or (display + "'s agency")
+    conn.execute("INSERT INTO companies (name,status,plan,created_at) VALUES (?,?,?,?)",
+                 (company_label, 'pending', 'standard', ts()))
+    new_company_id = conn.execute('SELECT id FROM companies ORDER BY id DESC LIMIT 1').fetchone()['id']
+    conn.execute('''INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,requested_at,company_id)
+                     VALUES (?,?,?,?,?,?,?,?,?)''',
+                 (username, hash_password(password), display, 'user', ts(), 'pending', company, ts(), new_company_id))
     conn.commit(); conn.close()
     log_activity('signup_requested', username + (' (' + company + ')' if company else ''))
     return jsonify({'ok': True, 'pending': True})
@@ -264,11 +293,13 @@ def list_pending_users():
 @admin_required
 def approve_pending_user(uid):
     conn = get_db()
-    u = conn.execute('SELECT username, status FROM users WHERE id=?', (uid,)).fetchone()
+    u = conn.execute('SELECT username, status, company_id FROM users WHERE id=?', (uid,)).fetchone()
     if not u:
         conn.close()
         return jsonify({'error': 'User not found'}), 404
     conn.execute("UPDATE users SET status='approved' WHERE id=?", (uid,))
+    if u['company_id']:
+        conn.execute("UPDATE companies SET status='active' WHERE id=?", (u['company_id'],))
     conn.commit(); conn.close()
     log_activity('approve_user', u['username'])
     return jsonify({'ok': True})
@@ -304,10 +335,17 @@ def auth_login():
     if u['status'] == 'rejected':
         conn.close()
         return jsonify({'error': 'This account request was declined. Contact your admin for access.'}), 403
+    # Block login if the tenant company is suspended (super-admin can suspend
+    # an agency e.g. for non-payment). The platform owner is never blocked.
+    if u['role'] != 'admin' and u['company_id']:
+        comp = conn.execute('SELECT status FROM companies WHERE id=?', (u['company_id'],)).fetchone()
+        if comp and comp['status'] == 'suspended':
+            conn.close()
+            return jsonify({'error': 'Your agency account is currently suspended. Please contact support.'}), 403
     conn.execute('UPDATE users SET last_login=? WHERE id=?', (ts(), u['id']))
     conn.commit(); conn.close()
     session['user_id'] = u['id']
-    session.pop('view_as_id', None)
+    session.pop('view_as_company', None)
     log_activity('login', username)
     return jsonify({'ok': True})
 
@@ -323,13 +361,22 @@ def auth_logout():
 @admin_required
 def list_users():
     conn = get_db()
-    rows = conn.execute('SELECT id, username, display_name, role, created_at, last_login, status, company_name FROM users ORDER BY id').fetchall()
-    # attach quick counts per user
+    rows = conn.execute('''SELECT u.id, u.username, u.display_name, u.role, u.created_at,
+                                  u.last_login, u.status, u.company_name, u.company_id,
+                                  co.name AS company_label, co.status AS company_status
+                           FROM users u LEFT JOIN companies co ON co.id = u.company_id
+                           ORDER BY u.id''').fetchall()
     out = []
     for u in rows:
         d = dict(u)
-        d['mandate_count'] = conn.execute('SELECT COUNT(*) n FROM mandates WHERE owner_id=?', (u['id'],)).fetchone()['n']
-        d['candidate_count'] = conn.execute('SELECT COUNT(*) n FROM candidates WHERE owner_id=?', (u['id'],)).fetchone()['n']
+        # Counts are per-tenant (company), since owner_id stores the company id.
+        cid = u['company_id']
+        if cid:
+            d['mandate_count'] = conn.execute('SELECT COUNT(*) n FROM mandates WHERE owner_id=?', (cid,)).fetchone()['n']
+            d['candidate_count'] = conn.execute('SELECT COUNT(*) n FROM candidates WHERE owner_id=?', (cid,)).fetchone()['n']
+        else:
+            d['mandate_count'] = 0
+            d['candidate_count'] = 0
         out.append(d)
     conn.close()
     return jsonify({'ok': True, 'users': out})
@@ -337,11 +384,14 @@ def list_users():
 @app.route('/api/users', methods=['POST'])
 @admin_required
 def create_user():
+    """Super-admin creates a user. By default the new user joins the
+    super-admin's OWN company; pass company_id to place them in another tenant."""
     d = request.json or {}
     username = (d.get('username') or '').strip()
     password = d.get('password') or ''
     display = (d.get('display_name') or username).strip()
     role = d.get('role') if d.get('role') in ('admin', 'user') else 'user'
+    company_id = d.get('company_id') or current_company_id()
     if not username or len(password) < 4:
         return jsonify({'error': 'Username required and password min 4 chars'}), 400
     conn = get_db()
@@ -349,8 +399,8 @@ def create_user():
     if exists:
         conn.close()
         return jsonify({'error': 'Username already taken'}), 400
-    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at) VALUES (?,?,?,?,?)',
-                 (username, hash_password(password), display, role, ts()))
+    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_id) VALUES (?,?,?,?,?,?,?)',
+                 (username, hash_password(password), display, role, ts(), 'approved', company_id))
     conn.commit(); conn.close()
     log_activity('create_user', username + ' (' + role + ')')
     return jsonify({'ok': True})
@@ -389,75 +439,117 @@ def delete_user(uid):
         if admins <= 1:
             conn.close()
             return jsonify({'error': 'Cannot delete the only admin'}), 400
-    # What happens to their data? Reassign to the requesting admin so nothing is lost.
-    keep = current_user()['id']
-    conn.execute('UPDATE mandates SET owner_id=? WHERE owner_id=?', (keep, uid))
-    conn.execute('UPDATE candidates SET owner_id=? WHERE owner_id=?', (keep, uid))
-    conn.execute('UPDATE reminders SET owner_id=? WHERE owner_id=?', (keep, uid))
+    # Data belongs to the user's COMPANY (tenant), not to the individual user,
+    # so deleting a user does NOT touch any mandates/candidates — the company
+    # keeps all its data for its remaining (or future) members.
     conn.execute('DELETE FROM users WHERE id=?', (uid,))
     conn.commit(); conn.close()
-    log_activity('delete_user', u['username'] + ' (data reassigned to you)')
+    log_activity('delete_user', u['username'])
     return jsonify({'ok': True})
 
 
 @app.route('/api/admin/claim-orphans', methods=['POST'])
 @admin_required
 def claim_orphans():
-    """Assign any data with owner_id=0/NULL (e.g. imported before multi-user, or
-    imported without an owner) to the current admin so it shows up in their workspace."""
-    uid = current_user()['id']
+    """Assign any data with owner_id=0/NULL to the admin's COMPANY (tenant) so
+    it shows up in their workspace. owner_id stores the tenant/company id."""
+    tenant = current_company_id()
     conn = get_db(); c = conn.cursor()
-    n_m = c.execute('UPDATE mandates SET owner_id=? WHERE owner_id IS NULL OR owner_id=0', (uid,)).rowcount
-    n_c = c.execute('UPDATE candidates SET owner_id=? WHERE owner_id IS NULL OR owner_id=0', (uid,)).rowcount
-    n_r = c.execute('UPDATE reminders SET owner_id=? WHERE owner_id IS NULL OR owner_id=0', (uid,)).rowcount
+    n_m = c.execute('UPDATE mandates SET owner_id=? WHERE owner_id IS NULL OR owner_id=0', (tenant,)).rowcount
+    n_c = c.execute('UPDATE candidates SET owner_id=? WHERE owner_id IS NULL OR owner_id=0', (tenant,)).rowcount
+    n_r = c.execute('UPDATE reminders SET owner_id=? WHERE owner_id IS NULL OR owner_id=0', (tenant,)).rowcount
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'mandates': n_m, 'candidates': n_c, 'reminders': n_r})
 
 
 
-# ── Admin: view-as (impersonate a user's workspace) ───────────────────────
+# ── Super-Admin: view-as (impersonate a tenant's workspace) ───────────────
 @app.route('/api/admin/view-as', methods=['POST'])
 @admin_required
 def admin_view_as():
+    """Super-admin impersonates a COMPANY (tenant). Accepts a company_id (or a
+    legacy user_id, resolved to that user's company)."""
     d = request.json or {}
-    uid = d.get('user_id')
-    conn = get_db()
-    if uid:
-        u = conn.execute('SELECT username FROM users WHERE id=?', (uid,)).fetchone()
+    company_id = d.get('company_id')
+    # Backward-compat: if a user_id is sent, resolve it to that user's company.
+    if not company_id and d.get('user_id'):
+        conn = get_db()
+        ur = conn.execute('SELECT company_id FROM users WHERE id=?', (d.get('user_id'),)).fetchone()
         conn.close()
-        if not u:
-            return jsonify({'error': 'User not found'}), 404
-        session['view_as_id'] = uid
-        log_activity('view_as', u['username'])
+        company_id = ur['company_id'] if ur else None
+    conn = get_db()
+    if company_id:
+        comp = conn.execute('SELECT name FROM companies WHERE id=?', (company_id,)).fetchone()
+        conn.close()
+        if not comp:
+            return jsonify({'error': 'Company not found'}), 404
+        session['view_as_company'] = company_id
+        log_activity('view_as', comp['name'])
     else:
         conn.close()
-        session.pop('view_as_id', None)
+        session.pop('view_as_company', None)
         log_activity('view_as', 'exited')
     return jsonify({'ok': True})
 
 
-# ── Admin: cross-user summary + activity ──────────────────────────────────
+# ── Super-Admin: per-tenant (company) summary + activity ──────────────────
 @app.route('/api/admin/summary', methods=['GET'])
 @admin_required
 def admin_summary():
     conn = get_db()
-    users = conn.execute("SELECT id, username, display_name, role, last_login FROM users WHERE status='approved' ORDER BY id").fetchall()
+    companies = conn.execute("SELECT id, name, status, plan, created_at, expires_at FROM companies ORDER BY id").fetchall()
     summary = []
-    for u in users:
-        uid = u['id']
-        mand = conn.execute('SELECT COUNT(*) n FROM mandates WHERE owner_id=?', (uid,)).fetchone()['n']
-        active_mand = conn.execute("SELECT COUNT(*) n FROM mandates WHERE owner_id=? AND status='active'", (uid,)).fetchone()['n']
-        cands = conn.execute('SELECT COUNT(*) n FROM candidates WHERE owner_id=?', (uid,)).fetchone()['n']
-        placed = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND stage='Placed'", (uid,)).fetchone()['n']
+    for comp in companies:
+        cid = comp['id']
+        mand = conn.execute('SELECT COUNT(*) n FROM mandates WHERE owner_id=?', (cid,)).fetchone()['n']
+        active_mand = conn.execute("SELECT COUNT(*) n FROM mandates WHERE owner_id=? AND status='active'", (cid,)).fetchone()['n']
+        cands = conn.execute('SELECT COUNT(*) n FROM candidates WHERE owner_id=?', (cid,)).fetchone()['n']
+        placed = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND stage='Placed'", (cid,)).fetchone()['n']
+        members = conn.execute("SELECT COUNT(*) n FROM users WHERE company_id=? AND status='approved'", (cid,)).fetchone()['n']
+        last_login = conn.execute("SELECT MAX(last_login) m FROM users WHERE company_id=?", (cid,)).fetchone()['m']
         summary.append({
-            'id': uid, 'username': u['username'], 'display_name': u['display_name'],
-            'role': u['role'], 'last_login': u['last_login'],
+            'id': cid, 'name': comp['name'], 'status': comp['status'], 'plan': comp['plan'],
+            'created_at': comp['created_at'], 'expires_at': comp['expires_at'],
+            'members': members, 'last_login': last_login,
             'mandates': mand, 'active_mandates': active_mand,
             'candidates': cands, 'placed': placed,
         })
     recent = conn.execute('SELECT username, action, detail, created_at FROM activity_log ORDER BY id DESC LIMIT 50').fetchall()
     conn.close()
     return jsonify({'ok': True, 'summary': summary, 'recent_activity': [dict(r) for r in recent]})
+
+
+@app.route('/api/admin/companies/<int:cid>/suspend', methods=['POST'])
+@admin_required
+def suspend_company(cid):
+    """Suspend an agency (e.g. non-payment). Its users can't log in until
+    reactivated. The platform owner's own company can't be suspended."""
+    me = current_user()
+    if me and me.get('company_id') == cid:
+        return jsonify({'error': "You can't suspend your own company"}), 400
+    conn = get_db()
+    comp = conn.execute('SELECT name FROM companies WHERE id=?', (cid,)).fetchone()
+    if not comp:
+        conn.close()
+        return jsonify({'error': 'Company not found'}), 404
+    conn.execute("UPDATE companies SET status='suspended' WHERE id=?", (cid,))
+    conn.commit(); conn.close()
+    log_activity('suspend_company', comp['name'])
+    return jsonify({'ok': True})
+
+
+@app.route('/api/admin/companies/<int:cid>/activate', methods=['POST'])
+@admin_required
+def activate_company(cid):
+    conn = get_db()
+    comp = conn.execute('SELECT name FROM companies WHERE id=?', (cid,)).fetchone()
+    if not comp:
+        conn.close()
+        return jsonify({'error': 'Company not found'}), 404
+    conn.execute("UPDATE companies SET status='active' WHERE id=?", (cid,))
+    conn.commit(); conn.close()
+    log_activity('activate_company', comp['name'])
+    return jsonify({'ok': True})
 
 
 @app.route('/login')
@@ -535,7 +627,17 @@ def init_db():
             last_login TEXT,
             status TEXT DEFAULT 'approved',
             company_name TEXT DEFAULT '',
-            requested_at TEXT
+            requested_at TEXT,
+            company_id INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS companies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL DEFAULT '',
+            status TEXT DEFAULT 'active',
+            plan TEXT DEFAULT 'standard',
+            created_at TEXT,
+            expires_at TEXT DEFAULT '',
+            notes TEXT DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -736,6 +838,7 @@ def init_db():
         ('status', "TEXT DEFAULT 'approved'"),
         ('company_name', "TEXT DEFAULT ''"),
         ('requested_at', 'TEXT'),
+        ('company_id', 'INTEGER DEFAULT 0'),
     ]:
         try:
             c.execute(f'ALTER TABLE users ADD COLUMN {col} {defn}')
@@ -748,6 +851,56 @@ def init_db():
         c.execute("UPDATE users SET status='approved' WHERE status IS NULL OR status=''")
     except Exception:
         pass
+
+    conn.commit()
+
+    # ── ONE-TIME MULTI-TENANT MIGRATION ────────────────────────────────────
+    # Phase 2: introduce companies (tenants). Data isolation is by company.
+    # We REUSE the existing owner_id column on mandates/candidates/reminders as
+    # the TENANT (company) id — every data-filtering query already filters on
+    # owner_id, so isolation is enforced everywhere automatically and there is
+    # no risk of a missed filter leaking data across tenants.
+    #
+    # This block runs only once: if there are users but no companies yet, we:
+    #   1. Create one company per the user's stated company_name (or a default
+    #      "HireLab" company for the admin), so existing data stays together as
+    #      a single agency exactly as it is today.
+    #   2. Point every user at their company.
+    #   3. Remap all existing data rows: owner_id (currently a USER id) becomes
+    #      the COMPANY id of whoever owned it.
+    try:
+        have_users = c.execute('SELECT COUNT(*) n FROM users').fetchone()['n']
+        have_companies = c.execute('SELECT COUNT(*) n FROM companies').fetchone()['n']
+    except Exception:
+        have_users, have_companies = 0, 0
+
+    if have_users > 0 and have_companies == 0:
+        print('*** Phase-2 tenant migration: creating companies for existing users ***')
+        # All existing users belong to ONE agency: "HireLab" (the original
+        # single-company system). This matches the owner's mental model that
+        # the existing 290 candidates / 10 mandates are HireLab's own data.
+        # New signups (post-migration) each get their OWN company.
+        admin_row = c.execute("SELECT id, company_name FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
+        default_name = ''
+        if admin_row and (admin_row['company_name'] or '').strip():
+            default_name = admin_row['company_name'].strip()
+        if not default_name:
+            default_name = 'HireLab'
+        c.execute("INSERT INTO companies (name,status,plan,created_at) VALUES (?,?,?,?)",
+                  (default_name, 'active', 'owner', ts()))
+        hirelab_company_id = c.lastrowid
+        # Point every existing user at this company.
+        c.execute('UPDATE users SET company_id=?', (hirelab_company_id,))
+        # Remap ALL existing data to this single company (owner_id was a user id
+        # before; now it is the company id). Existing data becomes HireLab's.
+        for tbl in ['mandates', 'candidates', 'reminders']:
+            try:
+                c.execute(f'UPDATE {tbl} SET owner_id=?', (hirelab_company_id,))
+            except Exception:
+                pass
+        conn.commit()
+        print(f'*** Tenant migration complete: company "{default_name}" (id={hirelab_company_id}) now owns all existing data ***')
+
 
     conn.commit(); conn.close()
 
@@ -871,6 +1024,52 @@ def get_setting(key, default=''):
 @app.route('/')
 def index():
     return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html'))
+
+
+# ── PWA: installable mobile app (manifest + service worker + icons) ────────
+@app.route('/manifest.webmanifest')
+def pwa_manifest():
+    return jsonify({
+        'name': 'HireLab Screener',
+        'short_name': 'HireLab',
+        'description': 'Recruitment ATS with mobile call assistant',
+        'start_url': '/',
+        'display': 'standalone',
+        'background_color': '#0E2A47',
+        'theme_color': '#0E2A47',
+        'orientation': 'portrait-primary',
+        'icons': [
+            {'src': '/icon-192.png', 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any maskable'},
+            {'src': '/icon-512.png', 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any maskable'},
+        ]
+    })
+
+@app.route('/sw.js')
+def pwa_sw():
+    # Minimal network-first service worker. Its presence (with a fetch handler)
+    # is what makes the app installable to the home screen. We deliberately do
+    # NOT cache API responses so tenant data is always fresh from the server.
+    sw = (
+        "self.addEventListener('install', e => self.skipWaiting());\n"
+        "self.addEventListener('activate', e => self.clients.claim());\n"
+        "self.addEventListener('fetch', function(e){\n"
+        "  // Pass through to network; no offline caching of data.\n"
+        "  e.respondWith(fetch(e.request).catch(function(){\n"
+        "    return new Response('Offline', {status: 503});\n"
+        "  }));\n"
+        "});\n"
+    )
+    return app.response_class(sw, mimetype='application/javascript')
+
+@app.route('/icon-192.png')
+def pwa_icon_192():
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon-192.png')
+    return send_file(p) if os.path.exists(p) else ('', 404)
+
+@app.route('/icon-512.png')
+def pwa_icon_512():
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon-512.png')
+    return send_file(p) if os.path.exists(p) else ('', 404)
 
 
 
@@ -2182,7 +2381,15 @@ CALL_DIR = os.path.join(DATA_DIR, 'calls')
 os.makedirs(CALL_DIR, exist_ok=True)
 
 @app.route('/api/candidates/<int:cid>/analyse-call', methods=['POST'])
+@login_required
 def analyse_call(cid):
+    # TENANT GUARD: the candidate must belong to the caller's company (tenant).
+    _g = get_db()
+    _own = _g.execute('SELECT owner_id FROM candidates WHERE id=?', (cid,)).fetchone()
+    _g.close()
+    if not _own or _own['owner_id'] != effective_company_id():
+        return jsonify({'error': 'Candidate not in your workspace'}), 403
+
     language    = request.form.get('language', 'hi')   # hi = Hindi, en = English
     # Server keys (env var first, then DB) take priority over anything from frontend
     groq_key    = get_setting('groq_api_key') or request.form.get('groq_api_key', '').strip()
@@ -2278,7 +2485,9 @@ def analyse_call(cid):
         '{\n'
         '  "interest_level": "HIGH" | "MEDIUM" | "LOW",\n'
         '  "interest_reason": "one sentence why",\n'
-        '  "ctc_discussed": null or float (LPA mentioned by candidate),\n'
+        '  "ctc_discussed": null or float (current CTC in LPA the candidate states they earn now),\n'
+        '  "ctc_expected_discussed": null or float (expected/asking CTC in LPA, if mentioned),\n'
+        '  "current_company_discussed": null or "the company the candidate currently works at, if stated",\n'
         '  "notice_negotiable": true | false | null,\n'
         '  "notice_discussed_days": null or int,\n'
         '  "key_concerns": ["concern1", "concern2"],\n'
@@ -2318,14 +2527,43 @@ def analyse_call(cid):
     # ── Step 4: Save to DB ────────────────────────────────────────────────────
     analysis_str = json.dumps(analysis, ensure_ascii=False)
     conn = get_db()
-    # Store in general_comments if empty, else append
-    existing = conn.execute('SELECT general_comments FROM candidates WHERE id=?', (cid,)).fetchone()
+    # Auto-update candidate fields from the call (roadmap: update CTC & company
+    # from the call). Only overwrite when the call actually surfaced a value.
+    updates = {}
+    try:
+        ctc = analysis.get('ctc_discussed')
+        if ctc is not None and float(ctc) > 0:
+            updates['ctc_current'] = float(ctc)
+    except (TypeError, ValueError):
+        pass
+    try:
+        ctc_e = analysis.get('ctc_expected_discussed')
+        if ctc_e is not None and float(ctc_e) > 0:
+            updates['ctc_expected'] = float(ctc_e)
+    except (TypeError, ValueError):
+        pass
+    comp = (analysis.get('current_company_discussed') or '').strip()
+    if comp:
+        updates['company'] = comp
+    try:
+        nd = analysis.get('notice_discussed_days')
+        if nd is not None and int(nd) >= 0:
+            updates['notice_period'] = int(nd)
+    except (TypeError, ValueError):
+        pass
+
     note = '[CALL ANALYSIS ' + datetime.datetime.now().strftime('%d %b %Y %H:%M') + '] Recorded. Interest: ' + analysis.get('interest_level', '') + '. ' + analysis.get('call_summary', '')[:200]
-    conn.execute('UPDATE candidates SET general_comments=?,updated_at=? WHERE id=?',
-                 (note, ts(), cid))
+    if updates:
+        set_clause = ', '.join(f'{k}=?' for k in updates) + ', general_comments=?, updated_at=? WHERE id=?'
+        conn.execute('UPDATE candidates SET ' + set_clause,
+                     tuple(updates.values()) + (note, ts(), cid))
+    else:
+        conn.execute('UPDATE candidates SET general_comments=?,updated_at=? WHERE id=?',
+                     (note, ts(), cid))
+    upd_summary = ', '.join(f'{k}→{v}' for k, v in updates.items()) if updates else ''
     conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
                  (cid, cand['stage'], cand['stage'],
-                  'Call analysed. Interest: ' + analysis.get('interest_level','') + '. Rec: ' + analysis.get('recommendation','') + '. ' + analysis.get('next_step',''),
+                  'Call analysed. Interest: ' + analysis.get('interest_level','') + '. Rec: ' + analysis.get('recommendation','') + '. ' + analysis.get('next_step','') + (' | Updated: ' + upd_summary if upd_summary else ''),
                   ts()))
     conn.commit(); conn.close()
 
@@ -2334,13 +2572,26 @@ def analyse_call(cid):
         'transcript': transcript,
         'analysis': analysis,
         'recording_file': fname,
+        'updated_fields': updates,
         'cv_used': bool(cv_text),
         'jd_used': bool(jd_or_sop)
     })
 
 @app.route('/api/calls/<path:filename>')
+@login_required
 def serve_call(filename):
-    fp = os.path.join(CALL_DIR, filename)
+    # Recordings are named call_<candidateId>_<timestamp>.<ext>. Verify the
+    # candidate belongs to the caller's tenant before serving the audio.
+    m = re.match(r'call_(\d+)_', os.path.basename(filename))
+    if not m:
+        return jsonify({'error': 'Not found'}), 404
+    cid = int(m.group(1))
+    conn = get_db()
+    own = conn.execute('SELECT owner_id FROM candidates WHERE id=?', (cid,)).fetchone()
+    conn.close()
+    if not own or own['owner_id'] != effective_company_id():
+        return jsonify({'error': 'Not found'}), 404
+    fp = os.path.join(CALL_DIR, os.path.basename(filename))
     return send_file(fp) if os.path.exists(fp) else (jsonify({'error': 'Not found'}), 404)
 
 
@@ -2380,10 +2631,15 @@ def central_search():
     per_page = 30
 
     conn = get_db()
+    # TENANT ISOLATION: only this company's candidates. owner_id stores the
+    # tenant (company) id, so this scopes the Central Database to the current
+    # agency. Without this filter, agencies would see each other's candidates.
     rows = conn.execute(
         'SELECT c.*, m.role as mandate_role, m.client as mandate_client '
         'FROM candidates c LEFT JOIN mandates m ON c.mandate_id = m.id '
-        'ORDER BY c.created_at DESC'
+        'WHERE c.owner_id = ? '
+        'ORDER BY c.created_at DESC',
+        (effective_company_id(),)
     ).fetchall()
     conn.close()
 
@@ -2434,21 +2690,23 @@ def central_search():
     return jsonify({'ok': True, 'total': total, 'page': page, 'candidates': paginated})
 
 @app.route('/api/central-db/add', methods=['POST'])
+@login_required
 def central_db_add():
     d   = request.json or {}
     mid = get_or_create_central_mandate()
     if not d.get('name') or not d.get('company'):
         return jsonify({'error': 'Name and Company required'}), 400
+    tenant = effective_company_id()
     conn = get_db(); c = conn.cursor()
     c.execute(
         'INSERT INTO candidates (mandate_id,name,company,designation,experience,ctc_current,'
         'ctc_expected,notice_period,location,phone,email,career_summary,key_skills,'
-        'screening_decision,ai_reasoning,stage,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        'screening_decision,ai_reasoning,stage,created_at,updated_at,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         (mid, d['name'], d['company'], d.get('designation',''), float(d.get('experience') or 0),
          float(d.get('ctc_current') or 0), float(d.get('ctc_expected') or 0),
          int(d.get('notice_period') or 0), d.get('location',''), d.get('phone',''), d.get('email',''),
          d.get('career_summary',''), json.dumps(d.get('key_skills') or []),
-         'worth_opening', 'Added to Central Database', 'Central DB', ts(), ts()))
+         'worth_opening', 'Added to Central Database', 'Central DB', ts(), ts(), tenant))
     cid = c.lastrowid
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
               (cid, '', 'Central DB', 'Added to Central Database', ts()))
@@ -2456,9 +2714,11 @@ def central_db_add():
     return jsonify({'ok': True, 'id': cid})
 
 @app.route('/api/central-db/bulk', methods=['POST'])
+@login_required
 def central_db_bulk():
     d   = request.json or {}
     mid = get_or_create_central_mandate()
+    tenant = effective_company_id()
     candidates = d.get('candidates', [])
     conn = get_db(); c = conn.cursor()
     added = 0
@@ -2469,13 +2729,13 @@ def central_db_bulk():
         c.execute(
             'INSERT INTO candidates (mandate_id,name,company,designation,experience,ctc_current,'
             'ctc_expected,notice_period,location,phone,email,career_summary,key_skills,'
-            'screening_decision,ai_reasoning,stage,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'screening_decision,ai_reasoning,stage,created_at,updated_at,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (mid, name, company, cand.get('designation',''), float(cand.get('experience') or 0),
              float(cand.get('ctc_current') or 0), float(cand.get('ctc_expected') or 0),
              int(cand.get('notice_period') or 0), cand.get('location',''),
              cand.get('phone',''), cand.get('email',''), cand.get('career_summary',''),
              json.dumps(cand.get('key_skills') or []),
-             'worth_opening', 'Bulk added to Central Database', 'Central DB', ts(), ts()))
+             'worth_opening', 'Bulk added to Central Database', 'Central DB', ts(), ts(), tenant))
         cid = c.lastrowid
         c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
                   (cid, '', 'Central DB', 'Bulk added', ts()))

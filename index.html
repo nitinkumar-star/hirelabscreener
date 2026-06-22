@@ -2,8 +2,22 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>HireLab Screener</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0E2A47">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="HireLab">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('/sw.js').catch(function(){});
+  });
+}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
@@ -1269,7 +1283,7 @@ function renderUserBar() {
   var h = '';
   if (S.viewingAs) {
     h += '<div style="display:flex;align-items:center;gap:8px;background:#FBEDE4;border:0.5px solid #E8C4A8;border-radius:7px;padding:4px 10px">'
-      + '<span style="font-size:11px;color:#A65A2E">&#128065; Viewing as <b>' + esc(S.viewingAs.display_name||S.viewingAs.username) + '</b></span>'
+      + '<span style="font-size:11px;color:#A65A2E">&#128065; Viewing as <b>' + esc(S.viewingAs.name||'agency') + '</b></span>'
       + '<button class="btn btn-o" style="font-size:10px;padding:2px 8px" onclick="exitViewAs()">Exit to Admin</button></div>';
   }
   h += '<div style="display:flex;align-items:center;gap:8px">'
@@ -2302,9 +2316,12 @@ function renderProfileDetail(c){
   html+='<div class="prof-section" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">'
     +'<div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div>'
-    +'<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload Android recording &rarr; Groq transcribes &rarr; Claude analyses vs JD/CV</div></div>'
+    +'<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Tap Call &rarr; record on your phone &rarr; upload here. Groq transcribes, Claude analyses &amp; auto-updates CTC/company.</div></div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call '+esc(c.phone)+'</a>'):'')
     +'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">'
-    +'&#127911; Upload Recording <input type="file" id="call-file-input-'+c.id+'" accept=".mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label>'
+    +'&#127911; Upload Recording <input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label>'
+    +'</div>'
     +'</div>'
     +'<div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div>'
     +'<div id="call-analysis-'+c.id+'"></div>'
@@ -2579,7 +2596,7 @@ async function loadUsersList() {
     h += '<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:0.5px solid var(--line);border-radius:9px;margin-bottom:7px;background:#fff">'
       + avatarHtml(u.display_name||u.username, 32)
       + '<div style="flex:1;min-width:0">'
-      + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(u.display_name||u.username) + (isMe?' <span style="font-size:10px;color:var(--muted);font-weight:400">(you)</span>':'') + ' ' + roleBadge + '</div>'
+      + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(u.display_name||u.username) + (isMe?' <span style="font-size:10px;color:var(--muted);font-weight:400">(you)</span>':'') + ' ' + roleBadge + (u.company_label?' <span style="font-size:9.5px;background:#F0F4F8;color:#41607A;padding:2px 7px;border-radius:8px;font-weight:600">' + esc(u.company_label) + '</span>':'') + '</div>'
       + '<div style="font-size:11px;color:var(--muted)">@' + esc(u.username) + ' &middot; ' + u.mandate_count + ' mandates &middot; ' + u.candidate_count + ' candidates' + (u.last_login?(' &middot; last login ' + fmtDate(u.last_login)):' &middot; never logged in') + '</div>'
       + '</div>';
     if (!isMe) {
@@ -3044,8 +3061,22 @@ async function handleCallUpload(cid, input) {
     statusEl.innerHTML = '&#10003; Analysis complete — ' + r.transcript.split(' ').length + ' words transcribed' +
       (r.cv_used?' &middot; CV used':' &middot; No CV') + (r.jd_used?' &middot; JD/SOP used':'');
 
-    // Render analysis card
-    analysisEl.innerHTML = ''
+    // Banner: what the call auto-updated on the candidate record
+    var uf = r.updated_fields || {};
+    var ufKeys = Object.keys(uf);
+    if (ufKeys.length) {
+      var labelMap = {ctc_current:'Current CTC', ctc_expected:'Expected CTC', company:'Company', notice_period:'Notice (days)'};
+      var parts = ufKeys.map(function(k){
+        var v = uf[k];
+        if (k==='ctc_current'||k==='ctc_expected') v = '₹'+v+'L';
+        return (labelMap[k]||k)+': '+v;
+      });
+      analysisEl.innerHTML = '<div style="background:rgba(29,158,117,0.18);border:0.5px solid rgba(159,225,203,.4);border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:11.5px;color:#CFF3E6">&#10003; Auto-updated from call &middot; ' + esc(parts.join('  ·  ')) + '</div>';
+    } else {
+      analysisEl.innerHTML = '';
+    }
+    var _afterBanner = analysisEl.innerHTML;
+    analysisEl.innerHTML = _afterBanner
       // Top metrics row
       +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">'
       +'<div style="background:rgba(255,255,255,.08);border-radius:8px;padding:10px;text-align:center">'
@@ -4795,30 +4826,37 @@ async function loadAdminSummary() {
 
   // Top stat cards
   h += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">'
-    + adminStatCard('Team Members', r.summary.length, '#6B4FA0', '#EEE9F8')
+    + adminStatCard('Agencies', r.summary.length, '#6B4FA0', '#EEE9F8')
     + adminStatCard('Total Mandates', totMandates, '#0F8A6B', '#E6F6F1')
     + adminStatCard('Total Candidates', totCands, '#1D6FA5', '#E4F0F8')
     + adminStatCard('Placed', totPlaced, '#BA7517', '#FBEDE4')
     + '</div>';
 
-  // Per-user table
+  // Per-agency (tenant) table
   h += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:18px;box-shadow:var(--shadow-sm)">'
-    + '<div style="padding:12px 16px;border-bottom:0.5px solid var(--line);font-size:13px;font-weight:700;color:var(--navy)">Per-User Summary</div>';
-  r.summary.forEach(function(u){
-    var roleBadge = u.role==='admin'
-      ? '<span style="font-size:9px;background:#EEE9F8;color:#6B4FA0;padding:1px 6px;border-radius:7px;font-weight:600">ADMIN</span>'
-      : '<span style="font-size:9px;background:#E6F6F1;color:#0F8A6B;padding:1px 6px;border-radius:7px;font-weight:600">USER</span>';
-    var isMe = S.currentUser && u.id === S.currentUser.id;
+    + '<div style="padding:12px 16px;border-bottom:0.5px solid var(--line);font-size:13px;font-weight:700;color:var(--navy)">Agencies (Tenants)</div>';
+  r.summary.forEach(function(co){
+    var isMine = S.currentUser && S.currentUser.company && co.id === S.currentUser.company.id;
+    var statusBadge;
+    if (co.status === 'suspended') statusBadge = '<span style="font-size:9px;background:#FCEBEB;color:#A32D2D;padding:1px 6px;border-radius:7px;font-weight:600">SUSPENDED</span>';
+    else if (co.status === 'pending') statusBadge = '<span style="font-size:9px;background:#FFF3E6;color:#9A6A1F;padding:1px 6px;border-radius:7px;font-weight:600">PENDING</span>';
+    else statusBadge = '<span style="font-size:9px;background:#E6F6F1;color:#0F8A6B;padding:1px 6px;border-radius:7px;font-weight:600">ACTIVE</span>';
+    var ownerBadge = isMine ? ' <span style="font-size:9px;background:#EEE9F8;color:#6B4FA0;padding:1px 6px;border-radius:7px;font-weight:600">YOUR AGENCY</span>' : '';
     h += '<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:0.5px solid #f0f0f0">'
-      + avatarHtml(u.display_name||u.username, 36)
+      + avatarHtml(co.name, 36)
       + '<div style="flex:1;min-width:0">'
-      + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(u.display_name||u.username) + ' ' + roleBadge + (isMe?' <span style="font-size:10px;color:var(--muted)">(you)</span>':'') + '</div>'
-      + '<div style="font-size:11px;color:var(--muted)">@' + esc(u.username) + (u.last_login?(' &middot; last login ' + fmtDate(u.last_login)):' &middot; never logged in') + '</div>'
+      + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(co.name) + ' ' + statusBadge + ownerBadge + '</div>'
+      + '<div style="font-size:11px;color:var(--muted)">' + co.members + ' member' + (co.members===1?'':'s') + (co.last_login?(' &middot; last active ' + fmtDate(co.last_login)):' &middot; never logged in') + '</div>'
       + '</div>'
       + '<div style="display:flex;gap:18px;text-align:center;margin-right:8px">'
-      + adminMiniStat(u.mandates, 'mandates') + adminMiniStat(u.active_mandates, 'active') + adminMiniStat(u.candidates, 'candidates') + adminMiniStat(u.placed, 'placed')
+      + adminMiniStat(co.mandates, 'mandates') + adminMiniStat(co.active_mandates, 'active') + adminMiniStat(co.candidates, 'candidates') + adminMiniStat(co.placed, 'placed')
       + '</div>'
-      + (isMe ? '<div style="width:96px"></div>' : '<button class="btn btn-g" style="font-size:11px;padding:6px 12px;background:#D97A4D;white-space:nowrap" onclick="viewAsUser(' + u.id + ',&quot;' + esc(u.display_name||u.username) + '&quot;)">&#128065; View as</button>')
+      + '<div style="display:flex;gap:6px">'
+      + (isMine ? '' : '<button class="btn btn-g" style="font-size:11px;padding:6px 12px;background:#D97A4D;white-space:nowrap" onclick="viewAsCompany(' + co.id + ',&quot;' + esc(co.name) + '&quot;)">&#128065; View as</button>')
+      + (isMine ? '' : (co.status === 'suspended'
+            ? '<button class="btn btn-o" style="font-size:11px;padding:6px 10px;white-space:nowrap;color:#0F8A6B" onclick="setCompanyStatus(' + co.id + ',&quot;activate&quot;,&quot;' + esc(co.name) + '&quot;)">Reactivate</button>'
+            : '<button class="btn btn-o" style="font-size:11px;padding:6px 10px;white-space:nowrap;color:#A32D2D" onclick="setCompanyStatus(' + co.id + ',&quot;suspend&quot;,&quot;' + esc(co.name) + '&quot;)">Suspend</button>'))
+      + '</div>'
       + '</div>';
   });
   h += '</div>';
@@ -4880,11 +4918,23 @@ async function decidePendingUser(uid, action) {
   }
 }
 
-async function viewAsUser(uid, name) {
-  if (!confirm('Switch to ' + name + "'s workspace?\n\nYou'll see and edit their mandates & candidates. A banner will let you return to your admin view.")) return;
-  var r = await req('POST', '/admin/view-as', {user_id: uid});
+async function viewAsCompany(cid, name) {
+  if (!confirm('Switch to ' + name + "'s workspace?\n\nYou'll see and edit their mandates & candidates. A banner will let you return to your own view.")) return;
+  var r = await req('POST', '/admin/view-as', {company_id: cid});
   if (r.ok) {
     location.reload();
+  } else {
+    toast('ERR', r.error||'Failed');
+  }
+}
+
+async function setCompanyStatus(cid, action, name) {
+  var verb = action === 'suspend' ? 'suspend' : 'reactivate';
+  if (!confirm(verb.charAt(0).toUpperCase()+verb.slice(1) + ' ' + name + '?' + (action==='suspend' ? '\n\nTheir users will not be able to log in until reactivated.' : ''))) return;
+  var r = await req('POST', '/admin/companies/' + cid + '/' + action, {});
+  if (r.ok) {
+    toast('OK', action==='suspend' ? name + ' suspended' : name + ' reactivated');
+    loadAdminSummary();
   } else {
     toast('ERR', r.error||'Failed');
   }
