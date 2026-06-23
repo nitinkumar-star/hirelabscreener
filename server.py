@@ -159,7 +159,7 @@ def admin_required(f):
 @app.route('/api/diag')
 def diag():
     """Diagnostic: shows whether the persistent disk and data are intact.
-    Helps debug 'data disappeared / logged out' issues."""
+    Helps debug 'data disappeared / logged out / asked to create new account'."""
     info = {'data_dir': DATA_DIR, 'db_path': DB_PATH}
     try:
         info['db_exists'] = os.path.exists(DB_PATH)
@@ -168,11 +168,40 @@ def diag():
         info['reset_marker'] = os.path.exists(os.path.join(DATA_DIR, '.last_reset'))
         info['reset_data_env'] = bool(os.environ.get('RESET_DATA'))
         info['secret_key_env'] = bool(os.environ.get('SECRET_KEY'))
+        info['data_dir_env_set'] = bool(os.environ.get('DATA_DIR'))
+
+        # Storage persistence (the key signal for the 'data keeps disappearing' bug)
+        info['storage_persistent'] = _PERSISTENCE.get('persistent')
+        info['restarts_survived'] = _PERSISTENCE.get('boots_seen', 0)
+
+        # Backups present on disk
+        try:
+            baks = sorted(Path(BAK_DIR).glob('hirelab_*.db'), reverse=True)
+            info['backup_count'] = len(baks)
+            info['latest_backup'] = baks[0].name if baks else None
+            info['latest_backup_users'] = _db_user_count(str(baks[0])) if baks else 0
+        except Exception as e:
+            info['backup_error'] = str(e)
+
         conn = get_db(); c = conn.cursor()
-        for t in ['users', 'mandates', 'candidates']:
+        for t in ['users', 'companies', 'mandates', 'candidates']:
             try: info[t + '_count'] = c.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
             except Exception as e: info[t + '_count'] = f'err: {e}'
         conn.close()
+
+        # Plain-language diagnosis
+        looks_ephemeral = (not info['data_dir_env_set']) and ('HireLab' in DATA_DIR)
+        if looks_ephemeral:
+            info['diagnosis'] = ('DATA_DIR is not set to the mounted disk — data is on TEMPORARY '
+                                 'storage and WILL be lost on restart. On Render: attach a disk at '
+                                 '/data and set env var DATA_DIR=/data.')
+        elif info.get('storage_persistent') is True:
+            info['diagnosis'] = 'OK — storage is persistent and has survived restarts.'
+        elif info.get('users_count') == 0 and info.get('latest_backup_users', 0) > 0:
+            info['diagnosis'] = 'DB is empty but a backup with users exists — auto-restore should recover on next start.'
+        else:
+            info['diagnosis'] = ('Persistence not yet confirmed. Restart the service once and re-check; '
+                                 'restarts_survived should increase if the disk is persistent.')
     except Exception as e:
         info['error'] = str(e)
     return jsonify(info)
@@ -938,14 +967,104 @@ def migrate_old():
             break
 
 def daily_backup():
+    """Snapshot the DB once per day. NEVER snapshot an empty DB over an existing
+    good backup, and refresh today's backup if the live DB now has more users
+    than the stored snapshot (so a startup-time empty snapshot can't 'stick')."""
     if not os.path.exists(DB_PATH):
         return
+    live_users = _db_user_count(DB_PATH)
+    if live_users == 0:
+        return  # Never back up an empty DB — it could clobber a good backup.
     bak = os.path.join(BAK_DIR, f'hirelab_{datetime.date.today()}.db')
-    if not os.path.exists(bak):
+    existing_users = _db_user_count(bak) if os.path.exists(bak) else -1
+    if (not os.path.exists(bak)) or live_users >= existing_users:
         shutil.copy2(DB_PATH, bak)
-        print(f'[BACKUP] {bak}')
+        print(f'[BACKUP] {bak} ({live_users} users)')
     for old in sorted(Path(BAK_DIR).glob('hirelab_*.db'))[:-7]:
         old.unlink()
+
+
+def _db_user_count(path):
+    """How many users a given SQLite file holds (0 if unreadable/missing)."""
+    try:
+        if not os.path.exists(path):
+            return 0
+        c = sqlite3.connect(path, timeout=10)
+        n = c.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+        c.close()
+        return n
+    except Exception:
+        return 0
+
+
+def auto_restore_if_empty():
+    """SAFETY NET against the 'logged out → asked to create a new account →
+    old data gone' problem. If the live DB has zero users (e.g. a restart lost
+    recent writes, or the file was recreated empty), but a backup on disk DOES
+    contain users, restore the newest such backup automatically. This runs at
+    every startup, including under gunicorn on the cloud."""
+    try:
+        live_users = _db_user_count(DB_PATH)
+        if live_users > 0:
+            return  # DB is healthy, nothing to do.
+        # Pick the backup with the MOST users (most complete), newest as tiebreak.
+        backups = sorted(Path(BAK_DIR).glob('hirelab_*.db'),
+                         key=lambda p: (_db_user_count(str(p)), p.stat().st_mtime),
+                         reverse=True)
+        for bak in backups:
+            if _db_user_count(str(bak)) > 0:
+                # Keep a copy of the (empty) current file just in case.
+                try:
+                    if os.path.exists(DB_PATH):
+                        shutil.copy2(DB_PATH, DB_PATH + '.empty-before-restore')
+                except Exception:
+                    pass
+                shutil.copy2(str(bak), DB_PATH)
+                print(f'*** AUTO-RESTORE: live DB had 0 users — restored from backup {bak.name} '
+                      f'({_db_user_count(DB_PATH)} users recovered). ***')
+                return
+        if not backups:
+            print('*** AUTO-RESTORE: DB empty and NO backups found on disk. '
+                  'If this is a restart, your storage may NOT be persistent — see /api/diag. ***')
+    except Exception as e:
+        print(f'Auto-restore warning (non-fatal): {e}')
+
+
+def check_storage_persistence():
+    """Definitively detect whether DATA_DIR survives restarts. We write a marker
+    file containing a boot counter. If the marker is MISSING on a later boot,
+    the storage is ephemeral (data WILL be lost on every restart) — the true
+    root cause of the 'asks me to create a new account again' problem. Returns
+    a dict used by /api/diag and the startup banner."""
+    marker = os.path.join(DATA_DIR, '.persistence_check')
+    result = {'marker_path': marker, 'persistent': None, 'boots_seen': 0}
+    try:
+        prev = ''
+        if os.path.exists(marker):
+            with open(marker) as f:
+                prev = f.read().strip()
+        if prev:
+            # Marker survived a previous boot → storage IS persistent.
+            try:
+                boots = int(prev.split('|')[0]) + 1
+            except Exception:
+                boots = 1
+            result['persistent'] = True
+            result['boots_seen'] = boots
+        else:
+            # First boot (or marker was wiped). Can't conclude persistence yet.
+            boots = 1
+            result['persistent'] = None  # unknown until we see it survive once
+            result['boots_seen'] = 1
+        with open(marker, 'w') as f:
+            f.write(f'{boots}|{datetime.datetime.now().isoformat()}')
+    except Exception as e:
+        result['error'] = str(e)
+    return result
+
+
+# Cache the persistence result computed at startup.
+_PERSISTENCE = {'persistent': None, 'boots_seen': 0}
 
 def check_timers():
     conn = get_db(); c = conn.cursor()
@@ -3248,6 +3367,28 @@ def import_data():
 try:
     migrate_old()
     init_db()
+    # Safety net order matters:
+    # 1) check persistence (writes/reads a marker that proves the disk survives restarts)
+    # 2) auto-restore if the live DB came up empty but a backup has users
+    # 3) take a fresh backup of the (now-healthy) DB
+    _PERSISTENCE = check_storage_persistence()
+    auto_restore_if_empty()
+    daily_backup()
+    _ucount = _db_user_count(DB_PATH)
+    print('\n' + '=' * 56)
+    print('  HireLab Screener — startup')
+    print('  DATA_DIR : ' + DATA_DIR)
+    print('  DB_PATH  : ' + DB_PATH)
+    print('  Users in DB: ' + str(_ucount))
+    if _PERSISTENCE.get('persistent') is True:
+        print(f'  Storage  : PERSISTENT ✓ (survived {_PERSISTENCE.get("boots_seen")} restarts)')
+    else:
+        print('  Storage  : NOT YET CONFIRMED persistent (first boot, or marker was wiped)')
+        if DATA_DIR.rstrip('/').endswith('HireLab') or 'expanduser' in DATA_DIR:
+            print('  *** WARNING: DATA_DIR is NOT the mounted disk. On Render you must set')
+            print('  *** DATA_DIR=/data AND attach a persistent disk mounted at /data,')
+            print('  *** otherwise ALL data is lost on every restart/spin-down. ***')
+    print('=' * 56 + '\n')
 except Exception as _startup_err:
     print(f'Startup init warning: {_startup_err}')
 
@@ -3293,13 +3434,6 @@ except Exception as _reset_err:
     print(f'Reset warning: {_reset_err}')
 
 if __name__ == '__main__':
-    migrate_old()
-    daily_backup()
-    init_db()
     check_timers()
-    print('\n' + '='*50)
-    print('  HireLab Screener v2 - Ready')
-    print('  Open: http://localhost:5000')
-    print('  Data: ' + DATA_DIR)
-    print('='*50 + '\n')
+    print('Local server: http://localhost:' + str(os.environ.get('PORT', 5000)))
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
