@@ -521,6 +521,51 @@ def admin_view_as():
     return jsonify({'ok': True})
 
 
+@app.route('/api/admin/api-usage', methods=['GET'])
+@admin_required
+def admin_api_usage():
+    """Per-agency API usage & estimated cost. Optional ?days=N (default 30)."""
+    try:
+        days = int(request.args.get('days', 30))
+    except Exception:
+        days = 30
+    since = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
+    conn = get_db()
+    companies = conn.execute('SELECT id, name FROM companies ORDER BY id').fetchall()
+    name_map = {c['id']: c['name'] for c in companies}
+
+    rows = conn.execute('''
+        SELECT company_id, provider,
+               SUM(input_tokens) in_tok, SUM(output_tokens) out_tok,
+               SUM(audio_seconds) audio_sec, SUM(cost_usd) cost, COUNT(*) calls
+        FROM api_usage WHERE created_at >= ?
+        GROUP BY company_id, provider''', (since,)).fetchall()
+    conn.close()
+
+    agg = {}
+    grand_total = 0.0
+    for r in rows:
+        cid = r['company_id']
+        if cid not in agg:
+            agg[cid] = {'company_id': cid,
+                        'company': name_map.get(cid, '(unknown / deleted)'),
+                        'total_cost': 0.0, 'total_calls': 0, 'providers': {}}
+        agg[cid]['providers'][r['provider']] = {
+            'calls': r['calls'], 'input_tokens': r['in_tok'] or 0,
+            'output_tokens': r['out_tok'] or 0,
+            'audio_minutes': round((r['audio_sec'] or 0) / 60.0, 1),
+            'cost_usd': round(r['cost'] or 0, 4)}
+        agg[cid]['total_cost'] += (r['cost'] or 0)
+        agg[cid]['total_calls'] += r['calls']
+        grand_total += (r['cost'] or 0)
+
+    out = sorted(agg.values(), key=lambda x: x['total_cost'], reverse=True)
+    for a in out:
+        a['total_cost'] = round(a['total_cost'], 4)
+    return jsonify({'ok': True, 'days': days, 'grand_total_usd': round(grand_total, 4),
+                    'usage': out})
+
+
 # ── Super-Admin: per-tenant (company) summary + activity ──────────────────
 @app.route('/api/admin/summary', methods=['GET'])
 @admin_required
@@ -788,6 +833,18 @@ def init_db():
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS api_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER DEFAULT 0,
+            provider TEXT DEFAULT '',
+            model TEXT DEFAULT '',
+            endpoint TEXT DEFAULT '',
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            audio_seconds REAL DEFAULT 0,
+            cost_usd REAL DEFAULT 0,
+            created_at TEXT
         );
     """)
     defaults = [
@@ -1091,11 +1148,80 @@ def check_timers():
             pass
     conn.commit(); conn.close()
 
-def call_claude(api_key, system_msg, messages, max_tokens=8000):
-    return requests.post(CLAUDE_URL,
+# ── Per-tenant API usage & cost tracking ──────────────────────────────────
+# Rates are EDITABLE ESTIMATES in USD. Token COUNTS logged below are exact
+# (read from each API response); only these per-unit rates are approximate and
+# can be adjusted any time without touching the logged history.
+#   *_in  / *_out = USD per 1,000,000 tokens
+#   whisper       = USD per second of audio
+API_PRICING = {
+    'claude':   {'in': 3.00,  'out': 15.00},   # Claude Sonnet (per 1M tokens)
+    'deepseek': {'in': 0.27,  'out': 1.10},    # DeepSeek chat   (per 1M tokens)
+    'gemini':   {'in': 0.075, 'out': 0.30},    # Gemini embed/flash (per 1M tokens)
+    'groq':     {'audio_per_sec': 0.111/3600}, # Groq Whisper ~ $0.111 / audio-hour
+}
+
+def log_api_usage(provider, model='', input_tokens=0, output_tokens=0, audio_seconds=0, endpoint=''):
+    """Record one AI API call against the current tenant, with an estimated
+    cost. Fully defensive — never raises into the calling request."""
+    try:
+        p = API_PRICING.get(provider, {})
+        cost = 0.0
+        if audio_seconds:
+            cost += float(audio_seconds) * p.get('audio_per_sec', 0)
+        if input_tokens:
+            cost += (float(input_tokens) / 1_000_000.0) * p.get('in', 0)
+        if output_tokens:
+            cost += (float(output_tokens) / 1_000_000.0) * p.get('out', 0)
+        try:
+            company_id = effective_company_id() or 0
+        except Exception:
+            company_id = 0
+        conn = get_db()
+        conn.execute('''INSERT INTO api_usage
+            (company_id,provider,model,endpoint,input_tokens,output_tokens,audio_seconds,cost_usd,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?)''',
+            (company_id, provider, model, endpoint,
+             int(input_tokens or 0), int(output_tokens or 0),
+             float(audio_seconds or 0), round(cost, 6), ts()))
+        conn.commit(); conn.close()
+    except Exception as e:
+        print(f'log_api_usage warning (non-fatal): {e}')
+
+
+def call_claude(api_key, system_msg, messages, max_tokens=8000, endpoint='claude'):
+    resp = requests.post(CLAUDE_URL,
         headers={'x-api-key': api_key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'},
         json={'model': CLAUDE_MODEL, 'max_tokens': max_tokens, 'system': system_msg, 'messages': messages},
         timeout=120)
+    # Log token usage (per tenant) without breaking the caller.
+    try:
+        u = resp.json().get('usage', {})
+        if u:
+            log_api_usage('claude', CLAUDE_MODEL,
+                          input_tokens=u.get('input_tokens', 0),
+                          output_tokens=u.get('output_tokens', 0),
+                          endpoint=endpoint)
+    except Exception:
+        pass
+    return resp
+
+def call_deepseek(api_key, payload, timeout=60, endpoint='deepseek'):
+    """POST to DeepSeek (OpenAI-compatible) and log token usage per tenant.
+    Returns the raw requests response, so existing callers work unchanged."""
+    resp = requests.post('https://api.deepseek.com/chat/completions',
+        headers={'Authorization': 'Bearer ' + api_key, 'Content-Type': 'application/json'},
+        json=payload, timeout=timeout)
+    try:
+        u = resp.json().get('usage', {})
+        if u:
+            log_api_usage('deepseek', payload.get('model', 'deepseek-chat'),
+                          input_tokens=u.get('prompt_tokens', 0),
+                          output_tokens=u.get('completion_tokens', 0),
+                          endpoint=endpoint)
+    except Exception:
+        pass
+    return resp
 
 def parse_json(text):
     text = text.strip()
@@ -1255,12 +1381,11 @@ def shorten_jd():
     )
 
     try:
-        resp = requests.post('https://api.deepseek.com/chat/completions',
-            headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
-            json={'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 900,
+        resp = call_deepseek(ds_key,
+            {'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 900,
                   'messages': [{'role': 'system', 'content': system_msg},
                                 {'role': 'user', 'content': text[:12000]}]},
-            timeout=60)
+            timeout=60, endpoint='screening')
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1671,11 +1796,10 @@ def rate_candidate(cid):
               '"reasoning": "<2-3 concise sentences: key strengths and gaps for THIS role>"}')
 
     try:
-        rr = requests.post('https://api.deepseek.com/chat/completions',
-            headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
-            json={'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 400,
+        rr = call_deepseek(ds_key,
+            {'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 400,
                   'messages': [{'role': 'user', 'content': prompt}]},
-            timeout=60)
+            timeout=60, endpoint='reasoning')
         if rr.status_code != 200:
             err = rr.json().get('error', {}).get('message', rr.text[:200])
             conn.close()
@@ -1870,11 +1994,10 @@ def ai_search():
                       "(note if someone saved for a different role is still a strong fit). "
                       "Be concise and practical. Plain text, start each line with '- '.")
             try:
-                rr = requests.post('https://api.deepseek.com/chat/completions',
-                    headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
-                    json={'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 400,
+                rr = call_deepseek(ds_key,
+                    {'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 400,
                           'messages': [{'role': 'user', 'content': prompt}]},
-                    timeout=60)
+                    timeout=60, endpoint='reasoning')
                 if rr.status_code == 200:
                     reasoning = rr.json()['choices'][0]['message']['content'].strip()
             except Exception:
@@ -1934,11 +2057,10 @@ def ai_stats():
               "DATA:\n" + snapshot + "\n\nQUESTION: " + question + "\n\nANSWER:")
 
     try:
-        rr = requests.post('https://api.deepseek.com/chat/completions',
-            headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
-            json={'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 800,
+        rr = call_deepseek(ds_key,
+            {'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 800,
                   'messages': [{'role': 'user', 'content': prompt}]},
-            timeout=90)
+            timeout=90, endpoint='analysis')
         if rr.status_code != 200:
             err = rr.json().get('error', {}).get('message', rr.text[:200])
             return jsonify({'error': 'DeepSeek error: ' + err}), 500
@@ -2328,12 +2450,11 @@ def parse_naukri():
                   'career_summary (2 sentences), is_mnc (bool). '
                   'Use null for missing strings, 0 for missing numbers.')
     try:
-        resp = requests.post('https://api.deepseek.com/chat/completions',
-            headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
-            json={'model': 'deepseek-chat', 'temperature': 0, 'max_tokens': 800,
+        resp = call_deepseek(key,
+            {'model': 'deepseek-chat', 'temperature': 0, 'max_tokens': 800,
                   'messages': [{'role': 'system', 'content': system_msg}, {'role': 'user', 'content': raw}],
                   'response_format': {'type': 'json_object'}},
-            timeout=30)
+            timeout=30, endpoint='parse')
     except requests.Timeout: return jsonify({'error': 'DeepSeek timeout. Try again.'}), 504
     except Exception as e: return jsonify({'error': str(e)}), 500
     if resp.status_code == 401: return jsonify({'error': 'Invalid DeepSeek API key'}), 401
@@ -2397,13 +2518,12 @@ def parse_resume():
                   'industry_background (e.g. FMCG, Manufacturing, IT), is_mnc (bool). '
                   'Use null for missing strings, 0 for missing numbers.')
     try:
-        resp = requests.post('https://api.deepseek.com/chat/completions',
-            headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
-            json={'model': 'deepseek-chat', 'temperature': 0, 'max_tokens': 1000,
+        resp = call_deepseek(ds_key,
+            {'model': 'deepseek-chat', 'temperature': 0, 'max_tokens': 1000,
                   'messages': [{'role': 'system', 'content': system_msg},
                                 {'role': 'user', 'content': 'Extract from this resume:\n\n' + text[:8000]}],
                   'response_format': {'type': 'json_object'}},
-            timeout=45)
+            timeout=45, endpoint='resume-parse')
     except requests.Timeout:
         return jsonify({'error': 'DeepSeek timeout — try again'}), 504
     except Exception as e:
@@ -2437,12 +2557,11 @@ def parse_naukri_bulk():
         'Separate candidates by looking for new profile headers, numbers, or clear breaks.'
     )
     try:
-        resp = requests.post('https://api.deepseek.com/chat/completions',
-            headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
-            json={'model': 'deepseek-chat', 'temperature': 0, 'max_tokens': 3000,
+        resp = call_deepseek(ds_key,
+            {'model': 'deepseek-chat', 'temperature': 0, 'max_tokens': 3000,
                   'messages': [{'role': 'system', 'content': system_msg},
                                 {'role': 'user', 'content': 'Extract all candidates from:\n\n' + raw}]},
-            timeout=60)
+            timeout=60, endpoint='bulk-parse')
     except requests.Timeout:
         return jsonify({'error': 'DeepSeek timeout — try again'}), 504
     except Exception as e:
@@ -2544,6 +2663,7 @@ def analyse_call(cid):
             headers={'Authorization': 'Bearer ' + groq_key},
             files={'file': (f.filename, file_bytes, mime)},
             data={'model': 'whisper-large-v3', 'language': language,
+                  'response_format': 'verbose_json',
                   'prompt': 'This is a recruiter call with a candidate discussing a job opportunity. '
                             'The conversation may be in Hindi, English, or Hinglish.'},
             timeout=120
@@ -2562,7 +2682,15 @@ def analyse_call(cid):
             err = whisper_resp.text[:200]
         return jsonify({'error': 'Groq transcription error: ' + err}), 500
 
-    transcript = whisper_resp.json().get('text', '').strip()
+    _wjson = whisper_resp.json()
+    transcript = _wjson.get('text', '').strip()
+    # Log transcription cost per tenant (Whisper bills by audio duration).
+    try:
+        log_api_usage('groq', 'whisper-large-v3',
+                      audio_seconds=float(_wjson.get('duration', 0) or 0),
+                      endpoint='transcription')
+    except Exception:
+        pass
     if not transcript:
         return jsonify({'error': 'Whisper returned empty transcript. Check recording quality.'}), 400
 
@@ -2965,13 +3093,12 @@ def public_parse_resume():
                'notice_period (int days), location, key_skills (array max 8). '
                'null for missing strings, 0 for missing numbers.')
     try:
-        resp = requests.post('https://api.deepseek.com/chat/completions',
-            headers={'Authorization': 'Bearer ' + ds_key, 'Content-Type': 'application/json'},
-            json={'model': 'deepseek-chat', 'temperature': 0, 'max_tokens': 800,
+        resp = call_deepseek(ds_key,
+            {'model': 'deepseek-chat', 'temperature': 0, 'max_tokens': 800,
                   'messages': [{'role': 'system', 'content': sys_msg},
                                 {'role': 'user', 'content': 'Extract:\n\n' + text[:8000]}],
                   'response_format': {'type': 'json_object'}},
-            timeout=45)
+            timeout=45, endpoint='extract')
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     if resp.status_code != 200:

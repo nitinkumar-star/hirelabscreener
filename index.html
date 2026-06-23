@@ -4878,7 +4878,57 @@ async function loadAdminSummary() {
   h += '</div>';
 
   h += '</div>';
+
+  // API spend per agency (loaded async below)
+  h += '<div id="api-usage-section" style="margin-top:18px"></div>';
+
+  h += '</div>';
   body.innerHTML = h;
+  loadApiUsage();
+}
+
+async function loadApiUsage(days) {
+  days = days || 30;
+  var sec = document.getElementById('api-usage-section');
+  if (!sec) return;
+  sec.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px">Loading API spend...</div>';
+  var r = await req('GET', '/admin/api-usage?days=' + days);
+  if (!r.ok) { sec.innerHTML = ''; return; }
+
+  var h = '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow-sm)">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:0.5px solid var(--line)">'
+    + '<div style="font-size:13px;font-weight:700;color:var(--navy)">API Spend per Agency</div>'
+    + '<div style="display:flex;align-items:center;gap:10px">'
+    + '<select onchange="loadApiUsage(parseInt(this.value))" style="font-size:11px;padding:3px 6px;border:0.5px solid var(--line);border-radius:6px">'
+    + [7,30,90].map(function(d){return '<option value="'+d+'"'+(d===days?' selected':'')+'>Last '+d+' days</option>';}).join('')
+    + '</select>'
+    + '<span style="font-size:12px;font-weight:700;color:#0F8A6B">Total: $' + (r.grand_total_usd||0).toFixed(2) + '</span>'
+    + '</div></div>';
+
+  if (!r.usage.length) {
+    h += '<div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">No API usage recorded in this period</div>';
+  } else {
+    r.usage.forEach(function(a){
+      var provParts = Object.keys(a.providers).map(function(p){
+        var v = a.providers[p];
+        var detail = v.audio_minutes ? (v.audio_minutes + ' min audio') : ((v.input_tokens+v.output_tokens).toLocaleString() + ' tokens');
+        return p + ': $' + v.cost_usd.toFixed(3) + ' (' + detail + ')';
+      });
+      h += '<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:0.5px solid #f5f5f5">'
+        + avatarHtml(a.company, 34)
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(a.company) + '</div>'
+        + '<div style="font-size:10.5px;color:var(--muted)">' + esc(provParts.join('  ·  ')) + '</div>'
+        + '</div>'
+        + '<div style="text-align:right">'
+        + '<div style="font-size:15px;font-weight:800;color:#0F8A6B">$' + a.total_cost.toFixed(3) + '</div>'
+        + '<div style="font-size:9px;color:var(--muted);text-transform:uppercase">' + a.total_calls + ' calls</div>'
+        + '</div></div>';
+    });
+  }
+  h += '<div style="padding:9px 16px;font-size:10px;color:var(--muted);background:#FAFAFA">Costs are estimates based on configured per-model rates. Token counts are exact.</div>';
+  h += '</div>';
+  sec.innerHTML = h;
 }
 
 function adminStatCard(label, value, color, bg) {
