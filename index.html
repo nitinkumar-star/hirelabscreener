@@ -502,6 +502,22 @@ body{font-size:14px !important; line-height:1.5}
 .sb-gear-sub{font-size:11px !important; margin-top:2px}
 .sb-bottom{padding:8px !important}
 
+/* Mockup-style sidebar nav — restyle .sb-gear (JS toggles this class, keep it working) */
+.sb-logo-box{width:34px;height:34px;border-radius:9px;background:#15966A;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.sb-logo-box span{width:13px;height:13px;border-radius:4px;border:2.5px solid #fff;display:block}
+#sidebar .sb-gear{display:flex !important;align-items:center !important;gap:10px !important;padding:9px 11px !important;margin:1px 8px !important;border-radius:9px !important;cursor:pointer;color:#6B675E !important;font-size:13px !important;font-weight:600;transition:background .15s;white-space:nowrap;background:transparent !important}
+#sidebar .sb-gear:hover{background:#F4F2EC !important}
+#sidebar .sb-gear.active{background:#E8F4EE !important;color:#127A57 !important}
+.sb-nav-ic{width:18px;display:flex;justify-content:center;flex-shrink:0;font-size:14px}
+.sb-nav-badge{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:10.5px;background:#15966A;color:#fff;border-radius:9px;padding:1px 7px}
+.sb-nav-count{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#A29E94}
+.sb-user{border-top:1px solid var(--line);padding:10px 14px;display:flex;align-items:center;gap:10px}
+.sb-user-av{width:30px;height:30px;border-radius:50%;background:#EAE6DE;color:#6B675E;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0}
+.sb-mand-head{display:flex;align-items:center;justify-content:space-between;padding:16px 16px 5px}
+.sb-mand-head .t{font-size:10.5px;font-weight:600;letter-spacing:.9px;color:#B4B0A6}
+.sb-mand-head .a{border:none;background:#F4F2EC;color:#15966A;width:20px;height:20px;border-radius:6px;font-size:14px;line-height:1;cursor:pointer}
+#sidebar.collapsed .sb-gear span:not(.sb-nav-ic),#sidebar.collapsed .sb-nav-badge,#sidebar.collapsed .sb-nav-count{display:none}
+
 /* Top bar — taller, bigger title */
 #topbar{padding:14px 28px !important}
 #topbar-title{font-size:20px !important; font-weight:700 !important; letter-spacing:-.4px}
@@ -581,38 +597,31 @@ body{font-size:14px !important; line-height:1.5}
 <div id="app" style="display:none">
 <button id="sb-reopen" onclick="toggleSidebar()" title="Open sidebar" style="display:none">&#9776;</button>
 <div id="sidebar">
-  <div class="sb-logo" style="display:flex;align-items:center;gap:8px">
-    <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#cdd5e0;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab Screener</div><div class="sb-logo-s">AI Recruitment Tool</div></div>
+  <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
+    <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
+    <div class="sb-logo-box"><span></span></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER</div></div>
   </div>
-  <div class="sb-sec">Mandates</div>
-  <div id="sb-mandates" style="overflow-y:auto;flex:1;min-height:220px"></div>
-  <div class="sb-spacer"></div>
+
+  <div style="padding:6px 0 2px">
+    <div class="sb-gear" id="sb-home" onclick="goHome()"><span class="sb-nav-ic">&#9711;</span><span>Home</span></div>
+    <div class="sb-gear" id="sb-tasks" onclick="openTasks()"><span class="sb-nav-ic">&#10003;</span><span>Today's Tasks</span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></div>
+    <div class="sb-gear" id="sb-ai" onclick="openAI()"><span class="sb-nav-ic">&#10038;</span><span>AI Insights</span></div>
+    <div class="sb-gear" id="sb-central" onclick="openCentralDB()"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></div>
+    <div class="sb-gear" id="sb-responses" onclick="openResponses()"><span class="sb-nav-ic">&#9993;</span><span>Responses</span><span class="sb-nav-count" id="nav-resp-count" style="display:none"></span></div>
+  </div>
+
+  <div class="sb-mand-head"><span class="t">MY MANDATES</span><button class="a" onclick="openModal('modal-mandate')" title="New mandate">+</button></div>
+  <div id="sb-mandates" style="overflow-y:auto;flex:1;min-height:120px"></div>
+
   <div class="sb-bottom">
-    <div class="sb-gear" id="sb-admin" onclick="openAdmin()" style="margin-bottom:4px;display:none">
-      <div class="sb-gear-icon" style="background:rgba(217,122,77,0.35);font-size:12px">&#128202;</div>
-      <div><div class="sb-gear-label">Team Overview</div><div class="sb-gear-sub">Summary &middot; View as user</div></div>
-    </div>
-    <div class="sb-gear" id="sb-ai" onclick="openAI()" style="margin-bottom:4px">
-      <div class="sb-gear-icon" style="background:rgba(139,111,203,0.35);font-size:12px">&#10024;</div>
-      <div><div class="sb-gear-label">AI Insights</div><div class="sb-gear-sub">Smart search &middot; Stats</div></div>
-    </div>
-    <div class="sb-gear" id="sb-tasks" onclick="openTasks()" style="margin-bottom:4px">
-      <div class="sb-gear-icon" style="background:rgba(217,122,77,0.35);font-size:12px">&#9989;</div>
-      <div><div class="sb-gear-label">Today's Tasks</div><div class="sb-gear-sub">Reminders &middot; Follow-ups</div></div>
-    </div>
-    <div class="sb-gear" id="sb-responses" onclick="openResponses()" style="margin-bottom:4px">
-      <div class="sb-gear-icon" style="background:rgba(29,158,117,0.3);font-size:12px">&#128235;</div>
-      <div><div class="sb-gear-label">Responses</div><div class="sb-gear-sub">Submission form &middot; Leads</div></div>
-    </div>
-    <div class="sb-gear" id="sb-central" onclick="openCentralDB()" style="margin-bottom:4px">
-      <div class="sb-gear-icon" style="background:rgba(83,74,183,0.3);font-size:12px">&#128101;</div>
-      <div><div class="sb-gear-label">Central Database</div><div class="sb-gear-sub">All candidates &middot; Search</div></div>
-    </div>
-    <div class="sb-gear" id="sb-gear" onclick="toggleSettings()">
-      <div class="sb-gear-icon">&#9881;</div>
-      <div><div class="sb-gear-label">Settings</div><div class="sb-gear-sub">API Keys &middot; Templates</div></div>
-    </div>
+    <div class="sb-gear" id="sb-admin" onclick="openAdmin()" style="display:none"><span class="sb-nav-ic">&#9672;</span><span>Admin Panel</span><span style="margin-left:auto;font-size:9.5px;font-weight:700;background:#F8EFDD;color:#9A6512;border-radius:6px;padding:2px 6px">ADMIN</span></div>
+    <div class="sb-gear" id="sb-gear" onclick="toggleSettings()"><span class="sb-nav-ic">&#9881;</span><span>Settings</span></div>
+  </div>
+  <div class="sb-user" id="sb-user">
+    <div class="sb-user-av" id="sb-user-av">NK</div>
+    <div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;line-height:1.1;color:var(--ink)" id="sb-user-name">Nitin Kumar</div><div style="font-size:11px;color:#A8A498;margin-top:2px" id="sb-user-role">HireLab Talent</div></div>
+    <button onclick="doLogout()" title="Log out" style="border:none;background:transparent;color:#B4B0A6;font-size:13px;cursor:pointer;padding:4px">&#9211;</button>
   </div>
 </div>
 <div id="sb-resizer" title="Drag to resize"></div>
@@ -1170,8 +1179,8 @@ async function goHome() {
     var b = document.getElementById(id); if (b) b.className = 'sb-gear';
   });
   var g = document.getElementById('sb-gear'); if (g) g.className = 'sb-gear';
+  var hb = document.getElementById('sb-home'); if (hb) hb.className = 'sb-gear active';
   document.getElementById('mandate-view').style.display = 'flex';
-  // Clear active mandate -> renderContent shows the dashboard
   S.activeMandate = null;
   S.selectedCandidateId = null;
   S.settingsOpen = false;
@@ -1452,6 +1461,13 @@ function renderUserBar() {
     + '<button class="btn btn-o" style="font-size:10px;padding:3px 9px;margin-left:4px" onclick="doLogout()">Logout</button>'
     + '</div>';
   bar.innerHTML = h;
+  // Mirror into the mockup-style sidebar footer
+  var av = document.getElementById('sb-user-av');
+  var nm = document.getElementById('sb-user-name');
+  var rl = document.getElementById('sb-user-role');
+  if (nm) nm.textContent = name;
+  if (rl) rl.textContent = (u.role === 'admin' ? 'Admin' : 'Recruiter') + ' \u00b7 HireLab Talent';
+  if (av) { var parts=(name||'U').trim().split(/\s+/); av.textContent=((parts[0]||'')[0]||'')+((parts[1]||'')[0]||''); }
 }
 
 async function doLogout() {
@@ -1518,8 +1534,8 @@ async function selectMandate(id){
 }
 function updateTopbar(){
   const m=S.activeMandate;
-  document.getElementById('topbar-title').textContent=m?m.role+' — '+m.client:'Select a mandate';
-  document.getElementById('topbar-sub').textContent=m?(m.location||'')+(m.division?' · '+m.division:'')+' · CTC '+(m.ctc_min||0)+'–'+(m.ctc_max||0)+' LPA':'';
+  document.getElementById('topbar-title').textContent=m?m.role+' — '+m.client:'Dashboard';
+  document.getElementById('topbar-sub').textContent=m?(m.location||'')+(m.division?' · '+m.division:'')+' · CTC '+(m.ctc_min||0)+'–'+(m.ctc_max||0)+' LPA':'Your mandates and tasks at a glance';
   const pill=document.getElementById('sop-pill');
   if(m&&m.sop_text){pill.textContent='SOP v'+m.sop_version;pill.style.display='';}else pill.style.display='none';
 }
@@ -1568,12 +1584,7 @@ async function renderDashboard(el){
   const totPipeline=statsArr.reduce((a,s)=>a+s.pipeline,0);
   const totPlaced=statsArr.reduce((a,s)=>a+s.placed,0);
 
-  let html='<div style="padding:20px 16px 4px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">'
-    +'<div><div style="font-size:19px;font-weight:700;letter-spacing:-.4px;color:var(--ink)">Mandate Dashboard</div>'
-    +'<div style="font-size:12.5px;color:var(--muted);margin-top:2px">All mandates overview</div></div>'
-    +'<button class="btn btn-g" onclick="openModal(\'modal-mandate\')">+ New Mandate</button>'
-    +'</div>'
-    +'<div style="padding:0 16px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">'
+  let html='<div style="padding:20px 16px 4px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">'
     +[['Active mandates',totActive],['Screened',totScreened],['In pipeline',totPipeline],['Placed',totPlaced]].map(([l,n])=>
       '<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm)">'
       +'<div style="font-size:12px;color:var(--muted);font-weight:500">'+l+'</div>'
@@ -2934,6 +2945,13 @@ async function importAll(input){
 
 // ── MODALS ─────────────────────────────────────────────────────────────────
 function openModal(id){document.getElementById(id).classList.add('open');}
+document.addEventListener('DOMContentLoaded',function(){
+  var sb=document.getElementById('sidebar'); if(!sb) return;
+  sb.addEventListener('click',function(e){
+    var row=e.target.closest('.sb-gear, .sb-item, .m-item, .mandate-item'); if(!row) return;
+    var home=document.getElementById('sb-home'); if(home) home.classList.toggle('active', row.id==='sb-home');
+  });
+});
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.addEventListener('click',e=>{document.querySelectorAll('.modal-bg.open').forEach(m=>{if(e.target===m)m.classList.remove('open');});});
 
@@ -3415,8 +3433,8 @@ function openCentralDB() {
   document.getElementById('cdb-view').style.flexDirection = 'column';
   // Highlight sidebar
   document.querySelectorAll('.sb-item').forEach(function(el) { el.classList.remove('active'); });
-  var sbcdb = document.getElementById('sb-cdb');
-  if (sbcdb) sbcdb.classList.add('active');
+  var sbcdb = document.getElementById('sb-central');
+  if (sbcdb) sbcdb.className = 'sb-gear active';
   S.settingsOpen = false;
   // Populate stage + mandate dropdowns
   populateCDBFilters();
