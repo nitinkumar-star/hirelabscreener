@@ -554,7 +554,8 @@ body{font-size:14px !important; line-height:1.5}
 .prof-list{width:262px !important}
 .prof-list-head{padding:14px 16px !important; font-size:11px !important; letter-spacing:.6px}
 .prof-list-item{padding:12px 16px !important}
-.prof-sticky{padding:14px 22px !important}
+.prof-sticky{padding:16px 22px !important; flex-wrap:wrap !important; gap:12px 16px}
+.prof-sticky select{font-size:12px}
 .prof-section{padding:20px 24px !important}
 .pq-role{font-size:15px !important}
 
@@ -1541,7 +1542,7 @@ async function renderContent(){
 
 // ── DASHBOARD ──────────────────────────────────────────────────────────────
 async function renderDashboard(el){
-  el.style.padding='0'; el.style.overflow='auto'; el.style.background='#f5f5f5';
+  el.style.padding='0'; el.style.overflow='auto'; el.style.background='#FAFAF9';
   if(!S.mandates.length){
     el.innerHTML='<div class="empty-state" style="padding:60px 20px"><div class="empty-icon" style="font-size:48px">&#128640;</div><div class="empty-title" style="font-size:18px;margin-bottom:8px">Welcome to HireLab Screener</div><div class="empty-sub" style="margin-bottom:20px">Create your first mandate to begin AI-powered screening.</div><button class="btn btn-g" style="font-size:13px;padding:10px 22px" onclick="openModal(\'modal-mandate\')">+ Create First Mandate</button></div>';
     return;
@@ -1567,17 +1568,18 @@ async function renderDashboard(el){
   const totPipeline=statsArr.reduce((a,s)=>a+s.pipeline,0);
   const totPlaced=statsArr.reduce((a,s)=>a+s.placed,0);
 
-  let html='<div style="background:#0a2540;padding:18px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
-    +'<div style="flex:1"><div style="color:#fff;font-size:16px;font-weight:600">Mandate Dashboard</div>'
-    +'<div style="color:rgba(255,255,255,.4);font-size:11px;margin-top:2px">All mandates overview</div></div>'
-    +'<div style="display:flex;gap:10px;flex-wrap:wrap">'
-    +[['Active',totActive,'#9FE1CB'],['Screened',totScreened,'#85B7EB'],['Pipeline',totPipeline,'#FAC775'],['Placed',totPlaced,'#1D9E75']].map(([l,n,c])=>
-      '<div style="text-align:center;background:rgba(255,255,255,.07);border-radius:8px;padding:8px 12px;min-width:72px">'
-      +'<div style="font-size:22px;font-weight:600;color:'+c+'">'+n+'</div>'
-      +'<div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:2px">'+l+'</div></div>'
+  let html='<div style="padding:20px 16px 4px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+    +'<div><div style="font-size:19px;font-weight:700;letter-spacing:-.4px;color:var(--ink)">Mandate Dashboard</div>'
+    +'<div style="font-size:12.5px;color:var(--muted);margin-top:2px">All mandates overview</div></div>'
+    +'<button class="btn btn-g" onclick="openModal(\'modal-mandate\')">+ New Mandate</button>'
+    +'</div>'
+    +'<div style="padding:0 16px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">'
+    +[['Active mandates',totActive],['Screened',totScreened],['In pipeline',totPipeline],['Placed',totPlaced]].map(([l,n])=>
+      '<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm)">'
+      +'<div style="font-size:12px;color:var(--muted);font-weight:500">'+l+'</div>'
+      +'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:28px;font-weight:600;letter-spacing:-1px;margin-top:8px;color:var(--ink)">'+n+'</div></div>'
     ).join('')
-    +'<button class="btn btn-g" onclick="openModal(\'modal-mandate\')" style="align-self:center">+ New Mandate</button>'
-    +'</div></div>';
+    +'</div>';
 
   html+='<div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">';
   S.mandates.filter(m=>m.status!=='hold' && m.status!=='closed').forEach(m=>{
@@ -1586,7 +1588,7 @@ async function renderDashboard(el){
     const statusLabel=m.status==='active'?'Active':m.status==='hold'?'On Hold':'Closed';
     const conv=s.total>0?Math.round(s.worth/s.total*100):0;
     html+='<div class="db-mandate-card" onclick="selectMandate('+m.id+')">'
-      +'<div style="padding:12px 14px;border-bottom:0.5px solid #e8e8e8;border-top:3px solid '+dotC+';display:flex;align-items:flex-start;justify-content:space-between;gap:8px">'
+      +'<div style="padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;justify-content:space-between;gap:8px">'
       +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#0a2540;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(m.role)+'</div>'
       +'<div style="font-size:12px;color:#555;margin-top:3px">'+esc(m.client)+'</div>'
       +'<div style="font-size:11px;color:#888;margin-top:2px">'+esc(m.location||'')+(m.division?' &middot; '+esc(m.division):'')+'</div></div>'
@@ -2105,13 +2107,13 @@ async function renderProfiles(el){
       +'</div>';
     cands.forEach(function(c){
       var isActive = c.id === selected.id;
-      listHtml += '<div class="prof-list-item'+(isActive?' active':'')+'" data-pid="'+c.id+'">'
-        +'<div style="font-size:12px;font-weight:500">'+esc(c.name||'')+'</div>'
-        +'<div style="font-size:10px;color:#555;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.company||'')+'</div>'
-        +(c.ctc_current||c.ctc_expected
-          ? '<div style="font-size:9px;color:#888;margin-top:1px">'+(c.ctc_current?'Rs'+c.ctc_current+'L':'')+(c.ctc_expected?' ->Rs'+c.ctc_expected+'L':'')+'</div>'
-          : '')
-        +(c.cv_path?'<span style="font-size:8px;background:#E1F5EE;color:#0F6E56;padding:1px 4px;border-radius:3px;margin-top:2px;display:inline-block">CV</span>':'')
+      listHtml += '<div class="prof-list-item'+(isActive?' active':'')+'" data-pid="'+c.id+'" style="display:flex;align-items:center;gap:10px">'
+        +avatarHtml(c.name, 34)
+        +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:13px;font-weight:600;color:#1B1B18;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.name||'')+'</div>'
+        +'<div style="font-size:11.5px;color:#A8A498;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.company||'')+(c.ctc_current?' \u00b7 '+c.ctc_current+'L':'')+'</div>'
+        +'</div>'
+        +(c.cv_path?'<span style="font-size:9px;font-weight:600;background:#E8F4EE;color:#127A57;padding:2px 6px;border-radius:6px;flex-shrink:0">CV</span>':'')
         +'</div>';
     });
   });
@@ -2231,11 +2233,11 @@ function renderProfileDetail(c){
   html += '<div class="prof-sticky">';
   // Left: avatar + name + small save + stage/response dropdowns
   html += '<div style="display:flex;align-items:flex-start;gap:10px;flex:1;min-width:0">';
-  html += avatarHtml(c.name, 36);
+  html += avatarHtml(c.name, 52);
   html += '<div style="min-width:0;flex:1">';
   // Name row + small Save icon
   html += '<div style="display:flex;align-items:center;gap:8px">';
-  html += '<div style="font-size:14px;font-weight:600">' + esc(c.name||'') + '</div>';
+  html += '<div style="font-size:21px;font-weight:700;letter-spacing:-.4px">' + esc(c.name||'') + '</div>';
   html += '<button class="btn-save-mini" onclick="saveProfile(' + c.id + ')" title="Save All">&#128190;</button>';
   html += '</div>';
   // Stage + Response dropdowns row
@@ -2265,6 +2267,10 @@ function renderProfileDetail(c){
 
   // Right: action buttons (Reminder, WhatsApp dropdown, Email)
   html += '<div style="display:flex;align-items:center;gap:7px;flex-shrink:0;position:relative">';
+  // AI fit ring (matches redesign) — purely visual, uses existing ai_score
+  var _fitSc = c.ai_score||0;
+  var _fitCol = _fitSc>=85?'#15966A':_fitSc>=70?'#2D6FB3':_fitSc>=55?'#9A6512':'#9C988D';
+  if(_fitSc>0) html += '<div style="text-align:center;margin-right:4px"><div style="width:50px;height:50px;border-radius:50%;border:3px solid '+_fitCol+';display:flex;align-items:center;justify-content:center;font-family:\'IBM Plex Mono\',monospace;font-size:17px;font-weight:600;color:'+_fitCol+'">'+_fitSc+'</div><div style="font-size:9px;color:#A8A498;font-weight:600;margin-top:3px;letter-spacing:.3px">AI FIT</div></div>';
   // Reminder
   html += '<button class="btn btn-o" style="position:relative;font-size:11px" onclick="toggleReminderPop(' + c.id + ')">&#9200; Reminder<span id="rem-count-' + c.id + '" class="rem-badge" style="display:none"></span></button>';
   // WhatsApp dropdown
