@@ -416,6 +416,70 @@ button,input,textarea,select{font-family:inherit}
 
 #sb-reopen{position:fixed;left:8px;top:10px;z-index:200;background:#13A37E;color:#fff;border:none;width:34px;height:30px;border-radius:7px;font-size:15px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.25)}
 #app.sb-collapsed #sb-reopen{display:block}
+
+/* ════════════════════════════════════════════════════════════════════════
+   CLEAN-MINIMAL RE-SKIN  ·  HireLab redesign (2026)
+   Append-only override layer. Re-themes tokens + sidebar to a light,
+   airy, emerald palette. No markup or JS touched — fully deployable.
+   ════════════════════════════════════════════════════════════════════════ */
+:root{
+  --navy:#1B1B18; --navy-2:#1B1B18;
+  --teal:#15966A; --teal-deep:#127A57; --teal-soft:#E8F4EE;
+  --copper:#B5703F; --copper-soft:#F4EBE3;
+  --ink:#1B1B18; --muted:#8C887E;
+  --paper:#FAFAF9; --line:#EBE8E1;
+  --shadow-sm:0 1px 2px rgba(40,38,30,.05);
+  --shadow-md:0 6px 22px rgba(40,38,30,.08);
+}
+body{background:var(--paper); color:var(--ink)}
+
+/* ── Sidebar: navy → light ────────────────────────────────────────────── */
+#sidebar{background:#fff !important; border-right:1px solid var(--line)}
+.sb-logo::after{display:none !important}
+.sb-logo{border-bottom:1px solid var(--line) !important}
+.sb-logo button{color:#9C988D !important}
+.sb-logo-t{color:var(--ink) !important; font-weight:700}
+.sb-logo-s{color:#A29E94 !important}
+.sb-sec{color:#B4B0A6 !important}
+.sb-name{color:#3A3833 !important}
+.sb-sub{color:#A8A498 !important}
+.sb-item:hover{background:#F4F2EC !important; transform:none}
+.sb-item.active{background:var(--teal-soft) !important; box-shadow:inset 2.5px 0 0 var(--teal)}
+.sb-status-btn{background:#F1EFE9 !important; color:#9C988D !important}
+.sb-new-btn{border:1px solid var(--line) !important; color:#76746C !important; background:#fff !important}
+.sb-new-btn:hover{background:#F4F2EC !important; color:#3A3833 !important}
+.sb-bottom{border-top:1px solid var(--line) !important}
+.sb-gear:hover{background:#F4F2EC !important}
+.sb-gear.active{background:#F4F2EC !important; box-shadow:inset 2.5px 0 0 var(--teal)}
+.sb-gear-icon{background:#F4F2EC !important; color:#6B675E !important}
+.sb-gear-label{color:#3A3833 !important}
+.sb-gear-sub{color:#A8A498 !important}
+
+/* ── Data bar: navy → light ───────────────────────────────────────────── */
+#data-bar{background:#fff !important; border-bottom:1px solid var(--line)}
+#data-bar > span{color:#A29E94 !important}
+.db-btn{background:#F4F2EC !important; color:#6B675E !important; border:1px solid var(--line) !important}
+.db-btn:hover{background:#EAE6DE !important}
+.db-status{color:#A8A498 !important}
+
+/* ── Surfaces & accents ───────────────────────────────────────────────── */
+#content, .pl-wrap, .prof-list{background:var(--paper) !important}
+#sb-reopen{background:var(--teal) !important}
+#toast{background:var(--ink) !important; border-radius:10px}
+.chat-user{background:var(--ink) !important}
+.chat-ai{background:var(--teal-soft) !important; color:var(--teal-deep) !important}
+
+/* ── Softer geometry to match the redesign ────────────────────────────── */
+.card{border-radius:14px !important; box-shadow:var(--shadow-sm)}
+.db-mandate-card{border-radius:14px !important}
+.btn{border-radius:9px !important; font-weight:600}
+.modal{border-radius:16px !important}
+.inp, .ta, select.inp{border-radius:9px !important}
+.pl-col{border-radius:13px !important; background:#F4F2EC !important; border-color:#F4F2EC !important}
+.pl-col-head{background:transparent !important; border-bottom-color:#E6E2D9 !important}
+.pl-card{border-radius:11px !important}
+.stat-box{border-radius:12px !important}
+.pill-g{background:var(--teal-soft) !important; color:var(--teal-deep) !important}
 </style>
 </head>
 <body>
