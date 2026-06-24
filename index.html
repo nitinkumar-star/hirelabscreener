@@ -673,7 +673,7 @@ body{font-size:14px !important; line-height:1.5}
       </div>
     </div>
     <!-- Results -->
-    <div style="flex:1;overflow-y:auto;background:#f5f5f5" id="cdb-results">
+    <div style="flex:1;overflow-y:auto;background:#FAFAF9;padding:20px" id="cdb-results">
       <div class="loading"><div class="spinner"></div>Loading...</div>
     </div>
   </div>
@@ -754,7 +754,7 @@ body{font-size:14px !important; line-height:1.5}
         <button class="btn btn-o" onclick="closeTasks()">&#10005; Close</button>
       </div>
     </div>
-    <div id="tasks-body" style="flex:1;overflow:auto;background:#f5f5f5;padding:16px"></div>
+    <div id="tasks-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:24px 20px"></div>
   </div>
 
   <div id="mandate-view" style="display:flex;flex:1;flex-direction:column;overflow:hidden">
@@ -2691,8 +2691,8 @@ function renderSettings(){
   const body=document.getElementById('settings-body');if(!body)return;
   const s=S.settings;
   body.innerHTML='<div style="max-width:680px">'
-    +'<div style="background:#0a2540;border-radius:8px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
-    +'<div><div style="color:#fff;font-size:12px;font-weight:500;margin-bottom:2px">&#128190; Export &amp; Import Data</div><div style="color:rgba(255,255,255,.5);font-size:10px">Export before updates &mdash; import after</div></div>'
+    +'<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;box-shadow:var(--shadow-sm)">'
+    +'<div><div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:2px">Export &amp; Import Data</div><div style="color:var(--muted);font-size:11.5px">Export before updates — import after</div></div>'
     +'<div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-g" onclick="exportAll()">&#8595; Export JSON</button><label class="btn btn-o" style="cursor:pointer">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="importAll(this)"></label></div></div>'
     +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Recruiter Details</span></div><div class="card-body">'
     +'<div class="g2"><div class="fg-row"><label>Recruiter Name</label><input class="inp" id="s-name" value="'+esc(s.recruiter_name||'')+'"></div>'
@@ -3500,33 +3500,32 @@ async function searchCDB() {
     var cands = r.candidates || [];
 
     if (!cands.length) {
-      resultsEl.innerHTML = '<div style="padding:40px;text-align:center"><div style="font-size:28px;margin-bottom:10px">&#128269;</div><div style="font-size:13px;font-weight:500;color:#555">No candidates found</div><div style="font-size:11px;color:#888;margin-top:4px">Try different keywords or clear filters</div></div>';
+      resultsEl.innerHTML = '<div style="padding:48px;text-align:center"><div style="font-size:30px;margin-bottom:10px;opacity:.4">&#128269;</div><div style="font-size:13.5px;font-weight:600;color:#3A3833">No candidates found</div><div style="font-size:12px;color:#A8A498;margin-top:4px">Try different keywords or clear filters</div></div>';
       return;
     }
 
-    var out = '<div style="font-size:12px;font-weight:500;color:#555;margin-bottom:10px">' + _cdbTotal + ' candidates found' + (_cdbTotal > 30 ? ' (page ' + _cdbPage + ' of ' + Math.ceil(_cdbTotal/30) + ')' : '') + '</div>';
-    out += '<div style="background:#fff;border:0.5px solid #e8e8e8;border-radius:8px;overflow:auto">';
-    out += '<table style="width:100%;border-collapse:collapse;min-width:680px">';
-    out += '<thead><tr style="background:#f9f9f9;border-bottom:0.5px solid #e8e8e8">';
-    var headers = ['Name / Role', 'Company', 'Phone', 'Exp', 'CTC', 'Exp CTC', 'Notice', 'Source'];
-    headers.forEach(function(h) { out += '<th style="padding:7px 10px;font-size:10px;font-weight:500;color:#888;text-align:left;white-space:nowrap">' + h + '</th>'; });
+    var out = '<div style="font-size:12.5px;font-weight:500;color:var(--muted);margin-bottom:12px">Showing <strong style="color:var(--ink)">' + cands.length + '</strong> of <strong style="color:var(--ink)">' + _cdbTotal + '</strong> candidates' + (_cdbTotal > 30 ? ' \u00b7 page ' + _cdbPage + ' of ' + Math.ceil(_cdbTotal/30) : '') + '</div>';
+    out += '<div style="background:#fff;border:1px solid var(--line);border-radius:13px;overflow:auto;box-shadow:var(--shadow-sm)">';
+    out += '<table style="width:100%;border-collapse:collapse;min-width:720px">';
+    out += '<thead><tr style="background:#FAFAF9;border-bottom:1px solid var(--line)">';
+    var headers = ['NAME', 'COMPANY', 'PHONE', 'EXP', 'CTC', 'EXP CTC', 'NOTICE', 'SOURCE'];
+    headers.forEach(function(h,hi) { out += '<th style="padding:11px 14px;font-size:10.5px;font-weight:600;letter-spacing:.4px;color:var(--muted);text-align:' + (hi>=3&&hi<=6?'center':'left') + ';white-space:nowrap">' + h + '</th>'; });
     out += '</tr></thead><tbody>';
 
     cands.forEach(function(c, idx) {
-      var bg = idx % 2 === 0 ? '#fff' : '#fafafa';
-      var skills = (c.key_skills || []).slice(0, 3).join(', ');
-      out += '<tr style="background:' + bg + ';border-bottom:0.5px solid #f0f0f0">';
-      out += '<td style="padding:8px 10px"><div style="font-size:12px;font-weight:600;color:#0a2540">' + esc(c.name || '') + '</div>';
-      if (c.designation) out += '<div style="font-size:10px;color:#666">' + esc(c.designation) + '</div>';
-      if (skills) out += '<div style="font-size:9px;color:#888">' + esc(skills) + '</div>';
-      out += '</td>';
-      out += '<td style="padding:8px 10px;font-size:11px;font-weight:500;color:#1D9E75">' + esc(c.company || '') + '</td>';
-      out += '<td style="padding:8px 10px;font-size:11px;color:#378ADD">' + esc(c.phone || '&mdash;') + '</td>';
-      out += '<td style="padding:8px 10px;font-size:11px;text-align:center">' + (c.experience ? c.experience + 'y' : '&mdash;') + '</td>';
-      out += '<td style="padding:8px 10px;font-size:11px;text-align:center">' + (c.ctc_current ? 'Rs' + c.ctc_current + 'L' : '&mdash;') + '</td>';
-      out += '<td style="padding:8px 10px;font-size:11px;font-weight:500;color:#1D9E75;text-align:center">' + (c.ctc_expected ? 'Rs' + c.ctc_expected + 'L' : '&mdash;') + '</td>';
-      out += '<td style="padding:8px 10px;font-size:11px;text-align:center">' + (c.notice_period ? c.notice_period + 'd' : '&mdash;') + '</td>';
-      out += '<td style="padding:8px 10px;font-size:10px;color:#888">' + esc(c.mandate_client || 'Central DB') + '</td>';
+      var skills = (c.key_skills || []).slice(0, 3).join(' \u00b7 ');
+      out += '<tr style="border-bottom:1px solid #F1EFE9;cursor:default" onmouseover="this.style.background=\'#FAFAF9\'" onmouseout="this.style.background=\'#fff\'">';
+      out += '<td style="padding:11px 14px"><div style="display:flex;align-items:center;gap:10px;min-width:0">' + avatarHtml(c.name, 30) + '<div style="min-width:0">';
+      out += '<div style="font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(c.name || '') + '</div>';
+      if (c.designation) out += '<div style="font-size:11px;color:#A8A498;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(c.designation) + (skills?' \u00b7 '+esc(skills):'') + '</div>';
+      out += '</div></div></td>';
+      out += '<td style="padding:11px 14px;font-size:12.5px;color:#3A3833;white-space:nowrap">' + esc(c.company || '&mdash;') + '</td>';
+      out += '<td style="padding:11px 14px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#378ADD;white-space:nowrap">' + esc(c.phone || '&mdash;') + '</td>';
+      out += '<td style="padding:11px 14px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#6B675E;text-align:center">' + (c.experience ? c.experience + 'y' : '&mdash;') + '</td>';
+      out += '<td style="padding:11px 14px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#6B675E;text-align:center">' + (c.ctc_current ? c.ctc_current + 'L' : '&mdash;') + '</td>';
+      out += '<td style="padding:11px 14px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;font-weight:600;color:#127A57;text-align:center">' + (c.ctc_expected ? c.ctc_expected + 'L' : '&mdash;') + '</td>';
+      out += '<td style="padding:11px 14px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#6B675E;text-align:center">' + (c.notice_period ? c.notice_period + 'd' : '&mdash;') + '</td>';
+      out += '<td style="padding:11px 14px;font-size:11px;color:#A8A498;white-space:nowrap">' + esc(c.mandate_client || 'Central DB') + '</td>';
       out += '</tr>';
     });
     out += '</tbody></table></div>';
@@ -4498,12 +4497,12 @@ async function renderResponses() {
   var html = '';
 
   // Top bar: link + search
-  html += '<div style="padding:12px 16px;background:#fff;border-bottom:0.5px solid #e8e8e8;flex-shrink:0">';
-  html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">';
-  html += '<div style="font-size:12px;font-weight:500;color:#0a2540">Submission Link:</div>';
-  html += '<div style="font-size:12px;color:#1D9E75;background:#E1F5EE;padding:5px 12px;border-radius:5px;font-family:monospace;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(applyLink) + '</div>';
-  html += '<button class="btn btn-g" style="font-size:11px;flex-shrink:0" onclick="copyApplyLink()">&#128203; Copy Link</button>';
-  html += '<a href="/apply" target="_blank" class="btn btn-o" style="font-size:11px;text-decoration:none;flex-shrink:0">&#128065; Preview Form</a>';
+  html += '<div style="padding:14px 16px;background:#fff;border-bottom:1px solid var(--line);flex-shrink:0">';
+  html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">';
+  html += '<div style="font-size:12.5px;font-weight:600;color:var(--ink)">Application link</div>';
+  html += '<div style="font-size:12px;color:#127A57;background:#E8F4EE;padding:6px 12px;border-radius:8px;font-family:\'IBM Plex Mono\',monospace;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(applyLink) + '</div>';
+  html += '<button class="btn btn-g" style="flex-shrink:0" onclick="copyApplyLink()">&#9112; Copy link</button>';
+  html += '<a href="/apply" target="_blank" class="btn btn-o" style="text-decoration:none;flex-shrink:0">&#128065; Preview</a>';
   html += '</div>';
 
   // Search + Filters
@@ -4529,56 +4528,62 @@ async function renderResponses() {
     return;
   }
 
-  html += '<div style="padding:12px 16px">';
-  html += '<div style="font-size:12px;color:#888;margin-bottom:10px">' + total + ' responses</div>';
+  html += '<div style="padding:16px">';
+  html += '<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px"><strong style="color:var(--ink)">' + total + '</strong> responses</div>';
 
   // Response cards
   subs.forEach(function(s) {
     var statusColors = {
-      'new': '#BA7517', 'reviewed': '#378ADD', 'shortlisted': '#1D9E75',
-      'added_to_pipeline': '#0F6E56', 'rejected': '#E24B4A'
+      'new': '#9A6512', 'reviewed': '#2D6FB3', 'shortlisted': '#127A57',
+      'added_to_pipeline': '#0F6E56', 'rejected': '#B23B3B'
     };
-    var sc = statusColors[s.status] || '#888';
-    var skills = (s.key_skills || []).slice(0, 5).join(', ');
+    var statusBgs = {
+      'new': '#F8EFDD', 'reviewed': '#E9F1FA', 'shortlisted': '#E8F4EE',
+      'added_to_pipeline': '#E1F2EC', 'rejected': '#FBEAEA'
+    };
+    var sc = statusColors[s.status] || '#6B675E';
+    var scbg = statusBgs[s.status] || '#F4F2EC';
+    var skills = (s.key_skills || []).slice(0, 5).join(' \u00b7 ');
     var date = s.created_at ? s.created_at.slice(0,10) : '';
 
-    html += '<div style="background:#fff;border:0.5px solid #e8e8e8;border-radius:8px;margin-bottom:10px;overflow:hidden">';
+    html += '<div style="background:#fff;border:1px solid var(--line);border-radius:13px;margin-bottom:10px;overflow:hidden;box-shadow:var(--shadow-sm)">';
 
     // Header row
-    html += '<div style="padding:10px 14px;display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap">';
+    html += '<div style="padding:14px 16px;display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">';
+    html += avatarHtml(s.name, 38);
     html += '<div style="flex:1;min-width:0">';
     html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
-    html += '<div style="font-size:14px;font-weight:600;color:#0a2540">' + esc(s.name||'') + '</div>';
-    html += '<span style="font-size:10px;padding:2px 8px;border-radius:8px;font-weight:500;background:' + sc + '22;color:' + sc + '">' + esc(s.status||'new') + '</span>';
-    if (s.cv_path) html += '<span style="font-size:9px;background:#E1F5EE;color:#0F6E56;padding:1px 6px;border-radius:4px">CV &#10003;</span>';
+    html += '<div style="font-size:14.5px;font-weight:700;color:var(--ink);white-space:nowrap">' + esc(s.name||'') + '</div>';
+    html += '<span style="font-size:10.5px;padding:2px 9px;border-radius:7px;font-weight:600;background:' + scbg + ';color:' + sc + '">' + esc(s.status||'new') + '</span>';
+    if (s.cv_path) html += '<span style="font-size:9.5px;font-weight:600;background:#E8F4EE;color:#127A57;padding:2px 7px;border-radius:6px">CV &#10003;</span>';
     html += '</div>';
-    html += '<div style="font-size:12px;color:#555;margin-top:3px">' + esc(s.designation||'') + (s.company?' &bull; <strong style="color:#1D9E75">' + esc(s.company) + '</strong>':'') + '</div>';
+    html += '<div style="font-size:12.5px;color:#76746C;margin-top:3px">' + esc(s.designation||'') + (s.company?' \u00b7 <strong style="color:#127A57;font-weight:600">' + esc(s.company) + '</strong>':'') + '</div>';
     html += '</div>';
     html += '<div style="text-align:right;flex-shrink:0">';
-    html += '<div style="font-size:10px;color:#aaa">' + esc(date) + '</div>';
-    html += '<div style="font-size:11px;color:#555;margin-top:3px">';
+    html += '<div style="font-size:11px;color:#A8A498;font-family:\'IBM Plex Mono\',monospace">' + esc(date) + '</div>';
+    html += '<div style="font-size:12px;color:#76746C;margin-top:3px">';
     if (s.experience) html += s.experience + 'y ';
-    if (s.location) html += '&bull; ' + esc(s.location);
+    if (s.location) html += '\u00b7 ' + esc(s.location);
     html += '</div>';
-    if (s.ctc_current) html += '<div style="font-size:10px;color:#1D9E75;font-weight:500">Rs' + s.ctc_current + 'L &rarr; Rs' + (s.ctc_expected||'?') + 'L</div>';
+    if (s.ctc_current) html += '<div style="font-size:11px;color:#127A57;font-weight:600;font-family:\'IBM Plex Mono\',monospace;margin-top:2px">' + s.ctc_current + 'L &rarr; ' + (s.ctc_expected||'?') + 'L</div>';
     html += '</div></div>';
 
     // Skills + contact
-    html += '<div style="padding:6px 14px;border-top:0.5px solid #f0f0f0;display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
-    html += '<span style="font-size:10px;color:#378ADD">&#128222; ' + esc(s.phone||'&mdash;') + '</span>';
-    html += '<span style="font-size:10px;color:#555">&#9993; ' + esc(s.email||'&mdash;') + '</span>';
-    if (skills) html += '<span style="font-size:10px;color:#888">&#128273; ' + esc(skills) + '</span>';
+    html += '<div style="padding:9px 16px;border-top:1px solid #F1EFE9;display:flex;align-items:center;gap:14px;flex-wrap:wrap">';
+    html += '<span style="font-size:11.5px;color:#378ADD;font-family:\'IBM Plex Mono\',monospace">&#128222; ' + esc(s.phone||'&mdash;') + '</span>';
+    html += '<span style="font-size:11.5px;color:#76746C">&#9993; ' + esc(s.email||'&mdash;') + '</span>';
+    if (skills) html += '<span style="font-size:11px;color:#A8A498">&#128273; ' + esc(skills) + '</span>';
     html += '</div>';
 
     // Action buttons
-    html += '<div style="padding:8px 14px;border-top:0.5px solid #f0f0f0;background:#f9f9f9;display:flex;gap:6px;flex-wrap:wrap">';
-    html += '<select class="resp-status-sel" data-sid="' + s.id + '" style="font-size:11px;border:0.5px solid #ddd;border-radius:4px;padding:4px 8px;background:#fff;cursor:pointer">';
+    html += '<div style="padding:10px 16px;border-top:1px solid #F1EFE9;background:#FAFAF9;display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+    html += '<select class="resp-status-sel" data-sid="' + s.id + '" style="font-size:12px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:#fff;cursor:pointer;color:#3A3833">';
     ['new','reviewed','shortlisted','rejected'].forEach(function(st) {
       html += '<option value="' + st + '"' + (s.status===st?' selected':'') + '>' + st + '</option>';
     });
     html += '</select>';
-    html += '<button class="btn btn-g" style="font-size:10px;padding:4px 10px" onclick="addSubToPipeline(' + s.id + ')">+ Add to Pipeline</button>';
-    if (s.cv_path) html += '<a href="/api/cv/' + esc(s.cv_path) + '" target="_blank" class="btn btn-o" style="font-size:10px;text-decoration:none;padding:4px 10px">&#8595; CV</a>';
+    html += '<button class="btn btn-g" style="font-size:12px;padding:6px 13px" onclick="addSubToPipeline(' + s.id + ')">+ Add to pipeline</button>';
+    if (s.cv_path) html += '<a href="/api/cv/' + esc(s.cv_path) + '" target="_blank" class="btn btn-o" style="font-size:12px;text-decoration:none;padding:6px 13px">&#8595; CV</a>';
     html += '</div></div>';
   });
 
