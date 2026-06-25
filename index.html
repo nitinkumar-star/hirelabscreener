@@ -1738,6 +1738,19 @@ async function openProfileById(cid, mandateId) {
 function renderMandateSetup(el){
   const m=S.activeMandate;
   el.style.padding='16px';
+  var adminCard = '';
+  if (S.currentUser && S.currentUser.is_company_admin) {
+    adminCard = '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head"><span style="font-weight:500">Assignment &amp; Job Management</span></div><div class="card-body">'
+      + '<div class="fg-row"><label>Assign this job to recruiter</label>'
+      + '<select id="ms-assign" class="inp" style="width:100%"><option value="">Loading team...</option></select></div>'
+      + '<button class="btn btn-g" style="margin-top:8px" onclick="assignMandateTo()">Save Assignment</button>'
+      + '<div style="margin-top:18px;padding-top:14px;border-top:0.5px solid var(--line)">'
+      + '<div style="font-size:12px;color:#A32D2D;font-weight:600;margin-bottom:6px">Danger zone</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Deleting this job removes the mandate, but its candidates stay safe in your Central Database.</div>'
+      + '<button class="btn btn-o" style="color:#A32D2D;border-color:#E8C4C4" onclick="deleteJob()">&#128465; Delete this Job</button>'
+      + '</div>'
+      + '</div></div>';
+  }
   el.innerHTML='<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">Mandate Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
     +'<div class="g2">'
     +field('ms-client','Client Name',m.client||'')+field('ms-role','Role',m.role||'')
@@ -1746,8 +1759,50 @@ function renderMandateSetup(el){
     +'</div><div class="fg-row"><label>Job Description</label>'
     + buildJDEditor('ms-jd', m.jd||'')
     +'</div>'
-    +'</div></div>';
+    +'</div></div>' + adminCard;
   attachJDToolbar();
+  if (S.currentUser && S.currentUser.is_company_admin) loadTeamForAssign(m.assigned_user_id);
+}
+
+async function loadTeamForAssign(currentAssigned) {
+  var sel = document.getElementById('ms-assign');
+  if (!sel) return;
+  var r = await req('GET', '/my-team');
+  if (!r.ok) { sel.innerHTML = '<option value="">(could not load team)</option>'; return; }
+  sel.innerHTML = '<option value="">— Unassigned —</option>' + r.team.map(function(t){
+    var label = (t.display_name || t.username) + (t.is_company_admin ? ' (admin)' : '');
+    var selected = (t.id === currentAssigned) ? ' selected' : '';
+    return '<option value="' + t.id + '"' + selected + '>' + esc(label) + '</option>';
+  }).join('');
+}
+
+async function assignMandateTo() {
+  var sel = document.getElementById('ms-assign');
+  if (!sel || !S.activeMandate) return;
+  var uid = sel.value ? parseInt(sel.value) : 0;
+  var r = await req('POST', '/mandates/' + S.activeMandate.id + '/assign', {user_id: uid});
+  if (r.ok) {
+    toast('OK', uid ? 'Job assigned' : 'Job unassigned');
+    S.activeMandate.assigned_user_id = uid;
+  } else {
+    toast('ERR', r.error || 'Failed');
+  }
+}
+
+async function deleteJob() {
+  if (!S.activeMandate) return;
+  var m = S.activeMandate;
+  if (!confirm('Delete the job "' + (m.role||'') + ' @ ' + (m.client||'') + '"?\n\nThe job will be removed, but all its candidates will stay in your Central Database.')) return;
+  var r = await req('DELETE', '/mandates/' + m.id);
+  if (r.ok) {
+    toast('OK', 'Job deleted — ' + (r.candidates_kept||0) + ' candidates kept in Central DB');
+    S.activeMandate = null;
+    await loadMandates();
+    location.hash = '';
+    location.reload();
+  } else {
+    toast('ERR', r.error || 'Failed');
+  }
 }
 
 // ── Rich Text JD Editor ─────────────────────────────────────────────────────

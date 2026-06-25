@@ -124,6 +124,23 @@ def is_admin():
     u = current_user()
     return u and u.get('role') == 'admin'
 
+def is_company_admin():
+    """True if the logged-in user can manage their whole company (see all
+    company mandates, assign them, delete jobs). This is the platform owner OR
+    a user flagged as their company's admin. When a super-admin is viewing-as a
+    company, they act as that company's admin."""
+    if session.get('view_as_company'):
+        return True  # super-admin impersonating a tenant acts as its admin
+    u = current_user()
+    if not u:
+        return False
+    return u.get('role') == 'admin' or u.get('is_company_admin') == 1
+
+def real_user_id():
+    """The actual logged-in user id (NOT the company id that effective_user_id
+    returns). Used for per-recruiter mandate assignment."""
+    return session.get('user_id')
+
 def log_activity(action, detail=''):
     try:
         u = current_user()
@@ -233,7 +250,8 @@ def auth_status():
     conn.close()
     return jsonify({'state': 'app', 'user': {
         'id': u['id'], 'username': u['username'], 'display_name': u['display_name'],
-        'role': u['role'], 'company': own_company
+        'role': u['role'], 'company': own_company,
+        'is_company_admin': (u.get('role') == 'admin' or u.get('is_company_admin') == 1)
     }, 'viewing_as': viewing, 'pending_count': pending_count})
 
 
@@ -253,7 +271,7 @@ def auth_setup():
     conn.execute("INSERT INTO companies (name,status,plan,created_at) VALUES (?,?,?,?)",
                  (display_company, 'active', 'owner', ts()))
     company_id = conn.execute('SELECT id FROM companies ORDER BY id DESC LIMIT 1').fetchone()['id']
-    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,company_id) VALUES (?,?,?,?,?,?,?,?)',
+    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,company_id,is_company_admin) VALUES (?,?,?,?,?,?,?,?,1)',
                  (username, hash_password(password), display, 'admin', ts(), 'approved', display_company, company_id))
     conn.commit()
     uid = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()['id']
@@ -300,8 +318,8 @@ def auth_signup():
     conn.execute("INSERT INTO companies (name,status,plan,created_at) VALUES (?,?,?,?)",
                  (company_label, 'pending', 'standard', ts()))
     new_company_id = conn.execute('SELECT id FROM companies ORDER BY id DESC LIMIT 1').fetchone()['id']
-    conn.execute('''INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,requested_at,company_id)
-                     VALUES (?,?,?,?,?,?,?,?,?)''',
+    conn.execute('''INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,requested_at,company_id,is_company_admin)
+                     VALUES (?,?,?,?,?,?,?,?,?,1)''',
                  (username, hash_password(password), display, 'user', ts(), 'pending', company, ts(), new_company_id))
     conn.commit(); conn.close()
     log_activity('signup_requested', username + (' (' + company + ')' if company else ''))
@@ -873,6 +891,23 @@ def init_db():
             c.execute(f'ALTER TABLE {tbl} ADD COLUMN created_by TEXT DEFAULT ""')
         except sqlite3.OperationalError:
             pass
+    # Per-recruiter mandate assignment (within a company) + company-admin flag
+    try:
+        c.execute('ALTER TABLE mandates ADD COLUMN assigned_user_id INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute('ALTER TABLE users ADD COLUMN is_company_admin INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+    # Backfill company-admin: platform super-admins, and the first (lowest-id)
+    # user of each company (the agency's own admin from signup/setup).
+    try:
+        c.execute("UPDATE users SET is_company_admin=1 WHERE role='admin'")
+        c.execute('''UPDATE users SET is_company_admin=1 WHERE id IN (
+            SELECT MIN(id) FROM users WHERE company_id>0 GROUP BY company_id)''')
+    except sqlite3.OperationalError:
+        pass
 
     # Trigger: a candidate inherits its mandate's owner_id automatically, so
     # every insert path (manual, extension, bulk, central-db, import) is covered
@@ -2161,8 +2196,13 @@ def save_settings():
 @login_required
 def list_mandates():
     conn = get_db()
-    rows = conn.execute('SELECT * FROM mandates WHERE owner_id=? ORDER BY created_at DESC',
-                        (effective_user_id(),)).fetchall()
+    if is_company_admin():
+        rows = conn.execute('SELECT * FROM mandates WHERE owner_id=? ORDER BY created_at DESC',
+                            (effective_company_id(),)).fetchall()
+    else:
+        # Recruiter: only mandates assigned to them within their company.
+        rows = conn.execute('SELECT * FROM mandates WHERE owner_id=? AND assigned_user_id=? ORDER BY created_at DESC',
+                            (effective_company_id(), real_user_id())).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
 
@@ -2173,9 +2213,9 @@ def create_mandate():
     if not d.get('client') or not d.get('role'):
         return jsonify({'error': 'Client and Role required'}), 400
     conn = get_db(); c = conn.cursor()
-    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,status,created_at,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,status,created_at,owner_id,assigned_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
               (d['client'], d['role'], d.get('location',''), d.get('division',''),
-               float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('jd',''), 'active', ts(), effective_user_id()))
+               float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('jd',''), 'active', ts(), effective_company_id(), real_user_id()))
     mid = c.lastrowid; conn.commit(); conn.close()
     log_activity('create_mandate', d['role'] + ' @ ' + d['client'])
     return jsonify({'ok': True, 'id': mid})
@@ -2184,9 +2224,81 @@ def create_mandate():
 @login_required
 def get_mandate(mid):
     conn = get_db()
-    r = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?', (mid, effective_user_id())).fetchone()
+    r = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?', (mid, effective_company_id())).fetchone()
     conn.close()
-    return jsonify(dict(r)) if r else (jsonify({'error': 'Not found'}), 404)
+    if not r:
+        return jsonify({'error': 'Not found'}), 404
+    # Recruiters can only open mandates assigned to them.
+    if not is_company_admin() and r['assigned_user_id'] != real_user_id():
+        return jsonify({'error': 'Not found'}), 404
+    return jsonify(dict(r))
+
+
+@app.route('/api/my-team', methods=['GET'])
+@login_required
+def my_team():
+    """Recruiters in the current company (for the assign-to dropdown).
+    Company-admin only."""
+    if not is_company_admin():
+        return jsonify({'error': 'Not allowed'}), 403
+    conn = get_db()
+    rows = conn.execute('''SELECT id, username, display_name, is_company_admin
+                           FROM users WHERE company_id=? AND status='approved'
+                           ORDER BY is_company_admin DESC, id''',
+                        (effective_company_id(),)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'team': [dict(r) for r in rows]})
+
+
+@app.route('/api/mandates/<int:mid>/assign', methods=['POST'])
+@login_required
+def assign_mandate(mid):
+    """Company-admin assigns a mandate to a recruiter in the same company."""
+    if not is_company_admin():
+        return jsonify({'error': 'Only an admin can assign mandates'}), 403
+    d = request.json or {}
+    target = d.get('user_id')
+    conn = get_db()
+    m = conn.execute('SELECT id, role, client FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, effective_company_id())).fetchone()
+    if not m:
+        conn.close(); return jsonify({'error': 'Mandate not found'}), 404
+    # Target must be a user in the same company.
+    u = conn.execute('SELECT id, display_name, username FROM users WHERE id=? AND company_id=?',
+                     (target, effective_company_id())).fetchone()
+    if not u:
+        conn.close(); return jsonify({'error': 'Recruiter not in your company'}), 400
+    conn.execute('UPDATE mandates SET assigned_user_id=? WHERE id=?', (target, mid))
+    conn.commit(); conn.close()
+    log_activity('assign_mandate', f"{m['role']} @ {m['client']} → {u['display_name'] or u['username']}")
+    return jsonify({'ok': True})
+
+
+@app.route('/api/mandates/<int:mid>', methods=['DELETE'])
+@login_required
+def delete_mandate(mid):
+    """Company-admin deletes a job (mandate). Its candidates are NOT deleted —
+    they are detached and kept in the company's Central Database."""
+    if not is_company_admin():
+        return jsonify({'error': 'Only an admin can delete a job'}), 403
+    conn = get_db()
+    m = conn.execute('SELECT id, role, client FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, effective_company_id())).fetchone()
+    if not m:
+        conn.close(); return jsonify({'error': 'Mandate not found'}), 404
+    # Move this mandate's candidates to the company's central pool so they
+    # survive in the Central Database (owner_id already = company, so they stay
+    # visible there). We only repoint mandate_id to avoid a dangling reference.
+    central_mid = get_or_create_central_mandate()
+    kept = conn.execute('SELECT COUNT(*) n FROM candidates WHERE mandate_id=? AND owner_id=?',
+                        (mid, effective_company_id())).fetchone()['n']
+    conn.execute('UPDATE candidates SET mandate_id=? WHERE mandate_id=? AND owner_id=?',
+                 (central_mid, mid, effective_company_id()))
+    conn.execute('DELETE FROM mandates WHERE id=?', (mid,))
+    conn.commit(); conn.close()
+    log_activity('delete_mandate', f"{m['role']} @ {m['client']} (kept {kept} candidates in Central DB)")
+    return jsonify({'ok': True, 'candidates_kept': kept})
+
 
 @app.route('/api/mandates/<int:mid>', methods=['PUT'])
 @login_required
