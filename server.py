@@ -269,8 +269,8 @@ def auth_setup():
         return jsonify({'error': 'Username required and password min 4 chars'}), 400
     conn = get_db()
     display_company = (d.get('company_name') or 'HireLab').strip() or 'HireLab'
-    conn.execute("INSERT INTO companies (name,status,plan,created_at) VALUES (?,?,?,?)",
-                 (display_company, 'active', 'owner', ts()))
+    conn.execute("INSERT INTO companies (name,status,plan,billing_status,created_at) VALUES (?,?,?,?,?)",
+                 (display_company, 'active', 'owner', 'owner', ts()))
     company_id = conn.execute('SELECT id FROM companies ORDER BY id DESC LIMIT 1').fetchone()['id']
     conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,company_id,is_company_admin) VALUES (?,?,?,?,?,?,?,?,1)',
                  (username, hash_password(password), display, 'admin', ts(), 'approved', display_company, company_id))
@@ -684,6 +684,98 @@ def my_billing():
     return jsonify({'ok': True, 'bill': b}) if b else (jsonify({'error': 'No company'}), 404)
 
 
+@app.route('/api/admin/billing/<int:cid>/status', methods=['POST'])
+@admin_required
+def set_billing_status(cid):
+    """Super-admin sets an agency's billing status (active/suspended/trial/past_due)."""
+    d = request.json or {}
+    status = d.get('status', '')
+    if status not in ('active', 'suspended', 'trial', 'past_due'):
+        return jsonify({'error': 'Invalid status'}), 400
+    conn = get_db()
+    comp = conn.execute('SELECT name FROM companies WHERE id=?', (cid,)).fetchone()
+    if not comp:
+        conn.close(); return jsonify({'error': 'Company not found'}), 404
+    # billing_status drives the badge; company.status controls actual login block.
+    company_status = 'suspended' if status == 'suspended' else 'active'
+    conn.execute('UPDATE companies SET billing_status=?, status=? WHERE id=?',
+                 (status, company_status, cid))
+    conn.commit(); conn.close()
+    log_activity('billing_status', f"{comp['name']} → {status}")
+    return jsonify({'ok': True})
+
+
+@app.route('/api/admin/billing/<int:cid>/pay', methods=['POST'])
+@admin_required
+def record_payment(cid):
+    """Record a manual payment (UPI/bank transfer) and activate the agency."""
+    d = request.json or {}
+    conn = get_db()
+    comp = conn.execute('SELECT name FROM companies WHERE id=?', (cid,)).fetchone()
+    if not comp:
+        conn.close(); return jsonify({'error': 'Company not found'}), 404
+    bill = compute_company_bill(cid, 30)
+    amount = float(d.get('amount') or (bill['total_inr'] if bill else 0))
+    note = d.get('note', '')
+    invoice_no = _next_invoice_no(conn)
+    period = datetime.date.today().strftime('%b %Y')
+    conn.execute('''INSERT INTO payments (company_id,invoice_no,amount_inr,period,method,note,created_at)
+                    VALUES (?,?,?,?,?,?,?)''',
+                 (cid, invoice_no, amount, period, d.get('method', 'manual'), note, ts()))
+    # Mark active and clear trial so they're a paying customer now.
+    conn.execute("UPDATE companies SET billing_status='active', status='active' WHERE id=?", (cid,))
+    conn.commit(); conn.close()
+    log_activity('payment', f"{comp['name']} ₹{amount} ({invoice_no})")
+    return jsonify({'ok': True, 'invoice_no': invoice_no, 'amount': amount})
+
+
+def _next_invoice_no(conn):
+    """Sequential invoice number like HL-2026-0001."""
+    yr = datetime.date.today().year
+    n = conn.execute("SELECT COUNT(*) c FROM payments").fetchone()['c'] + 1
+    return f"HL-{yr}-{n:04d}"
+
+
+@app.route('/api/admin/billing/<int:cid>/payments', methods=['GET'])
+@admin_required
+def list_payments(cid):
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM payments WHERE company_id=? ORDER BY created_at DESC', (cid,)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'payments': [dict(r) for r in rows]})
+
+
+@app.route('/api/billing/invoice/<int:cid>', methods=['GET'])
+@login_required
+def billing_invoice(cid):
+    """Invoice data for a company's current bill. Super-admin for any company;
+    a company admin only for their own."""
+    if not is_admin() and not (is_company_admin() and effective_company_id() == cid):
+        return jsonify({'error': 'Not allowed'}), 403
+    bill = compute_company_bill(cid, 30)
+    if not bill:
+        return jsonify({'error': 'No company'}), 404
+    conn = get_db()
+    last = conn.execute('SELECT invoice_no FROM payments WHERE company_id=? ORDER BY id DESC LIMIT 1', (cid,)).fetchone()
+    conn.close()
+    line_items = [{'desc': f"Subscription — {bill['recruiters']} recruiter(s) × ₹{bill['price_per_recruiter']}",
+                   'amount': bill['base_inr']}]
+    if bill['token_inr'] > 0:
+        line_items.append({'desc': 'AI / API usage charges (this period)', 'amount': bill['token_inr']})
+    return jsonify({'ok': True, 'invoice': {
+        'invoice_no': (last['invoice_no'] if last else 'DRAFT'),
+        'date': datetime.date.today().isoformat(),
+        'seller_name': get_setting('billing_legal_name', 'HireLab Talent Resource'),
+        'seller_address': get_setting('billing_address', ''),
+        'seller_gstin': get_setting('billing_gstin', ''),
+        'buyer': bill['company'],
+        'line_items': line_items,
+        'subtotal': bill['subtotal_inr'], 'gst_rate': bill['gst_rate'],
+        'gst': bill['gst_inr'], 'total': bill['total_inr'],
+        'billing_status': bill['billing_status'],
+    }})
+
+
 
 @app.route('/api/admin/summary', methods=['GET'])
 @admin_required
@@ -973,6 +1065,16 @@ def init_db():
             output_tokens INTEGER DEFAULT 0,
             audio_seconds REAL DEFAULT 0,
             cost_usd REAL DEFAULT 0,
+            created_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            invoice_no TEXT DEFAULT '',
+            amount_inr REAL DEFAULT 0,
+            period TEXT DEFAULT '',
+            method TEXT DEFAULT 'manual',
+            note TEXT DEFAULT '',
             created_at TEXT
         );
     """)
@@ -2372,7 +2474,12 @@ def get_settings():
 
 @app.route('/api/settings', methods=['POST'])
 def save_settings():
+    admin = is_admin()
     for k, v in (request.json or {}).items():
+        # Global billing config can only be changed by the platform owner,
+        # so an agency cannot set its own price/GST.
+        if k.startswith('billing_') and not admin:
+            continue
         set_setting(k, v)   # routes per-tenant keys automatically
     return jsonify({'ok': True})
 

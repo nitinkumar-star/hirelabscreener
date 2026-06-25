@@ -2793,9 +2793,51 @@ function renderSettings(){
     ).join('')
     +'<button class="btn btn-g" onclick="saveSettings()">Save All Settings</button>'
     +'<span id="s-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
+    + (S.currentUser && S.currentUser.role==='admin' ? billingConfigHTML(s) : '')
     + (S.currentUser && S.currentUser.role==='admin' ? adminUserMgmtHTML() : '')
     +'</div>';
   if (S.currentUser && S.currentUser.role==='admin') loadUsersList();
+}
+
+function billingConfigHTML(s){
+  function row(id,label,val,ph){return '<div class="fg-row"><label>'+label+'</label><input class="inp" id="'+id+'" value="'+esc(val||'')+'" placeholder="'+(ph||'')+'"></div>';}
+  return '<div style="margin-top:24px;border-top:2px solid #E8E4DC;padding-top:20px">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+    + '<span style="font-size:15px">&#128179;</span>'
+    + '<div style="font-size:15px;font-weight:700;color:var(--navy)">Billing Configuration</div>'
+    + '<span style="font-size:10px;background:#EEE9F8;color:#6B4FA0;padding:2px 8px;border-radius:10px;font-weight:600">ADMIN</span></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">These drive every agency\'s bill and invoices. Token counts are exact; rates are editable.</div>'
+    + '<div class="card"><div class="card-body">'
+    + '<div class="g2">'
+    + row('b-price','Price per recruiter (₹/month)',s.billing_price_per_recruiter||'700')
+    + row('b-trial','Free trial (days)',s.billing_trial_days||'14')
+    + row('b-gst','GST rate (%)',s.billing_gst_rate||'18')
+    + row('b-gstin','Your GSTIN (for invoices)',s.billing_gstin||'','22AAAAA0000A1Z5')
+    + row('b-usdinr','USD → INR rate',s.billing_usd_inr||'88')
+    + row('b-markup','Token markup (1.0 = pass-through)',s.billing_token_markup||'1.0')
+    + '</div>'
+    + row('b-legal','Business legal name (invoice)',s.billing_legal_name||'')
+    + row('b-addr','Business address (invoice)',s.billing_address||'')
+    + '<button class="btn btn-g" style="margin-top:8px" onclick="saveBillingConfig()">Save Billing Config</button>'
+    + '<span id="b-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
+    + '</div></div></div>';
+}
+
+async function saveBillingConfig(){
+  function v(id){var e=document.getElementById(id);return e?e.value.trim():'';}
+  var data={
+    billing_price_per_recruiter:v('b-price')||'700',
+    billing_trial_days:v('b-trial')||'14',
+    billing_gst_rate:v('b-gst')||'18',
+    billing_gstin:v('b-gstin'),
+    billing_usd_inr:v('b-usdinr')||'88',
+    billing_token_markup:v('b-markup')||'1.0',
+    billing_legal_name:v('b-legal'),
+    billing_address:v('b-addr')
+  };
+  var r=await req('POST','/settings',data);
+  if(r.ok){Object.assign(S.settings,data);toast('✅','Billing config saved');var ss=document.getElementById('b-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}
+  else toast('&#9888;&#65039;',r.error||'Save failed');
 }
 
 // ── Admin: User Management section (rendered inside Settings) ──────────────
@@ -5198,18 +5240,79 @@ async function loadBilling() {
       return;
     }
     var trialNote = (b.billing_status==='trial' && b.trial_days_left!=null) ? (' &middot; ' + b.trial_days_left + ' trial days left') : '';
-    h += '<div style="display:flex;align-items:center;gap:14px;padding:11px 16px;border-bottom:0.5px solid #f5f5f5">'
+    var actions = '<div style="display:flex;gap:5px;margin-top:5px;flex-wrap:wrap">'
+      + '<button class="btn btn-g" style="font-size:10px;padding:3px 8px" onclick="markPaid('+b.company_id+','+b.total_inr+')">Mark Paid</button>';
+    if (b.billing_status==='suspended') {
+      actions += '<button class="btn btn-o" style="font-size:10px;padding:3px 8px" onclick="setBillStatus('+b.company_id+',\'active\')">Activate</button>';
+    } else {
+      actions += '<button class="btn btn-o" style="font-size:10px;padding:3px 8px;color:#A32D2D;border-color:#E8C4C4" onclick="setBillStatus('+b.company_id+',\'suspended\')">Suspend</button>';
+    }
+    actions += '<button class="btn btn-o" style="font-size:10px;padding:3px 8px" onclick="showInvoice('+b.company_id+')">Invoice</button>'
+      + '</div>';
+    h += '<div style="padding:11px 16px;border-bottom:0.5px solid #f5f5f5">'
+      + '<div style="display:flex;align-items:center;gap:14px">'
       + avatarHtml(b.company, 32)
       + '<div style="flex:1;min-width:0">'
       + '<div style="font-size:12.5px;font-weight:600;color:var(--navy)">' + esc(b.company) + ' ' + statusBadge(b.billing_status) + '</div>'
       + '<div style="font-size:10.5px;color:var(--muted)">' + b.recruiters + ' recruiters \u00d7 ' + inr(b.price_per_recruiter) + ' = ' + inr(b.base_inr) + ' + tokens ' + inr(b.token_inr) + ' + GST ' + b.gst_rate + '%' + trialNote + '</div>'
       + '</div>'
       + '<div style="text-align:right"><div style="font-size:15px;font-weight:800;color:var(--navy)">' + inr(b.total_inr) + '</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase">per month</div></div>'
-      + '</div>';
+      + '</div>' + actions + '</div>';
   });
   h += '<div style="padding:9px 16px;font-size:10px;color:var(--muted);background:#FAFAFA">Auto-charge via Cashfree activates once your payment gateway is connected. Trials auto-expire after 14 days.</div>';
   h += '</div>';
   sec.innerHTML = h;
+}
+
+async function markPaid(cid, amount) {
+  var note = prompt('Record a payment for this agency.\n\nAmount (₹):', amount);
+  if (note === null) return;
+  var amt = parseFloat(note) || amount;
+  var method = prompt('Payment method? (UPI / Bank Transfer / Cash)', 'UPI') || 'manual';
+  var r = await req('POST', '/admin/billing/' + cid + '/pay', {amount: amt, method: method});
+  if (r.ok) { toast('OK', 'Payment recorded — ' + r.invoice_no); loadBilling(); }
+  else toast('ERR', r.error || 'Failed');
+}
+
+async function setBillStatus(cid, status) {
+  if (status === 'suspended' && !confirm('Suspend this agency? Their users will not be able to log in until reactivated.')) return;
+  var r = await req('POST', '/admin/billing/' + cid + '/status', {status: status});
+  if (r.ok) { toast('OK', status === 'suspended' ? 'Agency suspended' : 'Agency activated'); loadBilling(); }
+  else toast('ERR', r.error || 'Failed');
+}
+
+async function showInvoice(cid) {
+  var r = await req('GET', '/billing/invoice/' + cid);
+  if (!r.ok) { toast('ERR', r.error || 'Failed'); return; }
+  var inv = r.invoice;
+  function inr(n){ return '\u20b9' + (n||0).toLocaleString('en-IN'); }
+  var rows = inv.line_items.map(function(li){
+    return '<tr><td style="padding:8px 10px;border-bottom:1px solid #eee">' + esc(li.desc) + '</td><td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:right">' + inr(li.amount) + '</td></tr>';
+  }).join('');
+  var html = '<div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#1a1a1a">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1D9E75;padding-bottom:14px;margin-bottom:18px">'
+    + '<div><div style="font-size:20px;font-weight:800;color:#1D9E75">' + esc(inv.seller_name) + '</div>'
+    + '<div style="font-size:11px;color:#666">' + esc(inv.seller_address || '') + '</div>'
+    + (inv.seller_gstin ? '<div style="font-size:11px;color:#666">GSTIN: ' + esc(inv.seller_gstin) + '</div>' : '')
+    + '</div>'
+    + '<div style="text-align:right"><div style="font-size:16px;font-weight:700">TAX INVOICE</div>'
+    + '<div style="font-size:11px;color:#666">No: ' + esc(inv.invoice_no) + '</div>'
+    + '<div style="font-size:11px;color:#666">Date: ' + esc(inv.date) + '</div></div></div>'
+    + '<div style="font-size:11px;color:#666;margin-bottom:4px">BILLED TO</div>'
+    + '<div style="font-size:14px;font-weight:600;margin-bottom:16px">' + esc(inv.buyer) + '</div>'
+    + '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:14px">'
+    + '<tr style="background:#f5f5f5"><th style="padding:8px 10px;text-align:left">Description</th><th style="padding:8px 10px;text-align:right">Amount</th></tr>'
+    + rows
+    + '<tr><td style="padding:8px 10px;text-align:right;color:#666">Subtotal</td><td style="padding:8px 10px;text-align:right">' + inr(inv.subtotal) + '</td></tr>'
+    + '<tr><td style="padding:8px 10px;text-align:right;color:#666">GST @ ' + inv.gst_rate + '%</td><td style="padding:8px 10px;text-align:right">' + inr(inv.gst) + '</td></tr>'
+    + '<tr style="font-weight:800;font-size:15px"><td style="padding:10px;text-align:right">TOTAL</td><td style="padding:10px;text-align:right;color:#1D9E75">' + inr(inv.total) + '</td></tr>'
+    + '</table>'
+    + '<div style="font-size:10px;color:#999;text-align:center;margin-top:20px">This is a computer-generated invoice.</div>'
+    + '<div style="text-align:center;margin-top:18px" class="no-print"><button onclick="window.print()" style="background:#1D9E75;color:#fff;border:none;padding:9px 20px;border-radius:7px;cursor:pointer;font-size:13px">Print / Save PDF</button></div>'
+    + '</div>';
+  var w = window.open('', '_blank');
+  w.document.write('<html><head><title>Invoice ' + inv.invoice_no + '</title><style>@media print{.no-print{display:none}}</style></head><body>' + html + '</body></html>');
+  w.document.close();
 }
 
 async function loadApiUsage(days) {
