@@ -2375,7 +2375,7 @@ function renderProfileDetail(c){
   html += '</div>';
   html += '</div>';
   // Email
-  html += '<button class="prof-email-btn btn" data-cid="' + c.id + '" style="font-size:11px;background:#0a2540;color:#fff;border:none">&#9993; Email</button>';
+  html += '<button class="btn" onclick="openEmailPanel(' + c.id + ',\'' + esc(c.email || '').replace(/'/g, "\\'") + '\')" style="font-size:11px;background:#0a2540;color:#fff;border:none">&#9993; Email</button>';
   html += '</div>';
 
   html += '</div>';  // end prof-sticky
@@ -2803,12 +2803,36 @@ function renderSettings(){
       +(t.timing?'<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#666">Send after <input class="inp" id="s-'+t.timing+'" type="number" value="'+(s[t.timing]||8)+'" style="width:55px;text-align:center"> hrs after '+t.from+'</div>':'<span style="font-size:10px;color:#888">Immediate</span>')+'</div>'
       +'<div style="padding:10px 14px"><textarea class="ta" id="s-'+t.key+'" rows="4">'+esc(s[t.key]||'')+'</textarea></div></div>'
     ).join('')
+    + emailConfigHTML(s)
     +'<button class="btn btn-g" onclick="saveSettings()">Save All Settings</button>'
     +'<span id="s-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
     + (S.currentUser && S.currentUser.role==='admin' ? billingConfigHTML(s) : '')
     + (S.currentUser && S.currentUser.role==='admin' ? adminUserMgmtHTML() : '')
     +'</div>';
   if (S.currentUser && S.currentUser.role==='admin') loadUsersList();
+}
+
+function emailConfigHTML(s){
+  return '<div style="margin:18px 0;border-top:2px solid #534AB7;padding-top:16px">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+    + '<span style="font-size:15px">&#9993;&#65039;</span>'
+    + '<div style="font-size:15px;font-weight:700;color:var(--navy)">Email Configuration</div></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5">'
+    + 'Connect your Gmail to send emails directly from the ATS. Each agency can set their own email.'
+    + '</div>'
+    + '<div class="card"><div class="card-body">'
+    + '<div class="fg-row"><label>Gmail Address</label><input class="inp" id="s-smtp_email" value="' + esc(s.smtp_email||'') + '" placeholder="you@gmail.com"></div>'
+    + '<div class="fg-row"><label>App Password</label><input class="inp" id="s-smtp_app_password" type="password" value="' + esc(s.smtp_app_password||'') + '" placeholder="xxxx xxxx xxxx xxxx"></div>'
+    + '<div class="fg-row"><label>Display Name (optional)</label><input class="inp" id="s-smtp_display_name" value="' + esc(s.smtp_display_name||'') + '" placeholder="e.g. HireLab Talent"></div>'
+    + '<div style="background:#F3F8FF;border:0.5px solid #C5DEFF;border-radius:8px;padding:12px;margin-top:10px;font-size:11px;color:#1565C0;line-height:1.6">'
+    + '<div style="font-weight:700;margin-bottom:4px">&#128273; Gmail App Password kaise banayein:</div>'
+    + '1. Google Account → <b>Security</b> → <b>2-Step Verification</b> ON karein<br>'
+    + '2. Phir <b>Security → App passwords</b> par jaayen<br>'
+    + '3. App name daalein (e.g. "HireLab ATS") → <b>Create</b> dabayein<br>'
+    + '4. Jo 16-character password mile, woh upar paste karein<br>'
+    + '<div style="margin-top:6px;color:#0D47A1">&#128279; <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:#0D47A1;text-decoration:underline">Direct link: Google App Passwords</a></div>'
+    + '</div>'
+    + '</div></div></div>';
 }
 
 function billingConfigHTML(s){
@@ -2946,7 +2970,7 @@ async function deleteUser(uid, username) {
 }
 async function saveSettings(){
   const wf=(document.querySelector('input[name="wfmode"]:checked')||{}).value||'agency';
-  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf};
+  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name')};
   const r=await req('POST','/settings',data);
   if(r.ok){S.settings=data;toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }
@@ -3123,7 +3147,7 @@ async function saveStatusTags(cid){
 function _journeyIcon(t){
   return ({'user-plus':'\u2795','arrow-right':'\ud83d\udd04','brand-whatsapp':'\ud83d\udcac',
     'message-dots':'\u2705','bell':'\u23f0','check':'\u2714\ufe0f','tag':'\ud83c\udff7\ufe0f',
-    'phone':'\ud83d\udcde','note':'\ud83d\udcdd','point':'\u2022'})[t] || '\u2022';
+    'phone':'\ud83d\udcde','note':'\ud83d\udcdd','mail':'\u2709\ufe0f','point':'\u2022'})[t] || '\u2022';
 }
 function _journeyColor(c){
   return ({gray:'#888780',purple:'#534AB7',green:'#639922',teal:'#1D9E75',
@@ -3224,6 +3248,99 @@ function closeJourney(){
   var main=document.getElementById('main');
   if(main){ main.style.marginRight=''; }
   document.removeEventListener('mousedown', _journeyOutside);
+}
+
+// ── Email Compose Side Panel ──────────────────────────────────────────────
+function openEmailPanel(cid, candidateEmail){
+  // Close journey if open
+  closeJourney();
+  S._emailCid = cid;
+  var drawer = document.getElementById('email-drawer');
+  if(!drawer){
+    drawer = document.createElement('div');
+    drawer.id = 'email-drawer';
+    drawer.style.cssText = 'position:fixed;top:0;right:0;height:100%;width:420px;max-width:92vw;background:#fff;border-left:0.5px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.08);z-index:9000;transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column';
+    document.body.appendChild(drawer);
+  }
+  var smtpConfigured = !!(S.settings && S.settings.smtp_email);
+  var setupWarning = smtpConfigured ? '' :
+    '<div style="background:#FFF3E0;border:0.5px solid #FFCC80;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:11.5px;color:#E65100">'
+    + '&#9888;&#65039; Email not configured yet. Go to <b>Settings → Email Configuration</b> and add your Gmail address + App Password.'
+    + '</div>';
+
+  drawer.innerHTML = '<div style="padding:14px 16px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'
+    + '<div style="font-size:14px;font-weight:600;color:var(--navy);display:flex;align-items:center;gap:7px">&#9993;&#65039; Compose Email</div>'
+    + '<button onclick="closeEmailPanel()" style="background:none;border:none;font-size:20px;color:#999;cursor:pointer;line-height:1">&times;</button></div>'
+    + '<div style="flex:1;overflow-y:auto;padding:16px">'
+    + setupWarning
+    + '<div style="margin-bottom:12px"><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">To</label>'
+    + '<input id="email-to" class="inp" value="' + esc(candidateEmail || '') + '" placeholder="candidate@email.com"></div>'
+    + '<div style="margin-bottom:12px"><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">Subject</label>'
+    + '<input id="email-subject" class="inp" placeholder="e.g. Opportunity at Siemens — PLC Engineer"></div>'
+    + '<div style="margin-bottom:12px"><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">Message</label>'
+    + '<textarea id="email-body" class="ta" rows="10" placeholder="Dear Candidate,\n\nI am reaching out regarding..." style="font-size:13px;line-height:1.5;resize:vertical;min-height:150px"></textarea></div>'
+    + '<div style="display:flex;gap:8px;align-items:center">'
+    + '<button id="email-send-btn" onclick="sendEmailFromPanel()" class="btn btn-g" style="font-size:13px;padding:9px 22px">&#128228; Send Email</button>'
+    + '<span id="email-send-status" style="font-size:11.5px;color:var(--muted)"></span></div>'
+    + '<div style="margin-top:16px;font-size:10.5px;color:var(--muted);line-height:1.5">'
+    + 'Sent emails are logged in the candidate\'s journey timeline. Replies are not auto-captured yet — you can add them manually via the Journey comment box.'
+    + '</div></div>';
+
+  var main = document.getElementById('main');
+  if(main && window.innerWidth > 900){ main.style.transition = 'margin-right .22s ease'; main.style.marginRight = '420px'; }
+  requestAnimationFrame(function(){ drawer.style.transform = 'translateX(0)'; });
+  setTimeout(function(){ document.addEventListener('mousedown', _emailOutside); }, 50);
+
+  // Focus on subject if to is already filled
+  setTimeout(function(){
+    var subj = document.getElementById('email-subject');
+    if(subj && candidateEmail) subj.focus();
+  }, 300);
+}
+
+function _emailOutside(e){
+  var drawer = document.getElementById('email-drawer');
+  if(drawer && !drawer.contains(e.target)) closeEmailPanel();
+}
+
+function closeEmailPanel(){
+  var d = document.getElementById('email-drawer');
+  if(d) d.style.transform = 'translateX(100%)';
+  var main = document.getElementById('main');
+  if(main) main.style.marginRight = '';
+  document.removeEventListener('mousedown', _emailOutside);
+}
+
+async function sendEmailFromPanel(){
+  var cid = S._emailCid;
+  if(!cid) return;
+  var to = (document.getElementById('email-to') || {}).value || '';
+  var subject = (document.getElementById('email-subject') || {}).value || '';
+  var body = (document.getElementById('email-body') || {}).value || '';
+  if(!to.trim() || !subject.trim() || !body.trim()){
+    toast('ERR', 'To, Subject aur Message teenon zaroori hain'); return;
+  }
+  var btn = document.getElementById('email-send-btn');
+  var status = document.getElementById('email-send-status');
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending...'; }
+  if(status) status.textContent = '';
+
+  var r = await req('POST', '/candidates/' + cid + '/send-email', {to: to.trim(), subject: subject.trim(), body: body.trim()});
+
+  if(r.ok){
+    toast('OK', 'Email sent successfully!');
+    if(status){ status.textContent = '✅ Sent!'; status.style.color = '#1D9E75'; }
+    if(btn){ btn.textContent = '✅ Sent'; }
+    // Clear body for next email, keep subject
+    var bodyEl = document.getElementById('email-body');
+    if(bodyEl) bodyEl.value = '';
+    // Auto-close after a moment
+    setTimeout(function(){ closeEmailPanel(); }, 1500);
+  } else {
+    toast('ERR', r.error || 'Email send failed');
+    if(status){ status.textContent = r.error || 'Failed'; status.style.color = '#E24B4A'; }
+    if(btn){ btn.disabled = false; btn.textContent = '📨 Send Email'; }
+  }
 }
 
 function wfMode(){ return (S.settings && S.settings.workflow_mode) || (S.currentUser && S.currentUser.workflow_mode) || 'agency'; }

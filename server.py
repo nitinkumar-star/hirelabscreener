@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify, send_file, Response
 from flask_cors import CORS
-import sqlite3, json, os, datetime, requests, shutil, io, re
+import sqlite3, json, os, datetime, requests, shutil, io, re, smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 try:
     import pdfplumber
@@ -1979,6 +1981,7 @@ TENANT_SETTINGS = {
     'template_msg1', 'template_fu1', 'template_fu2',
     'fu1_hours', 'fu2_hours',
     'workflow_mode',   # 'agency' (default) or 'corporate'
+    'smtp_email', 'smtp_app_password', 'smtp_display_name',
 }
 
 def _safe_company_id():
@@ -2643,6 +2646,64 @@ def list_candidates(mid):
         out.append(d)
     return jsonify(out)
 
+@app.route('/api/candidates/<int:cid>/send-email', methods=['POST'])
+@login_required
+def send_candidate_email(cid):
+    """Send an email to a candidate via the user's configured SMTP (Gmail app-password).
+    Logs the sent email to the candidate journey."""
+    d = request.json or {}
+    to_email = (d.get('to') or '').strip()
+    subject = (d.get('subject') or '').strip()
+    body = (d.get('body') or '').strip()
+    if not to_email or not subject or not body:
+        return jsonify({'error': 'To, Subject and Body are required'}), 400
+
+    smtp_email = get_setting('smtp_email', '')
+    smtp_pass = get_setting('smtp_app_password', '')
+    smtp_name = get_setting('smtp_display_name', '') or smtp_email
+    if not smtp_email or not smtp_pass:
+        return jsonify({'error': 'Email not configured. Go to Settings → Email Configuration and add your Gmail + App Password.'}), 400
+
+    # Build the email
+    msg = MIMEMultipart('alternative')
+    msg['From'] = f'{smtp_name} <{smtp_email}>' if smtp_name else smtp_email
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    # Send as both plain text and simple HTML (for line breaks)
+    msg.attach(MIMEText(body, 'plain', 'utf-8'))
+    html_body = body.replace('\n', '<br>')
+    msg.attach(MIMEText(f'<div style="font-family:sans-serif;font-size:14px">{html_body}</div>', 'html', 'utf-8'))
+
+    # Detect SMTP server from email domain
+    if '@gmail' in smtp_email.lower() or '@googlemail' in smtp_email.lower():
+        smtp_host, smtp_port = 'smtp.gmail.com', 587
+    elif '@outlook' in smtp_email.lower() or '@hotmail' in smtp_email.lower() or '@live' in smtp_email.lower():
+        smtp_host, smtp_port = 'smtp-mail.outlook.com', 587
+    elif '@yahoo' in smtp_email.lower():
+        smtp_host, smtp_port = 'smtp.mail.yahoo.com', 587
+    else:
+        smtp_host, smtp_port = 'smtp.gmail.com', 587  # default to Gmail
+
+    try:
+        server = smtplib.SMTP(smtp_host, smtp_port, timeout=15)
+        server.starttls()
+        server.login(smtp_email, smtp_pass)
+        server.sendmail(smtp_email, [to_email], msg.as_string())
+        server.quit()
+    except smtplib.SMTPAuthenticationError:
+        return jsonify({'error': 'Email authentication failed. Check your email address and app password in Settings.'}), 401
+    except Exception as e:
+        return jsonify({'error': f'Failed to send email: {str(e)}'}), 500
+
+    # Log to candidate journey
+    u = current_user()
+    who = (u.get('display_name') or u.get('username') or '') if u else ''
+    preview = (subject[:60] + '…') if len(subject) > 60 else subject
+    log_candidate_event(cid, 'email', f'Email sent — "{preview}" to {to_email}' + (f' by {who}' if who else ''))
+
+    return jsonify({'ok': True, 'message': 'Email sent successfully'})
+
+
 @app.route('/api/candidates/<int:cid>/note', methods=['POST'])
 @login_required
 def add_candidate_note(cid):
@@ -2692,8 +2753,8 @@ def candidate_journey(cid):
             add(r['due_at'], 'Reminder completed — ' + note, 'check', 'teal')
     # Logged events (tags added, call analysed, etc.)
     for e in conn.execute('SELECT * FROM candidate_events WHERE candidate_id=? ORDER BY created_at', (cid,)).fetchall():
-        icon = {'tag': 'tag', 'call': 'phone', 'note': 'note'}.get(e['event_type'], 'point')
-        color = {'tag': 'gray', 'call': 'teal', 'note': 'blue'}.get(e['event_type'], 'gray')
+        icon = {'tag': 'tag', 'call': 'phone', 'note': 'note', 'email': 'mail'}.get(e['event_type'], 'point')
+        color = {'tag': 'gray', 'call': 'teal', 'note': 'blue', 'email': 'purple'}.get(e['event_type'], 'gray')
         add(e['created_at'], e['detail'], icon, color)
     conn.close()
 
