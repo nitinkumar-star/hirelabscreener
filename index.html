@@ -2173,11 +2173,17 @@ async function renderProfiles(el){
       +'</div>';
     cands.forEach(function(c){
       var isActive = c.id === selected.id;
+      var _lst = []; try { _lst = JSON.parse(c.status_tags||'[]'); } catch(e){ _lst = []; }
+      var tagChips = _lst.slice(0,3).map(function(t){
+        var col = _tagColor(t);
+        return '<span style="font-size:8.5px;font-weight:600;color:'+col+';background:'+col+'18;padding:1px 5px;border-radius:7px;white-space:nowrap">'+esc(t)+'</span>';
+      }).join(' ');
       listHtml += '<div class="prof-list-item'+(isActive?' active':'')+'" data-pid="'+c.id+'" style="display:flex;align-items:center;gap:10px">'
         +avatarHtml(c.name, 34)
         +'<div style="flex:1;min-width:0">'
         +'<div style="font-size:13px;font-weight:600;color:#1B1B18;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.name||'')+'</div>'
         +'<div style="font-size:11.5px;color:#A8A498;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.company||'')+(c.ctc_current?' \u00b7 '+c.ctc_current+'L':'')+'</div>'
+        +(tagChips?'<div style="margin-top:3px;display:flex;gap:3px;flex-wrap:wrap">'+tagChips+'</div>':'')
         +'</div>'
         +(c.cv_path?'<span style="font-size:9px;font-weight:600;background:#E8F4EE;color:#127A57;padding:2px 6px;border-radius:6px;flex-shrink:0">CV</span>':'')
         +'</div>';
@@ -2306,6 +2312,12 @@ function renderProfileDetail(c){
   html += '<div style="font-size:21px;font-weight:700;letter-spacing:-.4px">' + esc(c.name||'') + '</div>';
   html += '<button class="btn-save-mini" onclick="saveProfile(' + c.id + ')" title="Save All">&#128190;</button>';
   html += '</div>';
+  // Status tags (quick call-outcome labels) — right under the name
+  var _stags = [];
+  try { _stags = JSON.parse(c.status_tags || '[]'); } catch(e) { _stags = []; }
+  S.statusTags = S.statusTags || {};
+  S.statusTags[c.id] = _stags;
+  html += '<div id="status-tags-' + c.id + '" style="margin-top:6px">' + statusTagsInner(c.id) + '</div>';
   // Stage + Response dropdowns row
   html += '<div style="margin-top:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
   // Stage
@@ -3050,6 +3062,63 @@ async function importAll(input){
 }
 
 // ── MODALS ─────────────────────────────────────────────────────────────────
+// ── Candidate status tags (quick call-outcome labels) ─────────────────────
+var STATUS_TAG_PRESETS = [
+  {t:'No Answer', c:'#9C988D'}, {t:'Call Later', c:'#BA7517'},
+  {t:'Switched Off', c:'#9C988D'}, {t:'Busy', c:'#BA7517'},
+  {t:'Will Callback', c:'#2D6FB3'}, {t:'Wrong Number', c:'#E24B4A'},
+  {t:'Not Interested', c:'#E24B4A'}, {t:'Interested', c:'#1D9E75'},
+  {t:'Asked to Send JD', c:'#2D6FB3'}, {t:'Ringing', c:'#9C988D'}
+];
+function _tagColor(t){
+  var f = STATUS_TAG_PRESETS.filter(function(p){return p.t===t;})[0];
+  return f ? f.c : '#6B4FA0';
+}
+function statusTagsInner(cid){
+  var tags = (S.statusTags && S.statusTags[cid]) || [];
+  var h = '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">';
+  tags.forEach(function(t){
+    var col = _tagColor(t);
+    h += '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;color:'+col+';background:'+col+'18;border:0.5px solid '+col+'55;padding:2px 7px;border-radius:11px">'
+      + esc(t)
+      + '<span onclick="removeStatusTag('+cid+',\''+esc(t).replace(/'/g,"")+'\')" style="cursor:pointer;font-weight:700;opacity:.7">&times;</span></span>';
+  });
+  h += '<span style="position:relative;display:inline-block">'
+    + '<button onclick="toggleStatusTagPop('+cid+')" style="font-size:10.5px;font-weight:600;color:#6B4FA0;background:#fff;border:1px dashed #C9C2E0;padding:2px 9px;border-radius:11px;cursor:pointer">+ Tag</button>'
+    + '<div id="stag-pop-'+cid+'" style="display:none;position:absolute;top:24px;left:0;z-index:50;background:#fff;border:0.5px solid var(--line);border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.13);padding:7px;width:180px">'
+    + STATUS_TAG_PRESETS.map(function(p){
+        return '<div onclick="addStatusTag('+cid+',\''+p.t+'\')" style="font-size:11.5px;padding:5px 8px;border-radius:6px;cursor:pointer;color:'+p.c+';font-weight:600" onmouseover="this.style.background=\''+p.c+'14\'" onmouseout="this.style.background=\'transparent\'">'+p.t+'</div>';
+      }).join('')
+    + '<div style="border-top:0.5px solid #eee;margin-top:5px;padding-top:6px"><input id="stag-custom-'+cid+'" placeholder="Custom tag + Enter" onkeydown="if(event.key===\'Enter\'){addStatusTag('+cid+',this.value);this.value=\'\';}" style="width:100%;font-size:11px;border:0.5px solid var(--line);border-radius:6px;padding:4px 7px"></div>'
+    + '</div></span>';
+  h += '</div>';
+  return h;
+}
+function toggleStatusTagPop(cid){
+  var p = document.getElementById('stag-pop-'+cid);
+  if(p) p.style.display = (p.style.display==='none') ? 'block' : 'none';
+}
+function _rerenderStatusTags(cid){
+  var box = document.getElementById('status-tags-'+cid);
+  if(box) box.innerHTML = statusTagsInner(cid);
+}
+async function addStatusTag(cid, tag){
+  tag = (tag||'').trim();
+  if(!tag) return;
+  S.statusTags = S.statusTags || {}; S.statusTags[cid] = S.statusTags[cid] || [];
+  if(S.statusTags[cid].indexOf(tag) === -1) S.statusTags[cid].push(tag);
+  _rerenderStatusTags(cid);
+  await saveStatusTags(cid);
+}
+async function removeStatusTag(cid, tag){
+  S.statusTags[cid] = (S.statusTags[cid]||[]).filter(function(t){return t!==tag;});
+  _rerenderStatusTags(cid);
+  await saveStatusTags(cid);
+}
+async function saveStatusTags(cid){
+  await req('POST', '/candidates/'+cid+'/tags', {tag_type:'status', tags:(S.statusTags[cid]||[])});
+}
+
 function wfMode(){ return (S.settings && S.settings.workflow_mode) || (S.currentUser && S.currentUser.workflow_mode) || 'agency'; }
 function wfL(){
   var corp = wfMode()==='corporate';

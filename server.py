@@ -1188,6 +1188,7 @@ def init_db():
     for col, defn in [
         ('product_handles', 'TEXT DEFAULT "[]"'),
         ('function_tags', 'TEXT DEFAULT "[]"'),
+        ('status_tags', 'TEXT DEFAULT "[]"'),
     ]:
         try:
             c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {defn}')
@@ -2390,7 +2391,7 @@ def get_tag_suggestions(tag_type):
     """Return distinct tags used across all candidates for autocomplete.
     tag_type: 'product' (Product Handles) or 'function' (Function)
     """
-    col_map = {'product': 'product_handles', 'function': 'function_tags'}
+    col_map = {'product': 'product_handles', 'function': 'function_tags', 'status': 'status_tags'}
     col = col_map.get(tag_type)
     if not col:
         return jsonify({'ok': False, 'error': 'Invalid tag type'}), 400
@@ -2438,7 +2439,7 @@ def save_candidate_tags(cid):
     d = request.json or {}
     tag_type = d.get('tag_type')
     tags = d.get('tags', [])
-    col_map = {'product': 'product_handles', 'function': 'function_tags'}
+    col_map = {'product': 'product_handles', 'function': 'function_tags', 'status': 'status_tags'}
     col = col_map.get(tag_type)
     if not col:
         return jsonify({'ok': False, 'error': 'Invalid tag type'}), 400
