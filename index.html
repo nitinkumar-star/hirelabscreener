@@ -5128,9 +5128,58 @@ async function loadAdminSummary() {
   // API spend per agency (loaded async below)
   h += '<div id="api-usage-section" style="margin-top:18px"></div>';
 
+  // Billing per agency (loaded async)
+  h += '<div id="billing-section" style="margin-top:18px"></div>';
+
   h += '</div>';
   body.innerHTML = h;
   loadApiUsage();
+  loadBilling();
+}
+
+async function loadBilling() {
+  var sec = document.getElementById('billing-section');
+  if (!sec) return;
+  sec.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px">Loading billing...</div>';
+  var r = await req('GET', '/admin/billing');
+  if (!r.ok) { sec.innerHTML = ''; return; }
+
+  function inr(n){ return '\u20b9' + (n||0).toLocaleString('en-IN'); }
+  function statusBadge(s){
+    var map = {trial:['#FFF3E6','#9A6A1F','TRIAL'], active:['#E6F6F1','#0F8A6B','PAID'],
+               past_due:['#FCEBEB','#A32D2D','PAST DUE'], owner:['#EEE9F8','#6B4FA0','OWNER'],
+               suspended:['#FCEBEB','#A32D2D','SUSPENDED']};
+    var m = map[s] || ['#F0F0F0','#666',s.toUpperCase()];
+    return '<span style="font-size:9px;background:'+m[0]+';color:'+m[1]+';padding:1px 7px;border-radius:7px;font-weight:700">'+m[2]+'</span>';
+  }
+
+  var h = '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow-sm)">'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:0.5px solid var(--line)">'
+    + '<div style="font-size:13px;font-weight:700;color:var(--navy)">Billing &amp; Subscriptions</div>'
+    + '<span style="font-size:12px;font-weight:700;color:#0F8A6B">Monthly revenue: ' + inr(r.monthly_revenue_inr) + '</span>'
+    + '</div>';
+
+  r.bills.forEach(function(b){
+    if (b.is_owner) {
+      h += '<div style="display:flex;align-items:center;gap:14px;padding:11px 16px;border-bottom:0.5px solid #f5f5f5;opacity:.7">'
+        + avatarHtml(b.company, 32)
+        + '<div style="flex:1"><div style="font-size:12.5px;font-weight:600;color:var(--navy)">' + esc(b.company) + ' ' + statusBadge('owner') + '</div>'
+        + '<div style="font-size:10.5px;color:var(--muted)">Your own agency — not billed</div></div></div>';
+      return;
+    }
+    var trialNote = (b.billing_status==='trial' && b.trial_days_left!=null) ? (' &middot; ' + b.trial_days_left + ' trial days left') : '';
+    h += '<div style="display:flex;align-items:center;gap:14px;padding:11px 16px;border-bottom:0.5px solid #f5f5f5">'
+      + avatarHtml(b.company, 32)
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="font-size:12.5px;font-weight:600;color:var(--navy)">' + esc(b.company) + ' ' + statusBadge(b.billing_status) + '</div>'
+      + '<div style="font-size:10.5px;color:var(--muted)">' + b.recruiters + ' recruiters \u00d7 ' + inr(b.price_per_recruiter) + ' = ' + inr(b.base_inr) + ' + tokens ' + inr(b.token_inr) + ' + GST ' + b.gst_rate + '%' + trialNote + '</div>'
+      + '</div>'
+      + '<div style="text-align:right"><div style="font-size:15px;font-weight:800;color:var(--navy)">' + inr(b.total_inr) + '</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase">per month</div></div>'
+      + '</div>';
+  });
+  h += '<div style="padding:9px 16px;font-size:10px;color:var(--muted);background:#FAFAFA">Auto-charge via Cashfree activates once your payment gateway is connected. Trials auto-expire after 14 days.</div>';
+  h += '</div>';
+  sec.innerHTML = h;
 }
 
 async function loadApiUsage(days) {

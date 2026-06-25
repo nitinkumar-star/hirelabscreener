@@ -346,6 +346,15 @@ def approve_pending_user(uid):
         return jsonify({'error': 'User not found'}), 404
     conn.execute("UPDATE users SET status='approved' WHERE id=?", (uid,))
     if u['company_id']:
+        # Activate the company and start its free trial.
+        try:
+            trial_days = int(get_setting('billing_trial_days', '14') or 14)
+        except Exception:
+            trial_days = 14
+        trial_end = (datetime.datetime.now() + datetime.timedelta(days=trial_days)).isoformat()
+        conn.execute("UPDATE companies SET status='active', billing_status='trial', trial_ends_at=? WHERE id=? AND (trial_ends_at IS NULL OR trial_ends_at='')",
+                     (trial_end, u['company_id']))
+        # If trial was already set (re-approval), just activate.
         conn.execute("UPDATE companies SET status='active' WHERE id=?", (u['company_id'],))
     conn.commit(); conn.close()
     log_activity('approve_user', u['username'])
@@ -385,10 +394,21 @@ def auth_login():
     # Block login if the tenant company is suspended (super-admin can suspend
     # an agency e.g. for non-payment). The platform owner is never blocked.
     if u['role'] != 'admin' and u['company_id']:
-        comp = conn.execute('SELECT status FROM companies WHERE id=?', (u['company_id'],)).fetchone()
+        comp = conn.execute('SELECT status, billing_status, trial_ends_at, plan FROM companies WHERE id=?', (u['company_id'],)).fetchone()
         if comp and comp['status'] == 'suspended':
             conn.close()
             return jsonify({'error': 'Your agency account is currently suspended. Please contact support.'}), 403
+        # Trial expiry: if on trial and the trial period has passed without
+        # converting to a paid subscription, block until they subscribe.
+        if comp and comp['plan'] != 'owner' and comp['billing_status'] == 'trial' and comp['trial_ends_at']:
+            try:
+                te = datetime.datetime.fromisoformat(comp['trial_ends_at'])
+                if datetime.datetime.now() > te:
+                    conn.execute("UPDATE companies SET billing_status='past_due' WHERE id=?", (u['company_id'],))
+                    conn.commit(); conn.close()
+                    return jsonify({'error': 'Your free trial has ended. Please subscribe to continue using HireLab.'}), 402
+            except Exception:
+                pass
     conn.execute('UPDATE users SET last_login=? WHERE id=?', (ts(), u['id']))
     conn.commit(); conn.close()
     session['user_id'] = u['id']
@@ -584,7 +604,86 @@ def admin_api_usage():
                     'usage': out})
 
 
-# ── Super-Admin: per-tenant (company) summary + activity ──────────────────
+def compute_company_bill(company_id, days=30):
+    """Compute one company's bill: (recruiters x price) + token charges (API
+    cost passed through, USD→INR x markup), then GST. The platform owner's own
+    company is never billed."""
+    conn = get_db()
+    comp = conn.execute('SELECT * FROM companies WHERE id=?', (company_id,)).fetchone()
+    if not comp:
+        conn.close(); return None
+    recruiters = conn.execute("SELECT COUNT(*) n FROM users WHERE company_id=? AND status='approved'",
+                              (company_id,)).fetchone()['n']
+    since = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
+    token_usd = conn.execute('SELECT COALESCE(SUM(cost_usd),0) c FROM api_usage WHERE company_id=? AND created_at>=?',
+                             (company_id, since)).fetchone()['c'] or 0
+    conn.close()
+
+    price = int(get_setting('billing_price_per_recruiter', '700') or 700)
+    usd_inr = float(get_setting('billing_usd_inr', '88') or 88)
+    markup = float(get_setting('billing_token_markup', '1.0') or 1.0)
+    gst_rate = float(get_setting('billing_gst_rate', '18') or 18)
+
+    base = recruiters * price
+    token_inr = round(token_usd * usd_inr * markup, 2)
+    subtotal = round(base + token_inr, 2)
+    gst = round(subtotal * gst_rate / 100.0, 2)
+    total = round(subtotal + gst, 2)
+
+    trial_left = None
+    if comp['trial_ends_at']:
+        try:
+            te = datetime.datetime.fromisoformat(comp['trial_ends_at'])
+            trial_left = max(0, (te - datetime.datetime.now()).days)
+        except Exception:
+            trial_left = None
+
+    return {
+        'company_id': company_id, 'company': comp['name'],
+        'billing_status': comp['billing_status'], 'status': comp['status'],
+        'recruiters': recruiters, 'price_per_recruiter': price,
+        'base_inr': base, 'token_usd': round(token_usd, 4), 'token_inr': token_inr,
+        'subtotal_inr': subtotal, 'gst_rate': gst_rate, 'gst_inr': gst, 'total_inr': total,
+        'trial_ends_at': comp['trial_ends_at'], 'trial_days_left': trial_left,
+        'is_owner': (comp['plan'] == 'owner' or comp['billing_status'] == 'owner'),
+    }
+
+
+@app.route('/api/admin/billing', methods=['GET'])
+@admin_required
+def admin_billing():
+    """Super-admin billing dashboard: every agency's monthly bill + status."""
+    try:
+        days = int(request.args.get('days', 30))
+    except Exception:
+        days = 30
+    conn = get_db()
+    ids = [r['id'] for r in conn.execute('SELECT id FROM companies ORDER BY id').fetchall()]
+    conn.close()
+    bills = []
+    revenue = 0.0
+    for cid in ids:
+        b = compute_company_bill(cid, days)
+        if not b:
+            continue
+        bills.append(b)
+        if not b['is_owner'] and b['billing_status'] in ('active', 'past_due'):
+            revenue += b['total_inr']
+    return jsonify({'ok': True, 'days': days, 'monthly_revenue_inr': round(revenue, 2),
+                    'gstin': get_setting('billing_gstin', ''), 'bills': bills})
+
+
+@app.route('/api/billing/me', methods=['GET'])
+@login_required
+def my_billing():
+    """An agency admin sees their own current bill + trial status."""
+    if not is_company_admin():
+        return jsonify({'error': 'Not allowed'}), 403
+    b = compute_company_bill(effective_company_id(), 30)
+    return jsonify({'ok': True, 'bill': b}) if b else (jsonify({'error': 'No company'}), 404)
+
+
+
 @app.route('/api/admin/summary', methods=['GET'])
 @admin_required
 def admin_summary():
@@ -729,7 +828,12 @@ def init_db():
             plan TEXT DEFAULT 'standard',
             created_at TEXT,
             expires_at TEXT DEFAULT '',
-            notes TEXT DEFAULT ''
+            notes TEXT DEFAULT '',
+            billing_status TEXT DEFAULT 'trial',
+            trial_ends_at TEXT DEFAULT '',
+            price_per_recruiter INTEGER DEFAULT 700,
+            cf_subscription_id TEXT DEFAULT '',
+            gstin TEXT DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -876,6 +980,15 @@ def init_db():
         ('template_msg1', 'Hi {Name}, this is {RecruiterName} from HireLab. I wanted to speak about a {Position} opportunity at {Location}.\n\nIf you are interested, please suggest the best time to connect.'),
         ('template_fu1', 'Hi {Name}, I had messaged you earlier about a {Position} role at {Location}.\n\nJust following up — would love to connect for a quick 10-minute call.\n\nLooking forward to hearing from you!'),
         ('template_fu2', 'Hi {Name}, this is my last follow up regarding the {Position} opportunity at {Location}.\n\nIf the timing is not right, no worries. But do let me know if you would like to explore this.\n\nHave a great day!'),
+        # ── Billing config (super-admin editable) ──
+        ('billing_price_per_recruiter', '700'),   # INR per recruiter / month
+        ('billing_trial_days', '14'),
+        ('billing_usd_inr', '88'),                # rate to convert API cost USD→INR
+        ('billing_token_markup', '1.0'),          # multiplier on pass-through token cost
+        ('billing_gst_rate', '18'),               # GST % on the invoice
+        ('billing_gstin', ''),                    # your GST number (for invoices)
+        ('billing_legal_name', 'HireLab Talent Resource'),
+        ('billing_address', 'Ghaziabad / NCR, India'),
     ]
     for k, v in defaults:
         c.execute('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)', (k, v))
@@ -898,6 +1011,24 @@ def init_db():
         pass
     try:
         c.execute('ALTER TABLE users ADD COLUMN is_company_admin INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+    # Billing columns on companies (for existing DBs)
+    for col, defn in [
+        ('billing_status', "TEXT DEFAULT 'trial'"),
+        ('trial_ends_at', "TEXT DEFAULT ''"),
+        ('price_per_recruiter', 'INTEGER DEFAULT 700'),
+        ('cf_subscription_id', "TEXT DEFAULT ''"),
+        ('gstin', "TEXT DEFAULT ''"),
+    ]:
+        try:
+            c.execute(f'ALTER TABLE companies ADD COLUMN {col} {defn}')
+        except sqlite3.OperationalError:
+            pass
+    # The platform owner's own company (the first one) is not on trial — it's
+    # the owner, mark it active so the owner never bills themselves.
+    try:
+        c.execute("UPDATE companies SET billing_status='owner' WHERE plan='owner'")
     except sqlite3.OperationalError:
         pass
     # Backfill company-admin: platform super-admins, and the first (lowest-id)
