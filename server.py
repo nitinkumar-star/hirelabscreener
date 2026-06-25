@@ -2643,6 +2643,20 @@ def list_candidates(mid):
         out.append(d)
     return jsonify(out)
 
+@app.route('/api/candidates/<int:cid>/note', methods=['POST'])
+@login_required
+def add_candidate_note(cid):
+    """Add a free-text comment to the candidate's journey."""
+    text = (request.json or {}).get('text', '').strip()
+    if not text:
+        return jsonify({'error': 'Empty comment'}), 400
+    u = current_user()
+    who = (u.get('display_name') or u.get('username') or '') if u else ''
+    detail = text + (' — ' + who if who else '')
+    log_candidate_event(cid, 'note', detail)
+    return jsonify({'ok': True})
+
+
 @app.route('/api/candidates/<int:cid>/journey')
 def candidate_journey(cid):
     """Aggregate a candidate's full journey from every real event source,

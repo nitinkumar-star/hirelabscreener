@@ -3131,22 +3131,46 @@ function _journeyTime(iso){
   try{return new Date(iso).toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit'}).toLowerCase();}catch(e){return '';}
 }
 async function openJourney(cid){
+  S._journeyCid = cid;
   var drawer=document.getElementById('journey-drawer');
   if(!drawer){
     drawer=document.createElement('div');
     drawer.id='journey-drawer';
-    drawer.style.cssText='position:fixed;top:0;right:0;height:100%;width:370px;max-width:88vw;background:#fff;border-left:0.5px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.10);z-index:9000;transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column';
+    drawer.style.cssText='position:fixed;top:0;right:0;height:100%;width:370px;max-width:90vw;background:#fff;border-left:0.5px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.08);z-index:9000;transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column';
     document.body.appendChild(drawer);
   }
-  drawer.innerHTML='<div style="padding:14px 16px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between">'
+  drawer.innerHTML='<div style="padding:14px 16px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'
     +'<div style="font-size:14px;font-weight:600;color:var(--navy);display:flex;align-items:center;gap:7px">&#128205; Candidate Journey</div>'
     +'<button onclick="closeJourney()" style="background:none;border:none;font-size:20px;color:#999;cursor:pointer;line-height:1">&times;</button></div>'
-    +'<div id="journey-body" style="flex:1;overflow-y:auto;padding:16px"><div style="color:var(--muted);font-size:12px">Loading journey...</div></div>';
+    +'<div id="journey-body" style="flex:1;overflow-y:auto;padding:16px"><div style="color:var(--muted);font-size:12px">Loading journey...</div></div>'
+    +'<div style="border-top:0.5px solid var(--line);padding:10px 12px;flex-shrink:0;background:#FAFAF8">'
+    +'<div style="display:flex;gap:7px;align-items:flex-end">'
+    +'<textarea id="journey-comment" rows="1" placeholder="Write a comment..." onkeydown="journeyCommentKey(event)" oninput="this.style.height=\'auto\';this.style.height=Math.min(this.scrollHeight,80)+\'px\'" style="flex:1;resize:none;border:0.5px solid var(--line);border-radius:9px;padding:8px 10px;font-size:12.5px;font-family:inherit;max-height:80px"></textarea>'
+    +'<button onclick="sendJourneyComment()" style="background:#1D9E75;color:#fff;border:none;border-radius:9px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0">Send</button>'
+    +'</div></div>';
+
+  // Shrink the main content so the panel does NOT overlap it (wide screens only)
+  var main=document.getElementById('main');
+  if(main && window.innerWidth>900){ main.style.transition='margin-right .22s ease'; main.style.marginRight='370px'; }
   requestAnimationFrame(function(){ drawer.style.transform='translateX(0)'; });
+
+  // Close when clicking outside the drawer
+  setTimeout(function(){ document.addEventListener('mousedown', _journeyOutside); }, 50);
+
+  await loadJourneyBody(cid);
+}
+
+function _journeyOutside(e){
+  var drawer=document.getElementById('journey-drawer');
+  if(drawer && !drawer.contains(e.target)){ closeJourney(); }
+}
+
+async function loadJourneyBody(cid){
   var r=await req('GET','/candidates/'+cid+'/journey');
   var body=document.getElementById('journey-body');
+  if(!body) return;
   if(!r.ok||!r.events||!r.events.length){
-    body.innerHTML='<div style="color:var(--muted);font-size:12px;text-align:center;padding:20px">No journey events yet.</div>';
+    body.innerHTML='<div style="color:var(--muted);font-size:12px;text-align:center;padding:20px">No journey events yet. Add a comment below to start.</div>';
     return;
   }
   var html=''; var lastDate='';
@@ -3168,9 +3192,28 @@ async function openJourney(cid){
   if(lastDate!=='') html+='</div>';
   body.innerHTML=html;
 }
+
+function journeyCommentKey(e){
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendJourneyComment(); }
+}
+async function sendJourneyComment(){
+  var ta=document.getElementById('journey-comment');
+  var cid=S._journeyCid;
+  if(!ta||!cid) return;
+  var text=ta.value.trim();
+  if(!text) return;
+  ta.value=''; ta.style.height='auto';
+  var r=await req('POST','/candidates/'+cid+'/note',{text:text});
+  if(r.ok){ await loadJourneyBody(cid); }
+  else toast('ERR', r.error||'Failed');
+}
+
 function closeJourney(){
   var d=document.getElementById('journey-drawer');
   if(d){ d.style.transform='translateX(100%)'; }
+  var main=document.getElementById('main');
+  if(main){ main.style.marginRight=''; }
+  document.removeEventListener('mousedown', _journeyOutside);
 }
 
 function wfMode(){ return (S.settings && S.settings.workflow_mode) || (S.currentUser && S.currentUser.workflow_mode) || 'agency'; }
