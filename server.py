@@ -1045,6 +1045,13 @@ def init_db():
             created_at TEXT DEFAULT '',
             FOREIGN KEY (candidate_id) REFERENCES candidates(id)
         );
+        CREATE TABLE IF NOT EXISTS candidate_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_id INTEGER NOT NULL,
+            event_type TEXT DEFAULT '',
+            detail TEXT DEFAULT '',
+            created_at TEXT DEFAULT ''
+        );
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT DEFAULT ''
@@ -1298,6 +1305,17 @@ def migrate_old():
                     if os.path.isfile(src) and not os.path.exists(dst):
                         shutil.copy2(src, dst)
             break
+
+def log_candidate_event(cid, event_type, detail=''):
+    """Record a journey event (tag added, call analysed, etc.) for a candidate."""
+    try:
+        conn = get_db()
+        conn.execute('INSERT INTO candidate_events (candidate_id,event_type,detail,created_at) VALUES (?,?,?,?)',
+                     (cid, event_type, detail, ts()))
+        conn.commit(); conn.close()
+    except Exception as e:
+        print(f'log_candidate_event warning: {e}')
+
 
 def daily_backup():
     """Snapshot the DB once per day. NEVER snapshot an empty DB over an existing
@@ -2449,6 +2467,8 @@ def save_candidate_tags(cid):
     conn = get_db()
     conn.execute(f'UPDATE candidates SET {col}=?, updated_at=? WHERE id=?', (json.dumps(tags), ts(), cid))
     conn.commit(); conn.close()
+    if tag_type == 'status' and tags:
+        log_candidate_event(cid, 'tag', 'Tag updated — ' + ', '.join(tags))
     return jsonify({'ok': True, 'tags': tags})
 
 @app.route('/api/health')
@@ -2622,6 +2642,51 @@ def list_candidates(mid):
         except: d['secondary_skills'] = []
         out.append(d)
     return jsonify(out)
+
+@app.route('/api/candidates/<int:cid>/journey')
+def candidate_journey(cid):
+    """Aggregate a candidate's full journey from every real event source,
+    newest first. Each event: {ts, type, text, icon, color}."""
+    conn = get_db()
+    c = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not c:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    ev = []
+    def add(t, text, icon, color):
+        if t:
+            ev.append({'ts': t, 'text': text, 'icon': icon, 'color': color})
+
+    # Sourced / created
+    add(c['created_at'], 'Candidate added to pipeline', 'user-plus', 'gray')
+    # Stage changes
+    for h in conn.execute('SELECT * FROM stage_history WHERE candidate_id=? ORDER BY created_at', (cid,)).fetchall():
+        frm = h['from_stage'] or '—'
+        add(h['created_at'], f"Stage changed — {frm} to {h['to_stage']}", 'arrow-right', 'purple')
+    # WhatsApp sends
+    add(c['msg1_sent_at'], 'WhatsApp intro sent', 'brand-whatsapp', 'green')
+    add(c['fu1_sent_at'], 'WhatsApp follow up 1 sent', 'brand-whatsapp', 'green')
+    add(c['fu2_sent_at'], 'WhatsApp follow up 2 sent', 'brand-whatsapp', 'green')
+    # WhatsApp / call response
+    if c['wa_response']:
+        rmap = {'interested': 'Interested', 'callback': 'Callback', 'not_interested': 'Not interested', 'no_reply': 'No reply'}
+        add(c['wa_response_at'] or c['updated_at'], 'Response logged — ' + rmap.get(c['wa_response'], c['wa_response']), 'message-dots', 'teal')
+    # Reminders
+    for r in conn.execute('SELECT * FROM reminders WHERE candidate_id=? ORDER BY created_at', (cid,)).fetchall():
+        note = (r['note'] or 'Reminder')
+        add(r['created_at'], 'Reminder set — ' + note, 'bell', 'amber')
+        if r['done']:
+            add(r['due_at'], 'Reminder completed — ' + note, 'check', 'teal')
+    # Logged events (tags added, call analysed, etc.)
+    for e in conn.execute('SELECT * FROM candidate_events WHERE candidate_id=? ORDER BY created_at', (cid,)).fetchall():
+        icon = {'tag': 'tag', 'call': 'phone', 'note': 'note'}.get(e['event_type'], 'point')
+        color = {'tag': 'gray', 'call': 'teal', 'note': 'blue'}.get(e['event_type'], 'gray')
+        add(e['created_at'], e['detail'], icon, color)
+    conn.close()
+
+    ev = [x for x in ev if x['ts']]
+    ev.sort(key=lambda x: x['ts'], reverse=True)
+    return jsonify({'ok': True, 'events': ev})
+
 
 @app.route('/api/candidates/<int:cid>')
 def get_candidate(cid):
@@ -3218,6 +3283,8 @@ def analyse_call(cid):
                   'Call analysed. Interest: ' + analysis.get('interest_level','') + '. Rec: ' + analysis.get('recommendation','') + '. ' + analysis.get('next_step','') + (' | Updated: ' + upd_summary if upd_summary else ''),
                   ts()))
     conn.commit(); conn.close()
+    _interest = analysis.get('interest_level', '')
+    log_candidate_event(cid, 'call', 'Call analysed' + (' — interest: ' + _interest if _interest else '') + (' · updated ' + upd_summary if upd_summary else ''))
 
     return jsonify({
         'ok': True,
