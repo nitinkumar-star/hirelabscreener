@@ -251,7 +251,8 @@ def auth_status():
     return jsonify({'state': 'app', 'user': {
         'id': u['id'], 'username': u['username'], 'display_name': u['display_name'],
         'role': u['role'], 'company': own_company,
-        'is_company_admin': (u.get('role') == 'admin' or u.get('is_company_admin') == 1)
+        'is_company_admin': (u.get('role') == 'admin' or u.get('is_company_admin') == 1),
+        'workflow_mode': (get_setting('workflow_mode', 'agency') or 'agency')
     }, 'viewing_as': viewing, 'pending_count': pending_count})
 
 
@@ -955,6 +956,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS tenant_settings (
+            company_id INTEGER NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT DEFAULT '',
+            PRIMARY KEY (company_id, key)
         );
         CREATE TABLE IF NOT EXISTS api_usage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1844,6 +1851,21 @@ import math
 GEMINI_EMBED_URL = ('https://generativelanguage.googleapis.com/v1beta/'
                     'models/gemini-embedding-001:embedContent')
 
+# Settings that are PER-COMPANY (each tenant has their own). Everything else
+# (billing config, pricing, central ids, API keys) stays global.
+TENANT_SETTINGS = {
+    'recruiter_name', 'company_name',
+    'template_msg1', 'template_fu1', 'template_fu2',
+    'fu1_hours', 'fu2_hours',
+    'workflow_mode',   # 'agency' (default) or 'corporate'
+}
+
+def _safe_company_id():
+    try:
+        return effective_company_id() or 0
+    except Exception:
+        return 0
+
 def get_setting(key, default=''):
     # Env var takes priority for sensitive keys (see _ENV_KEY_MAP)
     env_name = _ENV_KEY_MAP.get(key)
@@ -1852,9 +1874,33 @@ def get_setting(key, default=''):
         if env_val:
             return env_val
     conn = get_db()
+    # Per-tenant keys: prefer this company's own value, else fall back to the
+    # global row (which acts as the default seed).
+    if key in TENANT_SETTINGS:
+        cid = _safe_company_id()
+        if cid:
+            tr = conn.execute('SELECT value FROM tenant_settings WHERE company_id=? AND key=?',
+                              (cid, key)).fetchone()
+            if tr is not None:
+                conn.close()
+                return (tr['value'] or '') or default
     row = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
     conn.close()
     return (row['value'] if row else '') or default
+
+def set_setting(key, value):
+    """Write a setting. Per-tenant keys go to this company's own row; global
+    keys go to the shared settings table."""
+    conn = get_db()
+    if key in TENANT_SETTINGS:
+        cid = _safe_company_id()
+        if cid:
+            conn.execute('INSERT OR REPLACE INTO tenant_settings (company_id,key,value) VALUES (?,?,?)',
+                         (cid, key, str(value)))
+            conn.commit(); conn.close()
+            return
+    conn.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (key, str(value)))
+    conn.commit(); conn.close()
 
 def gemini_embed(text, api_key):
     """Return a list[float] embedding for the given text via Gemini, or None."""
@@ -2311,15 +2357,23 @@ def health():
 def get_settings():
     conn = get_db()
     rows = conn.execute('SELECT key,value FROM settings').fetchall()
+    out = {r['key']: r['value'] for r in rows}
+    # Overlay this company's own per-tenant settings on top of the global defaults.
+    cid = _safe_company_id()
+    if cid:
+        trows = conn.execute('SELECT key,value FROM tenant_settings WHERE company_id=?', (cid,)).fetchall()
+        for r in trows:
+            out[r['key']] = r['value']
     conn.close()
-    return jsonify({r['key']: r['value'] for r in rows})
+    # Ensure workflow_mode is always present so the UI can branch on it.
+    if 'workflow_mode' not in out or not out.get('workflow_mode'):
+        out['workflow_mode'] = 'agency'
+    return jsonify(out)
 
 @app.route('/api/settings', methods=['POST'])
 def save_settings():
-    conn = get_db()
     for k, v in (request.json or {}).items():
-        conn.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (k, str(v)))
-    conn.commit(); conn.close()
+        set_setting(k, v)   # routes per-tenant keys automatically
     return jsonify({'ok': True})
 
 # Mandates

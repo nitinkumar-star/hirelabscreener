@@ -1753,7 +1753,7 @@ function renderMandateSetup(el){
   }
   el.innerHTML='<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">Mandate Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
     +'<div class="g2">'
-    +field('ms-client','Client Name',m.client||'')+field('ms-role','Role',m.role||'')
+    +field('ms-client',wfL().client,m.client||'')+field('ms-role','Role',m.role||'')
     +field('ms-loc','Location',m.location||'')+field('ms-div','Division',m.division||'')
     +numfield('ms-cmin','CTC Min (LPA)',m.ctc_min||'')+numfield('ms-cmax','CTC Max (LPA)',m.ctc_max||'')
     +'</div><div class="fg-row"><label>Job Description</label>'
@@ -2757,6 +2757,14 @@ function renderSettings(){
   const body=document.getElementById('settings-body');if(!body)return;
   const s=S.settings;
   body.innerHTML='<div style="max-width:680px">'
+    +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Workspace Type</span></div><div class="card-body">'
+    +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Choose how this workspace works. <b>Agency</b> = you recruit for client companies. <b>Corporate</b> = you hire for your own company.</div>'
+    +'<div style="display:flex;gap:10px">'
+    +'<label style="flex:1;border:1.5px solid '+((s.workflow_mode||"agency")==="agency"?"#1D9E75":"var(--line)")+';border-radius:10px;padding:10px 12px;cursor:pointer;display:flex;gap:8px;align-items:center">'
+    +'<input type="radio" name="wfmode" value="agency" '+((s.workflow_mode||"agency")==="agency"?"checked":"")+'><div><div style="font-size:13px;font-weight:600">Recruitment Agency</div><div style="font-size:10.5px;color:var(--muted)">Mandates from clients</div></div></label>'
+    +'<label style="flex:1;border:1.5px solid '+(s.workflow_mode==="corporate"?"#1D9E75":"var(--line)")+';border-radius:10px;padding:10px 12px;cursor:pointer;display:flex;gap:8px;align-items:center">'
+    +'<input type="radio" name="wfmode" value="corporate" '+(s.workflow_mode==="corporate"?"checked":"")+'><div><div style="font-size:13px;font-weight:600">Corporate / Company</div><div style="font-size:10.5px;color:var(--muted)">Hiring for your own company</div></div></label>'
+    +'</div></div></div>'
     +'<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;box-shadow:var(--shadow-sm)">'
     +'<div><div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:2px">Export &amp; Import Data</div><div style="color:var(--muted);font-size:11.5px">Export before updates — import after</div></div>'
     +'<div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-g" onclick="exportAll()">&#8595; Export JSON</button><label class="btn btn-o" style="cursor:pointer">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="importAll(this)"></label></div></div>'
@@ -2883,7 +2891,8 @@ async function deleteUser(uid, username) {
   else toast('ERR', r.error||'Failed');
 }
 async function saveSettings(){
-  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2')};
+  const wf=(document.querySelector('input[name="wfmode"]:checked')||{}).value||'agency';
+  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf};
   const r=await req('POST','/settings',data);
   if(r.ok){S.settings=data;toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }
@@ -2999,7 +3008,28 @@ async function importAll(input){
 }
 
 // ── MODALS ─────────────────────────────────────────────────────────────────
-function openModal(id){document.getElementById(id).classList.add('open');}
+function wfMode(){ return (S.settings && S.settings.workflow_mode) || (S.currentUser && S.currentUser.workflow_mode) || 'agency'; }
+function wfL(){
+  var corp = wfMode()==='corporate';
+  return {
+    corp: corp,
+    mandate: corp?'Job Opening':'Mandate',
+    newMandate: corp?'New Job Opening':'New Mandate',
+    client: corp?'Department / Hiring Manager':'Client Name',
+    clientPlaceholder: corp?'e.g. Engineering Dept / Mr. Sharma':'e.g. Legrand India'
+  };
+}
+function openModal(id){
+  if(id==='modal-mandate'){
+    var L=wfL();
+    var t=document.getElementById('mandate-modal-title'); if(t)t.textContent=L.newMandate;
+    var cl=document.querySelector('#modal-mandate label'); // first label = client/department
+    var ci=document.getElementById('m-client');
+    if(cl)cl.textContent=L.client+' *';
+    if(ci)ci.placeholder=L.clientPlaceholder;
+  }
+  document.getElementById(id).classList.add('open');
+}
 document.addEventListener('DOMContentLoaded',function(){
   var sb=document.getElementById('sidebar'); if(!sb) return;
   sb.addEventListener('click',function(e){
