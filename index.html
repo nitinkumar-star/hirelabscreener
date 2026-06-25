@@ -1985,13 +1985,23 @@ function copyToClipboard(btn) {
   }).catch(function(){ toast('ERR','Could not copy'); });
 }
 
-// ─── MOBILE SIDEBAR DRAWER ──────────────────────────────────────────────
+// ─── SIDEBAR TOGGLE (works on both desktop collapse + mobile drawer) ─────
 function toggleSidebar() {
+  var app = document.getElementById('app');
   var sb = document.getElementById('sidebar');
   var bd = document.getElementById('sidebar-backdrop');
   if (!sb) return;
-  var isOpen = sb.classList.toggle('mobile-open');
-  if (bd) bd.style.display = isOpen ? 'block' : 'none';
+  if (window.innerWidth <= 860) {
+    // Mobile: slide-in drawer
+    var isOpen = sb.classList.toggle('mobile-open');
+    if (bd) bd.style.display = isOpen ? 'block' : 'none';
+  } else {
+    // Desktop: collapse the menu to zero width
+    if (app) {
+      app.classList.toggle('sb-collapsed');
+      try { localStorage.setItem('hl_sb_collapsed', app.classList.contains('sb-collapsed') ? '1' : '0'); } catch(e){}
+    }
+  }
 }
 
 function closeSidebarOnMobile() {
