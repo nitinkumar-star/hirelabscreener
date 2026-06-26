@@ -591,6 +591,9 @@ body{font-size:14px !important; line-height:1.5}
 
 /* Toast */
 #toast{padding:12px 18px !important; font-size:13px !important; border-radius:12px !important}
+.fmt-btn{background:#fff;border:0.5px solid var(--line);border-radius:4px;padding:2px 7px;cursor:pointer;font-size:12px;color:var(--ink);line-height:1.4}
+.fmt-btn:hover{background:#EEEDFE}
+[contenteditable]:empty:before{content:attr(data-placeholder);color:#bbb;pointer-events:none}
 </style>
 </head>
 <body>
@@ -2772,6 +2775,19 @@ function renderSettings(){
   const body=document.getElementById('settings-body');if(!body)return;
   const s=S.settings;
   body.innerHTML='<div style="max-width:680px">'
+    // ── My Profile (every user) ──
+    +'<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head"><span style="font-weight:500">&#128100; My Profile &amp; Email Signature</span></div><div class="card-body">'
+    +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Yeh details aapke email signature mein aur AI-composed emails mein automatically use hongi.</div>'
+    +'<div class="g2">'
+    +'<div class="fg-row"><label>Full Name</label><input class="inp" id="mp-name" value="" placeholder="e.g. Nitin Kumar"></div>'
+    +'<div class="fg-row"><label>Designation / Title</label><input class="inp" id="mp-designation" value="" placeholder="e.g. Practice Lead | Talent Acquisition"></div>'
+    +'<div class="fg-row"><label>Phone / Mobile</label><input class="inp" id="mp-phone" value="" placeholder="e.g. 8950122628"></div>'
+    +'<div class="fg-row"><label>Email</label><input class="inp" id="mp-email" value="" placeholder="e.g. nitin@hirelab.com"></div>'
+    +'</div>'
+    +'<button class="btn btn-g" style="margin-top:8px" onclick="saveMyProfile()">Save My Profile</button>'
+    +'<span id="mp-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
+    +'</div></div>'
+    // ── Workspace Type ──
     +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Workspace Type</span></div><div class="card-body">'
     +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Choose how this workspace works. <b>Agency</b> = you recruit for client companies. <b>Corporate</b> = you hire for your own company.</div>'
     +'<div style="display:flex;gap:10px">'
@@ -2813,6 +2829,33 @@ function renderSettings(){
     + (S.currentUser && S.currentUser.role==='admin' ? adminUserMgmtHTML() : '')
     +'</div>';
   if (S.currentUser && S.currentUser.role==='admin') loadUsersList();
+  loadMyProfile();
+}
+
+async function loadMyProfile(){
+  var r = await req('GET', '/my-profile');
+  if(!r.ok) return;
+  var p = r.profile || {};
+  var e = function(id, val){ var el=document.getElementById(id); if(el) el.value = val || ''; };
+  e('mp-name', p.display_name);
+  e('mp-phone', p.profile_phone);
+  e('mp-designation', p.profile_designation);
+  e('mp-email', p.profile_email);
+}
+
+async function saveMyProfile(){
+  var v = function(id){ var el=document.getElementById(id); return el ? el.value.trim() : ''; };
+  var r = await req('POST', '/my-profile', {
+    display_name: v('mp-name'),
+    profile_phone: v('mp-phone'),
+    profile_designation: v('mp-designation'),
+    profile_email: v('mp-email')
+  });
+  if(r.ok){
+    toast('OK', 'Profile saved!');
+    var ss = document.getElementById('mp-save-status');
+    if(ss){ ss.textContent = '✅ Saved'; setTimeout(function(){ ss.textContent=''; }, 2000); }
+  } else toast('ERR', r.error || 'Failed');
 }
 
 function savedTemplatesHTML(s){
@@ -3326,7 +3369,21 @@ function openEmailPanel(cid, candidateEmail){
     + '<div style="margin-bottom:8px"><label style="font-size:10.5px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px">Subject</label>'
     + '<input id="email-subject" class="inp" placeholder="e.g. Opportunity at Siemens" style="font-size:12.5px"></div>'
     + '<div style="margin-bottom:8px"><label style="font-size:10.5px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px">Message</label>'
-    + '<textarea id="email-body" class="ta" rows="7" placeholder="Dear Candidate,\n\nI am reaching out regarding..." style="font-size:12.5px;line-height:1.5;resize:vertical;min-height:120px"></textarea></div>'
+    + '<div style="border:0.5px solid var(--line);border-radius:8px;overflow:hidden">'
+    + '<div id="email-toolbar" style="display:flex;gap:2px;padding:4px 6px;background:#F5F5F3;border-bottom:0.5px solid var(--line);flex-wrap:wrap">'
+    + '<button onclick="emailFmt(\'bold\')" style="font-weight:700" class="fmt-btn" title="Bold">B</button>'
+    + '<button onclick="emailFmt(\'italic\')" style="font-style:italic" class="fmt-btn" title="Italic">I</button>'
+    + '<button onclick="emailFmt(\'underline\')" style="text-decoration:underline" class="fmt-btn" title="Underline">U</button>'
+    + '<span style="width:1px;background:var(--line);margin:2px 4px"></span>'
+    + '<select onchange="emailFmtSize(this.value);this.value=\'\'" class="fmt-btn" style="width:55px;font-size:10px" title="Font Size">'
+    + '<option value="">Size</option><option value="1">Small</option><option value="3">Normal</option><option value="4">Large</option><option value="5">XL</option><option value="6">XXL</option></select>'
+    + '<span style="width:1px;background:var(--line);margin:2px 4px"></span>'
+    + '<button onclick="emailFmt(\'justifyLeft\')" class="fmt-btn" title="Align Left">&#8676;</button>'
+    + '<button onclick="emailFmt(\'justifyCenter\')" class="fmt-btn" title="Center">&#8633;</button>'
+    + '<button onclick="emailFmt(\'insertUnorderedList\')" class="fmt-btn" title="Bullet List">&#8226;</button>'
+    + '</div>'
+    + '<div id="email-body" contenteditable="true" style="min-height:140px;max-height:300px;overflow-y:auto;padding:10px;font-size:13px;line-height:1.6;font-family:sans-serif;outline:none" data-placeholder="Dear Candidate,\n\nI am reaching out regarding..."></div>'
+    + '</div></div>'
     + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px">'
     + '<button id="email-send-btn" onclick="sendEmailFromPanel()" class="btn btn-g" style="font-size:12px;padding:8px 18px">&#128228; Send</button>'
     + '<span id="email-send-status" style="font-size:11px;color:var(--muted)"></span></div>'
@@ -3370,12 +3427,12 @@ function applyEmailTemplate(){
   var subj = document.getElementById('email-subject');
   var body = document.getElementById('email-body');
   if(subj) subj.value = t.subject || '';
-  if(body) body.value = t.body || '';
+  if(t.body) _setEmailBody(t.body);
 }
 
 async function saveAsEmailTemplate(){
   var subject = (document.getElementById('email-subject') || {}).value || '';
-  var body = (document.getElementById('email-body') || {}).value || '';
+  var body = _getEmailBody();
   if(!subject.trim() && !body.trim()){ toast('ERR','Subject ya message likhein pehle'); return; }
   var name = prompt('Template ka naam dein:', subject.trim().substring(0,40) || 'My Template');
   if(!name) return;
@@ -3418,7 +3475,7 @@ async function aiComposeEmail(){
   var cmd = (document.getElementById('ai-compose-cmd') || {}).value || '';
   if(!cmd.trim()){ toast('ERR','Command likhein, jaise "Write follow up email"'); return; }
   var cid = S._emailCid;
-  var currentDraft = (document.getElementById('email-body') || {}).value || '';
+  var currentDraft = _getEmailBody();
   var currentSubject = (document.getElementById('email-subject') || {}).value || '';
   var status = document.getElementById('ai-compose-status');
   if(status){ status.textContent = '🤖 AI likh raha hai...'; status.style.color = '#534AB7'; }
@@ -3431,7 +3488,7 @@ async function aiComposeEmail(){
 
   if(r.ok){
     if(r.subject){ var subj = document.getElementById('email-subject'); if(subj) subj.value = r.subject; }
-    if(r.body){ var body = document.getElementById('email-body'); if(body) body.value = r.body; }
+    if(r.body){ _setEmailBody(r.body); }
     if(status){ status.textContent = '✅ Draft ready — review and send!'; status.style.color = '#1D9E75'; }
     document.getElementById('ai-compose-cmd').value = '';
   } else {
@@ -3452,12 +3509,29 @@ function closeEmailPanel(){
   document.removeEventListener('mousedown', _emailOutside);
 }
 
+function emailFmt(cmd){ document.execCommand(cmd, false, null); document.getElementById('email-body').focus(); }
+function emailFmtSize(size){ if(size) document.execCommand('fontSize', false, size); document.getElementById('email-body').focus(); }
+
+function _getEmailBody(){
+  var el = document.getElementById('email-body');
+  return el ? el.innerHTML.replace(/<br\s*\/?>/gi,'\n').replace(/<[^>]+>/g,'').trim() : '';
+}
+function _getEmailBodyHtml(){
+  var el = document.getElementById('email-body');
+  return el ? el.innerHTML : '';
+}
+function _setEmailBody(text){
+  var el = document.getElementById('email-body');
+  if(el) el.innerHTML = text.replace(/\n/g, '<br>');
+}
+
 async function sendEmailFromPanel(){
   var cid = S._emailCid;
   if(!cid) return;
   var to = (document.getElementById('email-to') || {}).value || '';
   var subject = (document.getElementById('email-subject') || {}).value || '';
-  var body = (document.getElementById('email-body') || {}).value || '';
+  var body = _getEmailBody();
+  var bodyHtml = _getEmailBodyHtml();
   if(!to.trim() || !subject.trim() || !body.trim()){
     toast('ERR', 'To, Subject aur Message teenon zaroori hain'); return;
   }
@@ -3466,14 +3540,13 @@ async function sendEmailFromPanel(){
   if(btn){ btn.disabled = true; btn.textContent = 'Sending...'; }
   if(status) status.textContent = '';
 
-  var r = await req('POST', '/candidates/' + cid + '/send-email', {to: to.trim(), subject: subject.trim(), body: body.trim()});
+  var r = await req('POST', '/candidates/' + cid + '/send-email', {to: to.trim(), subject: subject.trim(), body: body.trim(), body_html: bodyHtml});
 
   if(r.ok){
     toast('OK', 'Email sent!');
     if(status){ status.textContent = '✅ Sent!'; status.style.color = '#1D9E75'; }
     if(btn){ btn.textContent = '✅ Sent'; }
-    var bodyEl = document.getElementById('email-body');
-    if(bodyEl) bodyEl.value = '';
+    _setEmailBody('');
     // Refresh sent email history in the panel
     loadEmailHistory(cid);
   } else {

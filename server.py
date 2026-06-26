@@ -1210,6 +1210,9 @@ def init_db():
         ('company_name', "TEXT DEFAULT ''"),
         ('requested_at', 'TEXT'),
         ('company_id', 'INTEGER DEFAULT 0'),
+        ('profile_phone', "TEXT DEFAULT ''"),
+        ('profile_designation', "TEXT DEFAULT ''"),
+        ('profile_email', "TEXT DEFAULT ''"),
     ]:
         try:
             c.execute(f'ALTER TABLE users ADD COLUMN {col} {defn}')
@@ -2551,6 +2554,30 @@ def get_mandate(mid):
     return jsonify(dict(r))
 
 
+@app.route('/api/my-profile', methods=['GET'])
+@login_required
+def get_my_profile():
+    u = current_user()
+    return jsonify({'ok': True, 'profile': {
+        'display_name': u.get('display_name', ''),
+        'profile_phone': u.get('profile_phone', ''),
+        'profile_designation': u.get('profile_designation', ''),
+        'profile_email': u.get('profile_email', ''),
+    }})
+
+@app.route('/api/my-profile', methods=['POST'])
+@login_required
+def update_my_profile():
+    d = request.json or {}
+    conn = get_db()
+    uid = session.get('user_id')
+    for field in ('display_name', 'profile_phone', 'profile_designation', 'profile_email'):
+        if field in d:
+            conn.execute(f'UPDATE users SET {field}=? WHERE id=?', (d[field], uid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
 @app.route('/api/my-team', methods=['GET'])
 @login_required
 def my_team():
@@ -2663,18 +2690,57 @@ def ai_compose_email(cid):
 
     # Get candidate info for context
     conn = get_db()
-    c = conn.execute('SELECT name,company,designation,email,ctc_current,experience,location FROM candidates WHERE id=?', (cid,)).fetchone()
-    conn.close()
+    c = conn.execute('SELECT name,company,designation,email,ctc_current,experience,location,mandate_id FROM candidates WHERE id=?', (cid,)).fetchone()
     cand_info = dict(c) if c else {}
 
-    sender_name = get_setting('smtp_display_name', '') or get_setting('recruiter_name', '') or 'Recruiter'
+    # Get mandate JD for context
+    jd_text = ''
+    if cand_info.get('mandate_id'):
+        mandate = conn.execute('SELECT client,role,jd,location,division,ctc_min,ctc_max FROM mandates WHERE id=?', (cand_info['mandate_id'],)).fetchone()
+        if mandate:
+            jd_text = mandate['jd'] or ''
+            cand_info['mandate_role'] = mandate['role'] or ''
+            cand_info['mandate_client'] = mandate['client'] or ''
+            cand_info['mandate_location'] = mandate['location'] or ''
+            cand_info['ctc_range'] = f"{mandate['ctc_min']}-{mandate['ctc_max']} LPA"
+
+    # Get recruiter profile for signature
+    u = current_user()
+    recruiter_name = (u.get('display_name') or u.get('username') or '') if u else ''
+    recruiter_phone = (u.get('profile_phone') or '') if u else ''
+    recruiter_email_addr = (u.get('profile_email') or get_setting('smtp_email', '')) if u else ''
+    recruiter_designation = (u.get('profile_designation') or '') if u else ''
+    company_name = get_setting('company_name', '') or get_setting('recruiter_name', '')
+    conn.close()
+
+    signature_block = f"Name: {recruiter_name}"
+    if recruiter_designation: signature_block += f", Designation: {recruiter_designation}"
+    if company_name: signature_block += f", Company: {company_name}"
+    if recruiter_phone: signature_block += f", Phone: {recruiter_phone}"
+    if recruiter_email_addr: signature_block += f", Email: {recruiter_email_addr}"
 
     system_prompt = f"""You are a professional recruitment email writer. Write emails that are polite, professional, and concise.
+
 Candidate info: Name={cand_info.get('name','')}, Company={cand_info.get('company','')}, Role={cand_info.get('designation','')}, Experience={cand_info.get('experience','')} yrs, CTC={cand_info.get('ctc_current','')} LPA, Location={cand_info.get('location','')}.
-Sender: {sender_name}
-{('Current email context/JD: ' + context) if context else ''}
-{('Current draft in the compose box: ' + current_draft) if current_draft else ''}
-Respond with ONLY a JSON object: {{"subject": "...", "body": "..."}}. No markdown, no extra text."""
+
+Job opening: {cand_info.get('mandate_role','')} at {cand_info.get('mandate_client','')}, Location: {cand_info.get('mandate_location','')}, CTC: {cand_info.get('ctc_range','')}
+
+{('Job Description:\n' + jd_text + '\n') if jd_text else ''}
+
+Recruiter signature (ALWAYS include at the end of every email):
+{signature_block}
+
+{('Current email context/draft:\n' + context) if context else ''}
+{('Current draft in compose box:\n' + current_draft) if current_draft else ''}
+
+Rules:
+- Start with a proper greeting like "Dear [Candidate Name]," or "Hi [Candidate Name],"
+- Introduce yourself: "This is [Recruiter Name] from [Company]"
+- Include the job details naturally
+- End with the recruiter's full signature block (name, designation, company, phone, email)
+- For "create the jd" or "share jd" commands: compose a professional email sharing the job description with the candidate
+- For "follow up" commands: write a polite follow-up referencing the previous communication
+- Respond with ONLY a JSON object: {{"subject": "...", "body": "..."}}. No markdown, no extra text."""
 
     try:
         resp = call_deepseek(key, {
@@ -2734,10 +2800,15 @@ def send_candidate_email(cid):
     msg['From'] = f'{smtp_name} <{smtp_email}>' if smtp_name else smtp_email
     msg['To'] = to_email
     msg['Subject'] = subject
-    # Send as both plain text and simple HTML (for line breaks)
+    # Send as both plain text and HTML
     msg.attach(MIMEText(body, 'plain', 'utf-8'))
-    html_body = body.replace('\n', '<br>')
-    msg.attach(MIMEText(f'<div style="font-family:sans-serif;font-size:14px">{html_body}</div>', 'html', 'utf-8'))
+    body_html = (d.get('body_html') or '').strip()
+    if body_html:
+        # Use the rich-text HTML from the editor
+        html_content = f'<div style="font-family:sans-serif;font-size:14px">{body_html}</div>'
+    else:
+        html_content = f'<div style="font-family:sans-serif;font-size:14px">{body.replace(chr(10), "<br>")}</div>'
+    msg.attach(MIMEText(html_content, 'html', 'utf-8'))
 
     # Detect SMTP server from email domain
     if '@gmail' in smtp_email.lower() or '@googlemail' in smtp_email.lower():
