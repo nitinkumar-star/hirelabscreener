@@ -1982,6 +1982,7 @@ TENANT_SETTINGS = {
     'fu1_hours', 'fu2_hours',
     'workflow_mode',   # 'agency' (default) or 'corporate'
     'smtp_email', 'smtp_app_password', 'smtp_display_name',
+    'email_templates',  # JSON array of {name, subject, body}
 }
 
 def _safe_company_id():
@@ -2646,6 +2647,66 @@ def list_candidates(mid):
         out.append(d)
     return jsonify(out)
 
+@app.route('/api/candidates/<int:cid>/ai-compose', methods=['POST'])
+@login_required
+def ai_compose_email(cid):
+    """Use DeepSeek to draft/refine an email for a candidate based on user's command."""
+    d = request.json or {}
+    command = (d.get('command') or '').strip()
+    context = (d.get('context') or '').strip()
+    current_draft = (d.get('current_draft') or '').strip()
+    if not command:
+        return jsonify({'error': 'Please give a command'}), 400
+    key = get_setting('deepseek_api_key', '') or os.environ.get('DEEPSEEK_API_KEY', '')
+    if not key:
+        return jsonify({'error': 'DeepSeek API key not configured. Add it in Settings.'}), 400
+
+    # Get candidate info for context
+    conn = get_db()
+    c = conn.execute('SELECT name,company,designation,email,ctc_current,experience,location FROM candidates WHERE id=?', (cid,)).fetchone()
+    conn.close()
+    cand_info = dict(c) if c else {}
+
+    sender_name = get_setting('smtp_display_name', '') or get_setting('recruiter_name', '') or 'Recruiter'
+
+    system_prompt = f"""You are a professional recruitment email writer. Write emails that are polite, professional, and concise.
+Candidate info: Name={cand_info.get('name','')}, Company={cand_info.get('company','')}, Role={cand_info.get('designation','')}, Experience={cand_info.get('experience','')} yrs, CTC={cand_info.get('ctc_current','')} LPA, Location={cand_info.get('location','')}.
+Sender: {sender_name}
+{('Current email context/JD: ' + context) if context else ''}
+{('Current draft in the compose box: ' + current_draft) if current_draft else ''}
+Respond with ONLY a JSON object: {{"subject": "...", "body": "..."}}. No markdown, no extra text."""
+
+    try:
+        resp = call_deepseek(
+            messages=[{'role': 'system', 'content': system_prompt},
+                      {'role': 'user', 'content': command}],
+            model='deepseek-chat', max_tokens=1000
+        )
+        text = resp.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
+        # Try parse JSON
+        text = text.replace('```json', '').replace('```', '').strip()
+        result = json.loads(text)
+        return jsonify({'ok': True, 'subject': result.get('subject', ''), 'body': result.get('body', '')})
+    except json.JSONDecodeError:
+        # If not JSON, return the raw text as body
+        return jsonify({'ok': True, 'subject': '', 'body': text})
+    except Exception as e:
+        return jsonify({'error': f'AI compose failed: {str(e)}'}), 500
+
+
+@app.route('/api/candidates/<int:cid>/email-history')
+@login_required
+def candidate_email_history(cid):
+    """Return sent email events for a candidate."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT detail, created_at FROM candidate_events WHERE candidate_id=? AND event_type='email' ORDER BY created_at DESC",
+        (cid,)
+    ).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'emails': [{'text': r['detail'], 'ts': r['created_at']} for r in rows]})
+
+
 @app.route('/api/candidates/<int:cid>/send-email', methods=['POST'])
 @login_required
 def send_candidate_email(cid):
@@ -2695,11 +2756,13 @@ def send_candidate_email(cid):
     except Exception as e:
         return jsonify({'error': f'Failed to send email: {str(e)}'}), 500
 
-    # Log to candidate journey
+    # Log to candidate journey (full email for history)
     u = current_user()
     who = (u.get('display_name') or u.get('username') or '') if u else ''
-    preview = (subject[:60] + '…') if len(subject) > 60 else subject
-    log_candidate_event(cid, 'email', f'Email sent — "{preview}" to {to_email}' + (f' by {who}' if who else ''))
+    full_log = f'Email sent to {to_email}\nSubject: {subject}\n\n{body}'
+    if who:
+        full_log += f'\n— {who}'
+    log_candidate_event(cid, 'email', full_log)
 
     return jsonify({'ok': True, 'message': 'Email sent successfully'})
 
