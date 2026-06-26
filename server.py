@@ -2677,12 +2677,16 @@ Sender: {sender_name}
 Respond with ONLY a JSON object: {{"subject": "...", "body": "..."}}. No markdown, no extra text."""
 
     try:
-        resp = call_deepseek(
-            messages=[{'role': 'system', 'content': system_prompt},
-                      {'role': 'user', 'content': command}],
-            model='deepseek-chat', max_tokens=1000
-        )
-        text = resp.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
+        resp = call_deepseek(key, {
+            'model': 'deepseek-chat',
+            'max_tokens': 1000,
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': command}
+            ]
+        }, endpoint='ai-compose')
+        data = resp.json()
+        text = data.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
         # Try parse JSON
         text = text.replace('```json', '').replace('```', '').strip()
         result = json.loads(text)
