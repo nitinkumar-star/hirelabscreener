@@ -106,6 +106,11 @@ input:focus,textarea:focus{outline:none;border-color:#1D9E75!important}
 .tl-act{font-size:12px;font-weight:500}.tl-note{font-size:11px;color:#666;margin-top:1px;line-height:1.5}
 /* Pipeline */
 .pl-wrap{overflow-x:auto;overflow-y:auto;padding:10px;background:#f5f5f5;flex:1}
+.pl-wrap::-webkit-scrollbar{height:14px;width:14px}
+.pl-wrap::-webkit-scrollbar-track{background:#E6E5E0;border-radius:7px}
+.pl-wrap::-webkit-scrollbar-thumb{background:#B0ADA3;border-radius:7px;border:3px solid #E6E5E0}
+.pl-wrap::-webkit-scrollbar-thumb:hover{background:#928E83}
+.pl-wrap{scrollbar-width:auto;scrollbar-color:#B0ADA3 #E6E5E0}
 .pl-cols{display:flex;gap:8px;min-width:max-content}
 .pl-col{width:158px;background:#fff;border:0.5px solid #e8e8e8;border-radius:8px;overflow:visible;flex-shrink:0}
 .pl-col-head{padding:7px 9px;border-bottom:0.5px solid #e8e8e8;background:#f9f9f9;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:3}
@@ -601,6 +606,14 @@ body{font-size:14px !important; line-height:1.5}
 .fmt-btn{background:#fff;border:0.5px solid var(--line);border-radius:4px;padding:2px 7px;cursor:pointer;font-size:12px;color:var(--ink);line-height:1.4}
 .fmt-btn:hover{background:#EEEDFE}
 [contenteditable]:empty:before{content:attr(data-placeholder);color:#bbb;pointer-events:none}
+.sb-grp-head{display:flex;align-items:center;gap:8px;padding:9px 14px;cursor:pointer;font-size:11px;font-weight:700;color:rgba(255,255,255,.62);text-transform:uppercase;letter-spacing:.5px;user-select:none;transition:background .15s}
+.sb-grp-head:hover{background:rgba(255,255,255,.06)}
+.sb-grp-arrow{display:inline-block;transition:transform .18s;font-size:10px;color:rgba(255,255,255,.5);flex-shrink:0}
+.sb-grp-head.collapsed .sb-grp-arrow{transform:rotate(0deg)}
+.sb-grp-head:not(.collapsed) .sb-grp-arrow{transform:rotate(90deg)}
+.sb-grp-count{background:rgba(255,255,255,.12);border-radius:8px;padding:0 7px;font-size:10px;flex-shrink:0}
+.sb-grp-body{overflow:hidden;max-height:3000px;transition:max-height .25s ease}
+.sb-grp-body.collapsed{max-height:0}
 </style>
 </head>
 <body>
@@ -1518,6 +1531,45 @@ async function loadMandates(){
   if(data.error){showConnError(data.error);return;}
   S.mandates=data; renderSidebar();
 }
+// ── Move candidate to another mandate ─────────────────────────────────────
+function openMoveCandidate(cid){
+  var current = S.activeMandate ? S.activeMandate.id : null;
+  var opts = S.mandates.filter(function(m){ return m.id !== current; });
+  if(!opts.length){ toast('ERR','Koi doosra mandate nahi hai'); return; }
+  var existing = document.getElementById('move-cand-modal');
+  if(existing) existing.remove();
+  var modal = document.createElement('div');
+  modal.id = 'move-cand-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(14,42,71,.45);z-index:9500;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.onclick = function(e){ if(e.target===modal) modal.remove(); };
+  var listHtml = opts.map(function(m){
+    var dotC = m.status==='active'?'#1D9E75':m.status==='hold'?'#EF9F27':'#9C988D';
+    return '<div onclick="doMoveCandidate('+cid+','+m.id+')" style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:0.5px solid var(--line);cursor:pointer;border-radius:8px" onmouseover="this.style.background=\'#F5F4F1\'" onmouseout="this.style.background=\'transparent\'">'
+      + '<span style="width:9px;height:9px;border-radius:50%;background:'+dotC+';flex-shrink:0"></span>'
+      + '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:var(--ink)">'+esc(m.role)+'</div>'
+      + '<div style="font-size:11px;color:var(--muted)">'+esc(m.client)+(m.location?' · '+esc(m.location):'')+'</div></div>'
+      + '<span style="font-size:16px;color:#534AB7">&#8594;</span>'
+      + '</div>';
+  }).join('');
+  modal.innerHTML = '<div style="background:#fff;border-radius:16px;width:440px;max-width:94vw;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
+    + '<div style="padding:16px 18px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between">'
+    + '<div style="font-size:15px;font-weight:700;color:var(--navy)">&#8644; Move Candidate to...</div>'
+    + '<button onclick="document.getElementById(\'move-cand-modal\').remove()" style="background:none;border:none;font-size:20px;color:#999;cursor:pointer">&times;</button></div>'
+    + '<div style="font-size:11.5px;color:var(--muted);padding:10px 18px 4px">Kis mandate mein move karna hai? Candidate uss mandate ki pipeline mein chala jaayega.</div>'
+    + '<div style="flex:1;overflow-y:auto;padding:8px 12px">' + listHtml + '</div>'
+    + '</div>';
+  document.body.appendChild(modal);
+}
+async function doMoveCandidate(cid, targetMid){
+  var r = await req('POST', '/candidates/'+cid+'/move', {mandate_id: targetMid});
+  var modal = document.getElementById('move-cand-modal');
+  if(modal) modal.remove();
+  if(r.ok){
+    toast('OK', 'Candidate moved!');
+    S.selectedCandidateId = null;
+    if(S.activeMandate) await selectMandate(S.activeMandate.id);
+  } else { toast('ERR', r.error || 'Move failed'); }
+}
 // ── Universal search (whole database: name / email / phone) ───────────────
 var _uSearchTimer=null;
 function universalSearch(q){
@@ -1571,38 +1623,34 @@ function renderSidebar(){
     else if(st==='closed') groups.closed.push(m);
     else groups.active.push(m);
   });
-  S._mandColl=S._mandColl||{};  // collapsed state per group
+  S._mandColl=S._mandColl||{closed:true};  // closed group starts collapsed
   var defs=[
     {key:'active',label:'Active',color:'#1D9E75'},
     {key:'hold',label:'Hold',color:'#EF9F27'},
-    {key:'closed',label:'Closed',color:'#888'}
+    {key:'closed',label:'Closed',color:'#9C988D'}
   ];
   var html='';
   defs.forEach(function(g){
     var list=groups[g.key];
-    var collapsed=S._mandColl[g.key]===true;  // default expanded
-    html+='<div class="sb-grp-head" onclick="toggleMandGroup(\''+g.key+'\')" style="display:flex;align-items:center;gap:7px;padding:7px 14px;cursor:pointer;font-size:10.5px;font-weight:700;color:rgba(255,255,255,.55);text-transform:uppercase;letter-spacing:.5px;user-select:none">'
-      +'<span style="transition:transform .15s;display:inline-block;transform:rotate('+(collapsed?'-90':'0')+'deg);font-size:9px">&#9660;</span>'
-      +'<span style="width:7px;height:7px;border-radius:50%;background:'+g.color+';display:inline-block"></span>'
-      +g.label
-      +'<span style="margin-left:auto;background:rgba(255,255,255,.12);border-radius:8px;padding:0 7px;font-size:10px">'+list.length+'</span>'
+    if(!list.length) return;  // hide empty groups entirely
+    var collapsed=S._mandColl[g.key]===true;
+    html+='<div class="sb-grp-head'+(collapsed?' collapsed':'')+'" onclick="toggleMandGroup(\''+g.key+'\')">'
+      +'<span class="sb-grp-arrow">&#9656;</span>'
+      +'<span style="width:8px;height:8px;border-radius:50%;background:'+g.color+';display:inline-block;flex-shrink:0"></span>'
+      +'<span style="flex:1">'+g.label+'</span>'
+      +'<span class="sb-grp-count">'+list.length+'</span>'
       +'</div>';
-    if(!collapsed){
-      if(!list.length){
-        html+='<div style="padding:4px 14px 8px 30px;font-size:10.5px;color:rgba(255,255,255,.25)">None</div>';
-      } else {
-        html+=list.map(function(m){
-          const dotC=g.color;
-          const isA=S.activeMandate&&S.activeMandate.id===m.id;
-          return '<div class="sb-item'+(isA?' active':'')+'" onclick="selectMandate('+m.id+')" style="padding-left:22px">'
-            +'<div class="sb-dot" style="background:'+dotC+'"></div>'
-            +'<div style="flex:1;min-width:0"><div class="sb-name">'+esc(m.role)+'</div>'
-            +'<div class="sb-sub">'+esc(m.client)+' &middot; '+esc(m.location||'')+'</div></div>'
-            +'<button class="sb-status-btn" onclick="event.stopPropagation();openStatusModal('+m.id+')" title="Change status">&ctdot;</button>'
-            +'</div>';
-        }).join('');
-      }
-    }
+    html+='<div class="sb-grp-body'+(collapsed?' collapsed':'')+'">';
+    html+=list.map(function(m){
+      const isA=S.activeMandate&&S.activeMandate.id===m.id;
+      return '<div class="sb-item'+(isA?' active':'')+'" onclick="selectMandate('+m.id+')" style="padding-left:26px">'
+        +'<div class="sb-dot" style="background:'+g.color+'"></div>'
+        +'<div style="flex:1;min-width:0"><div class="sb-name">'+esc(m.role)+'</div>'
+        +'<div class="sb-sub">'+esc(m.client)+' &middot; '+esc(m.location||'')+'</div></div>'
+        +'<button class="sb-status-btn" onclick="event.stopPropagation();openStatusModal('+m.id+')" title="Change status">&ctdot;</button>'
+        +'</div>';
+    }).join('');
+    html+='</div>';
   });
   el.innerHTML=html;
 }
@@ -2479,6 +2527,7 @@ function renderProfileDetail(c){
   html += '</div>';
   html += '</div>';
   // Email
+  html += '<button class="btn" onclick="openMoveCandidate(' + c.id + ')" style="font-size:11px;background:#fff;color:#534AB7;border:0.5px solid #C9C2E0">&#8644; Move</button>';
   html += '<button class="btn" onclick="openEmailPanel(' + c.id + ',\'' + esc(c.email || '').replace(/'/g, "\\'") + '\',' + (c.mandate_id||'null') + ')" style="font-size:11px;background:#0a2540;color:#fff;border:none">&#9993; Email</button>';
   html += '</div>';
 
@@ -3504,13 +3553,14 @@ function applyEmailTemplate(){
   if(!t) return;
   var subj = document.getElementById('email-subject');
   if(subj) subj.value = t.subject || '';
-  if(t.body) _setEmailBody(t.body);
+  var be = document.getElementById('email-body');
+  if(be) be.innerHTML = t.body || '';
 }
 
 async function saveAsEmailTemplate(){
   if(!S._emailMandateId){ toast('ERR','Yeh candidate kisi mandate se linked nahi hai'); return; }
   var subject = (document.getElementById('email-subject') || {}).value || '';
-  var body = _getEmailBody();
+  var body = _getEmailBodyHtml();
   if(!subject.trim() && !body.trim()){ toast('ERR','Subject ya message likhein pehle'); return; }
   var name = prompt('Template ka naam dein:', subject.trim().substring(0,40) || 'My Template');
   if(!name) return;
@@ -3532,7 +3582,7 @@ async function updateEmailTemplate(){
   var t = (S._mandTemplates || [])[idx];
   if(!t) return;
   var subject = (document.getElementById('email-subject') || {}).value || '';
-  var body = _getEmailBody();
+  var body = _getEmailBodyHtml();
   if(!confirm('Template "'+t.name+'" ko current email se update karein?')) return;
   S._mandTemplates[idx] = {name: t.name, subject: subject, body: body};
   await _saveMandTemplates();
@@ -3578,7 +3628,7 @@ async function aiComposeEmail(){
 
   if(r.ok){
     if(r.subject){ var subj = document.getElementById('email-subject'); if(subj) subj.value = r.subject; }
-    if(r.body){ _setEmailBody(r.body); }
+    if(r.body){ var be=document.getElementById('email-body'); if(be) be.innerHTML = r.body; }
     if(status){ status.textContent = '✅ Draft ready — review and send!'; status.style.color = '#1D9E75'; }
     document.getElementById('ai-compose-cmd').value = '';
   } else {

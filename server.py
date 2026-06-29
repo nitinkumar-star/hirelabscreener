@@ -2745,7 +2745,8 @@ Rules:
 - End with the recruiter's full signature block (name, designation, company, phone, email)
 - For "create the jd" or "share jd" commands: compose a professional email sharing the job description with the candidate
 - For "follow up" commands: write a polite follow-up referencing the previous communication
-- Respond with ONLY a JSON object: {{"subject": "...", "body": "..."}}. No markdown, no extra text."""
+- FORMATTING: The "body" must be valid HTML. Use <b>...</b> for important words (job title, company, CTC, location, key skills), <br> for line breaks, <br><br> between paragraphs, and <ul><li>...</li></ul> for listing requirements or responsibilities. Make the signature block use <br> between lines with the name in <b>. Keep it clean and professional — bold only the genuinely important details, do not over-format.
+- Respond with ONLY a JSON object: {{"subject": "...", "body": "...html..."}}. No markdown fences, no extra text."""
 
     try:
         resp = call_deepseek(key, {
@@ -2948,6 +2949,32 @@ def get_candidate(cid):
     d['work_history'] = [dict(w) for w in wh]
     conn.close()
     return jsonify(d)
+
+@app.route('/api/candidates/<int:cid>/move', methods=['POST'])
+@login_required
+def move_candidate(cid):
+    """Move a candidate to a different mandate (within the same tenant)."""
+    d = request.json or {}
+    target_mid = d.get('mandate_id')
+    if not target_mid:
+        return jsonify({'error': 'Target mandate required'}), 400
+    conn = get_db()
+    cand = conn.execute('SELECT mandate_id, name FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not cand:
+        conn.close(); return jsonify({'error': 'Candidate not found'}), 404
+    # Verify target mandate belongs to this tenant
+    tgt = conn.execute('SELECT id, role, client, owner_id FROM mandates WHERE id=?', (target_mid,)).fetchone()
+    if not tgt or tgt['owner_id'] != effective_company_id():
+        conn.close(); return jsonify({'error': 'Target mandate not found'}), 404
+    old = conn.execute('SELECT role FROM mandates WHERE id=?', (cand['mandate_id'],)).fetchone()
+    old_label = old['role'] if old else 'previous mandate'
+    conn.execute('UPDATE candidates SET mandate_id=?, updated_at=? WHERE id=?', (target_mid, ts(), cid))
+    conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
+                 (cid, '', '', f'Moved from "{old_label}" to "{tgt["role"]}"', ts()))
+    conn.commit(); conn.close()
+    log_candidate_event(cid, 'note', f'Moved to mandate: {tgt["role"]} ({tgt["client"]})')
+    return jsonify({'ok': True, 'mandate_id': target_mid})
+
 
 @app.route('/api/candidates/<int:cid>', methods=['PUT'])
 def update_candidate(cid):
