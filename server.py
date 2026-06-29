@@ -951,6 +951,7 @@ def init_db():
             sop_version INTEGER DEFAULT 1,
             sop_changelog TEXT DEFAULT '[]',
             status TEXT DEFAULT 'active',
+            email_templates TEXT DEFAULT '[]',
             created_at TEXT DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS candidates (
@@ -1125,6 +1126,10 @@ def init_db():
     # Per-recruiter mandate assignment (within a company) + company-admin flag
     try:
         c.execute('ALTER TABLE mandates ADD COLUMN assigned_user_id INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE mandates ADD COLUMN email_templates TEXT DEFAULT '[]'")
     except sqlite3.OperationalError:
         pass
     try:
@@ -2764,6 +2769,32 @@ Rules:
         return jsonify({'error': f'AI compose failed: {str(e)}'}), 500
 
 
+@app.route('/api/mandates/<int:mid>/email-templates', methods=['GET'])
+@login_required
+def get_mandate_templates(mid):
+    conn = get_db()
+    m = conn.execute('SELECT email_templates FROM mandates WHERE id=?', (mid,)).fetchone()
+    conn.close()
+    if not m:
+        return jsonify({'error': 'Mandate not found'}), 404
+    try:
+        tpls = json.loads(m['email_templates'] or '[]')
+    except Exception:
+        tpls = []
+    return jsonify({'ok': True, 'templates': tpls})
+
+
+@app.route('/api/mandates/<int:mid>/email-templates', methods=['POST'])
+@login_required
+def save_mandate_templates(mid):
+    d = request.json or {}
+    templates = d.get('templates', [])
+    conn = get_db()
+    conn.execute('UPDATE mandates SET email_templates=? WHERE id=?', (json.dumps(templates), mid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
 @app.route('/api/candidates/<int:cid>/email-history')
 @login_required
 def candidate_email_history(cid):
@@ -3588,6 +3619,8 @@ def central_search():
                 str(d.get('career_summary') or ''),
                 str(d.get('location') or ''),
                 str(d.get('industry_background') or ''),
+                str(d.get('email') or ''),
+                str(d.get('phone') or ''),
             ]).lower()
             if q not in searchable: continue
         if location and location not in (d.get('location') or '').lower(): continue

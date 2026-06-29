@@ -120,9 +120,16 @@ input:focus,textarea:focus{outline:none;border-color:#1D9E75!important}
 /* Profiles */
 .prof-wrap{display:flex;height:100%;overflow:hidden}
 .prof-list{width:170px;border-right:0.5px solid #e8e8e8;overflow-y:auto;background:#f9f9f9;flex-shrink:0}
+.prof-list::-webkit-scrollbar{width:12px}
+.prof-list::-webkit-scrollbar-track{background:#ECECEC}
+.prof-list::-webkit-scrollbar-thumb{background:#B8B8B0;border-radius:6px;border:2px solid #ECECEC}
+.prof-list::-webkit-scrollbar-thumb:hover{background:#9C988D}
+.prof-list{scrollbar-width:auto;scrollbar-color:#B8B8B0 #ECECEC}
 .prof-list-head{padding:8px 12px;font-size:11px;font-weight:500;color:#888;border-bottom:0.5px solid #e8e8e8}
-.prof-list-item{padding:8px 12px;border-bottom:0.5px solid #e8e8e8;cursor:pointer;border-left:2px solid transparent}
-.prof-list-item:hover{background:#f0f0f0}.prof-list-item.active{background:#fff;border-left-color:#1D9E75}
+.prof-stage-head{padding:10px 14px 7px;font-size:14px;font-weight:800;color:#0a2540;letter-spacing:.3px;display:flex;align-items:center;justify-content:space-between;background:#F1F0EC;border-bottom:1px solid #E2E0D8;text-transform:uppercase}
+.prof-list-item{padding:8px 12px;border-bottom:0.5px solid #e8e8e8;cursor:pointer;border-left:3px solid transparent}
+.prof-list-item:hover{background:#f0f0f0}
+.prof-list-item.active{background:#E8F5EF;border-left-color:#1D9E75;box-shadow:inset 0 0 0 1px #B7E0CE}
 .prof-detail{flex:1;overflow-y:auto}
 .prof-sticky{position:relative;position:sticky;top:0;z-index:2;background:#fff;border-bottom:0.5px solid #e8e8e8;padding:9px 16px;display:flex;align-items:center;justify-content:space-between}
 .prof-section{padding:14px 18px;border-bottom:0.5px solid #e8e8e8;background:#fff}
@@ -778,7 +785,15 @@ body{font-size:14px !important; line-height:1.5}
         </button>
         <div><div id="topbar-title">Select a mandate</div><div id="topbar-sub">Create or select from sidebar</div></div>
       </div>
-      <span class="sop-pill" id="sop-pill" style="display:none"></span>
+      <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
+        <span class="sop-pill" id="sop-pill" style="display:none"></span>
+        <div style="position:relative">
+          <input id="universal-search" placeholder="&#128269; Search name, email, phone..." autocomplete="off"
+            oninput="universalSearch(this.value)" onfocus="universalSearch(this.value)"
+            style="width:240px;font-size:12px;padding:7px 12px;border:0.5px solid var(--line);border-radius:20px;background:#FAFAF9;outline:none">
+          <div id="universal-results" style="display:none;position:absolute;top:38px;right:0;width:340px;max-height:400px;overflow-y:auto;background:#fff;border:0.5px solid var(--line);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.13);z-index:200"></div>
+        </div>
+      </div>
     </div>
     <div id="sidebar-backdrop" onclick="toggleSidebar()"></div>
     <div id="tabs" style="display:none"></div>
@@ -1503,19 +1518,98 @@ async function loadMandates(){
   if(data.error){showConnError(data.error);return;}
   S.mandates=data; renderSidebar();
 }
+// ── Universal search (whole database: name / email / phone) ───────────────
+var _uSearchTimer=null;
+function universalSearch(q){
+  q=(q||'').trim();
+  var box=document.getElementById('universal-results');
+  if(!box) return;
+  if(q.length<2){ box.style.display='none'; box.innerHTML=''; return; }
+  clearTimeout(_uSearchTimer);
+  _uSearchTimer=setTimeout(async function(){
+    var r=await req('GET','/central-db/search?q='+encodeURIComponent(q));
+    if(!r.candidates){ box.style.display='none'; return; }
+    if(!r.candidates.length){
+      box.innerHTML='<div style="padding:14px;font-size:12px;color:#999;text-align:center">No match for "'+esc(q)+'"</div>';
+      box.style.display='block'; return;
+    }
+    box.innerHTML=r.candidates.slice(0,15).map(function(c){
+      return '<div onclick="goToSearchResult('+c.id+','+(c.mandate_id||'null')+')" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:0.5px solid #F1EFE9;cursor:pointer" onmouseover="this.style.background=\'#F7F6F3\'" onmouseout="this.style.background=\'#fff\'">'
+        +avatarHtml(c.name,30)
+        +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:12.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.name||'')+'</div>'
+        +'<div style="font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+        +esc(c.company||'')+(c.phone?' &middot; '+esc(c.phone):'')+(c.email?' &middot; '+esc(c.email):'')+'</div></div>'
+        +(c.cv_path?'<span style="font-size:9px;font-weight:600;background:#E8F4EE;color:#127A57;padding:2px 6px;border-radius:6px;flex-shrink:0">CV</span>':'')
+        +'</div>';
+    }).join('');
+    box.style.display='block';
+  }, 250);
+}
+async function goToSearchResult(cid, mandateId){
+  var box=document.getElementById('universal-results');
+  if(box){ box.style.display='none'; }
+  var inp=document.getElementById('universal-search'); if(inp) inp.value='';
+  await openProfileById(cid, mandateId);
+}
+document.addEventListener('mousedown', function(e){
+  var box=document.getElementById('universal-results');
+  var inp=document.getElementById('universal-search');
+  if(box && box.style.display!=='none' && !box.contains(e.target) && e.target!==inp){
+    box.style.display='none';
+  }
+});
+
 function renderSidebar(){
   const el=document.getElementById('sb-mandates');
   if(!S.mandates.length){el.innerHTML='<div style="padding:10px 14px;font-size:11px;color:rgba(255,255,255,.3);text-align:center">No mandates yet</div>';return;}
-  el.innerHTML=S.mandates.map(m=>{
-    const dotC=m.status==='active'?'#1D9E75':m.status==='hold'?'#EF9F27':'#888';
-    const isA=S.activeMandate&&S.activeMandate.id===m.id;
-    return '<div class="sb-item'+(isA?' active':'')+'" onclick="selectMandate('+m.id+')">'
-      +'<div class="sb-dot" style="background:'+dotC+'"></div>'
-      +'<div style="flex:1;min-width:0"><div class="sb-name">'+esc(m.role)+'</div>'
-      +'<div class="sb-sub">'+esc(m.client)+' &middot; '+esc(m.location||'')+'</div></div>'
-      +'<button class="sb-status-btn" onclick="event.stopPropagation();openStatusModal('+m.id+')" title="Change status">&ctdot;</button>'
+  // Group by status
+  var groups={active:[],hold:[],closed:[]};
+  S.mandates.forEach(function(m){
+    var st=(m.status||'active').toLowerCase();
+    if(st==='hold') groups.hold.push(m);
+    else if(st==='closed') groups.closed.push(m);
+    else groups.active.push(m);
+  });
+  S._mandColl=S._mandColl||{};  // collapsed state per group
+  var defs=[
+    {key:'active',label:'Active',color:'#1D9E75'},
+    {key:'hold',label:'Hold',color:'#EF9F27'},
+    {key:'closed',label:'Closed',color:'#888'}
+  ];
+  var html='';
+  defs.forEach(function(g){
+    var list=groups[g.key];
+    var collapsed=S._mandColl[g.key]===true;  // default expanded
+    html+='<div class="sb-grp-head" onclick="toggleMandGroup(\''+g.key+'\')" style="display:flex;align-items:center;gap:7px;padding:7px 14px;cursor:pointer;font-size:10.5px;font-weight:700;color:rgba(255,255,255,.55);text-transform:uppercase;letter-spacing:.5px;user-select:none">'
+      +'<span style="transition:transform .15s;display:inline-block;transform:rotate('+(collapsed?'-90':'0')+'deg);font-size:9px">&#9660;</span>'
+      +'<span style="width:7px;height:7px;border-radius:50%;background:'+g.color+';display:inline-block"></span>'
+      +g.label
+      +'<span style="margin-left:auto;background:rgba(255,255,255,.12);border-radius:8px;padding:0 7px;font-size:10px">'+list.length+'</span>'
       +'</div>';
-  }).join('');
+    if(!collapsed){
+      if(!list.length){
+        html+='<div style="padding:4px 14px 8px 30px;font-size:10.5px;color:rgba(255,255,255,.25)">None</div>';
+      } else {
+        html+=list.map(function(m){
+          const dotC=g.color;
+          const isA=S.activeMandate&&S.activeMandate.id===m.id;
+          return '<div class="sb-item'+(isA?' active':'')+'" onclick="selectMandate('+m.id+')" style="padding-left:22px">'
+            +'<div class="sb-dot" style="background:'+dotC+'"></div>'
+            +'<div style="flex:1;min-width:0"><div class="sb-name">'+esc(m.role)+'</div>'
+            +'<div class="sb-sub">'+esc(m.client)+' &middot; '+esc(m.location||'')+'</div></div>'
+            +'<button class="sb-status-btn" onclick="event.stopPropagation();openStatusModal('+m.id+')" title="Change status">&ctdot;</button>'
+            +'</div>';
+        }).join('');
+      }
+    }
+  });
+  el.innerHTML=html;
+}
+function toggleMandGroup(key){
+  S._mandColl=S._mandColl||{};
+  S._mandColl[key]=!S._mandColl[key];
+  renderSidebar();
 }
 async function selectMandate(id){
   closeSidebarOnMobile();
@@ -2183,10 +2277,10 @@ async function renderProfiles(el){
   PIPELINE_STAGES.forEach(function(stage){
     var cands = grouped[stage.id] || [];
     if(!cands.length) return;
-    listHtml += '<div style="padding:4px 10px 2px;font-size:9px;font-weight:600;color:'+stage.color+';text-transform:uppercase;letter-spacing:.4px;background:#f9f9f9;border-top:0.5px solid #eee;border-bottom:0.5px solid #eee;display:flex;align-items:center;gap:5px">'
-      +'<span style="width:6px;height:6px;border-radius:50%;background:'+stage.color+';flex-shrink:0;display:inline-block"></span>'
-      +esc(stage.id)
-      +'<span style="margin-left:auto;background:'+stage.color+'22;color:'+stage.color+';border-radius:8px;padding:1px 6px">'+cands.length+'</span>'
+    listHtml += '<div class="prof-stage-head" style="color:'+stage.color+'">'
+      +'<span style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:50%;background:'+stage.color+';flex-shrink:0;display:inline-block"></span>'
+      +esc(stage.id)+'</span>'
+      +'<span style="background:'+stage.color+'22;color:'+stage.color+';border-radius:9px;padding:1px 8px;font-size:11px">'+cands.length+'</span>'
       +'</div>';
     cands.forEach(function(c){
       var isActive = c.id === selected.id;
@@ -2218,8 +2312,12 @@ async function renderProfiles(el){
 }
 async function selectProfile(cid){
   S.selectedCandidateId=cid;
-  document.querySelectorAll('.prof-list-item').forEach(el=>el.classList.remove('active'));
-  document.querySelectorAll('.prof-list-item').forEach(el=>{if(el.getAttribute('onclick')==='selectProfile('+cid+')')el.classList.add('active');});
+  document.querySelectorAll('.prof-list-item').forEach(function(el){
+    el.classList.toggle('active', parseInt(el.dataset.pid)===cid);
+  });
+  // Scroll the active item into view
+  var act=document.querySelector('.prof-list-item.active');
+  if(act && act.scrollIntoView) act.scrollIntoView({block:'nearest'});
   const detail=await req('GET','/candidates/'+cid);renderProfileDetail(detail);
 }
 
@@ -2381,7 +2479,7 @@ function renderProfileDetail(c){
   html += '</div>';
   html += '</div>';
   // Email
-  html += '<button class="btn" onclick="openEmailPanel(' + c.id + ',\'' + esc(c.email || '').replace(/'/g, "\\'") + '\')" style="font-size:11px;background:#0a2540;color:#fff;border:none">&#9993; Email</button>';
+  html += '<button class="btn" onclick="openEmailPanel(' + c.id + ',\'' + esc(c.email || '').replace(/'/g, "\\'") + '\',' + (c.mandate_id||'null') + ')" style="font-size:11px;background:#0a2540;color:#fff;border:none">&#9993; Email</button>';
   html += '</div>';
 
   html += '</div>';  // end prof-sticky
@@ -2552,19 +2650,6 @@ function renderProfileDetail(c){
         : '<div style="background:#f9f9f9;border:0.5px dashed #ddd;border-radius:8px;padding:18px;text-align:center;color:#999;font-size:12px">Not rated yet. Click <strong>Rate Now</strong> to score this candidate against the role.</div>')
     +'</div>'
     +'</div>';
-  // Journey
-  html+='<div class="prof-section"><div class="sec-label">Candidate Journey</div>';
-  if(hist.length){
-    html+='<div class="tl">'+hist.slice().reverse().map(h=>
-      '<div class="tl-item">'
-      +'<div class="tl-dot" style="background:'+stageDot(h.to_stage||h.from_stage||'')+'33;border-color:'+stageDot(h.to_stage||h.from_stage||'')+'"></div>'
-      +'<div class="tl-date">'+fmtDate(h.created_at)+'</div>'
-      +'<div class="tl-act">'+(h.from_stage&&h.to_stage&&h.from_stage!==h.to_stage?'<span style="color:#888">'+esc(h.from_stage)+'</span> &rarr; <strong>'+esc(h.to_stage)+'</strong>':esc(h.note||h.to_stage||''))+'</div>'
-      +(h.note&&h.from_stage!==h.to_stage&&h.note?'<div class="tl-note">'+esc(h.note)+'</div>':'')
-      +'</div>'
-    ).join('')+'</div>';
-  }else html+='<div style="font-size:11px;color:#888;padding:8px 0">No events yet</div>';
-  html+='</div>';
   // ── Call Analysis ─────────────────────────────────────────────────────────
   html+='<div class="prof-section" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">'
@@ -2859,29 +2944,9 @@ async function saveMyProfile(){
 }
 
 function savedTemplatesHTML(s){
-  var templates = [];
-  try { templates = JSON.parse(s.email_templates || '[]'); } catch(e) { templates = []; }
-  if(!templates.length) return '<div style="margin-top:12px;font-size:11px;color:var(--muted)">No saved email templates yet. You can save templates from the Email compose panel.</div>';
-  var h = '<div style="margin-top:14px"><div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:6px">Saved Templates</div>';
-  templates.forEach(function(t,i){
-    h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid #eee">'
-      + '<div style="flex:1;font-size:11.5px;color:var(--ink)"><b>' + esc(t.name) + '</b> — ' + esc((t.subject||'').substring(0,50)) + '</div>'
-      + '<button onclick="deleteEmailTemplate('+i+')" style="background:none;border:none;color:#E24B4A;cursor:pointer;font-size:12px" title="Delete">&#10005;</button>'
-      + '</div>';
-  });
-  h += '</div>';
-  return h;
-}
-
-async function deleteEmailTemplate(idx){
-  if(!confirm('Delete this template?')) return;
-  var templates = [];
-  try { templates = JSON.parse(S.settings.email_templates || '[]'); } catch(e) { templates = []; }
-  templates.splice(idx, 1);
-  await req('POST', '/settings', {email_templates: JSON.stringify(templates)});
-  S.settings.email_templates = JSON.stringify(templates);
-  toast('OK', 'Template deleted');
-  renderSettings();
+  return '<div style="margin-top:12px;font-size:11px;color:var(--muted);background:#F3F8FF;border:0.5px solid #C5DEFF;border-radius:8px;padding:10px 12px;color:#1565C0">'
+    + '&#128161; Email templates ab <b>har job position (mandate)</b> ke apne hote hain. Email compose panel mein "New" / "Update" se templates banayein ya badlein.'
+    + '</div>';
 }
 
 function emailConfigHTML(s){
@@ -3330,10 +3395,11 @@ function closeJourney(){
 }
 
 // ── Email Compose Side Panel ──────────────────────────────────────────────
-function openEmailPanel(cid, candidateEmail){
+function openEmailPanel(cid, candidateEmail, mandateId){
   // Close journey if open
   closeJourney();
   S._emailCid = cid;
+  S._emailMandateId = mandateId || null;
   var drawer = document.getElementById('email-drawer');
   if(!drawer){
     drawer = document.createElement('div');
@@ -3347,22 +3413,19 @@ function openEmailPanel(cid, candidateEmail){
     + '&#9888;&#65039; Email not configured. Go to <b>Settings → Email Configuration</b>.'
     + '</div>';
 
-  // Load templates from settings
-  var templates = [];
-  try { templates = JSON.parse(S.settings.email_templates || '[]'); } catch(e) { templates = []; }
-  var tplOptions = '<option value="">— Select template —</option>'
-    + templates.map(function(t, i){ return '<option value="'+i+'">'+esc(t.name)+'</option>'; }).join('');
-
   drawer.innerHTML = '<div style="padding:12px 16px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'
     + '<div style="font-size:14px;font-weight:600;color:var(--navy);display:flex;align-items:center;gap:7px">&#9993;&#65039; Email</div>'
     + '<button onclick="closeEmailPanel()" style="background:none;border:none;font-size:20px;color:#999;cursor:pointer;line-height:1">&times;</button></div>'
     + '<div style="flex:1;overflow-y:auto;padding:14px">'
     + setupWarning
-    // Template selector
-    + '<div style="margin-bottom:10px;display:flex;gap:6px;align-items:center">'
-    + '<select id="email-tpl" onchange="applyEmailTemplate()" class="inp" style="flex:1;font-size:11.5px"><option value="">— Template —</option>' + tplOptions + '</select>'
-    + '<button onclick="saveAsEmailTemplate()" class="btn btn-o" style="font-size:10px;padding:4px 8px;white-space:nowrap" title="Save current email as template">&#128190; Save Template</button>'
-    + '</div>'
+    // Template selector (per-mandate)
+    + '<div style="margin-bottom:10px">'
+    + '<div style="font-size:10px;color:var(--muted);margin-bottom:3px">Templates for this job position</div>'
+    + '<div style="display:flex;gap:6px;align-items:center">'
+    + '<select id="email-tpl" onchange="applyEmailTemplate()" class="inp" style="flex:1;font-size:11.5px"><option value="">— Select template —</option></select>'
+    + '<button onclick="saveAsEmailTemplate()" class="btn btn-o" style="font-size:10px;padding:4px 8px;white-space:nowrap" title="Save as new template">&#10133; New</button>'
+    + '<button onclick="updateEmailTemplate()" class="btn btn-o" style="font-size:10px;padding:4px 8px;white-space:nowrap" title="Update selected template">&#128190; Update</button>'
+    + '</div></div>'
     // Compose fields
     + '<div style="margin-bottom:8px"><label style="font-size:10.5px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px">To</label>'
     + '<input id="email-to" class="inp" value="' + esc(candidateEmail || '') + '" placeholder="candidate@email.com" style="font-size:12.5px"></div>'
@@ -3382,7 +3445,7 @@ function openEmailPanel(cid, candidateEmail){
     + '<button onclick="emailFmt(\'justifyCenter\')" class="fmt-btn" title="Center">&#8633;</button>'
     + '<button onclick="emailFmt(\'insertUnorderedList\')" class="fmt-btn" title="Bullet List">&#8226;</button>'
     + '</div>'
-    + '<div id="email-body" contenteditable="true" style="min-height:140px;max-height:300px;overflow-y:auto;padding:10px;font-size:13px;line-height:1.6;font-family:sans-serif;outline:none" data-placeholder="Dear Candidate,\n\nI am reaching out regarding..."></div>'
+    + '<div id="email-body" contenteditable="true" style="min-height:140px;max-height:300px;overflow-y:auto;padding:10px;font-size:13px;line-height:1.6;font-family:sans-serif;outline:none" data-placeholder="Dear Candidate,..."></div>'
     + '</div></div>'
     + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px">'
     + '<button id="email-send-btn" onclick="sendEmailFromPanel()" class="btn btn-g" style="font-size:12px;padding:8px 18px">&#128228; Send</button>'
@@ -3408,7 +3471,7 @@ function openEmailPanel(cid, candidateEmail){
   requestAnimationFrame(function(){ drawer.style.transform = 'translateX(0)'; });
   setTimeout(function(){ document.addEventListener('mousedown', _emailOutside); }, 50);
 
-  // Load sent email history
+  loadMandateTemplates();
   loadEmailHistory(cid);
 
   setTimeout(function(){
@@ -3417,36 +3480,63 @@ function openEmailPanel(cid, candidateEmail){
   }, 300);
 }
 
+async function loadMandateTemplates(){
+  var sel = document.getElementById('email-tpl');
+  if(!sel) return;
+  S._mandTemplates = [];
+  if(S._emailMandateId){
+    var r = await req('GET', '/mandates/' + S._emailMandateId + '/email-templates');
+    if(r.ok) S._mandTemplates = r.templates || [];
+  }
+  sel.innerHTML = '<option value="">— Select template —</option>'
+    + S._mandTemplates.map(function(t,i){ return '<option value="'+i+'">'+esc(t.name)+'</option>'; }).join('');
+}
+
+async function _saveMandTemplates(){
+  if(!S._emailMandateId) return;
+  await req('POST', '/mandates/' + S._emailMandateId + '/email-templates', {templates: S._mandTemplates});
+}
+
 function applyEmailTemplate(){
   var sel = document.getElementById('email-tpl');
   if(!sel || sel.value === '') return;
-  var templates = [];
-  try { templates = JSON.parse(S.settings.email_templates || '[]'); } catch(e) { return; }
-  var t = templates[parseInt(sel.value)];
+  var t = (S._mandTemplates || [])[parseInt(sel.value)];
   if(!t) return;
   var subj = document.getElementById('email-subject');
-  var body = document.getElementById('email-body');
   if(subj) subj.value = t.subject || '';
   if(t.body) _setEmailBody(t.body);
 }
 
 async function saveAsEmailTemplate(){
+  if(!S._emailMandateId){ toast('ERR','Yeh candidate kisi mandate se linked nahi hai'); return; }
   var subject = (document.getElementById('email-subject') || {}).value || '';
   var body = _getEmailBody();
   if(!subject.trim() && !body.trim()){ toast('ERR','Subject ya message likhein pehle'); return; }
   var name = prompt('Template ka naam dein:', subject.trim().substring(0,40) || 'My Template');
   if(!name) return;
-  var templates = [];
-  try { templates = JSON.parse(S.settings.email_templates || '[]'); } catch(e) { templates = []; }
-  templates.push({name: name.trim(), subject: subject, body: body});
-  await req('POST', '/settings', {email_templates: JSON.stringify(templates)});
-  S.settings.email_templates = JSON.stringify(templates);
-  toast('OK', 'Template "'+name+'" saved!');
-  // Refresh template dropdown
+  S._mandTemplates = S._mandTemplates || [];
+  S._mandTemplates.push({name: name.trim(), subject: subject, body: body});
+  await _saveMandTemplates();
+  toast('OK', 'Template "'+name+'" saved for this job!');
   var sel = document.getElementById('email-tpl');
   if(sel){
-    sel.innerHTML = '<option value="">— Template —</option>' + templates.map(function(t,i){ return '<option value="'+i+'">'+esc(t.name)+'</option>'; }).join('');
+    sel.innerHTML = '<option value="">— Select template —</option>' + S._mandTemplates.map(function(t,i){ return '<option value="'+i+'">'+esc(t.name)+'</option>'; }).join('');
+    sel.value = S._mandTemplates.length - 1;
   }
+}
+
+async function updateEmailTemplate(){
+  var sel = document.getElementById('email-tpl');
+  if(!sel || sel.value === ''){ toast('ERR','Pehle ek template select karein jise update karna hai'); return; }
+  var idx = parseInt(sel.value);
+  var t = (S._mandTemplates || [])[idx];
+  if(!t) return;
+  var subject = (document.getElementById('email-subject') || {}).value || '';
+  var body = _getEmailBody();
+  if(!confirm('Template "'+t.name+'" ko current email se update karein?')) return;
+  S._mandTemplates[idx] = {name: t.name, subject: subject, body: body};
+  await _saveMandTemplates();
+  toast('OK', 'Template "'+t.name+'" updated!');
 }
 
 async function loadEmailHistory(cid){
