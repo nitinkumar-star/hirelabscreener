@@ -965,6 +965,7 @@ def init_db():
             ctc_expected REAL DEFAULT 0,
             notice_period INTEGER DEFAULT 0,
             location TEXT DEFAULT '',
+            preferred_location TEXT DEFAULT '',
             phone TEXT DEFAULT '',
             email TEXT DEFAULT '',
             qualification TEXT DEFAULT '',
@@ -1203,6 +1204,7 @@ def init_db():
         ('product_handles', 'TEXT DEFAULT "[]"'),
         ('function_tags', 'TEXT DEFAULT "[]"'),
         ('status_tags', 'TEXT DEFAULT "[]"'),
+        ('preferred_location', "TEXT DEFAULT ''"),
     ]:
         try:
             c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {defn}')
@@ -1932,6 +1934,8 @@ def extension_push():
              d.get('location',''), phone or existing['phone'], skills_json, ts(), existing['id'])
         )
         _save_wh_for(conn, existing['id'], d.get('work_history'))
+        conn.execute('UPDATE candidates SET qualification=?, preferred_location=? WHERE id=?',
+                     (d.get('qualification',''), d.get('preferred_location',''), existing['id']))
         conn.commit(); conn.close()
         return jsonify({'ok': True, 'action': 'updated', 'candidate_id': existing['id'],
                         'name': name, 'preserved': True,
@@ -1947,6 +1951,8 @@ def extension_push():
          'worth_opening', 'Pushed from Naukri', 'Screening', ts(), ts())
     )
     cid = c.lastrowid
+    c.execute('UPDATE candidates SET qualification=?, preferred_location=? WHERE id=?',
+              (d.get('qualification',''), d.get('preferred_location',''), cid))
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
               (cid, '', 'Screening', 'Pushed from Naukri extension', ts()))
     _save_wh_for(conn, cid, d.get('work_history'))
@@ -1991,6 +1997,7 @@ TENANT_SETTINGS = {
     'workflow_mode',   # 'agency' (default) or 'corporate'
     'smtp_email', 'smtp_app_password', 'smtp_display_name',
     'email_templates',  # JSON array of {name, subject, body}
+    'custom_status_tags',  # JSON array of user-created quick tags
 }
 
 def _safe_company_id():
@@ -2718,56 +2725,149 @@ def ai_compose_email(cid):
     company_name = get_setting('company_name', '') or get_setting('recruiter_name', '')
     conn.close()
 
-    signature_block = f"Name: {recruiter_name}"
-    if recruiter_designation: signature_block += f", Designation: {recruiter_designation}"
-    if company_name: signature_block += f", Company: {company_name}"
-    if recruiter_phone: signature_block += f", Phone: {recruiter_phone}"
-    if recruiter_email_addr: signature_block += f", Email: {recruiter_email_addr}"
+    signature_block = f"{recruiter_name}"
+    if recruiter_designation: signature_block += f"\n{recruiter_designation}"
+    if company_name: signature_block += f"\n{company_name}"
+    if recruiter_phone: signature_block += f"\nPhone: {recruiter_phone}"
+    if recruiter_email_addr: signature_block += f"\nEmail: {recruiter_email_addr}"
 
-    system_prompt = f"""You are a professional recruitment email writer. Write emails that are polite, professional, and concise.
+    system_prompt = f"""You are an expert recruitment email writer for an Indian recruitment agency. Write professional, warm, detailed emails.
 
-Candidate info: Name={cand_info.get('name','')}, Company={cand_info.get('company','')}, Role={cand_info.get('designation','')}, Experience={cand_info.get('experience','')} yrs, CTC={cand_info.get('ctc_current','')} LPA, Location={cand_info.get('location','')}.
+CANDIDATE: Name={cand_info.get('name','')}, Current Company={cand_info.get('company','')}, Current Role={cand_info.get('designation','')}, Experience={cand_info.get('experience','')} yrs, Location={cand_info.get('location','')}.
 
-Job opening: {cand_info.get('mandate_role','')} at {cand_info.get('mandate_client','')}, Location: {cand_info.get('mandate_location','')}, CTC: {cand_info.get('ctc_range','')}
+JOB OPENING: Role={cand_info.get('mandate_role','')}, Hiring Company/Client={cand_info.get('mandate_client','')}, Job Location={cand_info.get('mandate_location','')}.
 
-{('Job Description:\n' + jd_text + '\n') if jd_text else ''}
+{('FULL JOB DESCRIPTION (use this to write a detailed email):\n' + jd_text + '\n') if jd_text else ''}
 
-Recruiter signature (ALWAYS include at the end of every email):
+RECRUITER SIGNATURE (you MUST include this exact signature at the end of EVERY email, no exceptions):
 {signature_block}
 
-{('Current email context/draft:\n' + context) if context else ''}
-{('Current draft in compose box:\n' + current_draft) if current_draft else ''}
+{('Previous email context:\n' + context) if context else ''}
+{('Current draft in compose box (improve or continue from this):\n' + current_draft) if current_draft else ''}
 
-Rules:
-- Start with a proper greeting like "Dear [Candidate Name]," or "Hi [Candidate Name],"
-- Introduce yourself: "This is [Recruiter Name] from [Company]"
-- Include the job details naturally
-- End with the recruiter's full signature block (name, designation, company, phone, email)
-- For "create the jd" or "share jd" commands: compose a professional email sharing the job description with the candidate
-- For "follow up" commands: write a polite follow-up referencing the previous communication
-- FORMATTING: The "body" must be valid HTML. Use <b>...</b> for important words (job title, company, CTC, location, key skills), <br> for line breaks, <br><br> between paragraphs, and <ul><li>...</li></ul> for listing requirements or responsibilities. Make the signature block use <br> between lines with the name in <b>. Keep it clean and professional — bold only the genuinely important details, do not over-format.
-- Respond with ONLY a JSON object: {{"subject": "...", "body": "...html..."}}. No markdown fences, no extra text."""
+STRICT RULES:
+1. NEVER mention salary, CTC, compensation, package, or pay in the email — even if the JD contains it. Do not reference numbers about money at all. This is critical.
+2. ALWAYS end with the recruiter's full signature block exactly as given above (name, designation, company, phone, email). Never skip the signature.
+3. Start with "Dear {cand_info.get('name','Candidate')}," and introduce yourself as {recruiter_name} from {company_name}.
+4. For "create JD" / "share JD" commands: write a DETAILED email — include an engaging opening, a clear "About the Role" section, key responsibilities (as bullet points), required skills/qualifications (as bullet points), and about the company if info is available. Make it comprehensive and compelling, not a 2-line summary.
+5. For "follow up" commands: write a polite, brief follow-up referencing the earlier email/JD shared.
+6. FORMATTING — the "body" MUST be valid HTML: use <b>...</b> for the job title, company name, location and key terms; <br><br> between paragraphs; <b>Section headings</b> for sections; <ul><li>...</li></ul> for responsibilities and requirements. Signature: each line separated by <br>, with the name in <b>. Bold only genuinely important items.
+7. Respond with ONLY a JSON object exactly like: {{"subject": "...", "body": "...html..."}}. No markdown code fences, no commentary before or after."""
 
+    text = ''
     try:
         resp = call_deepseek(key, {
             'model': 'deepseek-chat',
-            'max_tokens': 1000,
+            'max_tokens': 1500,
             'messages': [
                 {'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': command}
             ]
         }, endpoint='ai-compose')
-        data = resp.json()
-        text = data.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
-        # Try parse JSON
+        try:
+            data = resp.json()
+        except Exception:
+            return jsonify({'error': 'AI service returned an invalid response. Check your DeepSeek API key in Settings.'}), 502
+        if isinstance(data, dict) and data.get('error'):
+            emsg = data['error'].get('message', 'Unknown error') if isinstance(data['error'], dict) else str(data['error'])
+            return jsonify({'error': 'DeepSeek error: ' + emsg}), 502
+        choices = data.get('choices') or []
+        if not choices:
+            return jsonify({'error': 'AI did not return any content. Please try again.'}), 502
+        text = (choices[0].get('message', {}).get('content', '') or '').strip()
+        # Strip markdown fences if present
         text = text.replace('```json', '').replace('```', '').strip()
-        result = json.loads(text)
-        return jsonify({'ok': True, 'subject': result.get('subject', ''), 'body': result.get('body', '')})
-    except json.JSONDecodeError:
-        # If not JSON, return the raw text as body
-        return jsonify({'ok': True, 'subject': '', 'body': text})
+        try:
+            result = json.loads(text)
+            return jsonify({'ok': True, 'subject': result.get('subject', ''), 'body': result.get('body', '')})
+        except json.JSONDecodeError:
+            # Not JSON — treat the whole thing as the email body
+            return jsonify({'ok': True, 'subject': '', 'body': text})
     except Exception as e:
         return jsonify({'error': f'AI compose failed: {str(e)}'}), 500
+
+
+@app.route('/api/mandates/<int:mid>/submission-excel')
+@login_required
+def submission_excel(mid):
+    """Generate a client-submission Excel for a mandate's candidates,
+    matching the standard submission format (yellow bold headers, borders)."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+    from openpyxl.utils import get_column_letter
+
+    conn = get_db()
+    m = conn.execute('SELECT role, client FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, effective_company_id())).fetchone()
+    if not m:
+        conn.close(); return jsonify({'error': 'Mandate not found'}), 404
+    rows = conn.execute(
+        'SELECT * FROM candidates WHERE mandate_id=? ORDER BY name', (mid,)
+    ).fetchall()
+    conn.close()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Submission'
+
+    headers = ['Candidate Name', 'Contact Number', 'Email ID', 'Educational Qualification',
+               'Current Company', 'Total Experience', 'Current CTC', 'Expected CTC',
+               'Current Location', 'Preferred Location', 'Notice Period']
+    widths = [26.5, 16, 31.5, 25.7, 31, 16.5, 27.7, 32.5, 16.3, 18.3, 28.3]
+
+    header_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+    header_font = Font(bold=True, size=10, color='222222')
+    thin = Side(style='thin', color='BBBBBB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+    for i, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=i, value=h)
+        cell.fill = header_fill; cell.font = header_font
+        cell.border = border; cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        ws.column_dimensions[get_column_letter(i)].width = widths[i-1]
+    ws.row_dimensions[1].height = 28
+
+    def fmt_exp(v):
+        try:
+            v = float(v or 0)
+            return f"{int(v)} Years" if v == int(v) else f"{v} Years"
+        except Exception:
+            return ''
+    def fmt_ctc(v):
+        try:
+            v = float(v or 0)
+            return f"{int(v)} LPA" if v == int(v) else f"{v} LPA"
+        except Exception:
+            return ''
+    def fmt_notice(v):
+        try:
+            v = int(v or 0)
+            return f"{v} Days" if v else ''
+        except Exception:
+            return ''
+
+    r = 2
+    for c in rows:
+        d = dict(c)
+        vals = [
+            d.get('name', ''), d.get('phone', ''), d.get('email', ''),
+            d.get('qualification', ''), d.get('company', ''),
+            fmt_exp(d.get('experience')), fmt_ctc(d.get('ctc_current')),
+            fmt_ctc(d.get('ctc_expected')), d.get('location', ''),
+            d.get('preferred_location', ''), fmt_notice(d.get('notice_period')),
+        ]
+        for i, val in enumerate(vals, 1):
+            cell = ws.cell(row=r, column=i, value=val)
+            cell.border = border; cell.alignment = center; cell.font = Font(size=10)
+        r += 1
+
+    bio = io.BytesIO()
+    wb.save(bio); bio.seek(0)
+    safe_role = re.sub(r'[^A-Za-z0-9_-]+', '_', (m['role'] or 'Submission'))[:40]
+    fname = f"Submission_{safe_role}.xlsx"
+    return send_file(bio, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 @app.route('/api/mandates/<int:mid>/email-templates', methods=['GET'])
@@ -2923,8 +3023,8 @@ def candidate_journey(cid):
             add(r['due_at'], 'Reminder completed — ' + note, 'check', 'teal')
     # Logged events (tags added, call analysed, etc.)
     for e in conn.execute('SELECT * FROM candidate_events WHERE candidate_id=? ORDER BY created_at', (cid,)).fetchall():
-        icon = {'tag': 'tag', 'call': 'phone', 'note': 'note', 'email': 'mail'}.get(e['event_type'], 'point')
-        color = {'tag': 'gray', 'call': 'teal', 'note': 'blue', 'email': 'purple'}.get(e['event_type'], 'gray')
+        icon = {'tag': 'tag', 'call': 'phone', 'note': 'note', 'email': 'mail', 'edit': 'edit'}.get(e['event_type'], 'point')
+        color = {'tag': 'gray', 'call': 'teal', 'note': 'blue', 'email': 'purple', 'edit': 'amber'}.get(e['event_type'], 'gray')
         add(e['created_at'], e['detail'], icon, color)
     conn.close()
 
@@ -2984,7 +3084,7 @@ def update_candidate(cid):
     if not c: conn.close(); return jsonify({'error': 'Not found'}), 404
 
     fields = ['name','company','designation','experience','ctc_current','ctc_expected',
-              'notice_period','location','phone','email','qualification','career_summary',
+              'notice_period','location','preferred_location','phone','email','qualification','career_summary',
               'key_skills','secondary_skills','recruiter_feedback','client_feedback','general_comments']
     sets = []; vals = []
     for f in fields:
@@ -2998,27 +3098,48 @@ def update_candidate(cid):
         vals += [ts(), cid]
         conn.execute('UPDATE candidates SET ' + ','.join(sets) + ',updated_at=? WHERE id=?', vals)
 
-        # Log feedback changes in history
+        # Build a human-readable list of what changed, for the journey
+        labels = {
+            'name':'Name','company':'Company','designation':'Designation',
+            'experience':'Experience','ctc_current':'Current CTC','ctc_expected':'Expected CTC',
+            'notice_period':'Notice period','location':'Location','preferred_location':'Preferred location','phone':'Phone','email':'Email',
+            'qualification':'Qualification','career_summary':'Summary'
+        }
+        changes = []
+        for f, lbl in labels.items():
+            if f in d:
+                old_v = c[f] if f in c.keys() else ''
+                new_v = d[f]
+                if str(old_v or '') != str(new_v or ''):
+                    if new_v not in (None, '', 0):
+                        changes.append(f"{lbl}: {old_v or '—'} \u2192 {new_v}")
+        # Skills change
+        if 'key_skills' in d:
+            try:
+                new_skills = d['key_skills'] if isinstance(d['key_skills'], list) else json.loads(d['key_skills'] or '[]')
+                old_skills = json.loads(c['key_skills'] or '[]')
+                if set(new_skills) != set(old_skills):
+                    changes.append('Skills updated')
+            except Exception:
+                pass
+
         notes = []
         if 'recruiter_feedback' in d and d['recruiter_feedback'] and d['recruiter_feedback'] != (c['recruiter_feedback'] or ''):
-            notes.append('Recruiter feedback updated: ' + str(d['recruiter_feedback'])[:120])
+            notes.append('Recruiter feedback updated')
         if 'client_feedback' in d and d['client_feedback'] and d['client_feedback'] != (c['client_feedback'] or ''):
-            notes.append('Client feedback: ' + str(d['client_feedback'])[:120])
-        if 'general_comments' in d and d['general_comments'] and d['general_comments'] != (c['general_comments'] or ''):
-            notes.append('Comment: ' + str(d['general_comments'])[:120])
-        if 'key_skills' in d:
-            new_skills = d['key_skills'] if isinstance(d['key_skills'], list) else json.loads(d['key_skills'] or '[]')
-            old_skills = json.loads(c['key_skills'] or '[]')
-            if set(new_skills) != set(old_skills):
-                notes.append('Skills updated: ' + ', '.join(new_skills[:6]))
-        if 'phone' in d and d['phone'] and d['phone'] != (c['phone'] or ''):
-            notes.append('Phone added: ' + str(d['phone']))
+            notes.append('Client feedback updated')
 
+        conn.commit(); conn.close()
+
+        # Log each change to the journey as an edit event
+        if changes:
+            u = current_user()
+            who = (u.get('display_name') or u.get('username') or '') if u else ''
+            detail = 'Profile updated \u2014 ' + '; '.join(changes) + (f' (by {who})' if who else '')
+            log_candidate_event(cid, 'edit', detail)
         for note in notes:
-            conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
-                         (cid, c['stage'], c['stage'], note, ts()))
-
-        conn.commit()
+            log_candidate_event(cid, 'note', note)
+        return jsonify({'ok': True})
     conn.close()
     return jsonify({'ok': True})
 
@@ -3054,6 +3175,8 @@ def add_manual(mid):
          d.get('location',''), d.get('phone',''), d.get('email',''), d.get('career_summary',''),
          json.dumps(d.get('key_skills') or []), 'worth_opening', 'Manually added', 'Screening', ts(), ts()))
     cid = c.lastrowid
+    c.execute('UPDATE candidates SET qualification=?, preferred_location=? WHERE id=?',
+              (d.get('qualification',''), d.get('preferred_location',''), cid))
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
               (cid, '', 'Screening', 'Manually added to pipeline', ts()))
     conn.commit(); conn.close()
@@ -3187,7 +3310,8 @@ def parse_naukri():
     system_msg = ('Extract candidate details from recruiter text. Return ONLY valid JSON with these fields: '
                   'name, phone, email, company, designation, experience (float years), '
                   'ctc_current (float LPA), ctc_expected (float LPA), notice_period (int days), '
-                  'location, qualification, key_skills (array max 6), secondary_skills (array), '
+                  'location (current city), preferred_location (preferred/desired job location, if mentioned), '
+                  'qualification (highest education degree e.g. B.Tech, MBA), key_skills (array max 6), secondary_skills (array), '
                   'career_summary (2 sentences), is_mnc (bool). '
                   'Use null for missing strings, 0 for missing numbers.')
     try:
@@ -3252,7 +3376,7 @@ def parse_resume():
                   'name, phone, email, company (current), designation (current title), '
                   'experience (float years total), ctc_current (float LPA, 0 if not found), '
                   'ctc_expected (float LPA, 0 if not found), notice_period (int days, 0 if not found), '
-                  'location (current city), qualification (highest degree), '
+                  'location (current city), preferred_location (preferred/desired job location if mentioned), qualification (highest degree), '
                   'key_skills (array of top 8 technical/domain skills), '
                   'secondary_skills (array of other skills), '
                   'career_summary (2-3 sentences about background and strengths), '

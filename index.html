@@ -1531,6 +1531,10 @@ async function loadMandates(){
   if(data.error){showConnError(data.error);return;}
   S.mandates=data; renderSidebar();
 }
+function downloadSubmissionExcel(){
+  if(!S.activeMandate){ toast('ERR','Pehle koi mandate select karein'); return; }
+  window.open('/api/mandates/' + S.activeMandate.id + '/submission-excel', '_blank');
+}
 // ── Move candidate to another mandate ─────────────────────────────────────
 function openMoveCandidate(cid){
   var current = S.activeMandate ? S.activeMandate.id : null;
@@ -2186,6 +2190,7 @@ async function renderPipeline(el){
     +'<div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap">'
     +'<button class="btn btn-o" style="font-size:11px" onclick="renderPipeline(document.getElementById(\'content\'))">&#8635; Refresh</button>'
     +'<button class="btn btn-o" style="font-size:11px" onclick="openAddCandidateModal()">+ Add Manually</button>'
+    +'<button class="btn" style="font-size:11px;background:#1D9E75;color:#fff" onclick="downloadSubmissionExcel()">&#128229; Submission Excel</button>'
     +(sharedCnt?'<button class="btn" style="font-size:11px;background:#534AB7;color:#fff" onclick="openSubmissionSheet()">&#128203; Client Sheet</button>':'')
     +'</div></div>'
     +'<div class="pl-wrap"><div class="pl-cols" id="pl-cols"></div></div>';
@@ -2569,7 +2574,8 @@ function renderProfileDetail(c){
     +'</div><div class="g3" style="margin-top:8px">'
     +sNum('pf-exp','Experience (yrs)',c.experience||'')+sNum('pf-ctc','Current CTC (LPA)',c.ctc_current||'')
     +sNum('pf-ectc','Expected CTC (LPA)',c.ctc_expected||'')+sNum('pf-notice','Notice (days)',c.notice_period||'')
-    +sInp('pf-location','Location',c.location||'')+sInp('pf-phone','Phone',c.phone||'','Add when called')
+    +sInp('pf-location','Location',c.location||'')+sInp('pf-preferred_location','Preferred Location',c.preferred_location||'')
+    +sInp('pf-qualification','Education / Qualification',c.qualification||'')+sInp('pf-phone','Phone',c.phone||'','Add when called')
     +sInp('pf-email','Email',c.email||'','candidate@email.com')
     +'</div>'
     +'<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-g" style="font-size:11px" onclick="saveProfileSection(&#39;pd&#39;,'+c.id+')">&#128190; Save</button>'
@@ -2816,7 +2822,7 @@ async function saveProfile(cid){
   const r=await req('PUT','/candidates/'+cid,{
     company:v('pf-company'),designation:v('pf-designation'),experience:parseFloat(v('pf-exp'))||0,
     ctc_current:parseFloat(v('pf-ctc'))||0,ctc_expected:parseFloat(v('pf-ectc'))||0,
-    notice_period:parseInt(v('pf-notice'))||0,location:v('pf-location'),phone:v('pf-phone'),email:v('pf-email'),
+    notice_period:parseInt(v('pf-notice'))||0,location:v('pf-location'),preferred_location:v('pf-preferred_location'),qualification:v('pf-qualification'),phone:v('pf-phone'),email:v('pf-email'),
     key_skills:skills,career_summary:v('pf-summary')
   });
   if(r.ok){
@@ -2834,7 +2840,7 @@ async function parseSnippet(cid){
   const setF=(id,val)=>{const el=document.getElementById(id);if(el&&val!=null&&val!==''&&val!==0){el.value=val;el.style.background='#E1F5EE';setTimeout(()=>{el.style.background='';},1200);}};
   setF('pf-company',d.company);setF('pf-designation',d.designation);setF('pf-exp',d.experience);
   setF('pf-ctc',d.ctc_current);setF('pf-ectc',d.ctc_expected);setF('pf-notice',d.notice_period);
-  setF('pf-location',d.location);setF('pf-phone',d.phone);setF('pf-email',d.email);
+  setF('pf-location',d.location);setF('pf-preferred_location',d.preferred_location);setF('pf-qualification',d.qualification);setF('pf-phone',d.phone);setF('pf-email',d.email);
   if(d.key_skills?.length)setF('pf-skills',d.key_skills.join(', '));
   if(d.career_summary)setF('pf-summary',d.career_summary);
   toast('✅','Fields filled');
@@ -3291,6 +3297,9 @@ function _tagColor(t){
   var f = STATUS_TAG_PRESETS.filter(function(p){return p.t===t;})[0];
   return f ? f.c : '#6B4FA0';
 }
+function _customTags(){
+  try { return JSON.parse(S.settings.custom_status_tags || '[]'); } catch(e){ return []; }
+}
 function statusTagsInner(cid){
   var tags = (S.statusTags && S.statusTags[cid]) || [];
   var h = '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">';
@@ -3300,13 +3309,16 @@ function statusTagsInner(cid){
       + esc(t)
       + '<span onclick="removeStatusTag('+cid+',\''+esc(t).replace(/'/g,"")+'\')" style="cursor:pointer;font-weight:700;opacity:.7">&times;</span></span>';
   });
+  // Combine presets + user's saved custom tags (custom in purple)
+  var custom = _customTags().map(function(t){ return {t:t, c:'#6B4FA0'}; });
+  var allPresets = STATUS_TAG_PRESETS.concat(custom);
   h += '<span style="position:relative;display:inline-block">'
     + '<button onclick="toggleStatusTagPop('+cid+')" style="font-size:10.5px;font-weight:600;color:#6B4FA0;background:#fff;border:1px dashed #C9C2E0;padding:2px 9px;border-radius:11px;cursor:pointer">+ Tag</button>'
-    + '<div id="stag-pop-'+cid+'" style="display:none;position:absolute;top:24px;left:0;z-index:50;background:#fff;border:0.5px solid var(--line);border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.13);padding:7px;width:180px">'
-    + STATUS_TAG_PRESETS.map(function(p){
-        return '<div onclick="addStatusTag('+cid+',\''+p.t+'\')" style="font-size:11.5px;padding:5px 8px;border-radius:6px;cursor:pointer;color:'+p.c+';font-weight:600" onmouseover="this.style.background=\''+p.c+'14\'" onmouseout="this.style.background=\'transparent\'">'+p.t+'</div>';
+    + '<div id="stag-pop-'+cid+'" style="display:none;position:absolute;top:24px;left:0;z-index:50;background:#fff;border:0.5px solid var(--line);border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.13);padding:7px;width:190px;max-height:280px;overflow-y:auto">'
+    + allPresets.map(function(p){
+        return '<div onclick="addStatusTag('+cid+',\''+p.t.replace(/'/g,"")+'\')" style="font-size:11.5px;padding:5px 8px;border-radius:6px;cursor:pointer;color:'+p.c+';font-weight:600" onmouseover="this.style.background=\''+p.c+'14\'" onmouseout="this.style.background=\'transparent\'">'+esc(p.t)+'</div>';
       }).join('')
-    + '<div style="border-top:0.5px solid #eee;margin-top:5px;padding-top:6px"><input id="stag-custom-'+cid+'" placeholder="Custom tag + Enter" onkeydown="if(event.key===\'Enter\'){addStatusTag('+cid+',this.value);this.value=\'\';}" style="width:100%;font-size:11px;border:0.5px solid var(--line);border-radius:6px;padding:4px 7px"></div>'
+    + '<div style="border-top:0.5px solid #eee;margin-top:5px;padding-top:6px"><input id="stag-custom-'+cid+'" placeholder="New tag + Enter (saves)" onkeydown="if(event.key===\'Enter\'){addStatusTag('+cid+',this.value);this.value=\'\';}" style="width:100%;font-size:11px;border:0.5px solid var(--line);border-radius:6px;padding:4px 7px"></div>'
     + '</div></span>';
   h += '</div>';
   return h;
@@ -3324,6 +3336,15 @@ async function addStatusTag(cid, tag){
   if(!tag) return;
   S.statusTags = S.statusTags || {}; S.statusTags[cid] = S.statusTags[cid] || [];
   if(S.statusTags[cid].indexOf(tag) === -1) S.statusTags[cid].push(tag);
+  // Autosave brand-new custom tags to reusable list (if not already a preset or saved)
+  var isPreset = STATUS_TAG_PRESETS.some(function(p){ return p.t.toLowerCase()===tag.toLowerCase(); });
+  var custom = _customTags();
+  var isCustom = custom.some(function(t){ return t.toLowerCase()===tag.toLowerCase(); });
+  if(!isPreset && !isCustom){
+    custom.push(tag);
+    S.settings.custom_status_tags = JSON.stringify(custom);
+    req('POST','/settings',{custom_status_tags: JSON.stringify(custom)});  // autosave, no await needed
+  }
   _rerenderStatusTags(cid);
   await saveStatusTags(cid);
 }
@@ -3340,7 +3361,7 @@ async function saveStatusTags(cid){
 function _journeyIcon(t){
   return ({'user-plus':'\u2795','arrow-right':'\ud83d\udd04','brand-whatsapp':'\ud83d\udcac',
     'message-dots':'\u2705','bell':'\u23f0','check':'\u2714\ufe0f','tag':'\ud83c\udff7\ufe0f',
-    'phone':'\ud83d\udcde','note':'\ud83d\udcdd','mail':'\u2709\ufe0f','point':'\u2022'})[t] || '\u2022';
+    'phone':'\ud83d\udcde','note':'\ud83d\udcdd','mail':'\u2709\ufe0f','edit':'\u270f\ufe0f','point':'\u2022'})[t] || '\u2022';
 }
 function _journeyColor(c){
   return ({gray:'#888780',purple:'#534AB7',green:'#639922',teal:'#1D9E75',
