@@ -628,7 +628,7 @@ body{font-size:14px !important; line-height:1.5}
 
   <div style="padding:6px 0 2px">
     <div class="sb-gear" id="sb-home" onclick="goHome()"><span class="sb-nav-ic">&#9711;</span><span>Home</span></div>
-    <div class="sb-gear" id="sb-tasks" onclick="openTasks()"><span class="sb-nav-ic">&#10003;</span><span>Today's Tasks</span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></div>
+    <div class="sb-gear" id="sb-tasks" onclick="openTasks()"><span class="sb-nav-ic">&#10003;</span><span>Tasks</span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></div>
     <div class="sb-gear" id="sb-ai" onclick="openAI()"><span class="sb-nav-ic">&#10038;</span><span>AI Insights</span></div>
     <div class="sb-gear" id="sb-central" onclick="openCentralDB()"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></div>
     <div class="sb-gear" id="sb-responses" onclick="openResponses()"><span class="sb-nav-ic">&#9993;</span><span>Responses</span><span class="sb-nav-count" id="nav-resp-count" style="display:none"></span></div>
@@ -780,9 +780,16 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:28px;height:28px;border-radius:6px;background:#FBEDE4;display:flex;align-items:center;justify-content:center;font-size:14px">&#9989;</div>
-        <div><div style="font-size:14px;font-weight:600">Today's Tasks</div><div style="font-size:11px;color:#888;margin-top:1px">Reminders, follow-ups &amp; new applications</div></div>
+        <div><div style="font-size:14px;font-weight:600">Tasks</div><div style="font-size:11px;color:#888;margin-top:1px">Reminders, follow-ups &amp; new applications</div></div>
       </div>
-      <div style="margin-left:auto;display:flex;gap:8px">
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <select id="task-filter" onchange="renderTasksView()" style="font-size:11.5px;padding:6px 10px">
+          <option value="">All types</option>
+          <option value="reminder">Reminders</option>
+          <option value="stale">Stale candidates</option>
+          <option value="promise">Promised follow-up</option>
+          <option value="submission">New submissions</option>
+        </select>
         <button class="btn btn-o" style="font-size:11px" onclick="renderTasksView()">&#8635; Refresh</button>
         <button class="btn btn-o" onclick="closeTasks()">&#10005; Close</button>
       </div>
@@ -1374,6 +1381,7 @@ async function init(){
   renderUserBar();
   await loadMandates();
   renderSettings();
+  updateTasksBadge();
   await readHash();   // restore last view from URL (refresh-safe)
 }
 
@@ -1729,7 +1737,7 @@ async function renderDashboard(el){
       pipeline:(cands||[]).filter(c=>!['Screened-Out',''].includes(c.stage)).length
     }))
   )),
-    req('GET', '/dashboard-tasks').catch(function(){ return {ok:false,reminders:[],wa_pending:[],new_submissions:[]}; })
+    req('GET', '/tasks').catch(function(){ return {ok:false,tasks:[],counts:{}}; })
   ]);
   const sm={};statsArr.forEach(s=>sm[s.mid]=s);
   const totActive=S.mandates.filter(m=>m.status==='active').length;
@@ -1772,82 +1780,49 @@ async function renderDashboard(el){
   });
   html+='</div>';
 
-  // ── Tasks Panel ──────────────────────────────────────────────────────────
-  var rems    = (tasksData && tasksData.reminders)       || [];
-  var wap     = (tasksData && tasksData.wa_pending)      || [];
-  var subs    = (tasksData && tasksData.new_submissions) || [];
-  var now     = new Date();
-  var hasAny  = rems.length || wap.length || subs.length;
+  // ── Tasks Panel (preview — full view lives in the dedicated Tasks tab) ──
+  var allTasks = (tasksData && tasksData.tasks) || [];
+  var counts   = (tasksData && tasksData.counts) || {};
+  var preview  = allTasks.filter(function(t){ return t.section==='overdue' || t.section==='today'; }).slice(0, 6);
+  var hasAny   = allTasks.length > 0;
 
   var tasks = '<div style="background:#fff;border-top:1px solid var(--line);padding:18px 20px">';
-  tasks += '<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:14px;display:flex;align-items:center;gap:8px">';
-  tasks += '&#9989; Today&#39;s Tasks';
-  if (hasAny) tasks += '<span style="background:#E24B4A;color:#fff;font-size:10px;padding:1px 8px;border-radius:8px;font-weight:600">' + (rems.length+wap.length+subs.length) + '</span>';
+  tasks += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">';
+  tasks += '<div style="font-size:13px;font-weight:700;color:var(--navy);display:flex;align-items:center;gap:8px">';
+  tasks += '&#9989; Aaj ke Follow-ups';
+  if (hasAny) tasks += '<span style="background:#E24B4A;color:#fff;font-size:10px;padding:1px 8px;border-radius:8px;font-weight:600">' + ((counts.overdue||0)+(counts.today||0)) + '</span>';
+  tasks += '</div>';
+  tasks += '<span onclick="openTasks()" style="font-size:11.5px;color:var(--teal-deep);cursor:pointer;font-weight:600">View all &#8594;</span>';
   tasks += '</div>';
 
   if (!hasAny) {
     tasks += '<div style="color:var(--muted);font-size:12px;padding:12px 0">&#127881; All clear — no pending tasks today!</div>';
-  }
-
-  // Manual Reminders
-  if (rems.length) {
-    tasks += '<div style="font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.5px;margin-bottom:6px">REMINDERS</div>';
-    rems.forEach(function(rem) {
-      var due = new Date(rem.due_at);
-      var overdue = due < now;
-      var dueLabel = due.toLocaleDateString('en-IN',{day:'numeric',month:'short'})
-                  + ' ' + due.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+  } else if (!preview.length) {
+    tasks += '<div style="color:var(--muted);font-size:12px;padding:12px 0">Nothing due today. <span onclick="openTasks()" style="color:var(--teal-deep);cursor:pointer">See upcoming &#8594;</span></div>';
+  } else {
+    preview.forEach(function(t){
+      var icon = ({reminder:'\u23f0', stale:'\ud83d\udca4', promise:'\ud83d\udcac', submission:'\ud83d\udce5'})[t.type] || '\u2022';
+      var overdue = t.section === 'overdue';
       tasks += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:7px;margin-bottom:6px;background:'
-             + (overdue ? '#FFF3EE' : 'var(--teal-soft)') + ';border:0.5px solid '
-             + (overdue ? '#FBCBB5' : '#C2EBD8') + '">'
-        + '<div style="flex:1;min-width:0;cursor:pointer" onclick="openProfileById('+rem.candidate_id+','+(rem.mandate_id||'null')+')">'
-        + '<div style="font-size:12px;font-weight:600;color:var(--navy)">' + esc(rem.candidate_name||'Candidate') + '</div>'
-        + '<div style="font-size:11px;color:var(--muted)">' + esc(rem.mandate_label||'') + '</div>'
-        + '<div style="font-size:11px;color:' + (overdue?'#C0522B':'var(--teal-deep)') + ';margin-top:2px">&#9200; ' + dueLabel + (overdue?' — OVERDUE':'') + (rem.note?' · '+esc(rem.note):'') + '</div>'
-        + '</div>'
-        + '<button class="btn btn-g" style="font-size:10px;padding:3px 10px;flex-shrink:0" onclick="dashReminderDone('+rem.id+', this)">&#10003; Done</button>'
-        + '</div>';
-    });
-  }
-
-  // WA Pending
-  if (wap.length) {
-    tasks += '<div style="font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.5px;margin:10px 0 6px">WHATSAPP — NO REPLY</div>';
-    wap.slice(0, 15).forEach(function(c) {
-      var days = c.days_since_wa;
-      var lastType = c.fu2_sent_at ? 'FU2' : c.fu1_sent_at ? 'FU1' : 'Intro';
-      tasks += '<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:7px;margin-bottom:5px;background:#F9F9F6;border:0.5px solid var(--line);cursor:pointer" onclick="openProfileById('+c.id+','+(c.mandate_id||'null')+')">'
-        + avatarHtml(c.name, 26)
+        + (overdue ? '#FFF3EE' : 'var(--teal-soft)') + ';border:0.5px solid '
+        + (overdue ? '#FBCBB5' : '#C2EBD8') + ';cursor:pointer" onclick="'+(t.candidate_id?('openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')'):'openResponses()')+'">'
         + '<div style="flex:1;min-width:0">'
-        + '<div style="font-size:12px;font-weight:600;color:var(--navy)">' + esc(c.name||'') + '</div>'
-        + '<div style="font-size:10px;color:var(--muted)">' + esc(c.mandate_label||'') + '</div>'
+        + '<div style="font-size:12px;font-weight:600;color:var(--navy)">' + icon + ' ' + esc(t.title||'') + '</div>'
+        + '<div style="font-size:11px;color:var(--muted)">' + esc(t.subtitle||'') + '</div>'
         + '</div>'
-        + '<div style="font-size:10px;font-weight:600;color:' + (days>=3?'#E24B4A':'#BA7517') + ';white-space:nowrap">'
-        + lastType + ' · ' + (days!=null?days+'d ago':'') + '</div>'
+        + (overdue ? '<span style="font-size:10px;font-weight:700;color:#C0522B">OVERDUE</span>' : '')
         + '</div>';
     });
-    if (wap.length > 15) tasks += '<div style="font-size:11px;color:var(--muted);padding:4px 12px">...and ' + (wap.length-15) + ' more</div>';
-  }
-
-  // New Submissions
-  if (subs.length) {
-    tasks += '<div style="font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.5px;margin:10px 0 6px">NEW APPLICATIONS TODAY</div>';
-    subs.forEach(function(s) {
-      tasks += '<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:7px;margin-bottom:5px;background:#F3FBF8;border:0.5px solid #C2EBD8;cursor:pointer" onclick="openResponses()">'
-        + avatarHtml(s.name, 26)
-        + '<div style="flex:1;min-width:0">'
-        + '<div style="font-size:12px;font-weight:600;color:var(--navy)">' + esc(s.name||'') + '</div>'
-        + '<div style="font-size:10px;color:var(--muted)">' + esc(s.company||'') + (s.experience?' · '+s.experience+'y':'') + '</div>'
-        + '</div>'
-        + '<span style="font-size:10px;background:var(--teal-soft);color:var(--teal-deep);padding:2px 8px;border-radius:8px;font-weight:600">New</span>'
-        + '</div>';
-    });
+    if (allTasks.length > preview.length) {
+      tasks += '<div onclick="openTasks()" style="font-size:11px;color:var(--muted);padding:4px 12px;cursor:pointer">...and ' + (allTasks.length - preview.length) + ' more — view all &#8594;</div>';
+    }
   }
 
   tasks += '</div>';
   html += tasks;
 
   el.innerHTML=html;
+  updateTasksBadge();
 }
 
 async function dashReminderDone(rid, btn) {
@@ -2963,6 +2938,7 @@ function renderSettings(){
       +'<div style="padding:10px 14px"><textarea class="ta" id="s-'+t.key+'" rows="4">'+esc(s[t.key]||'')+'</textarea></div></div>'
     ).join('')
     + emailConfigHTML(s)
+    + followUpConfigHTML(s)
     +'<button class="btn btn-g" onclick="saveSettings()">Save All Settings</button>'
     +'<span id="s-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
     + (S.currentUser && S.currentUser.role==='admin' ? billingConfigHTML(s) : '')
@@ -3002,6 +2978,29 @@ function savedTemplatesHTML(s){
   return '<div style="margin-top:12px;font-size:11px;color:var(--muted);background:#F3F8FF;border:0.5px solid #C5DEFF;border-radius:8px;padding:10px 12px;color:#1565C0">'
     + '&#128161; Email templates ab <b>har job position (mandate)</b> ke apne hote hain. Email compose panel mein "New" / "Update" se templates banayein ya badlein.'
     + '</div>';
+}
+
+function followUpConfigHTML(s){
+  var notifOn = false;
+  try { notifOn = localStorage.getItem('hl_notif_enabled')==='1' && typeof Notification!=='undefined' && Notification.permission==='granted'; } catch(e){}
+  return '<div style="margin:18px 0;border-top:2px solid #EF9F27;padding-top:16px">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+    + '<span style="font-size:15px">&#9989;</span>'
+    + '<div style="font-size:15px;font-weight:700;color:var(--navy)">Follow-up &amp; Task Settings</div></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5">'
+    + 'Controls when candidates show up as follow-up tasks, so nothing slips through.'
+    + '</div>'
+    + '<div class="card"><div class="card-body">'
+    + '<div class="g2">'
+    + '<div class="fg-row"><label>Flag as "stale" after (days, no activity)</label><input class="inp" id="s-stale_days" value="' + esc(s.stale_days||'7') + '"></div>'
+    + '<div class="fg-row"><label>Flag "promised" follow-up after (hours)</label><input class="inp" id="s-promise_hours" value="' + esc(s.promise_hours||'24') + '"></div>'
+    + '</div>'
+    + '<div style="margin-top:12px;padding-top:12px;border-top:0.5px solid #eee">'
+    + '<button id="notif-toggle-btn" class="btn ' + (notifOn?'btn-g':'btn-o') + '" style="font-size:12px" ' + (notifOn?'disabled':'onclick="enableTaskNotifications()"') + '>'
+    + (notifOn ? '\u2705 Notifications On' : '\ud83d\udd14 Enable Browser Notifications') + '</button>'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Get notified in this browser when a follow-up becomes overdue (works while the app tab is open).</div>'
+    + '</div>'
+    + '</div></div></div>';
 }
 
 function emailConfigHTML(s){
@@ -3163,7 +3162,7 @@ async function deleteUser(uid, username) {
 }
 async function saveSettings(){
   const wf=(document.querySelector('input[name="wfmode"]:checked')||{}).value||'agency';
-  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name')};
+  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24'};
   const r=await req('POST','/settings',data);
   if(r.ok){S.settings=data;toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }
@@ -6334,94 +6333,204 @@ function closeTasks() {
   document.getElementById('sb-tasks').className = 'sb-gear';
 }
 
+function _taskIcon(type){
+  return ({reminder:'\u23f0', stale:'\ud83d\udca4', promise:'\ud83d\udcac', submission:'\ud83d\udce5'})[type] || '\u2022';
+}
+function _taskColor(type, section){
+  if(section==='overdue') return '#A32D2D';
+  return ({reminder:'#BA7517', stale:'#888780', promise:'#378ADD', submission:'#0F6E56'})[type] || '#888780';
+}
+function _taskActionLabel(type){
+  return ({reminder:'Reminder', stale:'Stale candidate', promise:'Promised follow-up', submission:'New submission'})[type] || '';
+}
+
 async function renderTasksView() {
   var body = document.getElementById('tasks-body');
   if (!body) return;
   body.innerHTML = '<div class="loading"><div class="spinner"></div>Loading tasks...</div>';
 
-  var r = await req('GET', '/dashboard-tasks');
+  var r = await req('GET', '/tasks');
   if (!r.ok) { body.innerHTML = '<div style="padding:20px;color:#E24B4A">Failed to load tasks</div>'; return; }
 
-  var rems = r.reminders || [];
-  var wap  = r.wa_pending || [];
-  var subs = r.new_submissions || [];
-  var now  = new Date();
-  var total = rems.length + wap.length + subs.length;
+  var filter = (document.getElementById('task-filter') || {}).value || '';
+  var tasks = (r.tasks || []).filter(function(t){ return !filter || t.type === filter; });
+  S._allTasks = r.tasks || [];  // keep unfiltered for badge/notification use
 
-  if (!total) {
+  if (!tasks.length) {
     body.innerHTML = '<div style="text-align:center;padding:60px 20px"><div style="font-size:48px;margin-bottom:12px">&#127881;</div>'
       + '<div style="font-size:16px;font-weight:600;color:var(--navy);margin-bottom:6px">All caught up!</div>'
-      + '<div style="font-size:13px;color:var(--muted)">No pending reminders, follow-ups, or new applications.</div></div>';
+      + '<div style="font-size:13px;color:var(--muted)">No pending follow-ups right now.</div></div>';
     return;
   }
 
+  function taskCard(t){
+    var col = _taskColor(t.type, t.section);
+    var dueLabel = '';
+    if (t.type === 'reminder') {
+      try {
+        var due = new Date(t.due_at);
+        dueLabel = due.toLocaleDateString('en-IN',{day:'numeric',month:'short'}) + ' ' + due.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+      } catch(e){}
+    }
+    var callBtn = t.phone ? '<a href="tel:'+esc(t.phone)+'" class="btn btn-o" style="font-size:11px;padding:5px 9px;text-decoration:none" title="Call" onclick="event.stopPropagation()">&#128222;</a>' : '';
+    return '<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:9px;margin-bottom:8px;background:#fff;border:0.5px solid var(--line);box-shadow:var(--shadow-sm)">'
+      + '<span style="width:8px;height:8px;border-radius:50%;background:'+col+';flex-shrink:0"></span>'
+      + '<div style="flex:1;min-width:0;cursor:pointer" onclick="'+(t.candidate_id?('openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')'):'openResponses()')+'">'
+      + '<div style="font-size:13px;font-weight:600;color:var(--navy)">'+_taskIcon(t.type)+' '+esc(t.title)+'</div>'
+      + '<div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+esc(t.subtitle||'')+'</div>'
+      + (dueLabel ? '<div style="font-size:11px;color:'+col+';margin-top:3px;font-weight:500">&#9200; '+dueLabel+(t.section==='overdue'?' \u00b7 OVERDUE':'')+'</div>' : '')
+      + '</div>'
+      + callBtn
+      + '<button class="btn btn-o" style="font-size:11px;padding:5px 9px" title="Snooze" onclick="event.stopPropagation();openSnoozeModal(\''+t.type+'\','+t.ref_id+',\''+esc(t.title).replace(/'/g,"")+'\')">&#9200;</button>'
+      + '<button class="btn btn-g" style="font-size:11px;padding:5px 10px" onclick="event.stopPropagation();markTaskDone(\''+t.type+'\','+t.ref_id+')">&#10003;</button>'
+      + '</div>';
+  }
+
+  var overdue = tasks.filter(function(t){ return t.section === 'overdue'; });
+  var today   = tasks.filter(function(t){ return t.section === 'today'; });
+  var tomorrow = tasks.filter(function(t){ return t.section === 'tomorrow'; });
+  var upcoming = tasks.filter(function(t){ return t.section === 'upcoming'; });
+
   var html = '<div style="max-width:780px;margin:0 auto">';
 
-  // ── Reminders ──
-  if (rems.length) {
-    html += '<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px;display:flex;align-items:center;gap:8px">&#9200; Reminders <span style="background:var(--copper);color:#fff;font-size:10px;padding:1px 7px;border-radius:8px">' + rems.length + '</span></div>';
-    rems.forEach(function(rem) {
-      var due = new Date(rem.due_at);
-      var overdue = due < now;
-      var dueLabel = due.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})
-                  + ' ' + due.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
-      html += '<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:9px;margin-bottom:8px;background:#fff;border:0.5px solid ' + (overdue?'#FBCBB5':'var(--line)') + ';box-shadow:var(--shadow-sm)">'
-        + '<div style="flex:1;min-width:0;cursor:pointer" onclick="openProfileById(' + rem.candidate_id + ',' + (rem.mandate_id||'null') + ')">'
-        + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(rem.candidate_name||'Candidate') + '</div>'
-        + '<div style="font-size:11px;color:var(--muted);margin-top:1px">' + esc(rem.mandate_label||'') + '</div>'
-        + '<div style="font-size:11px;color:' + (overdue?'#C0522B':'var(--teal-deep)') + ';margin-top:4px;font-weight:500">&#9200; ' + dueLabel + (overdue?' · OVERDUE':'') + '</div>'
-        + (rem.note ? '<div style="font-size:11px;color:#555;margin-top:3px">' + esc(rem.note) + '</div>' : '')
-        + '</div>'
-        + '<button class="btn btn-g" style="font-size:11px;padding:5px 12px;flex-shrink:0" onclick="tasksViewReminderDone(' + rem.id + ')">&#10003; Done</button>'
-        + '</div>';
-    });
-    html += '<div style="height:18px"></div>';
+  // ── My Day: Overdue + Today combined, always expanded ──────────────────
+  var myDay = overdue.concat(today);
+  if (myDay.length) {
+    html += '<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">&#9728;&#65039; Aaj ke Follow-ups</div>';
+    html += '<div style="font-size:11px;color:var(--muted);margin-bottom:12px">' + myDay.length + ' to tackle today' + (overdue.length ? ' \u00b7 ' + overdue.length + ' overdue' : '') + '</div>';
+    myDay.forEach(function(t){ html += taskCard(t); });
+    html += '<div style="height:14px"></div>';
   }
 
-  // ── WA No Reply ──
-  if (wap.length) {
-    html += '<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px;display:flex;align-items:center;gap:8px">&#128172; WhatsApp — No Reply <span style="background:#E24B4A;color:#fff;font-size:10px;padding:1px 7px;border-radius:8px">' + wap.length + '</span></div>';
-    wap.forEach(function(c) {
-      var days = c.days_since_wa;
-      var lastType = c.fu2_sent_at ? 'FU2' : c.fu1_sent_at ? 'FU1' : 'Intro';
-      var urgent = days != null && days >= 3;
-      html += '<div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:9px;margin-bottom:7px;background:#fff;border:0.5px solid var(--line);box-shadow:var(--shadow-sm);cursor:pointer" onclick="openProfileById(' + c.id + ',' + (c.mandate_id||'null') + ')">'
-        + avatarHtml(c.name, 32)
-        + '<div style="flex:1;min-width:0">'
-        + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(c.name||'') + '</div>'
-        + '<div style="font-size:11px;color:var(--muted)">' + esc(c.company||'') + (c.mandate_label ? ' · ' + esc(c.mandate_label) : '') + '</div>'
-        + '</div>'
-        + '<div style="font-size:11px;font-weight:600;color:' + (urgent?'#E24B4A':'#BA7517') + ';white-space:nowrap;text-align:right">'
-        + lastType + '<br><span style="font-weight:500">' + (days!=null?days+'d ago':'') + '</span></div>'
-        + '</div>';
-    });
-    html += '<div style="height:18px"></div>';
+  // ── Tomorrow ──
+  if (tomorrow.length) {
+    html += '<div style="font-size:12px;font-weight:600;color:var(--muted);margin:14px 0 8px">Tomorrow \u00b7 ' + tomorrow.length + '</div>';
+    tomorrow.forEach(function(t){ html += taskCard(t); });
   }
 
-  // ── New Submissions ──
-  if (subs.length) {
-    html += '<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:10px;display:flex;align-items:center;gap:8px">&#128235; New Applications Today <span style="background:var(--teal);color:#fff;font-size:10px;padding:1px 7px;border-radius:8px">' + subs.length + '</span></div>';
-    subs.forEach(function(s) {
-      var skills = (function(){ try { return JSON.parse(s.key_skills||'[]').slice(0,3).join(', '); } catch(e){ return ''; } })();
-      html += '<div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:9px;margin-bottom:7px;background:#fff;border:0.5px solid #C2EBD8;box-shadow:var(--shadow-sm);cursor:pointer" onclick="openResponses()">'
-        + avatarHtml(s.name, 32)
-        + '<div style="flex:1;min-width:0">'
-        + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(s.name||'') + '</div>'
-        + '<div style="font-size:11px;color:var(--muted)">' + esc(s.company||'') + (s.experience?' · '+s.experience+'y':'') + (skills?' · '+esc(skills):'') + '</div>'
-        + '</div>'
-        + '<span style="font-size:10px;background:var(--teal-soft);color:var(--teal-deep);padding:3px 10px;border-radius:8px;font-weight:600;flex-shrink:0">New</span>'
-        + '</div>';
-    });
+  // ── Upcoming (collapsed by default) ──
+  if (upcoming.length) {
+    html += '<div style="font-size:12px;font-weight:600;color:var(--muted);margin:14px 0 8px;cursor:pointer;display:flex;align-items:center;gap:6px" onclick="_toggleUpcoming()">'
+      + '<span id="upcoming-arrow" style="transition:transform .15s;display:inline-block">&#9656;</span> Upcoming \u00b7 ' + upcoming.length + '</div>';
+    html += '<div id="upcoming-body" style="display:none">';
+    upcoming.forEach(function(t){ html += taskCard(t); });
+    html += '</div>';
   }
 
   html += '</div>';
   body.innerHTML = html;
 }
 
-async function tasksViewReminderDone(rid) {
-  var r = await req('POST', '/reminders/' + rid + '/done', {});
-  if (r.ok) { toast('OK', 'Reminder marked done'); renderTasksView(); }
+function _toggleUpcoming(){
+  var b = document.getElementById('upcoming-body');
+  var a = document.getElementById('upcoming-arrow');
+  if (!b) return;
+  var open = b.style.display !== 'none';
+  b.style.display = open ? 'none' : 'block';
+  if (a) a.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
 }
+
+async function markTaskDone(type, refId){
+  var r = await req('POST', '/tasks/done', {type: type, ref_id: refId});
+  if (r.ok) { toast('OK', 'Marked done'); renderTasksView(); updateTasksBadge(); }
+  else toast('ERR', r.error || 'Failed');
+}
+
+// ── Snooze modal: quick options + custom date & time ────────────────────
+function openSnoozeModal(type, refId, title){
+  var existing = document.getElementById('snooze-modal');
+  if (existing) existing.remove();
+  var modal = document.createElement('div');
+  modal.id = 'snooze-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(14,42,71,.45);z-index:9500;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.onclick = function(e){ if (e.target === modal) modal.remove(); };
+
+  function fmt(d){
+    var pad = function(n){ return String(n).padStart(2,'0'); };
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes())+':00';
+  }
+  var tomorrow9am = new Date(); tomorrow9am.setDate(tomorrow9am.getDate()+1); tomorrow9am.setHours(9,0,0,0);
+  var in3days = new Date(); in3days.setDate(in3days.getDate()+3); in3days.setHours(9,0,0,0);
+
+  var nowD = new Date();
+  var todayStr = nowD.getFullYear()+'-'+String(nowD.getMonth()+1).padStart(2,'0')+'-'+String(nowD.getDate()).padStart(2,'0');
+
+  modal.innerHTML = '<div style="background:#fff;border-radius:16px;width:360px;max-width:92vw;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
+    + '<div style="padding:16px 18px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between">'
+    + '<div style="font-size:14px;font-weight:700;color:var(--navy)">&#9200; Snooze \u2014 ' + esc(title) + '</div>'
+    + '<button onclick="document.getElementById(\'snooze-modal\').remove()" style="background:none;border:none;font-size:20px;color:#999;cursor:pointer">&times;</button></div>'
+    + '<div style="padding:16px 18px">'
+    + '<div style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px">'
+    + '<button class="btn btn-o" style="text-align:left;font-size:13px;padding:9px 12px" onclick="doSnooze(\''+type+'\','+refId+',\''+fmt(tomorrow9am)+'\')">Tomorrow, 9:00 am</button>'
+    + '<button class="btn btn-o" style="text-align:left;font-size:13px;padding:9px 12px" onclick="doSnooze(\''+type+'\','+refId+',\''+fmt(in3days)+'\')">In 3 days, 9:00 am</button>'
+    + '</div>'
+    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px;font-weight:600">Custom date &amp; time</div>'
+    + '<div style="display:flex;gap:8px;margin-bottom:12px">'
+    + '<input type="date" id="snooze-date" min="'+todayStr+'" style="flex:1;font-size:12.5px">'
+    + '<input type="time" id="snooze-time" value="09:00" style="width:110px;font-size:12.5px">'
+    + '</div>'
+    + '<button class="btn btn-g" style="width:100%;font-size:13px" onclick="doSnoozeCustom(\''+type+'\','+refId+')">Set reminder</button>'
+    + '</div></div>';
+  document.body.appendChild(modal);
+}
+
+async function doSnooze(type, refId, isoDateTime){
+  var r = await req('POST', '/tasks/snooze', {type: type, ref_id: refId, snoozed_until: isoDateTime});
+  var m = document.getElementById('snooze-modal'); if (m) m.remove();
+  if (r.ok) { toast('OK', 'Snoozed'); renderTasksView(); updateTasksBadge(); }
+  else toast('ERR', r.error || 'Failed');
+}
+
+function doSnoozeCustom(type, refId){
+  var d = (document.getElementById('snooze-date') || {}).value;
+  var t = (document.getElementById('snooze-time') || {}).value || '09:00';
+  if (!d) { toast('ERR', 'Date choose karein'); return; }
+  doSnooze(type, refId, d + 'T' + t + ':00');
+}
+
+// ── Sidebar badge + browser notifications ────────────────────────────────
+async function updateTasksBadge(){
+  var badge = document.getElementById('nav-tasks-badge');
+  if (!badge) return;
+  try {
+    var r = await req('GET', '/tasks');
+    if (!r.ok) return;
+    var overdueToday = (r.counts.overdue||0) + (r.counts.today||0);
+    if (overdueToday > 0) { badge.textContent = overdueToday; badge.style.display = 'inline-block'; }
+    else { badge.style.display = 'none'; }
+    _maybeNotify(r.counts.overdue||0);
+  } catch(e){}
+}
+
+function _maybeNotify(overdueCount){
+  try {
+    if (localStorage.getItem('hl_notif_enabled') !== '1') return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    var last = parseInt(localStorage.getItem('hl_last_overdue') || '0');
+    if (overdueCount > last && overdueCount > 0) {
+      new Notification('HireLab \u2014 Follow-ups pending', {
+        body: overdueCount + ' follow-up' + (overdueCount>1?'s are':' is') + ' overdue. Open Tasks to review.',
+        tag: 'hl-tasks'
+      }).onclick = function(){ window.focus(); openTasks(); };
+    }
+    localStorage.setItem('hl_last_overdue', String(overdueCount));
+  } catch(e){}
+}
+
+async function enableTaskNotifications(){
+  if (typeof Notification === 'undefined') { toast('ERR', 'Is browser mein notifications support nahi hain'); return; }
+  var perm = await Notification.requestPermission();
+  if (perm === 'granted') {
+    localStorage.setItem('hl_notif_enabled', '1');
+    toast('OK', 'Notifications enabled!');
+    var btn = document.getElementById('notif-toggle-btn');
+    if (btn) { btn.textContent = '\u2705 Notifications On'; btn.disabled = true; }
+  } else {
+    toast('ERR', 'Permission denied. Browser settings mein allow karein.');
+  }
+}
+
+setInterval(updateTasksBadge, 5 * 60 * 1000);  // poll every 5 min while app is open
 
 // ═══════════════════════════════════════════════════════════
 //  REMINDERS — candidate-level + dashboard widget

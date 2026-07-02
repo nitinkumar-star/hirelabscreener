@@ -1097,6 +1097,8 @@ def init_db():
         ('groq_api_key', os.environ.get('GROQ_API_KEY', '')),
         ('fu1_hours', '8'),
         ('fu2_hours', '24'),
+        ('stale_days', '7'),
+        ('promise_hours', '24'),
         ('template_msg1', 'Hi {Name}, this is {RecruiterName} from HireLab. I wanted to speak about a {Position} opportunity at {Location}.\n\nIf you are interested, please suggest the best time to connect.'),
         ('template_fu1', 'Hi {Name}, I had messaged you earlier about a {Position} role at {Location}.\n\nJust following up — would love to connect for a quick 10-minute call.\n\nLooking forward to hearing from you!'),
         ('template_fu2', 'Hi {Name}, this is my last follow up regarding the {Position} opportunity at {Location}.\n\nIf the timing is not right, no worries. But do let me know if you would like to explore this.\n\nHave a great day!'),
@@ -1131,6 +1133,10 @@ def init_db():
         pass
     try:
         c.execute("ALTER TABLE mandates ADD COLUMN email_templates TEXT DEFAULT '[]'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE submissions ADD COLUMN task_snoozed_until TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
     try:
@@ -1205,6 +1211,7 @@ def init_db():
         ('function_tags', 'TEXT DEFAULT "[]"'),
         ('status_tags', 'TEXT DEFAULT "[]"'),
         ('preferred_location', "TEXT DEFAULT ''"),
+        ('task_snoozed_until', "TEXT DEFAULT ''"),
     ]:
         try:
             c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {defn}')
@@ -1763,82 +1770,195 @@ def delete_reminder(rid):
 
 @app.route('/api/dashboard-tasks')
 @login_required
-def dashboard_tasks():
-    """Aggregate all tasks for the dashboard:
-    1. Manual reminders (due today or overdue)
-    2. WA messages sent but no response logged (any stage)
-    3. New submissions from public form (today)
-    """
+def dashboard_tasks_alias():
+    """Legacy alias — the dashboard/badge now reuse the unified task engine."""
+    return get_tasks()
+
+PROMISE_TAGS = ['Will Callback', 'Call Later', 'Asked to Send JD', 'Interested']
+
+@app.route('/api/tasks')
+@login_required
+def get_tasks():
+    """Unified follow-up task list for the dedicated Tasks tab.
+    Sources: manual reminders, stale candidates (no activity in N days),
+    promised follow-ups (a promise-tag with no activity after it for N hours),
+    and new submissions. Each task carries a 'section' for Overdue/Today/
+    Tomorrow/Upcoming grouping on the frontend."""
     conn = get_db()
-    now  = datetime.datetime.now()
-    today_str = now.strftime('%Y-%m-%d')
+    now = datetime.datetime.now()
+    today = now.date()
+    uid = effective_user_id()
+    stale_days = float(get_setting('stale_days', '7') or 7)
+    promise_hours = float(get_setting('promise_hours', '24') or 24)
 
-    # ── 1. Manual reminders (pending) — exclude hold/closed mandates ────────
+    tasks = []
+
+    def section_for(due_dt):
+        if due_dt < now: return 'overdue'
+        if due_dt.date() == today: return 'today'
+        if due_dt.date() == today + datetime.timedelta(days=1): return 'tomorrow'
+        return 'upcoming'
+
+    # ── 1. Manual reminders ──────────────────────────────────────────────
     rem_rows = conn.execute(
-        "SELECT r.* FROM reminders r "
-        "LEFT JOIN mandates m ON m.id = r.mandate_id "
-        "WHERE r.done=0 AND r.owner_id=? "
-        "  AND (m.id IS NULL OR m.status NOT IN ('hold','closed')) "
-        "ORDER BY r.due_at ASC",
-        (effective_user_id(),)
+        "SELECT r.* FROM reminders r LEFT JOIN mandates m ON m.id = r.mandate_id "
+        "WHERE r.done=0 AND r.owner_id=? AND (m.id IS NULL OR m.status NOT IN ('hold','closed')) "
+        "ORDER BY r.due_at ASC", (uid,)
     ).fetchall()
-    reminders = []
     for r in rem_rows:
-        d = dict(r)
         try:
-            due = datetime.datetime.fromisoformat(d['due_at'])
-            d['overdue'] = due < now
-            d['due_today'] = due.date() == now.date()
+            due = datetime.datetime.fromisoformat(r['due_at'])
         except Exception:
-            d['overdue'] = False; d['due_today'] = False
-        reminders.append(d)
+            due = now
+        tasks.append({
+            'id': 'reminder-' + str(r['id']), 'type': 'reminder', 'ref_id': r['id'],
+            'candidate_id': r['candidate_id'], 'mandate_id': r['mandate_id'],
+            'title': r['candidate_name'] or 'Candidate',
+            'subtitle': (r['note'] or 'Reminder') + (' \u00b7 ' + r['mandate_label'] if r['mandate_label'] else ''),
+            'due_at': r['due_at'], 'section': section_for(due),
+        })
 
-    # ── 2. WA sent but no response (any mandate, any stage) ─────────────────
-    wa_pending = []
-    cands = conn.execute(
-        "SELECT c.*, m.role, m.client FROM candidates c "
-        "LEFT JOIN mandates m ON m.id=c.mandate_id "
-        "WHERE (c.msg1_sent_at!='' OR c.fu1_sent_at!='' OR c.fu2_sent_at!='') "
-        "  AND (c.wa_response IS NULL OR c.wa_response='') "
-        "  AND c.owner_id=? "
-        "  AND (m.id IS NULL OR m.status NOT IN ('hold','closed')) "
-        "ORDER BY c.updated_at DESC",
-        (effective_user_id(),)
+    # ── Candidate base data for stale + promise detection ────────────────
+    cand_rows = conn.execute(
+        "SELECT c.id, c.name, c.phone, c.mandate_id, c.updated_at, c.task_snoozed_until, "
+        "m.role, m.client FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
+        "WHERE c.owner_id=? AND (m.id IS NULL OR m.status NOT IN ('hold','closed'))", (uid,)
     ).fetchall()
-    for c in cands:
-        d = dict(c)
-        # Calculate days since last WA message
-        last_sent = d.get('fu2_sent_at') or d.get('fu1_sent_at') or d.get('msg1_sent_at') or ''
-        days_ago = None
-        if last_sent:
+
+    for c in cand_rows:
+        snoozed = c['task_snoozed_until']
+        if snoozed:
             try:
-                sent_dt = datetime.datetime.fromisoformat(last_sent)
-                days_ago = (now - sent_dt).days
+                if datetime.datetime.fromisoformat(snoozed) > now:
+                    continue  # suppressed until this candidate's snooze passes
             except Exception:
                 pass
-        d['days_since_wa'] = days_ago
-        d['mandate_label'] = (d.get('role','') + ' — ' + d.get('client','')) if d.get('role') else ''
-        wa_pending.append(d)
 
-    # ── 3. New submissions today ─────────────────────────────────────────────
+        # Most recent event (any kind) for this candidate
+        ev = conn.execute(
+            "SELECT event_type, detail, created_at FROM candidate_events "
+            "WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1", (c['id'],)
+        ).fetchone()
+        stg = conn.execute(
+            "SELECT created_at FROM stage_history WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1", (c['id'],)
+        ).fetchone()
+
+        candidates_ts = [c['updated_at'] or '']
+        if ev: candidates_ts.append(ev['created_at'] or '')
+        if stg: candidates_ts.append(stg['created_at'] or '')
+        candidates_ts = [t for t in candidates_ts if t]
+        try:
+            last_activity = max(datetime.datetime.fromisoformat(t) for t in candidates_ts) if candidates_ts else None
+        except Exception:
+            last_activity = None
+        if not last_activity:
+            continue
+
+        mandate_label = (c['role'] + ' \u2014 ' + c['client']) if c['role'] else ''
+
+        # ── 2. Promised follow-up: most recent event is a promise-tag, and
+        #     nothing has happened since, for longer than promise_hours ──
+        is_promise = False
+        if ev and ev['event_type'] == 'tag' and any(pt in (ev['detail'] or '') for pt in PROMISE_TAGS):
+            hrs_since = (now - last_activity).total_seconds() / 3600
+            if hrs_since >= promise_hours:
+                matched_tag = next((pt for pt in PROMISE_TAGS if pt in ev['detail']), '')
+                tasks.append({
+                    'id': 'promise-' + str(c['id']), 'type': 'promise', 'ref_id': c['id'],
+                    'candidate_id': c['id'], 'mandate_id': c['mandate_id'],
+                    'title': c['name'] or 'Candidate',
+                    'subtitle': 'Tagged "' + matched_tag + '" \u2014 no follow-up yet' + (' \u00b7 ' + mandate_label if mandate_label else ''),
+                    'phone': c['phone'] or '',
+                    'due_at': last_activity.isoformat(), 'section': 'today',
+                })
+                is_promise = True
+
+        # ── 3. Stale candidate: no activity at all for stale_days ────────
+        if not is_promise:
+            days_since = (now - last_activity).total_seconds() / 86400
+            if days_since >= stale_days:
+                tasks.append({
+                    'id': 'stale-' + str(c['id']), 'type': 'stale', 'ref_id': c['id'],
+                    'candidate_id': c['id'], 'mandate_id': c['mandate_id'],
+                    'title': c['name'] or 'Candidate',
+                    'subtitle': 'No activity in ' + str(int(days_since)) + ' days' + (' \u00b7 ' + mandate_label if mandate_label else ''),
+                    'phone': c['phone'] or '',
+                    'due_at': last_activity.isoformat(), 'section': 'today',
+                })
+
+    # ── 4. New submissions (not yet reviewed, not snoozed) ────────────────
     sub_rows = conn.execute(
-        "SELECT * FROM submissions WHERE status='new' AND created_at LIKE ? ORDER BY created_at DESC",
-        (today_str + '%',)
+        "SELECT * FROM submissions WHERE status='new' "
+        "AND (task_snoozed_until IS NULL OR task_snoozed_until='' OR task_snoozed_until<?) "
+        "ORDER BY created_at DESC", (now.isoformat(),)
     ).fetchall()
-    new_submissions = [dict(r) for r in sub_rows]
+    for s in sub_rows:
+        tasks.append({
+            'id': 'submission-' + str(s['id']), 'type': 'submission', 'ref_id': s['id'],
+            'candidate_id': None, 'mandate_id': None,
+            'title': s['name'] or 'New applicant',
+            'subtitle': (s['company'] or '') + (' \u00b7 ' + str(s['experience']) + 'y' if s['experience'] else ''),
+            'due_at': s['created_at'], 'section': 'today',
+        })
 
     conn.close()
-    return jsonify({
-        'ok': True,
-        'reminders': reminders,
-        'wa_pending': wa_pending,
-        'new_submissions': new_submissions,
-        'counts': {
-            'reminders': len(reminders),
-            'wa_pending': len(wa_pending),
-            'new_submissions': len(new_submissions),
-        }
-    })
+
+    order = {'overdue': 0, 'today': 1, 'tomorrow': 2, 'upcoming': 3}
+    tasks.sort(key=lambda t: (order.get(t['section'], 9), t['due_at']))
+    counts = {'overdue': 0, 'today': 0, 'tomorrow': 0, 'upcoming': 0}
+    for t in tasks:
+        counts[t['section']] = counts.get(t['section'], 0) + 1
+    counts['total'] = len(tasks)
+    return jsonify({'ok': True, 'tasks': tasks, 'counts': counts})
+
+
+@app.route('/api/tasks/snooze', methods=['POST'])
+@login_required
+def snooze_task():
+    d = request.json or {}
+    ttype = d.get('type')
+    ref_id = d.get('ref_id')
+    snoozed_until = (d.get('snoozed_until') or '').strip()
+    if not ttype or not ref_id or not snoozed_until:
+        return jsonify({'error': 'type, ref_id and snoozed_until required'}), 400
+    conn = get_db()
+    if ttype == 'reminder':
+        conn.execute('UPDATE reminders SET due_at=? WHERE id=?', (snoozed_until, ref_id))
+    elif ttype in ('stale', 'promise'):
+        conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=?', (snoozed_until, ref_id))
+    elif ttype == 'submission':
+        conn.execute('UPDATE submissions SET task_snoozed_until=? WHERE id=?', (snoozed_until, ref_id))
+    else:
+        conn.close(); return jsonify({'error': 'Unknown task type'}), 400
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/tasks/done', methods=['POST'])
+@login_required
+def task_done():
+    d = request.json or {}
+    ttype = d.get('type')
+    ref_id = d.get('ref_id')
+    if not ttype or not ref_id:
+        return jsonify({'error': 'type and ref_id required'}), 400
+    conn = get_db()
+    if ttype == 'reminder':
+        conn.execute('UPDATE reminders SET done=1 WHERE id=?', (ref_id,))
+    elif ttype in ('stale', 'promise'):
+        # Push the suppression window out by the relevant threshold so it
+        # naturally resurfaces later if still untouched, rather than being
+        # silenced forever.
+        days = float(get_setting('stale_days', '7') or 7) if ttype == 'stale' else 1
+        push_to = (datetime.datetime.now() + datetime.timedelta(days=days)).isoformat()
+        conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=?', (push_to, ref_id))
+    elif ttype == 'submission':
+        conn.execute("UPDATE submissions SET status='reviewed' WHERE id=?", (ref_id,))
+    else:
+        conn.close(); return jsonify({'error': 'Unknown task type'}), 400
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
 
 def _save_wh_for(conn, cid, items):
     """Replace work_history for a candidate from extension data."""
@@ -1998,6 +2118,7 @@ TENANT_SETTINGS = {
     'smtp_email', 'smtp_app_password', 'smtp_display_name',
     'email_templates',  # JSON array of {name, subject, body}
     'custom_status_tags',  # JSON array of user-created quick tags
+    'stale_days', 'promise_hours',  # follow-up task detection thresholds
 }
 
 def _safe_company_id():
