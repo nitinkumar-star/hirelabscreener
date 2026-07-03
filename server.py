@@ -3028,9 +3028,15 @@ def submission_excel(mid):
                      (mid, effective_company_id())).fetchone()
     if not m:
         conn.close(); return jsonify({'error': 'Mandate not found'}), 404
-    rows = conn.execute(
-        'SELECT * FROM candidates WHERE mandate_id=? ORDER BY name', (mid,)
-    ).fetchall()
+    stage = (request.args.get('stage') or '').strip()
+    if stage:
+        rows = conn.execute(
+            'SELECT * FROM candidates WHERE mandate_id=? AND stage=? ORDER BY name', (mid, stage)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            'SELECT * FROM candidates WHERE mandate_id=? ORDER BY name', (mid,)
+        ).fetchall()
     conn.close()
 
     wb = openpyxl.Workbook()
@@ -3092,7 +3098,8 @@ def submission_excel(mid):
     bio = io.BytesIO()
     wb.save(bio); bio.seek(0)
     safe_role = re.sub(r'[^A-Za-z0-9_-]+', '_', (m['role'] or 'Submission'))[:40]
-    fname = f"Submission_{safe_role}.xlsx"
+    safe_stage = ('_' + re.sub(r'[^A-Za-z0-9_-]+', '_', stage)) if stage else ''
+    fname = f"Submission_{safe_role}{safe_stage}.xlsx"
     return send_file(bio, as_attachment=True, download_name=fname,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
