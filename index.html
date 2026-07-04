@@ -788,6 +788,7 @@ body{font-size:14px !important; line-height:1.5}
           <option value="reminder">Reminders</option>
           <option value="stale">Stale candidates</option>
           <option value="promise">Promised follow-up</option>
+          <option value="interview">Interviews</option>
           <option value="updated">Updated resume received</option>
           <option value="submission">New submissions</option>
         </select>
@@ -1128,6 +1129,7 @@ const PIPELINE_STAGES = [
   {id:'Screening',color:'#1D9E75'},{id:'Follow Up 1',color:'#5DCAA5'},{id:'Follow Up 2',color:'#9FE1CB'},
   {id:'Not Contacted',color:'#BA7517'},{id:'Called',color:'#378ADD'},{id:'Interested',color:'#639922'},
   {id:'Updated CV awaited',color:'#8B6914'},{id:'Not Interested',color:'#888'},{id:'Shared with Client',color:'#534AB7'},
+  {id:'Interview Inprocess',color:'#C7841E'},
   {id:'Not Suitable',color:'#D85A30'},{id:'Client Rejected on Paper',color:'#993C1D'},
   {id:'Client Rejected After Interview',color:'#E24B4A'},{id:'Placed',color:'#0F6E56'}
 ];
@@ -1575,6 +1577,133 @@ function doDownloadSubmissionExcel(stage){
   if(stage) url += '?stage=' + encodeURIComponent(stage);
   window.open(url, '_blank');
 }
+// ── Interview scheduling ──────────────────────────────────────────────────
+async function openInterviewModal(cid){
+  var c = await req('GET', '/candidates/' + cid);
+  var existing = document.getElementById('iv-modal');
+  if(existing) existing.remove();
+  var modal = document.createElement('div');
+  modal.id = 'iv-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(14,42,71,.45);z-index:9500;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.onclick = function(e){ if(e.target===modal) modal.remove(); };
+
+  // Default datetime = tomorrow 11:00
+  var t = new Date(); t.setDate(t.getDate()+1); t.setHours(11,0,0,0);
+  var pad=function(n){return String(n).padStart(2,'0');};
+  var defDate = t.getFullYear()+'-'+pad(t.getMonth()+1)+'-'+pad(t.getDate());
+  var defTime = '11:00';
+
+  // Load previous rounds for history display
+  var ivR = await req('GET', '/candidates/'+cid+'/interviews');
+  var prev = (ivR.interviews||[]);
+  var histHtml = '';
+  if(prev.length){
+    histHtml = '<div style="margin-top:8px;border-top:0.5px solid var(--line);padding-top:10px"><div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px">PREVIOUS ROUNDS</div>'
+      + prev.map(function(iv){
+          var dt=''; try{ dt=new Date(iv.scheduled_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){}
+          var badge = iv.status==='completed' ? '<span style="font-size:9px;background:#E8F4EE;color:#127A57;padding:1px 6px;border-radius:5px">Done</span>' : '<span style="font-size:9px;background:#FFF3E0;color:#C7841E;padding:1px 6px;border-radius:5px">Scheduled</span>';
+          return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:11.5px;border-bottom:0.5px solid #F2F0EA">'
+            + '<div style="flex:1"><b>'+esc(iv.round_name)+'</b> &middot; '+esc(dt)+(iv.result?'<div style="font-size:10.5px;color:var(--muted)">Result: '+esc(iv.result)+'</div>':'')+'</div>'
+            + badge
+            + (iv.status!=='completed' ? '<button onclick="promptInterviewResult('+iv.id+','+cid+')" class="btn btn-o" style="font-size:9px;padding:2px 6px" title="Mark result">Result</button>' : '')
+            + '<button onclick="deleteInterview('+iv.id+','+cid+')" style="background:none;border:none;color:#E24B4A;cursor:pointer;font-size:12px">&times;</button>'
+            + '</div>';
+        }).join('') + '</div>';
+  }
+
+  var roundNum = prev.length + 1;
+  modal.innerHTML = '<div style="background:#fff;border-radius:16px;width:460px;max-width:94vw;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
+    + '<div style="padding:16px 18px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between">'
+    + '<div style="font-size:15px;font-weight:700;color:var(--navy)">&#128197; Schedule Interview \u2014 ' + esc(c.name||'') + '</div>'
+    + '<button onclick="document.getElementById(\'iv-modal\').remove()" style="background:none;border:none;font-size:20px;color:#999;cursor:pointer">&times;</button></div>'
+    + '<div style="flex:1;overflow-y:auto;padding:16px 18px">'
+    + '<input type="hidden" id="iv-cid" value="'+cid+'">'
+    + '<div class="fg-row"><label>Round</label><input class="inp" id="iv-round" value="Round '+roundNum+'" placeholder="e.g. Round 1 - Technical"></div>'
+    + '<div class="g2" style="margin-top:8px"><div class="fg-row"><label>Date</label><input class="inp" type="date" id="iv-date" value="'+defDate+'"></div>'
+    + '<div class="fg-row"><label>Time</label><input class="inp" type="time" id="iv-time" value="'+defTime+'"></div></div>'
+    + '<div class="fg-row" style="margin-top:8px"><label>Mode</label><select class="inp" id="iv-mode" onchange="_ivModeChange()"><option value="">Select...</option><option>Phone</option><option>Video Call</option><option>In-person</option></select></div>'
+    + '<div class="fg-row" style="margin-top:8px"><label id="iv-loc-label">Location / Link</label><input class="inp" id="iv-location" placeholder="Video link or office address"></div>'
+    + '<div class="fg-row" style="margin-top:8px"><label>Interviewer (optional)</label><input class="inp" id="iv-interviewer" placeholder="Client-side interviewer name"></div>'
+    + '<button class="btn btn-g" style="margin-top:12px;width:100%" onclick="buildInterviewMessage()">Save &amp; Prepare Message &#8594;</button>'
+    + '<div id="iv-msg-area" style="display:none;margin-top:14px">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:5px">MESSAGE TO CANDIDATE (editable)</div>'
+    + '<textarea id="iv-msg" class="ta" rows="9" style="font-size:12.5px;line-height:1.5"></textarea>'
+    + '<div style="display:flex;gap:8px;margin-top:10px">'
+    + '<button class="btn" style="flex:1;background:#0a2540;color:#fff;border:none;font-size:12px" onclick="sendInterviewEmail('+cid+',\''+esc(c.email||'').replace(/'/g,"")+'\')">&#9993; Send Email</button>'
+    + '<button class="btn" style="flex:1;background:#25D366;color:#fff;border:none;font-size:12px" onclick="sendInterviewWhatsApp(\''+esc(c.phone||'').replace(/'/g,"")+'\')">&#128172; WhatsApp</button>'
+    + '</div></div>'
+    + histHtml
+    + '</div></div>';
+  document.body.appendChild(modal);
+}
+
+function _ivModeChange(){
+  var mode=(document.getElementById('iv-mode')||{}).value||'';
+  var lbl=document.getElementById('iv-loc-label');
+  if(lbl) lbl.textContent = mode==='Video Call' ? 'Meeting Link' : mode==='In-person' ? 'Venue Address' : 'Location / Link';
+}
+
+function _ivPayload(){
+  var cid=document.getElementById('iv-cid').value;
+  var date=document.getElementById('iv-date').value;
+  var time=document.getElementById('iv-time').value||'11:00';
+  return {
+    cid: cid,
+    round_name: document.getElementById('iv-round').value,
+    mode: document.getElementById('iv-mode').value,
+    location: document.getElementById('iv-location').value,
+    interviewer: document.getElementById('iv-interviewer').value,
+    scheduled_at: date ? (date+'T'+time+':00') : ''
+  };
+}
+
+async function buildInterviewMessage(){
+  var p=_ivPayload();
+  if(!p.scheduled_at){ toast('ERR','Date/time choose karein'); return; }
+  // Save the interview
+  var r = await req('POST','/candidates/'+p.cid+'/interviews', p);
+  if(!r.ok){ toast('ERR', r.error||'Failed'); return; }
+  // Build the message
+  var m = await req('POST','/candidates/'+p.cid+'/interview-message', p);
+  if(m.ok){
+    document.getElementById('iv-msg').value = m.message;
+    document.getElementById('iv-msg-area').style.display='block';
+    toast('OK','Interview saved! Ab message bhej dein.');
+    // Refresh underlying profile so stage shows Interview Inprocess
+    if(S.selectedCandidateId==p.cid){ var d=await req('GET','/candidates/'+p.cid); renderProfileDetail(d); }
+  }
+}
+
+async function sendInterviewEmail(cid, email){
+  var msg=document.getElementById('iv-msg').value;
+  if(!email){ toast('ERR','Candidate ka email nahi hai'); return; }
+  var subject='Interview Scheduled';
+  var r=await req('POST','/candidates/'+cid+'/send-email',{to:email,subject:subject,body:msg,body_html:esc(msg).replace(/\n/g,'<br>')});
+  if(r.ok){ toast('OK','Interview email sent!'); }
+  else toast('ERR', r.error||'Email failed');
+}
+
+function sendInterviewWhatsApp(phone){
+  var msg=document.getElementById('iv-msg').value;
+  if(!phone){ toast('ERR','Candidate ka phone nahi hai'); return; }
+  var num=phone.replace(/[^0-9]/g,'');
+  if(num.length===10) num='91'+num;
+  window.open('https://wa.me/'+num+'?text='+encodeURIComponent(msg),'_blank');
+}
+
+async function promptInterviewResult(iid, cid){
+  var res=prompt('Interview ka result / feedback likhein (e.g. Selected for next round, On hold, Rejected):');
+  if(res===null) return;
+  var r=await req('POST','/interviews/'+iid+'/result',{result:res});
+  if(r.ok){ toast('OK','Result saved'); openInterviewModal(cid); }
+}
+
+async function deleteInterview(iid, cid){
+  if(!confirm('Yeh interview round delete karein?')) return;
+  var r=await req('DELETE','/interviews/'+iid);
+  if(r.ok){ toast('OK','Deleted'); openInterviewModal(cid); }
+}
+
 async function requestUpdate(cid){
   if(!confirm('Candidate ko ek email jayega jisme apni profile update karne + resume upload karne ka secure link hoga. Bhejein?')) return;
   toast('...', 'Sending request...');
@@ -2554,6 +2683,7 @@ function renderProfileDetail(c){
   html += '</div>';
   html += '</div>';
   // Email
+  html += '<button class="btn" onclick="openInterviewModal(' + c.id + ')" style="font-size:11px;background:#fff;color:#C7841E;border:0.5px solid #E8CE9E">&#128197; Schedule Interview</button>';
   html += '<button class="btn" onclick="requestUpdate(' + c.id + ')" style="font-size:11px;background:#fff;color:#BA7517;border:0.5px solid #E8D3A8">&#128260; Request Updated Resume</button>';
   html += '<button class="btn" onclick="openMoveCandidate(' + c.id + ')" style="font-size:11px;background:#fff;color:#534AB7;border:0.5px solid #C9C2E0">&#8644; Move</button>';
   html += '<button class="btn" onclick="openEmailPanel(' + c.id + ',\'' + esc(c.email || '').replace(/'/g, "\\'") + '\',' + (c.mandate_id||'null') + ')" style="font-size:11px;background:#0a2540;color:#fff;border:none">&#9993; Email</button>';
@@ -3049,8 +3179,13 @@ function followUpConfigHTML(s){
     + '<button id="notif-toggle-btn" class="btn ' + (notifOn?'btn-g':'btn-o') + '" style="font-size:12px" ' + (notifOn?'disabled':'onclick="enableTaskNotifications()"') + '>'
     + (notifOn ? '\u2705 Notifications On' : '\ud83d\udd14 Enable Browser Notifications') + '</button>'
     + '<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Get notified in this browser when a follow-up becomes overdue (works while the app tab is open).</div>'
-    + '</div>'
-    + '</div></div></div>';
+    + '</div></div>'
+    + '<div class="card" style="margin-top:12px"><div class="card-body">'
+    + '<div style="font-size:12.5px;font-weight:600;color:var(--navy);margin-bottom:4px">&#128197; Interview Message Template</div>'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;line-height:1.5">Placeholders: <code>{name}</code> <code>{role}</code> <code>{client}</code> <code>{round}</code> <code>{datetime}</code> <code>{mode}</code> <code>{location_line}</code> <code>{interviewer}</code> <code>{recruiter}</code></div>'
+    + '<textarea class="ta" id="s-interview_template" rows="9" style="font-size:12px;line-height:1.5">' + esc(s.interview_template||'') + '</textarea>'
+    + '</div></div>'
+    + '</div>';
 }
 
 function emailConfigHTML(s){
@@ -3212,7 +3347,7 @@ async function deleteUser(uid, username) {
 }
 async function saveSettings(){
   const wf=(document.querySelector('input[name="wfmode"]:checked')||{}).value||'agency';
-  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24'};
+  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',interview_template:v('s-interview_template')};
   const r=await req('POST','/settings',data);
   if(r.ok){S.settings=data;toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }
@@ -6384,11 +6519,11 @@ function closeTasks() {
 }
 
 function _taskIcon(type){
-  return ({reminder:'\u23f0', stale:'\ud83d\udca4', promise:'\ud83d\udcac', submission:'\ud83d\udce5', updated:'\ud83d\udcc4'})[type] || '\u2022';
+  return ({reminder:'\u23f0', stale:'\ud83d\udca4', promise:'\ud83d\udcac', submission:'\ud83d\udce5', updated:'\ud83d\udcc4', interview:'\ud83d\udcc5'})[type] || '\u2022';
 }
 function _taskColor(type, section){
   if(section==='overdue') return '#A32D2D';
-  return ({reminder:'#BA7517', stale:'#888780', promise:'#378ADD', submission:'#0F6E56', updated:'#1D9E75'})[type] || '#888780';
+  return ({reminder:'#BA7517', stale:'#888780', promise:'#378ADD', submission:'#0F6E56', updated:'#1D9E75', interview:'#C7841E'})[type] || '#888780';
 }
 function _taskActionLabel(type){
   return ({reminder:'Reminder', stale:'Stale candidate', promise:'Promised follow-up', submission:'New submission'})[type] || '';

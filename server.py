@@ -1061,6 +1061,21 @@ def init_db():
             detail TEXT DEFAULT '',
             created_at TEXT DEFAULT ''
         );
+        CREATE TABLE IF NOT EXISTS interviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_id INTEGER NOT NULL,
+            mandate_id INTEGER,
+            owner_id INTEGER,
+            round_name TEXT DEFAULT '',
+            mode TEXT DEFAULT '',
+            location TEXT DEFAULT '',
+            interviewer TEXT DEFAULT '',
+            scheduled_at TEXT DEFAULT '',
+            status TEXT DEFAULT 'scheduled',
+            result TEXT DEFAULT '',
+            task_snoozed_until TEXT DEFAULT '',
+            created_at TEXT DEFAULT ''
+        );
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT DEFAULT ''
@@ -1104,6 +1119,16 @@ def init_db():
         ('fu2_hours', '24'),
         ('stale_days', '7'),
         ('promise_hours', '24'),
+        ('interview_template',
+         'Dear {name},\n\n'
+         'We are pleased to inform you that your interview for the position of {role} '
+         'has been scheduled.\n\n'
+         'Round: {round}\n'
+         'Date & Time: {datetime}\n'
+         'Mode: {mode}\n'
+         '{location_line}\n\n'
+         'Please be available on time. Kindly confirm your availability.\n\n'
+         'Best regards,\n{recruiter}'),
         ('template_msg1', 'Hi {Name}, this is {RecruiterName} from HireLab. I wanted to speak about a {Position} opportunity at {Location}.\n\nIf you are interested, please suggest the best time to connect.'),
         ('template_fu1', 'Hi {Name}, I had messaged you earlier about a {Position} role at {Location}.\n\nJust following up — would love to connect for a quick 10-minute call.\n\nLooking forward to hearing from you!'),
         ('template_fu2', 'Hi {Name}, this is my last follow up regarding the {Position} opportunity at {Location}.\n\nIf the timing is not right, no worries. But do let me know if you would like to explore this.\n\nHave a great day!'),
@@ -1894,6 +1919,55 @@ def get_tasks():
                     'due_at': last_activity.isoformat(), 'section': 'today',
                 })
 
+    # ── Interview follow-ups: day-of confirmation + next-day result chase ──
+    iv_rows = conn.execute(
+        "SELECT i.*, c.name, c.phone, m.role, m.client FROM interviews i "
+        "LEFT JOIN candidates c ON c.id=i.candidate_id "
+        "LEFT JOIN mandates m ON m.id=i.mandate_id "
+        "WHERE i.owner_id=? AND i.status='scheduled'", (uid,)
+    ).fetchall()
+    for iv in iv_rows:
+        snz = iv['task_snoozed_until']
+        if snz:
+            try:
+                if datetime.datetime.fromisoformat(snz) > now: continue
+            except Exception: pass
+        try:
+            sch = datetime.datetime.fromisoformat(iv['scheduled_at'])
+        except Exception:
+            continue
+        mandate_label = (iv['role'] + ' \u2014 ' + iv['client']) if iv['role'] else ''
+        nice = sch.strftime('%d %b, %I:%M %p')
+        if sch.date() == today:
+            # Interview is today — confirm candidate will attend
+            tasks.append({
+                'id': 'iv-day-' + str(iv['id']), 'type': 'interview', 'ref_id': iv['id'],
+                'candidate_id': iv['candidate_id'], 'mandate_id': iv['mandate_id'],
+                'title': iv['name'] or 'Candidate',
+                'subtitle': iv['round_name'] + ' today at ' + nice + ' \u2014 confirm attendance' + (' \u00b7 ' + mandate_label if mandate_label else ''),
+                'phone': iv['phone'] or '',
+                'due_at': iv['scheduled_at'], 'section': 'today',
+            })
+        elif sch.date() < today:
+            # Interview date passed, still 'scheduled' — chase the result from client
+            tasks.append({
+                'id': 'iv-result-' + str(iv['id']), 'type': 'interview', 'ref_id': iv['id'],
+                'candidate_id': iv['candidate_id'], 'mandate_id': iv['mandate_id'],
+                'title': iv['name'] or 'Candidate',
+                'subtitle': iv['round_name'] + ' done (' + nice + ') \u2014 get result/feedback from client' + (' \u00b7 ' + mandate_label if mandate_label else ''),
+                'phone': iv['phone'] or '',
+                'due_at': iv['scheduled_at'], 'section': 'overdue',
+            })
+        elif sch.date() == today + datetime.timedelta(days=1):
+            tasks.append({
+                'id': 'iv-tom-' + str(iv['id']), 'type': 'interview', 'ref_id': iv['id'],
+                'candidate_id': iv['candidate_id'], 'mandate_id': iv['mandate_id'],
+                'title': iv['name'] or 'Candidate',
+                'subtitle': iv['round_name'] + ' tomorrow at ' + nice + (' \u00b7 ' + mandate_label if mandate_label else ''),
+                'phone': iv['phone'] or '',
+                'due_at': iv['scheduled_at'], 'section': 'tomorrow',
+            })
+
     # ── 4. Candidates who submitted an updated profile via self-update link ──
     upd_rows = conn.execute(
         "SELECT c.id, c.name, c.phone, c.mandate_id, c.update_submitted_at, "
@@ -1953,6 +2027,8 @@ def snooze_task():
         conn.execute('UPDATE reminders SET due_at=? WHERE id=?', (snoozed_until, ref_id))
     elif ttype in ('stale', 'promise'):
         conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=?', (snoozed_until, ref_id))
+    elif ttype == 'interview':
+        conn.execute('UPDATE interviews SET task_snoozed_until=? WHERE id=?', (snoozed_until, ref_id))
     elif ttype == 'submission':
         conn.execute('UPDATE submissions SET task_snoozed_until=? WHERE id=?', (snoozed_until, ref_id))
     else:
@@ -1981,6 +2057,8 @@ def task_done():
         conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=?', (push_to, ref_id))
     elif ttype == 'updated':
         conn.execute("UPDATE candidates SET update_submitted_at='' WHERE id=?", (ref_id,))
+    elif ttype == 'interview':
+        conn.execute("UPDATE interviews SET status='completed' WHERE id=?", (ref_id,))
     elif ttype == 'submission':
         conn.execute("UPDATE submissions SET status='reviewed' WHERE id=?", (ref_id,))
     else:
@@ -2148,6 +2226,7 @@ TENANT_SETTINGS = {
     'email_templates',  # JSON array of {name, subject, body}
     'custom_status_tags',  # JSON array of user-created quick tags
     'stale_days', 'promise_hours',  # follow-up task detection thresholds
+    'interview_template',  # default interview communication message
 }
 
 def _safe_company_id():
@@ -3273,6 +3352,116 @@ def _smtp_send(to_email, subject, plain_body, html_body=None):
         return False, 'Email authentication failed. Check your email address and app password in Settings.'
     except Exception as e:
         return False, f'Failed to send email: {str(e)}'
+
+
+@app.route('/api/candidates/<int:cid>/interviews', methods=['GET'])
+@login_required
+def list_interviews(cid):
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM interviews WHERE candidate_id=? ORDER BY scheduled_at DESC', (cid,)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'interviews': [dict(r) for r in rows]})
+
+
+@app.route('/api/candidates/<int:cid>/interviews', methods=['POST'])
+@login_required
+def create_interview(cid):
+    d = request.json or {}
+    round_name = (d.get('round_name') or 'Interview').strip()
+    mode = (d.get('mode') or '').strip()
+    location = (d.get('location') or '').strip()
+    interviewer = (d.get('interviewer') or '').strip()
+    scheduled_at = (d.get('scheduled_at') or '').strip()
+    if not scheduled_at:
+        return jsonify({'error': 'Date & time required'}), 400
+    conn = get_db()
+    c = conn.execute('SELECT mandate_id, name FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not c:
+        conn.close(); return jsonify({'error': 'Candidate not found'}), 404
+    conn.execute(
+        'INSERT INTO interviews (candidate_id,mandate_id,owner_id,round_name,mode,location,interviewer,scheduled_at,status,created_at) '
+        'VALUES (?,?,?,?,?,?,?,?,?,?)',
+        (cid, c['mandate_id'], effective_user_id(), round_name, mode, location, interviewer, scheduled_at, 'scheduled', ts()))
+    # Auto-move to Interview Inprocess stage
+    conn.execute('UPDATE candidates SET stage=?, updated_at=? WHERE id=?', ('Interview Inprocess', ts(), cid))
+    conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
+                 (cid, '', 'Interview Inprocess', f'{round_name} scheduled', ts()))
+    conn.commit(); conn.close()
+    # Nice human date for the journey
+    try:
+        dt = datetime.datetime.fromisoformat(scheduled_at)
+        nice = dt.strftime('%d %b %Y, %I:%M %p')
+    except Exception:
+        nice = scheduled_at
+    log_candidate_event(cid, 'note', f'Interview scheduled — {round_name}: {nice}' + (f' ({mode})' if mode else ''))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/interviews/<int:iid>/result', methods=['POST'])
+@login_required
+def interview_result(iid):
+    d = request.json or {}
+    result = (d.get('result') or '').strip()
+    conn = get_db()
+    iv = conn.execute('SELECT candidate_id, round_name FROM interviews WHERE id=?', (iid,)).fetchone()
+    if not iv:
+        conn.close(); return jsonify({'error': 'Interview not found'}), 404
+    conn.execute('UPDATE interviews SET status=?, result=? WHERE id=?', ('completed', result, iid))
+    conn.commit(); conn.close()
+    if result:
+        log_candidate_event(iv['candidate_id'], 'note', f'{iv["round_name"]} result: {result}')
+    return jsonify({'ok': True})
+
+
+@app.route('/api/interviews/<int:iid>', methods=['DELETE'])
+@login_required
+def delete_interview(iid):
+    conn = get_db()
+    conn.execute('DELETE FROM interviews WHERE id=?', (iid,))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/candidates/<int:cid>/interview-message', methods=['POST'])
+@login_required
+def interview_message(cid):
+    """Build the ready-to-send interview message from the template + details."""
+    d = request.json or {}
+    conn = get_db()
+    c = conn.execute('SELECT name, mandate_id FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not c:
+        conn.close(); return jsonify({'error': 'Candidate not found'}), 404
+    mandate = conn.execute('SELECT role, client FROM mandates WHERE id=?', (c['mandate_id'],)).fetchone()
+    conn.close()
+
+    tpl = get_setting('interview_template', '') or 'Dear {name}, your interview is scheduled for {datetime}.'
+    u = current_user()
+    recruiter = (u.get('display_name') or u.get('username') or '') if u else ''
+    try:
+        dt = datetime.datetime.fromisoformat((d.get('scheduled_at') or '').strip())
+        nice_dt = dt.strftime('%d %b %Y, %I:%M %p')
+    except Exception:
+        nice_dt = (d.get('scheduled_at') or '').strip()
+    mode = (d.get('mode') or '').strip()
+    location = (d.get('location') or '').strip()
+    if mode.lower() in ('video', 'video call') and location:
+        location_line = f'Meeting Link: {location}'
+    elif location:
+        location_line = f'Venue: {location}'
+    else:
+        location_line = ''
+    msg = (tpl.replace('{name}', c['name'] or 'Candidate')
+              .replace('{role}', (mandate['role'] if mandate else '') or 'the role')
+              .replace('{client}', (mandate['client'] if mandate else '') or '')
+              .replace('{round}', (d.get('round_name') or 'Interview').strip())
+              .replace('{datetime}', nice_dt)
+              .replace('{mode}', mode or 'To be confirmed')
+              .replace('{location_line}', location_line)
+              .replace('{interviewer}', (d.get('interviewer') or '').strip())
+              .replace('{recruiter}', recruiter))
+    # Clean any empty leftover lines
+    msg = '\n'.join([ln for ln in msg.split('\n') if ln.strip() != ''] ) if False else msg
+    return jsonify({'ok': True, 'message': msg})
 
 
 @app.route('/api/candidates/<int:cid>/request-update', methods=['POST'])
