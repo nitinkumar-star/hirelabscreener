@@ -605,6 +605,8 @@ body{font-size:14px !important; line-height:1.5}
 #toast{padding:12px 18px !important; font-size:13px !important; border-radius:12px !important}
 .fmt-btn{background:#fff;border:0.5px solid var(--line);border-radius:4px;padding:2px 7px;cursor:pointer;font-size:12px;color:var(--ink);line-height:1.4}
 .fmt-btn:hover{background:#EEEDFE}
+.an-scope-btn{background:transparent;color:var(--muted);cursor:pointer}
+.an-scope-btn.active{background:#E7F3EE;color:#0F6E56;font-weight:600}
 [contenteditable]:empty:before{content:attr(data-placeholder);color:#bbb;pointer-events:none}
 .sb-grp-head{display:flex;align-items:center;gap:8px;padding:9px 14px;cursor:pointer;font-size:11px;font-weight:700;color:rgba(255,255,255,.62);text-transform:uppercase;letter-spacing:.5px;user-select:none;transition:background .15s}
 .sb-grp-head:hover{background:rgba(255,255,255,.06)}
@@ -629,6 +631,7 @@ body{font-size:14px !important; line-height:1.5}
   <div style="padding:6px 0 2px">
     <div class="sb-gear" id="sb-home" onclick="goHome()"><span class="sb-nav-ic">&#9711;</span><span>Home</span></div>
     <div class="sb-gear" id="sb-tasks" onclick="openTasks()"><span class="sb-nav-ic">&#10003;</span><span>Tasks</span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></div>
+    <div class="sb-gear" id="sb-analytics" onclick="openAnalytics()"><span class="sb-nav-ic">&#128202;</span><span>Analytics</span></div>
     <div class="sb-gear" id="sb-ai" onclick="openAI()"><span class="sb-nav-ic">&#10038;</span><span>AI Insights</span></div>
     <div class="sb-gear" id="sb-central" onclick="openCentralDB()"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></div>
     <div class="sb-gear" id="sb-responses" onclick="openResponses()"><span class="sb-nav-ic">&#9993;</span><span>Responses</span><span class="sb-nav-count" id="nav-resp-count" style="display:none"></span></div>
@@ -798,6 +801,25 @@ body{font-size:14px !important; line-height:1.5}
     </div>
     <div id="tasks-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:24px 20px"></div>
   </div>
+
+  <div id="analytics-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+    <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:28px;height:28px;border-radius:6px;background:#E7F3EE;display:flex;align-items:center;justify-content:center;font-size:14px">&#128202;</div>
+        <div><div style="font-size:14px;font-weight:600">Analytics</div><div style="font-size:11px;color:#888;margin-top:1px">Pipeline, performance &amp; sources</div></div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <div id="analytics-scope-toggle" style="display:none;border:0.5px solid var(--line);border-radius:8px;overflow:hidden">
+          <button id="scope-team" class="an-scope-btn active" onclick="setAnalyticsScope('team')" style="border:none;border-radius:0;font-size:11.5px;padding:6px 12px">Team overview</button>
+          <button id="scope-me" class="an-scope-btn" onclick="setAnalyticsScope('me')" style="border:none;border-radius:0;font-size:11.5px;padding:6px 12px;border-left:0.5px solid var(--line)">My performance</button>
+        </div>
+        <button class="btn btn-o" style="font-size:11px" onclick="renderAnalytics()">&#8635; Refresh</button>
+        <button class="btn btn-o" onclick="closeAnalytics()">&#10005; Close</button>
+      </div>
+    </div>
+    <div id="analytics-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:24px 20px"></div>
+  </div>
+
 
   <div id="mandate-view" style="display:flex;flex:1;flex-direction:column;overflow:hidden">
     <div id="topbar">
@@ -1270,9 +1292,15 @@ async function readHash() {
     var parts = raw.split('/');
     var head = parts[0];
 
+    // Analytics stage-candidate list (opened in new tab via funnel click)
+    if (head === 'analytics' && parts[1] === 'stage' && parts[2]) {
+      renderStageCandidatesPage(decodeURIComponent(parts[2]));
+      return;
+    }
+
     // Overlay views
     var overlayMap = { central: openCentralDB, ai: openAI, admin: openAdmin,
-                       tasks: openTasks, responses: openResponses };
+                       tasks: openTasks, responses: openResponses, analytics: openAnalytics };
     if (overlayMap[head]) {
       // admin overlay only for admins
       if (head === 'admin' && !(S.currentUser && S.currentUser.role === 'admin')) {
@@ -3174,6 +3202,7 @@ function followUpConfigHTML(s){
     + '<div class="g2">'
     + '<div class="fg-row"><label>Flag as "stale" after (days, no activity)</label><input class="inp" id="s-stale_days" value="' + esc(s.stale_days||'7') + '"></div>'
     + '<div class="fg-row"><label>Flag "promised" follow-up after (hours)</label><input class="inp" id="s-promise_hours" value="' + esc(s.promise_hours||'24') + '"></div>'
+    + '<div class="fg-row"><label>Analytics: flag stale mandate after (days)</label><input class="inp" id="s-analytics_stale_days" value="' + esc(s.analytics_stale_days||'7') + '"></div>'
     + '</div>'
     + '<div style="margin-top:12px;padding-top:12px;border-top:0.5px solid #eee">'
     + '<button id="notif-toggle-btn" class="btn ' + (notifOn?'btn-g':'btn-o') + '" style="font-size:12px" ' + (notifOn?'disabled':'onclick="enableTaskNotifications()"') + '>'
@@ -3347,7 +3376,7 @@ async function deleteUser(uid, username) {
 }
 async function saveSettings(){
   const wf=(document.querySelector('input[name="wfmode"]:checked')||{}).value||'agency';
-  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',interview_template:v('s-interview_template')};
+  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template')};
   const r=await req('POST','/settings',data);
   if(r.ok){S.settings=data;toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }
@@ -6527,6 +6556,184 @@ function _taskColor(type, section){
 }
 function _taskActionLabel(type){
   return ({reminder:'Reminder', stale:'Stale candidate', promise:'Promised follow-up', submission:'New submission'})[type] || '';
+}
+
+function openAnalytics() {
+  closeSidebarOnMobile();
+  var av=document.getElementById('ai-view'); if(av) av.style.display='none';
+  var sa=document.getElementById('sb-ai'); if(sa) sa.className='sb-gear';
+  var adv=document.getElementById('admin-view'); if(adv) adv.style.display='none';
+  document.getElementById('mandate-view').style.display = 'none';
+  document.getElementById('settings-view').style.display = 'none';
+  document.getElementById('central-view').style.display = 'none';
+  var _cv=document.getElementById('cdb-view'); if(_cv) _cv.style.display='none';
+  var rv = document.getElementById('responses-view'); if (rv) rv.style.display = 'none';
+  var tv = document.getElementById('tasks-view'); if(tv) tv.style.display='none';
+  var st = document.getElementById('sb-tasks'); if(st) st.className='sb-gear';
+  document.getElementById('analytics-view').style.display = 'flex';
+  document.getElementById('sb-analytics').className = 'sb-gear active';
+  var sr = document.getElementById('sb-responses'); if (sr) sr.className = 'sb-gear';
+  var sc = document.getElementById('sb-central'); if (sc) sc.className = 'sb-gear';
+  document.getElementById('sb-gear').className = 'sb-gear';
+  S.settingsOpen = false;
+  renderAnalytics();
+  writeHash();
+}
+function closeAnalytics() {
+  document.getElementById('analytics-view').style.display = 'none';
+  document.getElementById('mandate-view').style.display = 'flex';
+  document.getElementById('sb-analytics').className = 'sb-gear';
+}
+var _analyticsScope = 'team';
+function setAnalyticsScope(s){
+  _analyticsScope = s;
+  document.getElementById('scope-team').className = 'an-scope-btn' + (s==='team'?' active':'');
+  document.getElementById('scope-me').className = 'an-scope-btn' + (s==='me'?' active':'');
+  renderAnalytics();
+}
+
+async function renderAnalytics(){
+  var body = document.getElementById('analytics-body');
+  if(!body) return;
+  body.innerHTML = '<div class="loading"><div class="spinner"></div>Loading analytics...</div>';
+  var url = '/analytics' + (_analyticsScope==='me' ? '?scope=me' : '');
+  var r = await req('GET', url);
+  if(!r.ok){ body.innerHTML = '<div style="padding:20px;color:#E24B4A">Failed to load analytics</div>'; return; }
+
+  // Show scope toggle only for admins
+  var tog = document.getElementById('analytics-scope-toggle');
+  if(tog) tog.style.display = (S.currentUser && (S.currentUser.role==='admin' || S.currentUser.is_company_admin)) ? 'flex' : 'none';
+
+  var k = r.kpi;
+  var maxFunnel = Math.max.apply(null, r.funnel.map(function(f){return f.count;}).concat([1]));
+
+  var html = '<div style="max-width:920px;margin:0 auto">';
+
+  // KPI cards
+  html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px">';
+  html += _kpiCard('Open mandates', k.open_mandates, (k.active)+' active, '+(k.hold)+' hold, '+(k.closed)+' closed');
+  html += _kpiCard('Placements this month', k.placed_this_month, 'Moved to Placed this month');
+  html += _kpiCard('Avg time-to-fill', k.avg_time_to_fill!=null ? (k.avg_time_to_fill+' days') : '—', 'Created → Placed, last 90 days');
+  html += _kpiCard('Candidates in pipeline', k.pipeline_candidates, 'Across in-scope mandates');
+  html += '</div>';
+
+  // Pipeline funnel
+  html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:20px">';
+  html += '<div style="font-size:13px;font-weight:600;margin-bottom:6px">Pipeline funnel</div>';
+  html += '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">Kisi bhi stage par click karein &mdash; us stage ke saare candidates (sabhi positions se) naye tab mein khulenge.</div>';
+  html += '<div style="display:flex;flex-direction:column;gap:7px">';
+  r.funnel.forEach(function(f){
+    var pct = Math.round(f.count*100/maxFunnel);
+    var col = f.label==='Placed' ? '#0F6E56' : '#7F77DD';
+    var stagesParam = encodeURIComponent(f.stages.join('||'));
+    var href = '#analytics/stage/' + stagesParam;
+    html += '<a href="'+href+'" style="display:flex;align-items:center;gap:10px;text-decoration:none;cursor:pointer" title="Open in this tab, or Ctrl/Cmd+click for a new tab">'
+      + '<div style="width:120px;font-size:12px;color:var(--ink);flex-shrink:0">'+esc(f.label)+'</div>'
+      + '<div style="flex:1;background:#F1F0EC;border-radius:5px;height:24px;position:relative;overflow:hidden">'
+      + '<div style="width:'+Math.max(pct,3)+'%;height:100%;background:'+col+';border-radius:5px"></div></div>'
+      + '<div style="width:44px;text-align:right;font-size:13px;font-weight:600;color:var(--ink)">'+f.count+'</div>'
+      + '</a>';
+  });
+  html += '</div></div>';
+
+  // Two-column: leaderboard (admin) + sources
+  html += '<div style="display:grid;grid-template-columns:'+(r.leaderboard.length?'1.3fr 1fr':'1fr')+';gap:16px;margin-bottom:20px">';
+
+  if(r.leaderboard.length){
+    html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:16px 20px">';
+    html += '<div style="font-size:13px;font-weight:600;margin-bottom:12px">Recruiter leaderboard</div>';
+    html += '<table style="width:100%;font-size:12.5px;border-collapse:collapse">';
+    html += '<tr style="color:var(--muted);font-size:11px"><td style="padding:4px 0">Recruiter</td><td style="text-align:right">Added</td><td style="text-align:right">Interviews</td><td style="text-align:right">Placed</td></tr>';
+    r.leaderboard.forEach(function(u){
+      html += '<tr style="border-top:0.5px solid var(--line)">'
+        + '<td style="padding:8px 0;display:flex;align-items:center;gap:8px">'+avatarHtml(u.name,22)+esc(u.name)+'</td>'
+        + '<td style="text-align:right">'+u.added+'</td>'
+        + '<td style="text-align:right">'+u.interviews+'</td>'
+        + '<td style="text-align:right;font-weight:600">'+u.placed+'</td></tr>';
+    });
+    html += '</table></div>';
+  }
+
+  html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:16px 20px">';
+  html += '<div style="font-size:13px;font-weight:600;margin-bottom:12px">Source effectiveness</div>';
+  if(r.sources.length){
+    html += '<div style="display:flex;flex-direction:column;gap:10px">';
+    r.sources.forEach(function(s){
+      html += '<div><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span style="color:var(--muted)">'+esc(s.source)+'</span><span>'+s.pct+'%</span></div>'
+        + '<div style="background:#F1F0EC;border-radius:4px;height:8px"><div style="width:'+s.pct+'%;height:100%;background:#1D9E75;border-radius:4px"></div></div></div>';
+    });
+    html += '</div><div style="font-size:11px;color:var(--muted);margin-top:12px">Share of placed candidates by source</div>';
+  } else {
+    html += '<div style="font-size:12px;color:var(--muted);padding:8px 0">Abhi koi placement nahi &mdash; source data yahan aayega.</div>';
+  }
+  html += '</div></div>';
+
+  // Stale mandates alert
+  if(r.stale_mandates.length){
+    html += '<div style="background:#FDF6E9;border:0.5px solid #F3DFB0;border-radius:12px;padding:12px 18px;margin-bottom:8px">';
+    html += '<div style="font-size:12.5px;font-weight:600;color:#8A5A0B;margin-bottom:8px">&#9888;&#65039; '+r.stale_mandates.length+' mandate'+(r.stale_mandates.length>1?'s':'')+' mein '+r.stale_days+'+ din se koi movement nahi</div>';
+    r.stale_mandates.forEach(function(m){
+      html += '<div onclick="selectMandate('+m.id+')" style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12px;cursor:pointer;border-top:0.5px solid #F3DFB0">'
+        + '<span style="width:7px;height:7px;border-radius:50%;background:#C7841E;flex-shrink:0"></span>'
+        + '<span style="flex:1"><b>'+esc(m.role)+'</b> &middot; '+esc(m.client)+'</span>'
+        + '<span style="color:#B5730F;font-weight:600">'+m.days+' din</span></div>';
+    });
+    html += '</div>';
+  }
+
+  html += '</div>';
+  body.innerHTML = html;
+}
+
+function _kpiCard(label, value, sub){
+  return '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px">'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">'+esc(label)+'</div>'
+    + '<div style="font-size:24px;font-weight:700;color:var(--navy)">'+esc(String(value))+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:2px">'+esc(sub)+'</div></div>';
+}
+
+async function renderStageCandidatesPage(stagesStr){
+  // Reuse the analytics view shell for a full-page candidate list
+  openAnalytics();
+  var body = document.getElementById('analytics-body');
+  if(!body) return;
+  body.innerHTML = '<div class="loading"><div class="spinner"></div>Loading candidates...</div>';
+  var stages = stagesStr.split('||');
+  var r = await req('GET', '/analytics/stage-candidates?stages=' + encodeURIComponent(stagesStr));
+  if(!r.ok){ body.innerHTML='<div style="padding:20px;color:#E24B4A">Failed to load</div>'; return; }
+  var cands = r.candidates || [];
+  var staleCount = cands.filter(function(c){return c.is_stale;}).length;
+
+  var html = '<div style="max-width:920px;margin:0 auto">';
+  html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+    + '<a href="#analytics" style="font-size:12px;color:var(--teal-deep);text-decoration:none">&#8592; Analytics</a></div>';
+  html += '<div style="font-size:18px;font-weight:700;color:var(--navy);margin-bottom:4px">'+esc(stages.join(' / '))+'</div>';
+  html += '<div style="font-size:12px;color:var(--muted);margin-bottom:16px">'+cands.length+' candidate'+(cands.length!==1?'s':'')+' across all positions'
+    + (staleCount?' &middot; <span style="color:#C0522B;font-weight:600">'+staleCount+' inactive '+r.stale_days+'+ din se</span>':'')+'</div>';
+
+  if(!cands.length){
+    html += '<div style="text-align:center;padding:50px;color:var(--muted)">Is stage mein koi candidate nahi.</div>';
+  } else {
+    html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;overflow:hidden">';
+    cands.forEach(function(c){
+      var staleBadge = c.is_stale ? '<span style="font-size:9px;font-weight:700;background:#FBE4D4;color:#C0522B;padding:2px 7px;border-radius:6px;white-space:nowrap">&#9888; '+r.stale_days+'+ din inactive</span>' : '';
+      html += '<div onclick="openProfileById('+c.id+','+(c.mandate_id||'null')+')" style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:0.5px solid var(--line);cursor:pointer'
+        + (c.is_stale?';background:#FFFCF7':'') + '" onmouseover="this.style.background=\'#F7F6F3\'" onmouseout="this.style.background=\''+(c.is_stale?'#FFFCF7':'#fff')+'\'">'
+        + avatarHtml(c.name, 34)
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="font-size:13px;font-weight:600;color:var(--navy)">'+esc(c.name||'')+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+        + esc(c.company||'')+(c.designation?' &middot; '+esc(c.designation):'')+'</div></div>'
+        + '<div style="text-align:right;min-width:0"><div style="font-size:11px;color:var(--purple);font-weight:600">'+esc(c.mandate_role||'')+'</div>'
+        + '<div style="font-size:10.5px;color:var(--muted)">'+esc(c.mandate_client||'')+'</div></div>'
+        + staleBadge
+        + (c.cv_path?'<span style="font-size:9px;font-weight:600;background:#E8F4EE;color:#127A57;padding:2px 6px;border-radius:6px">CV</span>':'')
+        + '</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  body.innerHTML = html;
 }
 
 async function renderTasksView() {

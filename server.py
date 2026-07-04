@@ -1119,6 +1119,7 @@ def init_db():
         ('fu2_hours', '24'),
         ('stale_days', '7'),
         ('promise_hours', '24'),
+        ('analytics_stale_days', '7'),
         ('interview_template',
          'Dear {name},\n\n'
          'We are pleased to inform you that your interview for the position of {role} '
@@ -1809,6 +1810,200 @@ def dashboard_tasks_alias():
 
 PROMISE_TAGS = ['Will Callback', 'Call Later', 'Asked to Send JD', 'Interested']
 
+@app.route('/api/analytics')
+@login_required
+def analytics():
+    """Dashboard analytics. Admin sees the whole company; a recruiter sees only
+    their own assigned mandates + candidates. Pass ?scope=me to force self-view."""
+    conn = get_db()
+    cid = effective_company_id()
+    scope_me = request.args.get('scope') == 'me'
+    admin = is_company_admin() and not scope_me
+
+    stale_days = float(get_setting('analytics_stale_days', '7') or 7)
+    now = datetime.datetime.now()
+
+    # Determine which mandate ids are in scope
+    if admin:
+        mrows = conn.execute('SELECT * FROM mandates WHERE owner_id=?', (cid,)).fetchall()
+    else:
+        mrows = conn.execute('SELECT * FROM mandates WHERE owner_id=? AND assigned_user_id=?',
+                             (cid, real_user_id())).fetchall()
+    mandates = [dict(m) for m in mrows]
+    mandate_ids = [m['id'] for m in mandates]
+
+    def _in(ids):
+        return '(' + ','.join('?' for _ in ids) + ')' if ids else '(NULL)'
+
+    # KPI: mandate status counts
+    active = sum(1 for m in mandates if (m.get('status') or 'active') == 'active')
+    hold = sum(1 for m in mandates if m.get('status') == 'hold')
+    closed = sum(1 for m in mandates if m.get('status') == 'closed')
+
+    # Candidates in scope
+    if mandate_ids:
+        cand_rows = conn.execute(
+            f'SELECT id, stage, mandate_id, updated_at, ai_reasoning, created_at FROM candidates WHERE mandate_id IN {_in(mandate_ids)}',
+            mandate_ids).fetchall()
+    else:
+        cand_rows = []
+    cands = [dict(c) for c in cand_rows]
+    total_pipeline = len([c for c in cands if c['stage'] not in ('Placed', 'Not Interested', 'Not Suitable', 'Client Rejected on Paper', 'Client Rejected After Interview')])
+
+    # Placements this month
+    first_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    placed_ids = [c['id'] for c in cands if c['stage'] == 'Placed']
+    placed_this_month = 0
+    for c in cands:
+        if c['stage'] == 'Placed':
+            # find when it entered Placed via stage_history
+            sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
+            when = sh['created_at'] if sh else c['updated_at']
+            try:
+                if datetime.datetime.fromisoformat(when) >= first_of_month:
+                    placed_this_month += 1
+            except Exception:
+                pass
+
+    # Avg time-to-fill (days from candidate created → Placed), last 90 days
+    fill_days = []
+    for c in cands:
+        if c['stage'] == 'Placed':
+            sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
+            if sh and c['created_at']:
+                try:
+                    d0 = datetime.datetime.fromisoformat(c['created_at'])
+                    d1 = datetime.datetime.fromisoformat(sh['created_at'])
+                    if (now - d1).days <= 90:
+                        fill_days.append((d1 - d0).days)
+                except Exception:
+                    pass
+    avg_ttf = round(sum(fill_days) / len(fill_days)) if fill_days else None
+
+    # Pipeline funnel (grouped stages)
+    funnel_map = [
+        ('Screening', ['Screening']),
+        ('Follow Up', ['Follow Up 1', 'Follow Up 2', 'Not Contacted', 'Called']),
+        ('Interested', ['Interested', 'Updated CV awaited']),
+        ('Shared with Client', ['Shared with Client']),
+        ('Interview', ['Interview Inprocess']),
+        ('Placed', ['Placed']),
+    ]
+    funnel = []
+    for label, stages in funnel_map:
+        funnel.append({'label': label, 'count': len([c for c in cands if c['stage'] in stages]), 'stages': stages})
+
+    # Source effectiveness (of placed candidates, by source)
+    def _source(reason):
+        r = (reason or '').lower()
+        if 'naukri' in r: return 'Naukri extension'
+        if 'bulk' in r: return 'Bulk paste'
+        if 'manual' in r: return 'Manual add'
+        return 'Other'
+    src_counts = {}
+    for c in cands:
+        if c['stage'] == 'Placed':
+            s = _source(c['ai_reasoning'])
+            src_counts[s] = src_counts.get(s, 0) + 1
+    total_placed = sum(src_counts.values())
+    sources = [{'source': k, 'count': v, 'pct': round(v * 100 / total_placed) if total_placed else 0}
+               for k, v in sorted(src_counts.items(), key=lambda x: -x[1])]
+
+    # Recruiter leaderboard (admin only)
+    leaderboard = []
+    if admin:
+        team = conn.execute("SELECT id, display_name, username FROM users WHERE company_id=? AND status='approved'", (cid,)).fetchall()
+        for u in team:
+            uid = u['id']
+            u_mandates = conn.execute('SELECT id FROM mandates WHERE owner_id=? AND assigned_user_id=?', (cid, uid)).fetchall()
+            u_mids = [r['id'] for r in u_mandates]
+            if u_mids:
+                added = conn.execute(f'SELECT COUNT(*) n FROM candidates WHERE mandate_id IN {_in(u_mids)}', u_mids).fetchone()['n']
+                placed = conn.execute(f"SELECT COUNT(*) n FROM candidates WHERE mandate_id IN {_in(u_mids)} AND stage='Placed'", u_mids).fetchone()['n']
+                interviews = conn.execute(f'SELECT COUNT(*) n FROM interviews WHERE mandate_id IN {_in(u_mids)}', u_mids).fetchone()['n']
+            else:
+                added = placed = interviews = 0
+            leaderboard.append({'name': u['display_name'] or u['username'] or 'User',
+                                'added': added, 'interviews': interviews, 'placed': placed})
+        leaderboard.sort(key=lambda x: (-x['placed'], -x['added']))
+
+    # Stale mandates (no candidate activity in stale_days) + stale candidates within
+    stale_mandates = []
+    for m in mandates:
+        if (m.get('status') or 'active') != 'active':
+            continue
+        m_cands = [c for c in cands if c['mandate_id'] == m['id']]
+        if not m_cands:
+            continue
+        latest = None
+        for c in m_cands:
+            for t in (c['updated_at'],):
+                if t:
+                    try:
+                        dt = datetime.datetime.fromisoformat(t)
+                        if not latest or dt > latest: latest = dt
+                    except Exception:
+                        pass
+        if latest and (now - latest).days >= stale_days:
+            stale_mandates.append({'id': m['id'], 'role': m['role'], 'client': m['client'],
+                                   'days': (now - latest).days})
+    stale_mandates.sort(key=lambda x: -x['days'])
+
+    conn.close()
+    return jsonify({'ok': True, 'is_admin_view': admin,
+                    'kpi': {'open_mandates': len(mandates), 'active': active, 'hold': hold, 'closed': closed,
+                            'placed_this_month': placed_this_month, 'avg_time_to_fill': avg_ttf,
+                            'pipeline_candidates': total_pipeline},
+                    'funnel': funnel, 'sources': sources, 'leaderboard': leaderboard,
+                    'stale_mandates': stale_mandates, 'stale_days': int(stale_days)})
+
+
+@app.route('/api/analytics/stage-candidates')
+@login_required
+def analytics_stage_candidates():
+    """All candidates in a given funnel-stage-group, across every in-scope mandate.
+    Used when the user clicks a funnel bar (opens in a new tab via hash route)."""
+    stages_param = request.args.get('stages', '')
+    stages = [s for s in stages_param.split('||') if s]
+    if not stages:
+        return jsonify({'ok': True, 'candidates': []})
+    conn = get_db()
+    cid = effective_company_id()
+    if is_company_admin():
+        mrows = conn.execute('SELECT id, role, client FROM mandates WHERE owner_id=?', (cid,)).fetchall()
+    else:
+        mrows = conn.execute('SELECT id, role, client FROM mandates WHERE owner_id=? AND assigned_user_id=?',
+                             (cid, real_user_id())).fetchall()
+    mmap = {m['id']: dict(m) for m in mrows}
+    mandate_ids = list(mmap.keys())
+    if not mandate_ids:
+        conn.close(); return jsonify({'ok': True, 'candidates': []})
+    stale_days = float(get_setting('analytics_stale_days', '7') or 7)
+    now = datetime.datetime.now()
+    ph = '(' + ','.join('?' for _ in mandate_ids) + ')'
+    sph = '(' + ','.join('?' for _ in stages) + ')'
+    rows = conn.execute(
+        f'SELECT id, name, company, designation, phone, email, stage, mandate_id, updated_at, cv_path '
+        f'FROM candidates WHERE mandate_id IN {ph} AND stage IN {sph} ORDER BY name',
+        mandate_ids + stages).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        m = mmap.get(d['mandate_id'], {})
+        d['mandate_role'] = m.get('role', '')
+        d['mandate_client'] = m.get('client', '')
+        # stale flag
+        d['is_stale'] = False
+        if d['updated_at']:
+            try:
+                if (now - datetime.datetime.fromisoformat(d['updated_at'])).days >= stale_days:
+                    d['is_stale'] = True
+            except Exception:
+                pass
+        out.append(d)
+    return jsonify({'ok': True, 'candidates': out, 'stages': stages, 'stale_days': int(stale_days)})
+
 @app.route('/api/tasks')
 @login_required
 def get_tasks():
@@ -2226,6 +2421,7 @@ TENANT_SETTINGS = {
     'email_templates',  # JSON array of {name, subject, body}
     'custom_status_tags',  # JSON array of user-created quick tags
     'stale_days', 'promise_hours',  # follow-up task detection thresholds
+    'analytics_stale_days',  # dashboard stale-mandate threshold (separate)
     'interview_template',  # default interview communication message
 }
 
