@@ -48,7 +48,7 @@ input:focus,textarea:focus{outline:none;border-color:#1D9E75!important}
 .sb-new-btn:hover{background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.75)}
 .sb-spacer{flex:0;min-height:8px}
 .sb-bottom{border-top:0.5px solid rgba(255,255,255,0.08);padding:6px 8px;flex-shrink:0}
-.sb-gear{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer}
+.sb-gear{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;text-decoration:none;color:inherit}
 .sb-gear:hover{background:rgba(255,255,255,0.06)}.sb-gear.active{background:rgba(255,255,255,0.1)}
 .sb-gear-icon{width:26px;height:26px;border-radius:6px;background:rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
 .sb-gear-label{color:rgba(255,255,255,0.65);font-size:12px;font-weight:500}
@@ -62,7 +62,7 @@ input:focus,textarea:focus{outline:none;border-color:#1D9E75!important}
 .sop-pill{background:#E1F5EE;color:#0F6E56;font-size:10px;padding:3px 10px;border-radius:8px;font-weight:500}
 #tabs{display:flex;padding:0 16px;border-bottom:0.5px solid #e8e8e8;overflow-x:auto;flex-shrink:0;scrollbar-width:none}
 #tabs::-webkit-scrollbar{display:none}
-.tab-btn{padding:8px 12px;font-size:12px;cursor:pointer;border:none;border-bottom:2px solid transparent;background:transparent;color:#888;white-space:nowrap;transition:all .15s}
+.tab-btn{padding:8px 12px;font-size:12px;cursor:pointer;border:none;border-bottom:2px solid transparent;background:transparent;color:#888;white-space:nowrap;transition:all .15s;text-decoration:none;display:inline-block}
 .tab-btn:hover{color:#555}.tab-btn.active{color:#1D9E75;border-bottom-color:#1D9E75;font-weight:500}
 #content{flex:1;overflow-y:auto;overflow-x:hidden;background:#f5f5f5}
 .card{background:#fff;border:0.5px solid #e8e8e8;border-radius:8px;overflow:hidden;margin-bottom:10px}
@@ -629,20 +629,20 @@ body{font-size:14px !important; line-height:1.5}
   </div>
 
   <div style="padding:6px 0 2px">
-    <div class="sb-gear" id="sb-home" onclick="goHome()"><span class="sb-nav-ic">&#9711;</span><span>Home</span></div>
-    <div class="sb-gear" id="sb-tasks" onclick="openTasks()"><span class="sb-nav-ic">&#10003;</span><span>Tasks</span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></div>
-    <div class="sb-gear" id="sb-analytics" onclick="openAnalytics()"><span class="sb-nav-ic">&#128202;</span><span>Analytics</span></div>
-    <div class="sb-gear" id="sb-ai" onclick="openAI()"><span class="sb-nav-ic">&#10038;</span><span>AI Insights</span></div>
-    <div class="sb-gear" id="sb-central" onclick="openCentralDB()"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></div>
-    <div class="sb-gear" id="sb-responses" onclick="openResponses()"><span class="sb-nav-ic">&#9993;</span><span>Responses</span><span class="sb-nav-count" id="nav-resp-count" style="display:none"></span></div>
+    <a href="#" class="sb-gear" id="sb-home" onclick="return navClick(event,goHome)"><span class="sb-nav-ic">&#9711;</span><span>Home</span></a>
+    <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><span class="sb-nav-ic">&#10003;</span><span>Tasks</span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
+    <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><span class="sb-nav-ic">&#128202;</span><span>Analytics</span></a>
+    <a href="#ai" class="sb-gear" id="sb-ai" onclick="return navClick(event,openAI)"><span class="sb-nav-ic">&#10038;</span><span>AI Insights</span></a>
+    <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></a>
+    <a href="#responses" class="sb-gear" id="sb-responses" onclick="return navClick(event,openResponses)"><span class="sb-nav-ic">&#9993;</span><span>Responses</span><span class="sb-nav-count" id="nav-resp-count" style="display:none"></span></a>
   </div>
 
   <div class="sb-mand-head"><span class="t">MY MANDATES</span><button class="a" onclick="openModal('modal-mandate')" title="New mandate">+</button></div>
   <div id="sb-mandates" style="overflow-y:auto;flex:1;min-height:120px"></div>
 
   <div class="sb-bottom">
-    <div class="sb-gear" id="sb-admin" onclick="openAdmin()" style="display:none"><span class="sb-nav-ic">&#9672;</span><span>Admin Panel</span><span style="margin-left:auto;font-size:9.5px;font-weight:700;background:#F8EFDD;color:#9A6512;border-radius:6px;padding:2px 6px">ADMIN</span></div>
-    <div class="sb-gear" id="sb-gear" onclick="toggleSettings()"><span class="sb-nav-ic">&#9881;</span><span>Settings</span></div>
+    <a href="#admin" class="sb-gear" id="sb-admin" onclick="return navClick(event,openAdmin)" style="display:none"><span class="sb-nav-ic">&#9672;</span><span>Admin Panel</span><span style="margin-left:auto;font-size:9.5px;font-weight:700;background:#F8EFDD;color:#9A6512;border-radius:6px;padding:2px 6px">ADMIN</span></a>
+    <a href="#settings" class="sb-gear" id="sb-gear" onclick="return navClick(event,toggleSettings)"><span class="sb-nav-ic">&#9881;</span><span>Settings</span></a>
   </div>
   <div class="sb-user" id="sb-user">
     <div class="sb-user-av" id="sb-user-av">NK</div>
@@ -1414,6 +1414,13 @@ async function init(){
   renderSettings();
   updateTasksBadge();
   await readHash();   // restore last view from URL (refresh-safe)
+
+  // React to hash changes (back/forward, or a link opened in this tab).
+  // Guarded so our own writeHash() calls don't cause double-renders.
+  window.addEventListener('hashchange', function(){
+    if (__restoringHash) return;
+    if (S.currentUser) readHash();
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1906,7 +1913,27 @@ function updateTopbar(){
 }
 function renderTabs(){
   const bar=document.getElementById('tabs');
-  bar.innerHTML=TABS.map(t=>'<button class="tab-btn'+(t===S.activeTab?' active':'')+'" onclick="switchTab(\''+t+'\')">'+t+'</button>').join('');
+  var mid = S.activeMandate ? S.activeMandate.id : '';
+  var subOf = function(t){ return t==='Pipeline'?'pipeline':t==='Candidate Profiles'?'profiles':'setup'; };
+  bar.innerHTML=TABS.map(function(t){
+    var href = mid ? ('#mandate/'+mid+'/'+subOf(t)) : '#';
+    return '<a href="'+href+'" class="tab-btn'+(t===S.activeTab?' active':'')
+      +'" onclick="return tabClick(event,\''+t+'\')">'+t+'</a>';
+  }).join('');
+}
+// Normal click → SPA switch (no reload). Ctrl/Cmd/middle-click → let the browser open a new tab.
+function tabClick(e, tabName){
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return true;  // native new-tab/window
+  e.preventDefault();
+  switchTab(tabName);
+  return false;
+}
+// Same guard for sidebar nav anchors.
+function navClick(e, fn){
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return true;  // native new-tab/window
+  e.preventDefault();
+  try { fn(); } catch(err) {}
+  return false;
 }
 async function switchTab(t){S.activeTab=t;renderTabs();await renderContent();}
 
