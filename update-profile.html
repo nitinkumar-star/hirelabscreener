@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Update Your Profile — HireLab</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#F4F3EF;color:#1B1B18;line-height:1.5;padding:20px}
+  .wrap{max-width:560px;margin:24px auto}
+  .card{background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.06);overflow:hidden}
+  .head{background:#0a2540;color:#fff;padding:22px 24px}
+  .head h1{font-size:19px;font-weight:600}
+  .head p{font-size:12.5px;opacity:.75;margin-top:4px}
+  .body{padding:22px 24px}
+  .fg{margin-bottom:14px}
+  .fg label{display:block;font-size:12px;font-weight:600;color:#5F5E5A;margin-bottom:5px}
+  .fg input,.fg textarea{width:100%;border:1px solid #E2E0D8;border-radius:9px;padding:10px 12px;font-size:14px;font-family:inherit;outline:none;background:#FAFAF9}
+  .fg input:focus,.fg textarea:focus{border-color:#1D9E75;background:#fff}
+  .row{display:flex;gap:12px}
+  .row .fg{flex:1}
+  .upload{border:2px dashed #C9C2E0;border-radius:11px;padding:20px;text-align:center;cursor:pointer;transition:.15s;background:#FBFAFF}
+  .upload:hover{border-color:#1D9E75;background:#F3FBF8}
+  .upload.has-file{border-color:#1D9E75;background:#EAF7F1}
+  .upload-ic{font-size:26px;margin-bottom:6px}
+  .btn{width:100%;background:#1D9E75;color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px}
+  .btn:disabled{opacity:.6;cursor:not-allowed}
+  .msg{text-align:center;padding:50px 24px}
+  .msg-ic{font-size:52px;margin-bottom:14px}
+  .msg h2{font-size:20px;margin-bottom:8px;color:#0a2540}
+  .msg p{font-size:14px;color:#5F5E5A}
+  .foot{text-align:center;font-size:11px;color:#A8A498;padding:14px}
+  .load{text-align:center;padding:60px 20px;color:#888}
+  .spin{width:32px;height:32px;border:3px solid #E2E0D8;border-top-color:#1D9E75;border-radius:50%;margin:0 auto 14px;animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div id="content">
+      <div class="load"><div class="spin"></div>Loading your profile...</div>
+    </div>
+  </div>
+  <div class="foot">Powered by HireLab &middot; Secure candidate portal</div>
+</div>
+
+<script>
+var TOKEN = new URLSearchParams(location.search).get('token') || '';
+var API = '/api/public/candidate-update/' + TOKEN;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];}); }
+
+async function load(){
+  var box = document.getElementById('content');
+  if(!TOKEN){ box.innerHTML = errHtml('Invalid link', 'This link is missing its security token.'); return; }
+  try{
+    var res = await fetch(API);
+    var data = await res.json();
+    if(!data.ok){ box.innerHTML = errHtml('Link not valid', data.error || 'This link is invalid or has expired.'); return; }
+    renderForm(data.candidate);
+  }catch(e){
+    box.innerHTML = errHtml('Something went wrong', 'Please try again later.');
+  }
+}
+
+function errHtml(title, sub){
+  return '<div class="msg"><div class="msg-ic">&#9888;&#65039;</div><h2>'+esc(title)+'</h2><p>'+esc(sub)+'</p></div>';
+}
+
+function field(id, label, val, type){
+  return '<div class="fg"><label>'+label+'</label><input id="'+id+'" type="'+(type||'text')+'" value="'+esc(val)+'"></div>';
+}
+
+function renderForm(c){
+  var box = document.getElementById('content');
+  var skills = (c.key_skills||[]).join(', ');
+  box.innerHTML =
+    '<div class="head"><h1>Update Your Profile</h1><p>Please confirm your details and upload your latest resume.</p></div>'
+    + '<div class="body">'
+    + field('name','Full Name', c.name)
+    + '<div class="row">' + field('phone','Phone', c.phone) + field('email','Email', c.email, 'email') + '</div>'
+    + '<div class="row">' + field('company','Current Company', c.company) + field('designation','Designation', c.designation) + '</div>'
+    + '<div class="row">' + field('experience','Experience (years)', c.experience, 'number') + field('qualification','Education', c.qualification) + '</div>'
+    + '<div class="row">' + field('ctc_current','Current CTC (LPA)', c.ctc_current, 'number') + field('ctc_expected','Expected CTC (LPA)', c.ctc_expected, 'number') + '</div>'
+    + '<div class="row">' + field('notice_period','Notice Period (days)', c.notice_period, 'number') + field('location','Current Location', c.location) + '</div>'
+    + field('preferred_location','Preferred Location', c.preferred_location)
+    + '<div class="fg"><label>Key Skills (comma separated)</label><textarea id="key_skills" rows="2">'+esc(skills)+'</textarea></div>'
+    + '<div class="fg"><label>Upload Latest Resume (PDF / Word)</label>'
+    + '<label class="upload" id="upbox"><div class="upload-ic">&#128206;</div><div id="upext" style="font-size:13px;color:#6B4FA0;font-weight:600">Tap to choose your resume file</div>'
+    + '<input type="file" id="resume" accept=".pdf,.doc,.docx" style="display:none" onchange="onFile()"></label></div>'
+    + '<button class="btn" id="submitBtn" onclick="submitForm()">Submit Updated Profile</button>'
+    + '</div>';
+}
+
+function onFile(){
+  var f = document.getElementById('resume').files[0];
+  var box = document.getElementById('upbox');
+  var ext = document.getElementById('upext');
+  if(f){ box.classList.add('has-file'); ext.textContent = '\u2705 ' + f.name; }
+}
+
+async function submitForm(){
+  var btn = document.getElementById('submitBtn');
+  btn.disabled = true; btn.textContent = 'Submitting...';
+  var fd = new FormData();
+  ['name','phone','email','company','designation','experience','qualification','ctc_current','ctc_expected','notice_period','location','preferred_location'].forEach(function(id){
+    var el = document.getElementById(id); if(el) fd.append(id, el.value);
+  });
+  var ks = document.getElementById('key_skills').value.split(',').map(function(s){return s.trim();}).filter(Boolean);
+  fd.append('key_skills', JSON.stringify(ks));
+  var rf = document.getElementById('resume').files[0];
+  if(rf) fd.append('resume', rf);
+
+  try{
+    var res = await fetch(API, { method:'POST', body: fd });
+    var data = await res.json();
+    if(data.ok){
+      document.getElementById('content').innerHTML =
+        '<div class="msg"><div class="msg-ic">&#127881;</div><h2>Thank you!</h2><p>Your profile has been updated successfully. Our team will be in touch soon.</p></div>';
+    } else {
+      btn.disabled = false; btn.textContent = 'Submit Updated Profile';
+      alert(data.error || 'Submission failed. Please try again.');
+    }
+  }catch(e){
+    btn.disabled = false; btn.textContent = 'Submit Updated Profile';
+    alert('Something went wrong. Please try again.');
+  }
+}
+
+load();
+</script>
+</body>
+</html>

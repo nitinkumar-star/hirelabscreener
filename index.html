@@ -788,6 +788,7 @@ body{font-size:14px !important; line-height:1.5}
           <option value="reminder">Reminders</option>
           <option value="stale">Stale candidates</option>
           <option value="promise">Promised follow-up</option>
+          <option value="updated">Updated resume received</option>
           <option value="submission">New submissions</option>
         </select>
         <button class="btn btn-o" style="font-size:11px" onclick="renderTasksView()">&#8635; Refresh</button>
@@ -1574,6 +1575,14 @@ function doDownloadSubmissionExcel(stage){
   if(stage) url += '?stage=' + encodeURIComponent(stage);
   window.open(url, '_blank');
 }
+async function requestUpdate(cid){
+  if(!confirm('Candidate ko ek email jayega jisme apni profile update karne + resume upload karne ka secure link hoga. Bhejein?')) return;
+  toast('...', 'Sending request...');
+  var r = await req('POST', '/candidates/' + cid + '/request-update', {});
+  if(r.ok){ toast('OK', 'Update request email sent!'); if(S._journeyCid===cid) loadJourneyBody(cid); }
+  else toast('ERR', r.error || 'Failed to send');
+}
+
 // ── Move candidate to another mandate ─────────────────────────────────────
 function openMoveCandidate(cid){
   var current = S.activeMandate ? S.activeMandate.id : null;
@@ -2545,6 +2554,7 @@ function renderProfileDetail(c){
   html += '</div>';
   html += '</div>';
   // Email
+  html += '<button class="btn" onclick="requestUpdate(' + c.id + ')" style="font-size:11px;background:#fff;color:#BA7517;border:0.5px solid #E8D3A8">&#128260; Request Updated Resume</button>';
   html += '<button class="btn" onclick="openMoveCandidate(' + c.id + ')" style="font-size:11px;background:#fff;color:#534AB7;border:0.5px solid #C9C2E0">&#8644; Move</button>';
   html += '<button class="btn" onclick="openEmailPanel(' + c.id + ',\'' + esc(c.email || '').replace(/'/g, "\\'") + '\',' + (c.mandate_id||'null') + ')" style="font-size:11px;background:#0a2540;color:#fff;border:none">&#9993; Email</button>';
   html += '</div>';
@@ -6374,11 +6384,11 @@ function closeTasks() {
 }
 
 function _taskIcon(type){
-  return ({reminder:'\u23f0', stale:'\ud83d\udca4', promise:'\ud83d\udcac', submission:'\ud83d\udce5'})[type] || '\u2022';
+  return ({reminder:'\u23f0', stale:'\ud83d\udca4', promise:'\ud83d\udcac', submission:'\ud83d\udce5', updated:'\ud83d\udcc4'})[type] || '\u2022';
 }
 function _taskColor(type, section){
   if(section==='overdue') return '#A32D2D';
-  return ({reminder:'#BA7517', stale:'#888780', promise:'#378ADD', submission:'#0F6E56'})[type] || '#888780';
+  return ({reminder:'#BA7517', stale:'#888780', promise:'#378ADD', submission:'#0F6E56', updated:'#1D9E75'})[type] || '#888780';
 }
 function _taskActionLabel(type){
   return ({reminder:'Reminder', stale:'Stale candidate', promise:'Promised follow-up', submission:'New submission'})[type] || '';

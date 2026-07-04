@@ -876,6 +876,11 @@ def get_db():
     conn.execute('PRAGMA synchronous=FULL')
     return conn
 
+def esc_html(s):
+    """Escape a string for safe inclusion in HTML email bodies."""
+    return (str(s or '').replace('&', '&amp;').replace('<', '&lt;')
+            .replace('>', '&gt;').replace('"', '&quot;'))
+
 def ts():
     return datetime.datetime.now().isoformat(timespec='seconds')
 
@@ -1212,6 +1217,9 @@ def init_db():
         ('status_tags', 'TEXT DEFAULT "[]"'),
         ('preferred_location', "TEXT DEFAULT ''"),
         ('task_snoozed_until', "TEXT DEFAULT ''"),
+        ('update_token', "TEXT DEFAULT ''"),
+        ('update_requested_at', "TEXT DEFAULT ''"),
+        ('update_submitted_at', "TEXT DEFAULT ''"),
     ]:
         try:
             c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {defn}')
@@ -1886,7 +1894,26 @@ def get_tasks():
                     'due_at': last_activity.isoformat(), 'section': 'today',
                 })
 
-    # ── 4. New submissions (not yet reviewed, not snoozed) ────────────────
+    # ── 4. Candidates who submitted an updated profile via self-update link ──
+    upd_rows = conn.execute(
+        "SELECT c.id, c.name, c.phone, c.mandate_id, c.update_submitted_at, "
+        "m.role, m.client FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
+        "WHERE c.owner_id=? AND c.update_submitted_at!='' "
+        "AND (c.task_snoozed_until IS NULL OR c.task_snoozed_until='' OR c.task_snoozed_until<?)",
+        (uid, now.isoformat())
+    ).fetchall()
+    for c in upd_rows:
+        mandate_label = (c['role'] + ' \u2014 ' + c['client']) if c['role'] else ''
+        tasks.append({
+            'id': 'updated-' + str(c['id']), 'type': 'updated', 'ref_id': c['id'],
+            'candidate_id': c['id'], 'mandate_id': c['mandate_id'],
+            'title': c['name'] or 'Candidate',
+            'subtitle': 'Submitted updated profile \u2014 review now' + (' \u00b7 ' + mandate_label if mandate_label else ''),
+            'phone': c['phone'] or '',
+            'due_at': c['update_submitted_at'], 'section': 'overdue',
+        })
+
+    # ── 5. New submissions (not yet reviewed, not snoozed) ────────────────
     sub_rows = conn.execute(
         "SELECT * FROM submissions WHERE status='new' "
         "AND (task_snoozed_until IS NULL OR task_snoozed_until='' OR task_snoozed_until<?) "
@@ -1952,6 +1979,8 @@ def task_done():
         days = float(get_setting('stale_days', '7') or 7) if ttype == 'stale' else 1
         push_to = (datetime.datetime.now() + datetime.timedelta(days=days)).isoformat()
         conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=?', (push_to, ref_id))
+    elif ttype == 'updated':
+        conn.execute("UPDATE candidates SET update_submitted_at='' WHERE id=?", (ref_id,))
     elif ttype == 'submission':
         conn.execute("UPDATE submissions SET status='reviewed' WHERE id=?", (ref_id,))
     else:
@@ -3206,6 +3235,190 @@ def send_candidate_email(cid):
     log_candidate_event(cid, 'email', full_log)
 
     return jsonify({'ok': True, 'message': 'Email sent successfully'})
+
+
+def _smtp_send(to_email, subject, plain_body, html_body=None):
+    """Send an email via the tenant's configured SMTP. Returns (ok, error)."""
+    smtp_email = get_setting('smtp_email', '')
+    smtp_pass = get_setting('smtp_app_password', '')
+    smtp_name = get_setting('smtp_display_name', '') or smtp_email
+    if not smtp_email or not smtp_pass:
+        return False, 'Email not configured. Go to Settings → Email Configuration and add your Gmail + App Password.'
+    msg = MIMEMultipart('alternative')
+    msg['From'] = f'{smtp_name} <{smtp_email}>' if smtp_name else smtp_email
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(plain_body, 'plain', 'utf-8'))
+    if html_body:
+        msg.attach(MIMEText(f'<div style="font-family:sans-serif;font-size:14px">{html_body}</div>', 'html', 'utf-8'))
+    else:
+        msg.attach(MIMEText(f'<div style="font-family:sans-serif;font-size:14px">{plain_body.replace(chr(10), "<br>")}</div>', 'html', 'utf-8'))
+    el = smtp_email.lower()
+    if '@gmail' in el or '@googlemail' in el:
+        host, port = 'smtp.gmail.com', 587
+    elif '@outlook' in el or '@hotmail' in el or '@live' in el:
+        host, port = 'smtp-mail.outlook.com', 587
+    elif '@yahoo' in el:
+        host, port = 'smtp.mail.yahoo.com', 587
+    else:
+        host, port = 'smtp.gmail.com', 587
+    try:
+        server = smtplib.SMTP(host, port, timeout=15)
+        server.starttls()
+        server.login(smtp_email, smtp_pass)
+        server.sendmail(smtp_email, [to_email], msg.as_string())
+        server.quit()
+        return True, None
+    except smtplib.SMTPAuthenticationError:
+        return False, 'Email authentication failed. Check your email address and app password in Settings.'
+    except Exception as e:
+        return False, f'Failed to send email: {str(e)}'
+
+
+@app.route('/api/candidates/<int:cid>/request-update', methods=['POST'])
+@login_required
+def request_candidate_update(cid):
+    """Generate a secure self-update link and email it to the candidate."""
+    import secrets as _secrets
+    conn = get_db()
+    c = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
+                     (cid, effective_company_id())).fetchone()
+    if not c:
+        conn.close(); return jsonify({'error': 'Candidate not found'}), 404
+    if not (c['email'] or '').strip():
+        conn.close(); return jsonify({'error': 'Candidate ka email nahi hai. Pehle email add karein.'}), 400
+
+    token = _secrets.token_urlsafe(24)
+    conn.execute('UPDATE candidates SET update_token=?, update_requested_at=?, update_submitted_at=? WHERE id=?',
+                 (token, ts(), '', cid))
+    # Mandate + recruiter context for the email
+    mandate = conn.execute('SELECT role, client FROM mandates WHERE id=?', (c['mandate_id'],)).fetchone()
+    conn.commit(); conn.close()
+
+    role = mandate['role'] if mandate else 'a role'
+    u = current_user()
+    recruiter_name = (u.get('display_name') or u.get('username') or 'Recruiter') if u else 'Recruiter'
+    company = get_setting('company_name', '') or 'our team'
+
+    base = request.host_url.rstrip('/')
+    link = f'{base}/update-profile?token={token}'
+
+    subject = f'Please share your updated profile — {role}'
+    plain = (f"Dear {c['name'] or 'Candidate'},\n\n"
+             f"Thank you for your interest in the {role} position"
+             + (f" at {mandate['client']}" if mandate and mandate['client'] else '') + ".\n\n"
+             f"To move ahead, please review and update your details and upload your latest resume "
+             f"using the secure link below:\n\n{link}\n\n"
+             f"This link is personal to you. It will take just 2 minutes.\n\n"
+             f"Regards,\n{recruiter_name}\n{company}")
+    html = (f"Dear {esc_html(c['name'] or 'Candidate')},<br><br>"
+            f"Thank you for your interest in the <b>{esc_html(role)}</b> position"
+            + (f" at <b>{esc_html(mandate['client'])}</b>" if mandate and mandate['client'] else '') + ".<br><br>"
+            f"To move ahead, please review and update your details and upload your latest resume "
+            f"using the secure link below:<br><br>"
+            f'<a href="{link}" style="display:inline-block;background:#1D9E75;color:#fff;padding:11px 22px;border-radius:8px;text-decoration:none;font-weight:600">Update My Profile</a><br><br>'
+            f'<span style="font-size:12px;color:#666">Or copy this link: {link}</span><br><br>'
+            f"This link is personal to you. It will take just 2 minutes.<br><br>"
+            f"Regards,<br><b>{esc_html(recruiter_name)}</b><br>{esc_html(company)}")
+
+    ok, err = _smtp_send(c['email'], subject, plain, html)
+    if not ok:
+        return jsonify({'error': err}), 400
+    log_candidate_event(cid, 'note', f'Requested updated resume — link emailed to {c["email"]}')
+    return jsonify({'ok': True, 'message': 'Update request email sent!'})
+
+
+@app.route('/update-profile')
+def update_profile_page():
+    return send_file('update-profile.html')
+
+
+@app.route('/api/public/candidate-update/<token>', methods=['GET'])
+def public_get_candidate(token):
+    """Return the candidate's editable fields for the self-update page."""
+    if not token or len(token) < 10:
+        return jsonify({'error': 'Invalid link'}), 400
+    conn = get_db()
+    c = conn.execute('SELECT * FROM candidates WHERE update_token=?', (token,)).fetchone()
+    conn.close()
+    if not c:
+        return jsonify({'error': 'This link is invalid or has expired.'}), 404
+    # Expiry: 14 days from request
+    try:
+        req_at = datetime.datetime.fromisoformat(c['update_requested_at'])
+        if (datetime.datetime.now() - req_at).days > 14:
+            return jsonify({'error': 'This link has expired. Please ask your recruiter for a new one.'}), 410
+    except Exception:
+        pass
+    try:
+        skills = json.loads(c['key_skills'] or '[]')
+    except Exception:
+        skills = []
+    return jsonify({'ok': True, 'candidate': {
+        'name': c['name'] or '', 'phone': c['phone'] or '', 'email': c['email'] or '',
+        'company': c['company'] or '', 'designation': c['designation'] or '',
+        'experience': c['experience'] or '', 'ctc_current': c['ctc_current'] or '',
+        'ctc_expected': c['ctc_expected'] or '', 'notice_period': c['notice_period'] or '',
+        'location': c['location'] or '', 'preferred_location': c['preferred_location'] or '',
+        'qualification': c['qualification'] or '', 'key_skills': skills,
+        'already_submitted': bool(c['update_submitted_at']),
+    }})
+
+
+@app.route('/api/public/candidate-update/<token>', methods=['POST'])
+def public_save_candidate(token):
+    """Candidate submits their updated details (+ optional resume) via the link."""
+    if not token or len(token) < 10:
+        return jsonify({'error': 'Invalid link'}), 400
+    conn = get_db()
+    c = conn.execute('SELECT * FROM candidates WHERE update_token=?', (token,)).fetchone()
+    if not c:
+        conn.close(); return jsonify({'error': 'This link is invalid or has expired.'}), 404
+    cid = c['id']
+
+    d = request.form if request.form else (request.json or {})
+    fields = ['name', 'phone', 'email', 'company', 'designation', 'location',
+              'preferred_location', 'qualification']
+    num_fields = ['experience', 'ctc_current', 'ctc_expected', 'notice_period']
+    sets, vals = [], []
+    for f in fields:
+        if f in d:
+            sets.append(f'{f}=?'); vals.append(str(d.get(f) or '').strip())
+    for f in num_fields:
+        if f in d:
+            try:
+                sets.append(f'{f}=?'); vals.append(float(d.get(f) or 0))
+            except Exception:
+                pass
+    if 'key_skills' in d:
+        ks = d.get('key_skills')
+        if isinstance(ks, str):
+            try: ks = json.loads(ks)
+            except Exception: ks = [s.strip() for s in ks.split(',') if s.strip()]
+        sets.append('key_skills=?'); vals.append(json.dumps(ks or []))
+
+    # Optional resume upload
+    resume_saved = False
+    if 'resume' in request.files:
+        f = request.files['resume']
+        if f and f.filename:
+            ext = Path(f.filename).suffix.lower()
+            if ext in ['.pdf', '.doc', '.docx']:
+                fname = 'c' + str(cid) + '_' + datetime.datetime.now().strftime('%Y%m%d%H%M%S') + ext
+                f.save(os.path.join(CV_DIR, fname))
+                sets.append('cv_path=?'); vals.append(fname)
+                sets.append('cv_original_name=?'); vals.append(f.filename)
+                resume_saved = True
+
+    if sets:
+        vals += [ts(), cid]
+        conn.execute('UPDATE candidates SET ' + ','.join(sets) + ',updated_at=? WHERE id=?', vals)
+    conn.execute('UPDATE candidates SET update_submitted_at=? WHERE id=?', (ts(), cid))
+    conn.commit(); conn.close()
+
+    log_candidate_event(cid, 'update', 'Candidate submitted updated profile via self-update link'
+                        + (' (with new resume)' if resume_saved else ''))
+    return jsonify({'ok': True, 'message': 'Thank you! Your details have been updated.'})
 
 
 @app.route('/api/candidates/<int:cid>/note', methods=['POST'])
