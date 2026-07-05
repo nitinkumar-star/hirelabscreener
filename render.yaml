@@ -13,3 +13,5 @@ services:
         value: /data
       - key: APP_PASSWORD
         generateValue: false
+      - key: SECRET_KEY
+        generateValue: true

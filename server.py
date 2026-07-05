@@ -66,7 +66,15 @@ def _get_secret_key():
         import secrets as _secrets
         return _secrets.token_hex(32)
 
-app.secret_key = _get_secret_key()
+# NOTE: app.secret_key is assigned further down, right after DATA_DIR is
+# defined — see the assignment near DATA_DIR below. _get_secret_key() reads
+# DATA_DIR to store a persistent random secret on disk, so it must run
+# AFTER DATA_DIR exists; calling it here (before DATA_DIR is defined) used to
+# silently hit a NameError on every single boot, swallowed by the broad
+# except, which fell through to a brand-new ephemeral secret each restart —
+# invalidating every logged-in session. That was the same class of bug as
+# the "forced to create new account after logout" data-loss issue, just for
+# sessions instead of the database.
 
 # ─────────────────────────────────────────────────────────────────────────
 #  AUTH HELPERS (multi-user)
@@ -859,6 +867,9 @@ CLAUDE_MODEL = 'claude-sonnet-4-20250514'
 
 for d in [DATA_DIR, CV_DIR, BAK_DIR]:
     os.makedirs(d, exist_ok=True)
+
+# Now that DATA_DIR exists, it's safe to load/create the persistent secret key.
+app.secret_key = _get_secret_key()
 
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=60, check_same_thread=False)
@@ -1823,42 +1834,6 @@ def analytics():
     stale_days = float(get_setting('analytics_stale_days', '7') or 7)
     now = datetime.datetime.now()
 
-    # ── Date range for time-based metrics (placements, added, time-to-fill, sources) ──
-    range_from, range_to = None, None
-    rng = request.args.get('range', '7')
-    q_from = request.args.get('from', '')
-    q_to = request.args.get('to', '')
-    if q_from or q_to:
-        try:
-            if q_from: range_from = datetime.datetime.fromisoformat(q_from + 'T00:00:00')
-        except Exception: range_from = None
-        try:
-            if q_to: range_to = datetime.datetime.fromisoformat(q_to + 'T23:59:59')
-        except Exception: range_to = None
-        range_label = 'Custom range'
-    elif rng == 'all':
-        range_label = 'All time'
-    else:
-        try:
-            days = int(rng)
-        except Exception:
-            days = 7
-        range_from = now - datetime.timedelta(days=days)
-        range_label = f'Last {days} days'
-
-    def _in_range(iso_str):
-        if not iso_str:
-            return False
-        try:
-            dt = datetime.datetime.fromisoformat(iso_str)
-        except Exception:
-            return False
-        if range_from and dt < range_from:
-            return False
-        if range_to and dt > range_to:
-            return False
-        return True
-
     # Determine which mandate ids are in scope
     if admin:
         mrows = conn.execute('SELECT * FROM mandates WHERE owner_id=?', (cid,)).fetchall()
@@ -1886,17 +1861,22 @@ def analytics():
     cands = [dict(c) for c in cand_rows]
     total_pipeline = len([c for c in cands if c['stage'] not in ('Placed', 'Not Interested', 'Not Suitable', 'Client Rejected on Paper', 'Client Rejected After Interview')])
 
-    # Placements within the selected date range
+    # Placements this month
+    first_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     placed_ids = [c['id'] for c in cands if c['stage'] == 'Placed']
     placed_this_month = 0
     for c in cands:
         if c['stage'] == 'Placed':
+            # find when it entered Placed via stage_history
             sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
             when = sh['created_at'] if sh else c['updated_at']
-            if _in_range(when):
-                placed_this_month += 1
+            try:
+                if datetime.datetime.fromisoformat(when) >= first_of_month:
+                    placed_this_month += 1
+            except Exception:
+                pass
 
-    # Avg time-to-fill (days from candidate created → Placed) within range
+    # Avg time-to-fill (days from candidate created → Placed), last 90 days
     fill_days = []
     for c in cands:
         if c['stage'] == 'Placed':
@@ -1905,7 +1885,7 @@ def analytics():
                 try:
                     d0 = datetime.datetime.fromisoformat(c['created_at'])
                     d1 = datetime.datetime.fromisoformat(sh['created_at'])
-                    if _in_range(sh['created_at']):
+                    if (now - d1).days <= 90:
                         fill_days.append((d1 - d0).days)
                 except Exception:
                     pass
@@ -1934,10 +1914,6 @@ def analytics():
     src_counts = {}
     for c in cands:
         if c['stage'] == 'Placed':
-            sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
-            when = sh['created_at'] if sh else c['updated_at']
-            if not _in_range(when):
-                continue
             s = _source(c['ai_reasoning'])
             src_counts[s] = src_counts.get(s, 0) + 1
     total_placed = sum(src_counts.values())
@@ -1952,18 +1928,12 @@ def analytics():
             uid = u['id']
             u_mandates = conn.execute('SELECT id FROM mandates WHERE owner_id=? AND assigned_user_id=?', (cid, uid)).fetchall()
             u_mids = [r['id'] for r in u_mandates]
-            added = placed = interviews = 0
             if u_mids:
-                u_cands = conn.execute(f'SELECT id, stage, created_at, updated_at FROM candidates WHERE mandate_id IN {_in(u_mids)}', u_mids).fetchall()
-                for uc in u_cands:
-                    if _in_range(uc['created_at']):
-                        added += 1
-                    if uc['stage'] == 'Placed':
-                        sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (uc['id'],)).fetchone()
-                        if _in_range(sh['created_at'] if sh else uc['updated_at']):
-                            placed += 1
-                iv_rows = conn.execute(f'SELECT created_at FROM interviews WHERE mandate_id IN {_in(u_mids)}', u_mids).fetchall()
-                interviews = sum(1 for r in iv_rows if _in_range(r['created_at']))
+                added = conn.execute(f'SELECT COUNT(*) n FROM candidates WHERE mandate_id IN {_in(u_mids)}', u_mids).fetchone()['n']
+                placed = conn.execute(f"SELECT COUNT(*) n FROM candidates WHERE mandate_id IN {_in(u_mids)} AND stage='Placed'", u_mids).fetchone()['n']
+                interviews = conn.execute(f'SELECT COUNT(*) n FROM interviews WHERE mandate_id IN {_in(u_mids)}', u_mids).fetchone()['n']
+            else:
+                added = placed = interviews = 0
             leaderboard.append({'name': u['display_name'] or u['username'] or 'User',
                                 'added': added, 'interviews': interviews, 'placed': placed})
         leaderboard.sort(key=lambda x: (-x['placed'], -x['added']))
@@ -1996,8 +1966,7 @@ def analytics():
                             'placed_this_month': placed_this_month, 'avg_time_to_fill': avg_ttf,
                             'pipeline_candidates': total_pipeline},
                     'funnel': funnel, 'sources': sources, 'leaderboard': leaderboard,
-                    'stale_mandates': stale_mandates, 'stale_days': int(stale_days),
-                    'range_label': range_label})
+                    'stale_mandates': stale_mandates, 'stale_days': int(stale_days)})
 
 
 @app.route('/api/analytics/stage-candidates')
@@ -5237,6 +5206,11 @@ def import_data():
 try:
     migrate_old()
     init_db()
+    # Mount RecruitOS modules (CRM, and future modules) — one line, right
+    # after core init_db() so module tables/columns exist before anything
+    # else touches the DB. See modules/__init__.py for the ordering rule.
+    from modules import register_all as _register_modules
+    _register_modules(app)
     # Safety net order matters:
     # 1) check persistence (writes/reads a marker that proves the disk survives restarts)
     # 2) auto-restore if the live DB came up empty but a backup has users
