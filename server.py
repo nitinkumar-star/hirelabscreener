@@ -66,15 +66,7 @@ def _get_secret_key():
         import secrets as _secrets
         return _secrets.token_hex(32)
 
-# NOTE: app.secret_key is assigned further down, right after DATA_DIR is
-# defined — see the assignment near DATA_DIR below. _get_secret_key() reads
-# DATA_DIR to store a persistent random secret on disk, so it must run
-# AFTER DATA_DIR exists; calling it here (before DATA_DIR is defined) used to
-# silently hit a NameError on every single boot, swallowed by the broad
-# except, which fell through to a brand-new ephemeral secret each restart —
-# invalidating every logged-in session. That was the same class of bug as
-# the "forced to create new account after logout" data-loss issue, just for
-# sessions instead of the database.
+app.secret_key = _get_secret_key()
 
 # ─────────────────────────────────────────────────────────────────────────
 #  AUTH HELPERS (multi-user)
@@ -151,15 +143,77 @@ def real_user_id():
     returns). Used for per-recruiter mandate assignment."""
     return session.get('user_id')
 
-def log_activity(action, detail=''):
+def log_activity(action, detail='', entity_type='', entity_id=0, meta=None,
+                 actor_type='user', actor_name=''):
+    """Universal activity timeline. Backward-compatible: existing callers that
+    pass only (action, detail) keep working. New callers can attach an entity
+    (candidate/client/invoice), an actor (user/client/system) and a JSON meta
+    payload that future workflow-automation can consume without schema changes."""
     try:
         u = current_user()
+        uid = u['id'] if u else 0
+        uname = actor_name or (u['username'] if u else 'system')
+        try:
+            company_id = effective_company_id()
+        except Exception:
+            company_id = 0
+        meta_json = ''
+        if meta is not None:
+            try:
+                meta_json = json.dumps(meta)
+            except Exception:
+                meta_json = ''
         conn = get_db()
-        conn.execute('INSERT INTO activity_log (user_id,username,action,detail,created_at) VALUES (?,?,?,?,?)',
-                     (u['id'] if u else 0, u['username'] if u else 'system', action, detail, ts()))
+        conn.execute(
+            'INSERT INTO activity_log (user_id,username,action,detail,created_at,'
+            'company_id,entity_type,entity_id,actor_type,actor_name,meta) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            (uid, uname, action, detail, ts(), company_id, entity_type, entity_id,
+             actor_type, uname, meta_json))
         conn.commit(); conn.close()
     except Exception:
         pass
+
+
+def log_audit(entity_type, entity_id, field, old_value, new_value,
+              actor_type='user', actor_name=''):
+    """Record a single field change (old → new) for audit history."""
+    try:
+        u = current_user()
+        uid = u['id'] if u else 0
+        uname = actor_name or (u['username'] if u else 'system')
+        try:
+            company_id = effective_company_id()
+        except Exception:
+            company_id = 0
+        conn = get_db()
+        conn.execute(
+            'INSERT INTO audit_log (company_id,entity_type,entity_id,field,old_value,'
+            'new_value,actor_type,actor_id,actor_name,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            (company_id, entity_type, entity_id, field, str(old_value or ''),
+             str(new_value or ''), actor_type, uid, uname, ts()))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+
+
+def record_changes(entity_type, entity_id, before: dict, after: dict, fields,
+                   actor_type='user', actor_name=''):
+    """Diff two dicts across `fields` and write one audit row per changed field.
+    Returns a human-readable summary list of the changes (for activity detail)."""
+    changes = []
+    for f in fields:
+        old_v = before.get(f) if before else None
+        new_v = after.get(f) if after else None
+        if str(old_v or '') != str(new_v or ''):
+            log_audit(entity_type, entity_id, f, old_v, new_v, actor_type, actor_name)
+            changes.append(f'{f}: {old_v or "\u2014"} \u2192 {new_v or "\u2014"}')
+    return changes
+
+
+def utcnow_iso():
+    return datetime.datetime.now().isoformat()
+
 
 def login_required(f):
     @wraps(f)
@@ -868,9 +922,6 @@ CLAUDE_MODEL = 'claude-sonnet-4-20250514'
 for d in [DATA_DIR, CV_DIR, BAK_DIR]:
     os.makedirs(d, exist_ok=True)
 
-# Now that DATA_DIR exists, it's safe to load/create the persistent secret key.
-app.secret_key = _get_secret_key()
-
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=60, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -1181,6 +1232,45 @@ def init_db():
         c.execute("ALTER TABLE submissions ADD COLUMN task_snoozed_until TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
+    # ── Audit & Activity Foundation (PRD-0) ─────────────────────────────────
+    # Extend the existing activity_log (non-destructively) so any module can log
+    # structured, entity-scoped events for the universal timeline.
+    for col, defn in [
+        ('company_id', 'INTEGER DEFAULT 0'),   # tenant scope
+        ('entity_type', "TEXT DEFAULT ''"),    # e.g. 'candidate','client','invoice'
+        ('entity_id', 'INTEGER DEFAULT 0'),    # id of that entity
+        ('actor_type', "TEXT DEFAULT 'user'"), # 'user' | 'client' | 'system'
+        ('actor_name', "TEXT DEFAULT ''"),     # display name (client contacts have no user row)
+        ('meta', "TEXT DEFAULT ''"),           # optional JSON payload for automation
+    ]:
+        try:
+            c.execute(f'ALTER TABLE activity_log ADD COLUMN {col} {defn}')
+        except sqlite3.OperationalError:
+            pass
+    # Field-level audit table: every important change records old → new value.
+    c.execute('''CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER DEFAULT 0,
+        entity_type TEXT DEFAULT '',
+        entity_id INTEGER DEFAULT 0,
+        field TEXT DEFAULT '',
+        old_value TEXT DEFAULT '',
+        new_value TEXT DEFAULT '',
+        actor_type TEXT DEFAULT 'user',
+        actor_id INTEGER DEFAULT 0,
+        actor_name TEXT DEFAULT '',
+        created_at TEXT DEFAULT ''
+    )''')
+    for idx_sql in [
+        'CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id)',
+        'CREATE INDEX IF NOT EXISTS idx_activity_company ON activity_log(company_id, created_at)',
+        'CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id)',
+        'CREATE INDEX IF NOT EXISTS idx_audit_company ON audit_log(company_id, created_at)',
+    ]:
+        try:
+            c.execute(idx_sql)
+        except sqlite3.OperationalError:
+            pass
     try:
         c.execute('ALTER TABLE users ADD COLUMN is_company_admin INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
@@ -1334,6 +1424,14 @@ def init_db():
         conn.commit()
         print(f'*** Tenant migration complete: company "{default_name}" (id={hirelab_company_id}) now owns all existing data ***')
 
+    # ── RecruitOS modules: import them first (registers their migrations),
+    #    then build their tables alongside core schema ──────────────────────
+    try:
+        import modules
+        modules.import_all_modules()
+        modules.run_migrations(conn)
+    except Exception as e:
+        print(f'[modules] migration hook skipped: {e}')
 
     conn.commit(); conn.close()
 
@@ -1834,6 +1932,42 @@ def analytics():
     stale_days = float(get_setting('analytics_stale_days', '7') or 7)
     now = datetime.datetime.now()
 
+    # ── Date range for time-based metrics (placements, added, time-to-fill, sources) ──
+    range_from, range_to = None, None
+    rng = request.args.get('range', '7')
+    q_from = request.args.get('from', '')
+    q_to = request.args.get('to', '')
+    if q_from or q_to:
+        try:
+            if q_from: range_from = datetime.datetime.fromisoformat(q_from + 'T00:00:00')
+        except Exception: range_from = None
+        try:
+            if q_to: range_to = datetime.datetime.fromisoformat(q_to + 'T23:59:59')
+        except Exception: range_to = None
+        range_label = 'Custom range'
+    elif rng == 'all':
+        range_label = 'All time'
+    else:
+        try:
+            days = int(rng)
+        except Exception:
+            days = 7
+        range_from = now - datetime.timedelta(days=days)
+        range_label = f'Last {days} days'
+
+    def _in_range(iso_str):
+        if not iso_str:
+            return False
+        try:
+            dt = datetime.datetime.fromisoformat(iso_str)
+        except Exception:
+            return False
+        if range_from and dt < range_from:
+            return False
+        if range_to and dt > range_to:
+            return False
+        return True
+
     # Determine which mandate ids are in scope
     if admin:
         mrows = conn.execute('SELECT * FROM mandates WHERE owner_id=?', (cid,)).fetchall()
@@ -1861,22 +1995,17 @@ def analytics():
     cands = [dict(c) for c in cand_rows]
     total_pipeline = len([c for c in cands if c['stage'] not in ('Placed', 'Not Interested', 'Not Suitable', 'Client Rejected on Paper', 'Client Rejected After Interview')])
 
-    # Placements this month
-    first_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # Placements within the selected date range
     placed_ids = [c['id'] for c in cands if c['stage'] == 'Placed']
     placed_this_month = 0
     for c in cands:
         if c['stage'] == 'Placed':
-            # find when it entered Placed via stage_history
             sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
             when = sh['created_at'] if sh else c['updated_at']
-            try:
-                if datetime.datetime.fromisoformat(when) >= first_of_month:
-                    placed_this_month += 1
-            except Exception:
-                pass
+            if _in_range(when):
+                placed_this_month += 1
 
-    # Avg time-to-fill (days from candidate created → Placed), last 90 days
+    # Avg time-to-fill (days from candidate created → Placed) within range
     fill_days = []
     for c in cands:
         if c['stage'] == 'Placed':
@@ -1885,7 +2014,7 @@ def analytics():
                 try:
                     d0 = datetime.datetime.fromisoformat(c['created_at'])
                     d1 = datetime.datetime.fromisoformat(sh['created_at'])
-                    if (now - d1).days <= 90:
+                    if _in_range(sh['created_at']):
                         fill_days.append((d1 - d0).days)
                 except Exception:
                     pass
@@ -1914,6 +2043,10 @@ def analytics():
     src_counts = {}
     for c in cands:
         if c['stage'] == 'Placed':
+            sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
+            when = sh['created_at'] if sh else c['updated_at']
+            if not _in_range(when):
+                continue
             s = _source(c['ai_reasoning'])
             src_counts[s] = src_counts.get(s, 0) + 1
     total_placed = sum(src_counts.values())
@@ -1928,12 +2061,18 @@ def analytics():
             uid = u['id']
             u_mandates = conn.execute('SELECT id FROM mandates WHERE owner_id=? AND assigned_user_id=?', (cid, uid)).fetchall()
             u_mids = [r['id'] for r in u_mandates]
+            added = placed = interviews = 0
             if u_mids:
-                added = conn.execute(f'SELECT COUNT(*) n FROM candidates WHERE mandate_id IN {_in(u_mids)}', u_mids).fetchone()['n']
-                placed = conn.execute(f"SELECT COUNT(*) n FROM candidates WHERE mandate_id IN {_in(u_mids)} AND stage='Placed'", u_mids).fetchone()['n']
-                interviews = conn.execute(f'SELECT COUNT(*) n FROM interviews WHERE mandate_id IN {_in(u_mids)}', u_mids).fetchone()['n']
-            else:
-                added = placed = interviews = 0
+                u_cands = conn.execute(f'SELECT id, stage, created_at, updated_at FROM candidates WHERE mandate_id IN {_in(u_mids)}', u_mids).fetchall()
+                for uc in u_cands:
+                    if _in_range(uc['created_at']):
+                        added += 1
+                    if uc['stage'] == 'Placed':
+                        sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (uc['id'],)).fetchone()
+                        if _in_range(sh['created_at'] if sh else uc['updated_at']):
+                            placed += 1
+                iv_rows = conn.execute(f'SELECT created_at FROM interviews WHERE mandate_id IN {_in(u_mids)}', u_mids).fetchall()
+                interviews = sum(1 for r in iv_rows if _in_range(r['created_at']))
             leaderboard.append({'name': u['display_name'] or u['username'] or 'User',
                                 'added': added, 'interviews': interviews, 'placed': placed})
         leaderboard.sort(key=lambda x: (-x['placed'], -x['added']))
@@ -1966,7 +2105,8 @@ def analytics():
                             'placed_this_month': placed_this_month, 'avg_time_to_fill': avg_ttf,
                             'pipeline_candidates': total_pipeline},
                     'funnel': funnel, 'sources': sources, 'leaderboard': leaderboard,
-                    'stale_mandates': stale_mandates, 'stale_days': int(stale_days)})
+                    'stale_mandates': stale_mandates, 'stale_days': int(stale_days),
+                    'range_label': range_label})
 
 
 @app.route('/api/analytics/stage-candidates')
@@ -3561,6 +3701,57 @@ def _smtp_send(to_email, subject, plain_body, html_body=None):
         return False, f'Failed to send email: {str(e)}'
 
 
+@app.route('/api/activity', methods=['GET'])
+@login_required
+def get_activity():
+    """Universal activity timeline. Filter by entity or search; paginated.
+    Query params: entity_type, entity_id, q (search), page, per_page."""
+    entity_type = request.args.get('entity_type', '').strip()
+    entity_id = request.args.get('entity_id', type=int)
+    q = request.args.get('q', '').strip()
+    page = max(1, request.args.get('page', 1, type=int))
+    per_page = min(100, max(1, request.args.get('per_page', 25, type=int)))
+    company_id = effective_company_id()
+
+    where = ['(company_id=? OR company_id=0)']
+    params = [company_id]
+    if entity_type:
+        where.append('entity_type=?'); params.append(entity_type)
+    if entity_id:
+        where.append('entity_id=?'); params.append(entity_id)
+    if q:
+        where.append('(action LIKE ? OR detail LIKE ? OR username LIKE ?)')
+        like = f'%{q}%'; params += [like, like, like]
+    where_sql = ' AND '.join(where)
+
+    conn = get_db()
+    total = conn.execute(f'SELECT COUNT(*) n FROM activity_log WHERE {where_sql}', params).fetchone()['n']
+    rows = conn.execute(
+        f'SELECT * FROM activity_log WHERE {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?',
+        params + [per_page, (page - 1) * per_page]).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'total': total, 'page': page, 'per_page': per_page,
+                    'pages': (total + per_page - 1) // per_page,
+                    'activity': [dict(r) for r in rows]})
+
+
+@app.route('/api/audit', methods=['GET'])
+@login_required
+def get_audit():
+    """Field-level audit trail (old → new) for a given entity."""
+    entity_type = request.args.get('entity_type', '').strip()
+    entity_id = request.args.get('entity_id', type=int)
+    if not entity_type or not entity_id:
+        return jsonify({'error': 'entity_type and entity_id required'}), 400
+    company_id = effective_company_id()
+    conn = get_db()
+    rows = conn.execute(
+        'SELECT * FROM audit_log WHERE (company_id=? OR company_id=0) AND entity_type=? AND entity_id=? '
+        'ORDER BY id DESC LIMIT 200', (company_id, entity_type, entity_id)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'audit': [dict(r) for r in rows]})
+
+
 @app.route('/api/candidates/<int:cid>/interviews', methods=['GET'])
 @login_required
 def list_interviews(cid):
@@ -4123,7 +4314,20 @@ def save_work_history(cid):
              1 if it.get('is_current') else 0, (it.get('description') or '').strip(), i)
         )
     conn.commit(); conn.close()
+    _xp_recompute_safe(cid)
     return jsonify({'ok': True, 'count': len(items)})
+
+
+def _xp_recompute_safe(cid):
+    """Best-effort recompute of experience intelligence; never breaks the caller
+    if the xp module isn't loaded or the engine errors on one candidate."""
+    try:
+        from modules.xp_engine import feedback_loop as _fb
+        _conn = get_db()
+        _fb.recompute_candidate(_conn, cid)
+        _conn.close()
+    except Exception as _e:
+        print(f'[xp] recompute skipped for {cid}: {_e}')
 
 
 @app.route('/api/candidates/<int:cid>', methods=['DELETE'])
@@ -5206,11 +5410,12 @@ def import_data():
 try:
     migrate_old()
     init_db()
-    # Mount RecruitOS modules (CRM, and future modules) — one line, right
-    # after core init_db() so module tables/columns exist before anything
-    # else touches the DB. See modules/__init__.py for the ordering rule.
-    from modules import register_all as _register_modules
-    _register_modules(app)
+    # ── Mount RecruitOS platform modules (CRM, etc.) as Flask blueprints ──
+    try:
+        import modules
+        modules.register_all(app)
+    except Exception as _mod_err:
+        print(f'[modules] registration skipped: {_mod_err}')
     # Safety net order matters:
     # 1) check persistence (writes/reads a marker that proves the disk survives restarts)
     # 2) auto-restore if the live DB came up empty but a backup has users
