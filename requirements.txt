@@ -6,3 +6,5 @@ python-docx
 gunicorn
 mammoth
 openpyxl
+cryptography
+PyJWT
