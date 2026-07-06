@@ -489,6 +489,198 @@ def auth_logout():
     return jsonify({'ok': True})
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  CLICK-TO-CALL: device registration + push-to-dial
+# ═══════════════════════════════════════════════════════════════════════════
+@app.route('/api/devices/register', methods=['POST'])
+@login_required
+def register_device():
+    """Android app sends its FCM token after login. We store it so we can push
+    call requests to the user's phone later."""
+    d = request.json or {}
+    fcm_token = (d.get('fcm_token') or '').strip()
+    device_name = (d.get('device_name') or 'Unknown device').strip()
+    if not fcm_token:
+        return jsonify({'error': 'fcm_token required'}), 400
+    uid = real_user_id()
+    conn = get_db()
+    # Upsert: if this token already exists for this user, update; otherwise insert
+    existing = conn.execute('SELECT id FROM devices WHERE user_id=? AND fcm_token=?',
+                            (uid, fcm_token)).fetchone()
+    if existing:
+        conn.execute('UPDATE devices SET is_active=1, device_name=?, updated_at=? WHERE id=?',
+                     (device_name, ts(), existing['id']))
+    else:
+        conn.execute('INSERT INTO devices (user_id,fcm_token,device_name,is_active,created_at,updated_at) '
+                     'VALUES (?,?,?,1,?,?)', (uid, fcm_token, device_name, ts(), ts()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/push-call', methods=['POST'])
+@login_required
+def push_call():
+    """Desktop webapp calls this when user clicks "Call via Phone". We send a
+    Firebase push to ALL the user's registered devices with the phone number
+    and candidate name. The Android app receives it and opens the dialer.
+
+    Uses Firebase Cloud Messaging V1 API (Legacy was shut down June 2024).
+    Requires a service account JSON file on the server."""
+    d = request.json or {}
+    phone = (d.get('phone') or '').strip()
+    name = (d.get('name') or 'Candidate').strip()
+    if not phone:
+        return jsonify({'error': 'Phone number required'}), 400
+
+    uid = real_user_id()
+    conn = get_db()
+    tokens = conn.execute('SELECT fcm_token FROM devices WHERE user_id=? AND is_active=1',
+                          (uid,)).fetchall()
+    conn.close()
+    if not tokens:
+        return jsonify({'error': 'No phone connected. Open the HireLab Dialer app on your phone and login first.'}), 400
+
+    # Get FCM V1 access token using service account
+    access_token, project_id, err = _get_fcm_access_token()
+    if err:
+        return jsonify({'error': err}), 400
+
+    # Send push to all user's devices via V1 API
+    sent = 0
+    for row in tokens:
+        try:
+            resp = requests.post(
+                f'https://fcm.googleapis.com/v1/projects/{project_id}/messages:send',
+                json={
+                    'message': {
+                        'token': row['fcm_token'],
+                        'data': {'action': 'call', 'phone': phone, 'name': name},
+                        'android': {'priority': 'high'},
+                    }
+                },
+                headers={
+                    'Authorization': f'Bearer {access_token}',
+                    'Content-Type': 'application/json',
+                },
+                timeout=10)
+            if resp.status_code == 200:
+                sent += 1
+            else:
+                print(f'[push-call] FCM V1 error: {resp.status_code} {resp.text[:200]}')
+        except Exception as e:
+            print(f'[push-call] FCM send failed: {e}')
+
+    if sent > 0:
+        return jsonify({'ok': True, 'sent': sent, 'message': f'Call push sent! Check your phone.'})
+    else:
+        return jsonify({'error': 'Push failed — try re-opening the Dialer app on your phone.'}), 500
+
+
+# ── FCM V1 helper: get OAuth2 access token from service account JSON ─────
+_fcm_token_cache = {'token': '', 'expires': 0, 'project_id': ''}
+
+def _get_fcm_access_token():
+    """Get a short-lived OAuth2 access token for FCM V1 API.
+    Reads the service account JSON from either:
+      1. FCM_SERVICE_ACCOUNT_JSON env var (the entire JSON string), or
+      2. A file at DATA_DIR/firebase-service-account.json
+    Caches the token until it expires."""
+    import time
+    now = time.time()
+    if _fcm_token_cache['token'] and _fcm_token_cache['expires'] > now + 60:
+        return _fcm_token_cache['token'], _fcm_token_cache['project_id'], None
+
+    # Load service account credentials
+    sa_json = os.environ.get('FCM_SERVICE_ACCOUNT_JSON', '').strip()
+    sa_path = os.path.join(DATA_DIR, 'firebase-service-account.json')
+
+    try:
+        if sa_json:
+            import io
+            sa_info = json.loads(sa_json)
+        elif os.path.exists(sa_path):
+            with open(sa_path) as f:
+                sa_info = json.load(f)
+        else:
+            return None, None, ('FCM not configured. Either:\n'
+                                '1. Upload firebase-service-account.json to your data folder, or\n'
+                                '2. Set FCM_SERVICE_ACCOUNT_JSON env var on Render with the full JSON content.')
+    except Exception as e:
+        return None, None, f'Failed to read service account: {e}'
+
+    project_id = sa_info.get('project_id', '')
+    if not project_id:
+        return None, None, 'Service account JSON missing project_id.'
+
+    # Build a JWT and exchange for an access token (no external library needed)
+    try:
+        import jwt as _jwt_lib
+        _has_pyjwt = True
+    except ImportError:
+        _has_pyjwt = False
+
+    if _has_pyjwt:
+        token, exp = _fcm_token_via_pyjwt(sa_info, now)
+    else:
+        token, exp = _fcm_token_via_manual_jwt(sa_info, now)
+
+    if token:
+        _fcm_token_cache['token'] = token
+        _fcm_token_cache['expires'] = exp
+        _fcm_token_cache['project_id'] = project_id
+        return token, project_id, None
+    return None, None, 'Failed to generate FCM access token. Check service account JSON.'
+
+
+def _fcm_token_via_pyjwt(sa_info, now):
+    """Use PyJWT library if available."""
+    import jwt, time
+    payload = {
+        'iss': sa_info['client_email'],
+        'scope': 'https://www.googleapis.com/auth/firebase.messaging',
+        'aud': 'https://oauth2.googleapis.com/token',
+        'iat': int(now),
+        'exp': int(now) + 3600,
+    }
+    signed = jwt.encode(payload, sa_info['private_key'], algorithm='RS256')
+    resp = requests.post('https://oauth2.googleapis.com/token', data={
+        'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        'assertion': signed,
+    }, timeout=15)
+    data = resp.json()
+    return data.get('access_token'), int(now) + data.get('expires_in', 3500)
+
+
+def _fcm_token_via_manual_jwt(sa_info, now):
+    """Build JWT manually without any external library (pure Python + stdlib)."""
+    import base64, hashlib, hmac, struct, time
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    header = base64.urlsafe_b64encode(json.dumps(
+        {'alg': 'RS256', 'typ': 'JWT'}).encode()).rstrip(b'=')
+    claims = base64.urlsafe_b64encode(json.dumps({
+        'iss': sa_info['client_email'],
+        'scope': 'https://www.googleapis.com/auth/firebase.messaging',
+        'aud': 'https://oauth2.googleapis.com/token',
+        'iat': int(now), 'exp': int(now) + 3600,
+    }).encode()).rstrip(b'=')
+    signing_input = header + b'.' + claims
+
+    private_key = serialization.load_pem_private_key(
+        sa_info['private_key'].encode(), password=None)
+    signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+    sig_b64 = base64.urlsafe_b64encode(signature).rstrip(b'=')
+
+    jwt_token = (signing_input + b'.' + sig_b64).decode()
+    resp = requests.post('https://oauth2.googleapis.com/token', data={
+        'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        'assertion': jwt_token,
+    }, timeout=15)
+    data = resp.json()
+    return data.get('access_token'), int(now) + data.get('expires_in', 3500)
+
+
 @app.route('/api/users', methods=['GET'])
 @admin_required
 def list_users():
@@ -1137,6 +1329,15 @@ def init_db():
             result TEXT DEFAULT '',
             task_snoozed_until TEXT DEFAULT '',
             created_at TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            fcm_token TEXT NOT NULL,
+            device_name TEXT DEFAULT '',
+            is_active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
