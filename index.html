@@ -607,6 +607,8 @@ body{font-size:14px !important; line-height:1.5}
 .fmt-btn:hover{background:#EEEDFE}
 .an-scope-btn{background:transparent;color:var(--muted);cursor:pointer}
 .an-scope-btn.active{background:#E7F3EE;color:#0F6E56;font-weight:600}
+.icon-btn{cursor:pointer;transition:transform .12s, box-shadow .12s}
+.icon-btn:hover{transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.1)}
 [contenteditable]:empty:before{content:attr(data-placeholder);color:#bbb;pointer-events:none}
 .sb-grp-head{display:flex;align-items:center;gap:8px;padding:9px 14px;cursor:pointer;font-size:11px;font-weight:700;color:rgba(255,255,255,.62);text-transform:uppercase;letter-spacing:.5px;user-select:none;transition:background .15s}
 .sb-grp-head:hover{background:rgba(255,255,255,.06)}
@@ -2708,35 +2710,29 @@ function renderProfileDetail(c){
   html += stageOptions;
   html += '</select>';
   html += '</div>';
-  // Response dropdown (WhatsApp response)
-  var respVal = c.wa_response || '';
-  var respColor = respVal==='interested'?'#1D9E75':respVal==='callback'?'#BA7517':respVal==='not_interested'?'#E24B4A':respVal==='no_reply'?'#888':'#888';
-  html += '<div style="display:flex;align-items:center;gap:5px">';
-  html += '<span style="font-size:10px;color:#888">Response:</span>';
-  html += '<select id="prof-resp-sel" data-cid="' + c.id + '" onchange="setResponseFromDropdown(' + c.id + ',this.value)" style="font-size:11.5px;font-weight:600;color:' + respColor + ';border:1.5px solid ' + respColor + '44;border-radius:6px;padding:3px 7px;background:#fff;cursor:pointer">';
-  html += '<option value=""' + (respVal===''?' selected':'') + '>Not logged</option>';
-  html += '<option value="interested"' + (respVal==='interested'?' selected':'') + '>Interested</option>';
-  html += '<option value="callback"' + (respVal==='callback'?' selected':'') + '>Callback</option>';
-  html += '<option value="not_interested"' + (respVal==='not_interested'?' selected':'') + '>Not Interested</option>';
-  html += '<option value="no_reply"' + (respVal==='no_reply'?' selected':'') + '>No Reply</option>';
-  html += '</select>';
-  html += '</div>';
   html += '</div>';  // end dropdowns row
   html += '</div></div>';  // end name-block + left
 
   // Right: action buttons (Reminder, WhatsApp dropdown, Email)
-  html += '<div style="display:flex;align-items:center;gap:7px;flex-shrink:0;position:relative">';
-  // AI fit ring (matches redesign) — purely visual, uses existing ai_score
+  html += '<div style="display:flex;align-items:center;gap:5px;flex-shrink:0;position:relative">';
+  // AI fit ring
   var _fitSc = c.ai_score||0;
   var _fitCol = _fitSc>=85?'#15966A':_fitSc>=70?'#2D6FB3':_fitSc>=55?'#9A6512':'#9C988D';
   if(_fitSc>0) html += '<div style="text-align:center;margin-right:4px"><div style="width:50px;height:50px;border-radius:50%;border:3px solid '+_fitCol+';display:flex;align-items:center;justify-content:center;font-family:\'IBM Plex Mono\',monospace;font-size:17px;font-weight:600;color:'+_fitCol+'">'+_fitSc+'</div><div style="font-size:9px;color:#A8A498;font-weight:600;margin-top:3px;letter-spacing:.3px">AI FIT</div></div>';
-  // Candidate Journey
-  html += '<button class="btn btn-o" style="font-size:11px" onclick="openJourney(' + c.id + ')">&#128205; Candidate Journey</button>';
-  // Reminder
-  html += '<button class="btn btn-o" style="position:relative;font-size:11px" onclick="toggleReminderPop(' + c.id + ')">&#9200; Reminder<span id="rem-count-' + c.id + '" class="rem-badge" style="display:none"></span></button>';
+
+  // Icon-only action buttons (tooltip on hover)
+  var _iconBtn = function(icon, color, bg, border, onclick, title){
+    return '<button class="btn icon-btn" onclick="'+onclick+'" title="'+title+'" style="width:34px;height:34px;padding:0;font-size:15px;background:'+bg+';color:'+color+';border:'+(border||'none')+';display:inline-flex;align-items:center;justify-content:center;border-radius:8px">'+icon+'</button>';
+  };
+
+  // Journey
+  html += _iconBtn('&#128205;', '#5F5E5A', '#fff', '0.5px solid var(--line)',
+    'openJourney('+c.id+')', 'Candidate Journey');
+  // Reminder (with badge)
+  html += '<button class="btn icon-btn" onclick="toggleReminderPop('+c.id+')" title="Reminders" style="width:34px;height:34px;padding:0;font-size:15px;background:#fff;color:#5F5E5A;border:0.5px solid var(--line);position:relative;display:inline-flex;align-items:center;justify-content:center;border-radius:8px">&#9200;<span id="rem-count-'+c.id+'" class="rem-badge" style="display:none"></span></button>';
   // WhatsApp dropdown
   html += '<div style="position:relative">';
-  html += '<button class="btn" style="font-size:11px;background:#25D366;color:#fff;border:none" onclick="toggleWAPop(' + c.id + ')">&#128172; WhatsApp &#9662;</button>';
+  html += '<button class="btn icon-btn" onclick="toggleWAPop('+c.id+')" title="WhatsApp" style="width:34px;height:34px;padding:0;font-size:15px;background:#25D366;color:#fff;border:none;display:inline-flex;align-items:center;justify-content:center;border-radius:8px">&#128172;</button>';
   html += '<div id="wa-pop-' + c.id + '" class="wa-pop" style="display:none">';
   html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="normal">&#128172; Normal WhatsApp</button>';
   html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="msg1">&#128075; Intro</button>';
@@ -2744,11 +2740,25 @@ function renderProfileDetail(c){
   html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="fu2">&#128260; Follow Up 2</button>';
   html += '</div>';
   html += '</div>';
+  // Call via Phone (moved from bottom section)
+  if(c.phone){
+    html += _iconBtn('&#128241;', '#fff', '#0A2540', 'none',
+      "pushCall('"+esc(c.phone).replace(/'/g,'')+"','"+esc(c.name||'').replace(/'/g,'')+"')",
+      'Call via Phone (push to your mobile)');
+  }
+  // Schedule Interview
+  html += _iconBtn('&#128197;', '#C7841E', '#fff', '0.5px solid #E8CE9E',
+    'openInterviewModal('+c.id+')', 'Schedule Interview');
+  // Request Updated Resume
+  html += _iconBtn('&#128260;', '#BA7517', '#fff', '0.5px solid #E8D3A8',
+    'requestUpdate('+c.id+')', 'Request Updated Resume');
+  // Move
+  html += _iconBtn('&#8644;', '#534AB7', '#fff', '0.5px solid #C9C2E0',
+    'openMoveCandidate('+c.id+')', 'Move Candidate to Another Mandate');
   // Email
-  html += '<button class="btn" onclick="openInterviewModal(' + c.id + ')" style="font-size:11px;background:#fff;color:#C7841E;border:0.5px solid #E8CE9E">&#128197; Schedule Interview</button>';
-  html += '<button class="btn" onclick="requestUpdate(' + c.id + ')" style="font-size:11px;background:#fff;color:#BA7517;border:0.5px solid #E8D3A8">&#128260; Request Updated Resume</button>';
-  html += '<button class="btn" onclick="openMoveCandidate(' + c.id + ')" style="font-size:11px;background:#fff;color:#534AB7;border:0.5px solid #C9C2E0">&#8644; Move</button>';
-  html += '<button class="btn" onclick="openEmailPanel(' + c.id + ',\'' + esc(c.email || '').replace(/'/g, "\\'") + '\',' + (c.mandate_id||'null') + ')" style="font-size:11px;background:#0a2540;color:#fff;border:none">&#9993; Email</button>';
+  html += _iconBtn('&#9993;', '#fff', '#0a2540', 'none',
+    "openEmailPanel("+c.id+",'"+esc(c.email||'').replace(/'/g,"\\'")+"',"+(c.mandate_id||'null')+")",
+    'Send Email');
   html += '</div>';
 
   html += '</div>';  // end prof-sticky
@@ -2783,7 +2793,15 @@ function renderProfileDetail(c){
     + infoRow('Education', c.qualification)
     + infoRow('Phone', c.phone)
     + infoRow('Email', c.email)
+    + (c.linkedin_url
+        ? '<div class="info-row"><span class="info-label">LinkedIn</span><span class="info-value"><a href="'+esc(c.linkedin_url)+'" target="_blank" style="color:#0A66C2;text-decoration:none;word-break:break-all">&#128279; '+esc(c.linkedin_url)+'</a></span></div>'
+        : infoRow('LinkedIn', ''))
     +'</div>';
+  // AI Insight From CV — full-width read view (only if present)
+  if(c.ai_insight_cv){
+    html+='<div class="info-row" style="grid-column:1/-1;flex-direction:column;align-items:flex-start"><span class="info-label" style="margin-bottom:4px">AI Insight From CV</span>'
+      +'<div class="info-value" style="white-space:pre-wrap;line-height:1.55">'+esc(c.ai_insight_cv)+'</div></div>';
+  }
   // EDIT VIEW (hidden by default)
   html+='<div id="pd-edit" style="display:none">'
     +'<div class="g2">'
@@ -2794,6 +2812,13 @@ function renderProfileDetail(c){
     +sInp('pf-location','Location',c.location||'')+sInp('pf-preferred_location','Preferred Location',c.preferred_location||'')
     +sInp('pf-qualification','Education / Qualification',c.qualification||'')+sInp('pf-phone','Phone',c.phone||'','Add when called')
     +sInp('pf-email','Email',c.email||'','candidate@email.com')
+    +'</div>'
+    +'<div style="margin-top:8px">'
+    +sInp('pf-linkedin_url','LinkedIn URL',c.linkedin_url||'','https://www.linkedin.com/in/...')
+    +'</div>'
+    +'<div style="margin-top:8px">'
+    +'<label style="display:block;font-size:11px;color:#666;margin-bottom:3px;font-weight:600">AI Insight From CV</label>'
+    +'<textarea id="pf-ai_insight_cv" class="inp" rows="4" placeholder="Short AI-generated summary from the CV" style="width:100%;font-family:inherit;font-size:12px;line-height:1.5;resize:vertical">'+esc(c.ai_insight_cv||'')+'</textarea>'
     +'</div>'
     +'<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-g" style="font-size:11px" onclick="saveProfileSection(&#39;pd&#39;,'+c.id+')">&#128190; Save</button>'
     +'<button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;pd&#39;,true)">Cancel</button></div>'
@@ -2928,8 +2953,7 @@ function renderProfileDetail(c){
     +'<div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div>'
     +'<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Tap Call &rarr; record on your phone &rarr; upload here. Groq transcribes, Claude analyses &amp; auto-updates CTC/company.</div></div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
-    +(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call '+esc(c.phone)+'</a>'
-    +'<button class="btn" onclick="pushCall(\''+esc(c.phone).replace(/'/g,"")+'\',\''+esc(c.name||'').replace(/'/g,"")+'\')" style="background:#0A2540;color:#fff;border:none;font-size:11px" title="Send to your phone dialer">&#128241; Call via Phone</button>'):'')
+    +(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call '+esc(c.phone)+'</a>'):'')
     +'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">'
     +'&#127911; Upload Recording <input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label>'
     +'</div>'
@@ -3041,6 +3065,7 @@ async function saveProfile(cid){
     company:v('pf-company'),designation:v('pf-designation'),experience:parseFloat(v('pf-exp'))||0,
     ctc_current:parseFloat(v('pf-ctc'))||0,ctc_expected:parseFloat(v('pf-ectc'))||0,
     notice_period:parseInt(v('pf-notice'))||0,location:v('pf-location'),preferred_location:v('pf-preferred_location'),qualification:v('pf-qualification'),phone:v('pf-phone'),email:v('pf-email'),
+    linkedin_url:v('pf-linkedin_url'),ai_insight_cv:v('pf-ai_insight_cv'),
     key_skills:skills,career_summary:v('pf-summary')
   });
   if(r.ok){
@@ -3059,6 +3084,7 @@ async function parseSnippet(cid){
   setF('pf-company',d.company);setF('pf-designation',d.designation);setF('pf-exp',d.experience);
   setF('pf-ctc',d.ctc_current);setF('pf-ectc',d.ctc_expected);setF('pf-notice',d.notice_period);
   setF('pf-location',d.location);setF('pf-preferred_location',d.preferred_location);setF('pf-qualification',d.qualification);setF('pf-phone',d.phone);setF('pf-email',d.email);
+  setF('pf-linkedin_url',d.linkedin_url);setF('pf-ai_insight_cv',d.ai_insight_cv);
   if(d.key_skills?.length)setF('pf-skills',d.key_skills.join(', '));
   if(d.career_summary)setF('pf-summary',d.career_summary);
   toast('✅','Fields filled');

@@ -1548,6 +1548,8 @@ def init_db():
         ('update_token', "TEXT DEFAULT ''"),
         ('update_requested_at', "TEXT DEFAULT ''"),
         ('update_submitted_at', "TEXT DEFAULT ''"),
+        ('linkedin_url', "TEXT DEFAULT ''"),
+        ('ai_insight_cv', "TEXT DEFAULT ''"),
     ]:
         try:
             c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {defn}')
@@ -2708,8 +2710,9 @@ def extension_push():
              d.get('location',''), phone or existing['phone'], skills_json, ts(), existing['id'])
         )
         _save_wh_for(conn, existing['id'], d.get('work_history'))
-        conn.execute('UPDATE candidates SET qualification=?, preferred_location=? WHERE id=?',
-                     (d.get('qualification',''), d.get('preferred_location',''), existing['id']))
+        conn.execute('UPDATE candidates SET qualification=?, preferred_location=?, linkedin_url=?, ai_insight_cv=? WHERE id=?',
+                     (d.get('qualification',''), d.get('preferred_location',''),
+                      d.get('linkedin_url',''), d.get('ai_insight_cv',''), existing['id']))
         conn.commit(); conn.close()
         return jsonify({'ok': True, 'action': 'updated', 'candidate_id': existing['id'],
                         'name': name, 'preserved': True,
@@ -2725,8 +2728,9 @@ def extension_push():
          'worth_opening', 'Pushed from Naukri', 'Screening', ts(), ts())
     )
     cid = c.lastrowid
-    c.execute('UPDATE candidates SET qualification=?, preferred_location=? WHERE id=?',
-              (d.get('qualification',''), d.get('preferred_location',''), cid))
+    c.execute('UPDATE candidates SET qualification=?, preferred_location=?, linkedin_url=?, ai_insight_cv=? WHERE id=?',
+              (d.get('qualification',''), d.get('preferred_location',''),
+               d.get('linkedin_url',''), d.get('ai_insight_cv',''), cid))
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
               (cid, '', 'Screening', 'Pushed from Naukri extension', ts()))
     _save_wh_for(conn, cid, d.get('work_history'))
@@ -4320,7 +4324,8 @@ def update_candidate(cid):
 
     fields = ['name','company','designation','experience','ctc_current','ctc_expected',
               'notice_period','location','preferred_location','phone','email','qualification','career_summary',
-              'key_skills','secondary_skills','recruiter_feedback','client_feedback','general_comments']
+              'key_skills','secondary_skills','recruiter_feedback','client_feedback','general_comments',
+              'linkedin_url','ai_insight_cv']
     sets = []; vals = []
     for f in fields:
         if f in d:
@@ -4338,7 +4343,8 @@ def update_candidate(cid):
             'name':'Name','company':'Company','designation':'Designation',
             'experience':'Experience','ctc_current':'Current CTC','ctc_expected':'Expected CTC',
             'notice_period':'Notice period','location':'Location','preferred_location':'Preferred location','phone':'Phone','email':'Email',
-            'qualification':'Qualification','career_summary':'Summary'
+            'qualification':'Qualification','career_summary':'Summary',
+            'linkedin_url':'LinkedIn URL','ai_insight_cv':'AI Insight (CV)'
         }
         changes = []
         for f, lbl in labels.items():
