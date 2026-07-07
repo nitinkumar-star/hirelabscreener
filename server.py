@@ -1383,6 +1383,7 @@ def init_db():
         ('stale_days', '7'),
         ('promise_hours', '24'),
         ('analytics_stale_days', '7'),
+        ('bd_stale_days', '21'),
         ('interview_template',
          'Dear {name},\n\n'
          'We are pleased to inform you that your interview for the position of {role} '
@@ -2778,6 +2779,7 @@ TENANT_SETTINGS = {
     'custom_status_tags',  # JSON array of user-created quick tags
     'stale_days', 'promise_hours',  # follow-up task detection thresholds
     'analytics_stale_days',  # dashboard stale-mandate threshold (separate)
+    'bd_stale_days',  # BD command center: flag clients silent this many days
     'interview_template',  # default interview communication message
 }
 

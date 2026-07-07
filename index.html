@@ -635,6 +635,7 @@ body{font-size:14px !important; line-height:1.5}
     <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><span class="sb-nav-ic">&#10003;</span><span>Tasks</span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
     <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><span class="sb-nav-ic">&#128202;</span><span>Analytics</span></a>
     <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><span class="sb-nav-ic">&#129302;</span><span>WhatsApp AI</span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
+    <a href="#bd" class="sb-gear" id="sb-bd" onclick="return navClick(event,openBd)"><span class="sb-nav-ic">&#128188;</span><span>BD Command Center</span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
     <a href="#ai" class="sb-gear" id="sb-ai" onclick="return navClick(event,openAI)"><span class="sb-nav-ic">&#10038;</span><span>AI Insights</span></a>
     <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></a>
     <a href="#responses" class="sb-gear" id="sb-responses" onclick="return navClick(event,openResponses)"><span class="sb-nav-ic">&#9993;</span><span>Responses</span><span class="sb-nav-count" id="nav-resp-count" style="display:none"></span></a>
@@ -841,6 +842,25 @@ body{font-size:14px !important; line-height:1.5}
       </div>
     </div>
     <div id="waai-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
+  </div>
+
+  <!-- ═══ BD Command Center view ═══ -->
+  <div id="bd-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+    <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:28px;height:28px;border-radius:6px;background:#EAE6FB;display:flex;align-items:center;justify-content:center;font-size:14px">&#128188;</div>
+        <div><div style="font-size:14px;font-weight:600">BD Command Center</div><div style="font-size:11px;color:#888;margin-top:1px">Aaj ke follow-ups, meetings, stale clients &amp; requirements</div></div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <div id="bd-scope-toggle" style="display:none;border:0.5px solid var(--line);border-radius:8px;overflow:hidden">
+          <button id="bd-scope-team" class="an-scope-btn active" onclick="setBdScope('team')" style="border:none;border-radius:0;font-size:11.5px;padding:6px 12px">Team</button>
+          <button id="bd-scope-me" class="an-scope-btn" onclick="setBdScope('me')" style="border:none;border-radius:0;font-size:11.5px;padding:6px 12px;border-left:0.5px solid var(--line)">Mine</button>
+        </div>
+        <button class="btn btn-o" style="font-size:11px" onclick="renderBd()">&#8635; Refresh</button>
+        <button class="btn btn-o" onclick="closeBd()">&#10005; Close</button>
+      </div>
+    </div>
+    <div id="bd-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
   </div>
 
 
@@ -1324,7 +1344,7 @@ async function readHash() {
     // Overlay views
     var overlayMap = { central: openCentralDB, ai: openAI, admin: openAdmin,
                        tasks: openTasks, responses: openResponses, analytics: openAnalytics,
-                       waai: openWaAi };
+                       waai: openWaAi, bd: openBd };
     if (overlayMap[head]) {
       // admin overlay only for admins
       if (head === 'admin' && !(S.currentUser && S.currentUser.role === 'admin')) {
@@ -1438,6 +1458,7 @@ async function init(){
   renderSettings();
   updateTasksBadge();
   updateWaBadge();
+  updateBdBadge();
   await readHash();   // restore last view from URL (refresh-safe)
 
   // React to hash changes (back/forward, or a link opened in this tab).
@@ -7254,6 +7275,310 @@ function _fmtTime(iso){
     return d.toLocaleDateString('en-IN',{day:'numeric',month:'short'});
   } catch(e){ return iso; }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+//  BD COMMAND CENTER — UI
+// ═══════════════════════════════════════════════════════════════════════
+var _bdScope = 'team';
+
+function openBd(){
+  closeSidebarOnMobile();
+  ['ai-view','admin-view','settings-view','central-view','cdb-view','responses-view',
+   'tasks-view','analytics-view','waai-view'].forEach(function(id){
+    var el=document.getElementById(id); if(el) el.style.display='none';
+  });
+  ['sb-ai','sb-admin','sb-tasks','sb-analytics','sb-responses','sb-central','sb-waai']
+    .forEach(function(id){ var e=document.getElementById(id); if(e) e.className='sb-gear'; });
+  document.getElementById('mandate-view').style.display='none';
+  document.getElementById('bd-view').style.display='flex';
+  document.getElementById('sb-bd').className='sb-gear active';
+  S.settingsOpen=false;
+  renderBd();
+  writeHash();
+}
+function closeBd(){
+  document.getElementById('bd-view').style.display='none';
+  document.getElementById('mandate-view').style.display='flex';
+  document.getElementById('sb-bd').className='sb-gear';
+}
+function setBdScope(s){
+  _bdScope=s;
+  document.getElementById('bd-scope-team').className='an-scope-btn'+(s==='team'?' active':'');
+  document.getElementById('bd-scope-me').className='an-scope-btn'+(s==='me'?' active':'');
+  renderBd();
+}
+
+async function renderBd(){
+  var body=document.getElementById('bd-body');
+  if(!body) return;
+  body.innerHTML='<div class="loading"><div class="spinner"></div>Loading command center...</div>';
+
+  // Show scope toggle for admins
+  var tog=document.getElementById('bd-scope-toggle');
+  if(tog) tog.style.display=(S.currentUser && (S.currentUser.role==='admin'||S.currentUser.is_company_admin))?'flex':'none';
+
+  var r=await req('GET','/bd/command-center'+(_bdScope==='me'?'?scope=me':''));
+  if(!r.ok){ body.innerHTML='<div style="padding:20px;color:#E24B4A">Failed to load</div>'; return; }
+  var c=r.counts;
+
+  var html='<div style="max-width:1080px;margin:0 auto">';
+
+  // Top action bar
+  html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">';
+  html+='<div style="font-size:12.5px;color:var(--muted)">'+_bdGreeting()+'</div>';
+  html+='<button class="btn" onclick="openLogActivity()" style="background:#0F6E56;color:#fff;border:none;font-size:12px">&#43; Log Activity</button>';
+  html+='</div>';
+
+  // KPI strip
+  html+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px">';
+  html+=_bdKpi('Today\'s Follow-ups', c.todays, '#0F6E56', '#E7F3EE');
+  html+=_bdKpi('Overdue', c.overdue, '#C0522B', '#FBE9E4');
+  html+=_bdKpi('Upcoming Meetings', c.meetings, '#2D6FB3', '#E6F0FF');
+  html+=_bdKpi('Stale Clients', c.stale, '#8A5A0B', '#FDF6E9');
+  html+='</div>';
+
+  // Two-column layout
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
+
+  // LEFT column: Today + Overdue
+  html+='<div>';
+  html+=_bdCard('&#9200; Today\'s Follow-ups', r.todays_followups, 'No follow-ups due today', 'today');
+  html+=_bdCard('&#9888;&#65039; Overdue', r.overdue, 'Nothing overdue \u2014 great!', 'overdue');
+  html+='</div>';
+
+  // RIGHT column: Meetings + Stale + Prospects
+  html+='<div>';
+  html+=_bdCard('&#128197; Upcoming Meetings', r.meetings, 'No meetings scheduled', 'meeting');
+  html+=_bdStaleCard(r.stale_clients, r.stale_days);
+  if(r.prospects && r.prospects.length){
+    html+=_bdProspectsCard(r.prospects);
+  }
+  html+='</div>';
+
+  html+='</div>'; // grid
+  html+='</div>';
+  body.innerHTML=html;
+
+  // Update sidebar badge (today + overdue count)
+  var badge=document.getElementById('nav-bd-badge');
+  var total=(c.todays||0)+(c.overdue||0);
+  if(badge){ if(total){ badge.style.display=''; badge.textContent=total; } else badge.style.display='none'; }
+}
+
+function _bdGreeting(){
+  var h=new Date().getHours();
+  var g=h<12?'Good morning':h<17?'Good afternoon':'Good evening';
+  var name=(S.currentUser&&S.currentUser.display_name)||(S.currentUser&&S.currentUser.username)||'';
+  return g+(name?', '+esc(name):'')+' \u2014 here\'s your day.';
+}
+
+function _bdKpi(label,val,color,bg){
+  return '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:13px 15px">'
+    +'<div style="font-size:11px;color:var(--muted);margin-bottom:6px">'+label+'</div>'
+    +'<div style="font-size:24px;font-weight:700;color:'+color+'">'+val+'</div></div>';
+}
+
+function _bdCard(title, items, emptyMsg, kind){
+  var html='<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px">';
+  html+='<div style="font-size:13px;font-weight:600;margin-bottom:10px">'+title+' <span style="color:var(--muted);font-weight:400">('+items.length+')</span></div>';
+  if(!items.length){
+    html+='<div style="font-size:12px;color:var(--muted);padding:8px 0">'+emptyMsg+'</div>';
+  } else {
+    items.forEach(function(a){
+      var due=a.due_at?_fmtTime(a.due_at):'';
+      var typeIcon=_bdTypeIcon(a.activity_type);
+      html+='<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-top:0.5px solid var(--line)">'
+        +'<span style="font-size:14px;flex-shrink:0">'+typeIcon+'</span>'
+        +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:12.5px;color:var(--ink);font-weight:500">'+esc(a.subject||a.activity_type)+'</div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:1px">'
+        +'<span onclick="openClientTimeline('+a.client_id+')" style="color:var(--purple);cursor:pointer;font-weight:600">'+esc(a.client_name||'')+'</span>'
+        +(due?' &middot; '+due:'')+'</div>'
+        +(a.body?'<div style="font-size:11px;color:#777;margin-top:2px">'+esc(a.body.slice(0,80))+'</div>':'')
+        +'</div>'
+        +'<button class="btn btn-o" onclick="completeBdActivity('+a.id+')" style="font-size:10px;padding:3px 8px;flex-shrink:0" title="Mark done">&#10003;</button>'
+        +'</div>';
+    });
+  }
+  html+='</div>';
+  return html;
+}
+
+function _bdStaleCard(items, staleDays){
+  var html='<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px">';
+  html+='<div style="font-size:13px;font-weight:600;margin-bottom:4px">&#128564; Stale Clients <span style="color:var(--muted);font-weight:400">('+items.length+')</span></div>';
+  html+='<div style="font-size:11px;color:var(--muted);margin-bottom:8px">No contact in '+staleDays+'+ days</div>';
+  if(!items.length){
+    html+='<div style="font-size:12px;color:var(--muted);padding:6px 0">All clients recently engaged \u2014 good work!</div>';
+  } else {
+    items.forEach(function(s){
+      var silent=s.days_silent!=null?(s.days_silent+' days'):'never contacted';
+      html+='<div onclick="openClientTimeline('+s.id+')" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:0.5px solid var(--line);cursor:pointer">'
+        +'<span style="width:7px;height:7px;border-radius:50%;background:#C7841E;flex-shrink:0"></span>'
+        +'<div style="flex:1"><span style="font-size:12.5px;font-weight:500">'+esc(s.name)+'</span>'
+        +(s.city?'<span style="font-size:11px;color:var(--muted)"> &middot; '+esc(s.city)+'</span>':'')+'</div>'
+        +'<span style="font-size:11px;color:#B5730F;font-weight:600">'+silent+'</span></div>';
+    });
+  }
+  html+='</div>';
+  return html;
+}
+
+function _bdProspectsCard(items){
+  var html='<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px">';
+  html+='<div style="font-size:13px;font-weight:600;margin-bottom:10px">&#127793; New Prospects <span style="color:var(--muted);font-weight:400">('+items.length+')</span></div>';
+  items.forEach(function(p){
+    html+='<div onclick="openClientTimeline('+p.id+')" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:0.5px solid var(--line);cursor:pointer">'
+      +'<span style="font-size:13px">&#127970;</span>'
+      +'<div style="flex:1"><span style="font-size:12.5px;font-weight:500">'+esc(p.name)+'</span>'
+      +(p.industry?'<span style="font-size:11px;color:var(--muted)"> &middot; '+esc(p.industry)+'</span>':'')+'</div></div>';
+  });
+  html+='</div>';
+  return html;
+}
+
+function _bdTypeIcon(t){
+  var m={meeting:'&#128197;',call:'&#128222;',followup:'&#9200;',note:'&#128221;',
+         email:'&#9993;',requirement:'&#128203;',task:'&#9989;'};
+  return m[t]||'&#128221;';
+}
+
+async function completeBdActivity(aid){
+  var r=await req('POST','/bd/activities/'+aid+'/complete',{});
+  if(r.ok){ toast('OK','Marked done'); renderBd(); }
+  else toast('ERR', r.error||'Failed');
+}
+
+// ─── Log Activity modal ────────────────────────────────────────────────
+async function openLogActivity(preClientId){
+  // Load clients for the picker
+  var r=await req('GET','/crm/clients?per_page=100&sort=name&dir=asc');
+  var clients=(r.ok&&r.clients)?r.clients:[];
+  if(!clients.length){
+    toast('ERR','Pehle CRM mein ek client add karein');
+    return;
+  }
+  var opts=clients.map(function(c){
+    return '<option value="'+c.id+'"'+(preClientId==c.id?' selected':'')+'>'+esc(c.name)+'</option>';
+  }).join('');
+
+  var inner='<div style="display:flex;flex-direction:column;gap:12px">'
+    +'<div><label style="font-size:11px;color:#666;font-weight:600;display:block;margin-bottom:3px">Client</label>'
+    +'<select id="la-client" class="inp" style="width:100%">'+opts+'</select></div>'
+    +'<div><label style="font-size:11px;color:#666;font-weight:600;display:block;margin-bottom:3px">Activity Type</label>'
+    +'<select id="la-type" class="inp" style="width:100%" onchange="_laToggleDue()">'
+    +'<option value="note">&#128221; Note</option>'
+    +'<option value="meeting">&#128197; Meeting</option>'
+    +'<option value="call">&#128222; Call</option>'
+    +'<option value="followup">&#9200; Follow-up (needs due date)</option>'
+    +'<option value="task">&#9989; Task (needs due date)</option>'
+    +'<option value="email">&#9993; Email</option>'
+    +'</select></div>'
+    +'<div><label style="font-size:11px;color:#666;font-weight:600;display:block;margin-bottom:3px">Subject</label>'
+    +'<input id="la-subject" class="inp" style="width:100%" placeholder="e.g. Discussed Python hiring needs"></div>'
+    +'<div><label style="font-size:11px;color:#666;font-weight:600;display:block;margin-bottom:3px">Details</label>'
+    +'<textarea id="la-body" class="inp" rows="3" style="width:100%" placeholder="What happened / what to do"></textarea></div>'
+    +'<div id="la-due-wrap" style="display:none"><label style="font-size:11px;color:#666;font-weight:600;display:block;margin-bottom:3px">Due Date &amp; Time</label>'
+    +'<input id="la-due" type="datetime-local" class="inp" style="width:100%"></div>'
+    +'<div><label style="font-size:11px;color:#666;font-weight:600;display:block;margin-bottom:3px">Outcome (optional)</label>'
+    +'<input id="la-outcome" class="inp" style="width:100%" placeholder="Result of this activity"></div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
+    +'<button class="btn btn-o" onclick="_waCloseModal()" style="font-size:11px">Cancel</button>'
+    +'<button class="btn" onclick="saveLogActivity()" style="background:#0F6E56;color:#fff;border:none;font-size:11px">Save</button>'
+    +'</div></div>';
+  _waOpenModal('Log BD Activity', inner);
+}
+
+function _laToggleDue(){
+  var t=document.getElementById('la-type').value;
+  var wrap=document.getElementById('la-due-wrap');
+  if(wrap) wrap.style.display=(t==='followup'||t==='task'||t==='meeting'||t==='call')?'block':'none';
+}
+
+async function saveLogActivity(){
+  var client_id=document.getElementById('la-client').value;
+  var activity_type=document.getElementById('la-type').value;
+  var subject=document.getElementById('la-subject').value.trim();
+  var bodyText=document.getElementById('la-body').value.trim();
+  var outcome=document.getElementById('la-outcome').value.trim();
+  var dueEl=document.getElementById('la-due');
+  var due_at='';
+  if(dueEl && dueEl.value){
+    // datetime-local gives "2026-07-07T14:00" — append seconds
+    due_at=dueEl.value.length===16?dueEl.value+':00':dueEl.value;
+  }
+  if((activity_type==='followup'||activity_type==='task') && !due_at){
+    toast('ERR','Follow-up/task ke liye due date zaroori hai');
+    return;
+  }
+  var payload={client_id:parseInt(client_id),activity_type:activity_type,
+    subject:subject,body:bodyText,outcome:outcome};
+  if(due_at) payload.due_at=due_at;
+  var r=await req('POST','/bd/activities',payload);
+  if(r.ok){ toast('OK','Activity logged'); _waCloseModal(); renderBd(); }
+  else toast('ERR', r.error||'Failed');
+}
+
+// ─── Client Timeline modal ─────────────────────────────────────────────
+async function openClientTimeline(clientId){
+  var r=await req('GET','/bd/clients/'+clientId+'/timeline');
+  if(!r.ok){ toast('ERR','Failed to load timeline'); return; }
+  var acts=r.activities||[];
+
+  var inner='<div style="max-height:72vh;overflow:auto">';
+  inner+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">'
+    +'<div style="font-size:15px;font-weight:700;color:var(--navy)">'+esc(r.client_name)+'</div>'
+    +'<button class="btn" onclick="openLogActivity('+clientId+')" style="background:#0F6E56;color:#fff;border:none;font-size:11px">&#43; Log</button></div>';
+
+  if(!acts.length){
+    inner+='<div style="text-align:center;color:var(--muted);padding:40px;font-size:12px">No activity yet. Log the first one.</div>';
+  } else {
+    inner+='<div style="position:relative;padding-left:22px">';
+    // Timeline line
+    inner+='<div style="position:absolute;left:6px;top:6px;bottom:6px;width:2px;background:#E8E5DE"></div>';
+    acts.forEach(function(a){
+      var icon=_bdTypeIcon(a.activity_type);
+      var statusColor=a.status==='done'?'#0F6E56':a.status==='cancelled'?'#999':'#C7841E';
+      var when=a.created_at?_fmtDateTime(a.created_at):(a.due_at?_fmtDateTime(a.due_at):'');
+      inner+='<div style="position:relative;padding:0 0 16px 0">'
+        +'<div style="position:absolute;left:-22px;top:0;width:14px;height:14px;border-radius:50%;background:#fff;border:2px solid '+statusColor+'"></div>'
+        +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">'
+        +'<span style="font-size:13px">'+icon+'</span>'
+        +'<span style="font-size:12.5px;font-weight:600;color:var(--ink)">'+esc(a.subject||a.activity_type)+'</span>'
+        +'<span style="font-size:9.5px;padding:1px 6px;border-radius:5px;background:'+(a.status==='done'?'#E7F3EE':a.status==='cancelled'?'#F1F0EC':'#FDF6E9')+';color:'+statusColor+'">'+a.status+'</span>'
+        +'</div>'
+        +'<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">'+when+' &middot; '+esc(a.activity_type)+'</div>'
+        +(a.body?'<div style="font-size:12px;color:#5F5E5A;white-space:pre-wrap;line-height:1.45">'+esc(a.body)+'</div>':'')
+        +(a.outcome?'<div style="font-size:11.5px;color:#0F6E56;margin-top:3px">&#8594; '+esc(a.outcome)+'</div>':'')
+        +(a.status==='open'&&a.due_at?'<button class="btn btn-o" onclick="completeBdActivity('+a.id+');_waCloseModal()" style="font-size:10px;padding:2px 8px;margin-top:5px">&#10003; Mark done</button>':'')
+        +'</div>';
+    });
+    inner+='</div>';
+  }
+  inner+='</div>';
+  _waOpenModal('Client Timeline', inner);
+}
+
+function _fmtDateTime(iso){
+  if(!iso) return '';
+  try{
+    var d=new Date(iso);
+    return d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})
+      +' '+d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+  }catch(e){ return iso; }
+}
+
+async function updateBdBadge(){
+  try{
+    var r=await req('GET','/bd/command-center');
+    if(r.ok){
+      var total=(r.counts.todays||0)+(r.counts.overdue||0);
+      var b=document.getElementById('nav-bd-badge');
+      if(b){ if(total){ b.style.display=''; b.textContent=total; } else b.style.display='none'; }
+    }
+  }catch(e){}
+}
+setInterval(updateBdBadge, 5*60*1000);
 
 async function renderStageCandidatesPage(stagesStr){
   // Reuse the analytics view shell for a full-page candidate list
