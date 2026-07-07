@@ -578,12 +578,28 @@ def list_clients():
     }
     conn = get_db()
     rows, total, page, per = ClientRepo.search(conn, company_id, filters)
-    # attach contact counts
+    # attach contact counts, open job counts, and last activity time
     out = []
     for r in rows:
         d = _client_public(r)
         d['contact_count'] = conn.execute(
             'SELECT COUNT(*) n FROM crm_contacts WHERE client_id=? AND is_active=1', (r['id'],)).fetchone()['n']
+        # Open jobs linked to this client
+        try:
+            d['job_count'] = conn.execute(
+                "SELECT COUNT(*) n FROM mandates WHERE owner_id=? AND crm_client_id=? "
+                "AND (status IS NULL OR status='active')",
+                (company_id, r['id'])).fetchone()['n']
+        except Exception:
+            d['job_count'] = 0
+        # Last activity timestamp from crm_activities
+        try:
+            la = conn.execute(
+                "SELECT MAX(COALESCE(NULLIF(created_at,''), due_at)) last_at "
+                "FROM crm_activities WHERE client_id=? AND is_active=1", (r['id'],)).fetchone()
+            d['last_activity'] = la['last_at'] if la and la['last_at'] else ''
+        except Exception:
+            d['last_activity'] = ''
         out.append(d)
     conn.close()
     return jsonify({'ok': True, 'clients': out, 'total': total, 'page': page,
