@@ -1964,6 +1964,13 @@ function toggleMandGroup(key){
 }
 async function selectMandate(id){
   closeSidebarOnMobile();
+  // Hide the newer overlay views (CRM/BD/WhatsApp AI/Analytics) so they don't linger
+  ['crm-view','bd-view','waai-view','analytics-view'].forEach(function(vid){
+    var el=document.getElementById(vid); if(el) el.style.display='none';
+  });
+  ['sb-crm','sb-bd','sb-waai','sb-analytics'].forEach(function(bid){
+    var b=document.getElementById(bid); if(b) b.className='sb-gear';
+  });
   var av=document.getElementById('ai-view'); if(av) av.style.display='none';
   var sa=document.getElementById('sb-ai'); if(sa) sa.className='sb-gear';
   var adv=document.getElementById('admin-view'); if(adv) adv.style.display='none';
@@ -4561,6 +4568,7 @@ var _cdbBulkCandidates = [];
 
 function openCentralDB() {
   closeSidebarOnMobile();
+  _hideAllViews();
   var av=document.getElementById('ai-view'); if(av) av.style.display='none';
   var sa=document.getElementById('sb-ai'); if(sa) sa.className='sb-gear';
   var adv=document.getElementById('admin-view'); if(adv) adv.style.display='none';
@@ -5594,6 +5602,7 @@ var _respFilters = {};
 
 function openResponses() {
   closeSidebarOnMobile();
+  _hideAllViews();
   var av=document.getElementById('ai-view'); if(av) av.style.display='none';
   var sa=document.getElementById('sb-ai'); if(sa) sa.className='sb-gear';
   var adv=document.getElementById('admin-view'); if(adv) adv.style.display='none';
@@ -6103,6 +6112,7 @@ async function rateCandidate(cid) {
 // ═══════════════════════════════════════════════════════════
 function openAdmin() {
   closeSidebarOnMobile();
+  _hideAllViews();
   ['mandate-view','settings-view','central-view','cdb-view','responses-view','tasks-view','ai-view'].forEach(function(id){
     var v = document.getElementById(id); if (v) v.style.display = 'none';
   });
@@ -6440,21 +6450,31 @@ async function setCompanyStatus(cid, action, name) {
 // ═══════════════════════════════════════════════════════════
 var aiActiveTab = 'search';
 
+// Central view manager — hides ALL overlay views + resets their sidebar buttons.
+// Every open* function calls this first so views can never overlap.
+var _ALL_VIEWS = ['mandate-view','settings-view','central-view','cdb-view',
+  'responses-view','tasks-view','admin-view','ai-view','analytics-view',
+  'waai-view','bd-view','crm-view','cs-view','pd-view','we-view'];
+var _ALL_SB = ['sb-tasks','sb-responses','sb-central','sb-admin','sb-ai',
+  'sb-analytics','sb-waai','sb-bd','sb-crm'];
+function _hideAllViews(){
+  _ALL_VIEWS.forEach(function(id){
+    var v=document.getElementById(id); if(v) v.style.display='none';
+  });
+  _ALL_SB.forEach(function(id){
+    var b=document.getElementById(id); if(b) b.className='sb-gear';
+  });
+  var g=document.getElementById('sb-gear'); if(g) g.className='sb-gear';
+}
+
 function openAI() {
   closeSidebarOnMobile();
-  ['mandate-view','settings-view','central-view','cdb-view','responses-view','tasks-view','admin-view'].forEach(function(id){
-    var v = document.getElementById(id); if (v) v.style.display = 'none';
-  });
-  ['sb-tasks','sb-responses','sb-central','sb-admin'].forEach(function(id){
-    var b = document.getElementById(id); if (b) b.className = 'sb-gear';
-  });
+  _hideAllViews();
   document.getElementById('ai-view').style.display = 'flex';
   document.getElementById('sb-ai').className = 'sb-gear active';
-  document.getElementById('sb-gear').className = 'sb-gear';
   S.settingsOpen = false;
   loadAIIndexStatus();
   renderAITab();
-
   writeHash();
 }
 
@@ -6655,6 +6675,7 @@ async function runAIStats() {
 // ═══════════════════════════════════════════════════════════
 function openTasks() {
   closeSidebarOnMobile();
+  _hideAllViews();
   var av=document.getElementById('ai-view'); if(av) av.style.display='none';
   var sa=document.getElementById('sb-ai'); if(sa) sa.className='sb-gear';
   var adv=document.getElementById('admin-view'); if(adv) adv.style.display='none';
@@ -6694,6 +6715,7 @@ function _taskActionLabel(type){
 
 function openAnalytics() {
   closeSidebarOnMobile();
+  _hideAllViews();
   var av=document.getElementById('ai-view'); if(av) av.style.display='none';
   var sa=document.getElementById('sb-ai'); if(sa) sa.className='sb-gear';
   var adv=document.getElementById('admin-view'); if(adv) adv.style.display='none';
@@ -6878,14 +6900,7 @@ var _waSelectedConvId = null;
 
 function openWaAi() {
   closeSidebarOnMobile();
-  // Hide all other views
-  ['ai-view','admin-view','settings-view','central-view','cdb-view','responses-view',
-   'tasks-view','analytics-view'].forEach(function(id){
-    var el = document.getElementById(id); if(el) el.style.display = 'none';
-  });
-  ['sb-ai','sb-admin','sb-tasks','sb-analytics','sb-responses','sb-central']
-    .forEach(function(id){ var e=document.getElementById(id); if(e) e.className='sb-gear'; });
-  document.getElementById('mandate-view').style.display = 'none';
+  _hideAllViews();
   document.getElementById('waai-view').style.display = 'flex';
   document.getElementById('sb-waai').className = 'sb-gear active';
   S.settingsOpen = false;
@@ -7302,13 +7317,7 @@ var _bdScope = 'team';
 
 function openBd(){
   closeSidebarOnMobile();
-  ['ai-view','admin-view','settings-view','central-view','cdb-view','responses-view',
-   'tasks-view','analytics-view','waai-view'].forEach(function(id){
-    var el=document.getElementById(id); if(el) el.style.display='none';
-  });
-  ['sb-ai','sb-admin','sb-tasks','sb-analytics','sb-responses','sb-central','sb-waai']
-    .forEach(function(id){ var e=document.getElementById(id); if(e) e.className='sb-gear'; });
-  document.getElementById('mandate-view').style.display='none';
+  _hideAllViews();
   document.getElementById('bd-view').style.display='flex';
   document.getElementById('sb-bd').className='sb-gear active';
   S.settingsOpen=false;
@@ -7607,13 +7616,7 @@ var _crmMeta = { industries:[], cities:[], statuses:[] };
 
 function openCrm(){
   closeSidebarOnMobile();
-  ['ai-view','admin-view','settings-view','central-view','cdb-view','responses-view',
-   'tasks-view','analytics-view','waai-view','bd-view'].forEach(function(id){
-    var el=document.getElementById(id); if(el) el.style.display='none';
-  });
-  ['sb-ai','sb-admin','sb-tasks','sb-analytics','sb-responses','sb-central','sb-waai','sb-bd']
-    .forEach(function(id){ var e=document.getElementById(id); if(e) e.className='sb-gear'; });
-  document.getElementById('mandate-view').style.display='none';
+  _hideAllViews();
   document.getElementById('crm-view').style.display='flex';
   document.getElementById('sb-crm').className='sb-gear active';
   S.settingsOpen=false;
