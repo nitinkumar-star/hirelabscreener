@@ -24,6 +24,7 @@ from importlib import import_module
 # Modules to mount, in load order. Add new module filenames here (without .py).
 _MODULE_NAMES = [
     'crm',
+    'bd',
     'xp',
     'wa_agent',
 ]
