@@ -95,6 +95,18 @@ def migrate(conn):
         except Exception:
             pass
 
+    # Additive migration: multi-level contact structure (department, reporting, roles)
+    for col, defn in [
+        ('department', "TEXT DEFAULT ''"),        # HR | Procurement | Finance | Engineering | ...
+        ('reports_to', "INTEGER DEFAULT 0"),      # FK -> crm_contacts.id (this contact's manager)
+        ('role_tags', "TEXT DEFAULT ''"),         # JSON array of role tags
+        ('sort_order', "INTEGER DEFAULT 0"),      # manual ordering within a client
+    ]:
+        try:
+            c.execute(f'ALTER TABLE crm_contacts ADD COLUMN {col} {defn}')
+        except Exception:
+            pass
+
 
 # ══════════════════════════════════════════════════════════════════════════
 #  HELPERS
@@ -119,6 +131,37 @@ def _norm_email(s):
 
 VALID_CLIENT_STATUS = {'active', 'prospect', 'inactive', 'lost'}
 
+# Contact role tags for multi-level BD mapping (recruitment-specific)
+VALID_ROLE_TAGS = {'decision_maker', 'spoc', 'hiring_manager',
+                   'approver', 'influencer', 'gatekeeper'}
+ROLE_TAG_LABELS = {
+    'decision_maker': 'Decision Maker',
+    'spoc': 'SPOC',
+    'hiring_manager': 'Hiring Manager',
+    'approver': 'Approver',
+    'influencer': 'Influencer',
+    'gatekeeper': 'Gatekeeper',
+}
+
+
+def _norm_role_tags(raw):
+    """Accept a list or comma-string, return JSON of valid tags."""
+    if not raw:
+        return ''
+    if isinstance(raw, str):
+        items = [x.strip().lower().replace(' ', '_') for x in raw.split(',')]
+    elif isinstance(raw, list):
+        items = [str(x).strip().lower().replace(' ', '_') for x in raw]
+    else:
+        return ''
+    valid = [t for t in items if t in VALID_ROLE_TAGS]
+    # dedupe preserving order
+    seen = []
+    for t in valid:
+        if t not in seen:
+            seen.append(t)
+    return json.dumps(seen) if seen else ''
+
 
 def _client_public(row):
     d = dict(row)
@@ -129,6 +172,11 @@ def _client_public(row):
 def _contact_public(row):
     d = dict(row)
     d.pop('email_key', None)
+    # Parse role_tags JSON array
+    try:
+        d['role_tags'] = json.loads(d.get('role_tags') or '[]')
+    except Exception:
+        d['role_tags'] = []
     return d
 
 
@@ -238,14 +286,16 @@ class ContactRepo:
     @staticmethod
     def insert(conn, data):
         cols = ('company_id,client_id,name,designation,email,phone,is_primary,'
-                'is_decision_maker,linkedin,notes,email_key,is_active,created_by,'
-                'updated_by,created_at,updated_at')
+                'is_decision_maker,linkedin,notes,email_key,department,reports_to,'
+                'role_tags,sort_order,is_active,created_by,updated_by,created_at,updated_at')
         conn.execute(
-            f'INSERT INTO crm_contacts ({cols}) VALUES ({",".join("?" * 16)})',
+            f'INSERT INTO crm_contacts ({cols}) VALUES ({",".join("?" * 20)})',
             (data['company_id'], data['client_id'], data['name'], data['designation'],
              data['email'], data['phone'], data['is_primary'], data['is_decision_maker'],
-             data['linkedin'], data['notes'], data['email_key'], 1, data['actor'],
-             data['actor'], data['now'], data['now']))
+             data['linkedin'], data['notes'], data['email_key'],
+             data.get('department', ''), data.get('reports_to', 0),
+             data.get('role_tags', ''), data.get('sort_order', 0),
+             1, data['actor'], data['actor'], data['now'], data['now']))
         return conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
 
     @staticmethod
@@ -425,6 +475,10 @@ class ContactService:
             'is_decision_maker': 1 if payload.get('is_decision_maker') else 0,
             'linkedin': (payload.get('linkedin') or '').strip(),
             'notes': (payload.get('notes') or '').strip(),
+            'department': (payload.get('department') or '').strip(),
+            'reports_to': int(payload.get('reports_to') or 0),
+            'role_tags': _norm_role_tags(payload.get('role_tags')),
+            'sort_order': int(payload.get('sort_order') or 0),
             'email_key': email, 'actor': actor, 'now': now,
         }
         cid = ContactRepo.insert(conn, data)
@@ -458,9 +512,15 @@ class ContactService:
                     raise DuplicateError(f'Another contact uses email {email_key}.', dup['id'])
             fields['email'] = (payload.get('email') or '').strip()
             fields['email_key'] = email_key
-        for f in ['designation', 'phone', 'linkedin', 'notes']:
+        for f in ['designation', 'phone', 'linkedin', 'notes', 'department']:
             if f in payload:
                 fields[f] = (payload.get(f) or '').strip()
+        if 'reports_to' in payload:
+            fields['reports_to'] = int(payload.get('reports_to') or 0)
+        if 'role_tags' in payload:
+            fields['role_tags'] = _norm_role_tags(payload.get('role_tags'))
+        if 'sort_order' in payload:
+            fields['sort_order'] = int(payload.get('sort_order') or 0)
         if 'is_decision_maker' in payload:
             fields['is_decision_maker'] = 1 if payload.get('is_decision_maker') else 0
         if 'is_primary' in payload:
@@ -635,6 +695,44 @@ def delete_contact(contact_id):
         conn.close(); return _err(e)
 
 
+@bp.route('/clients/<int:cid>/org-chart', methods=['GET'])
+@login_required
+def client_org_chart(cid):
+    """Return contacts for a client structured as a reporting tree + grouped by
+    department. Powers the Org Chart visualization."""
+    company_id = effective_company_id()
+    conn = get_db()
+    client = ClientRepo.get(conn, company_id, cid)
+    if not client:
+        conn.close(); return jsonify({'error': 'Client not found.'}), 404
+    contacts = [_contact_public(c) for c in
+                ContactRepo.list_for_client(conn, company_id, cid)]
+    conn.close()
+
+    # Build a lookup and children map for the reporting tree
+    by_id = {c['id']: c for c in contacts}
+    for c in contacts:
+        c['children'] = []
+    roots = []
+    for c in contacts:
+        parent_id = c.get('reports_to') or 0
+        if parent_id and parent_id in by_id and parent_id != c['id']:
+            by_id[parent_id]['children'].append(c)
+        else:
+            roots.append(c)
+
+    # Department grouping (flat view)
+    departments = {}
+    for c in contacts:
+        dept = (c.get('department') or 'Other').strip() or 'Other'
+        departments.setdefault(dept, []).append(c)
+    dept_list = [{'department': k, 'contacts': v} for k, v in sorted(departments.items())]
+
+    return jsonify({'ok': True, 'client_name': client['name'],
+                    'tree': roots, 'departments': dept_list,
+                    'total_contacts': len(contacts)})
+
+
 @bp.route('/meta', methods=['GET'])
 @login_required
 def crm_meta():
@@ -649,4 +747,5 @@ def crm_meta():
         (company_id,)).fetchall()]
     conn.close()
     return jsonify({'ok': True, 'industries': industries, 'cities': cities,
-                    'statuses': sorted(VALID_CLIENT_STATUS)})
+                    'statuses': sorted(VALID_CLIENT_STATUS),
+                    'role_tags': [{'value': k, 'label': v} for k, v in ROLE_TAG_LABELS.items()]})
