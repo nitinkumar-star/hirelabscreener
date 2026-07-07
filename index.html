@@ -609,6 +609,7 @@ body{font-size:14px !important; line-height:1.5}
 .an-scope-btn.active{background:#E7F3EE;color:#0F6E56;font-weight:600}
 .icon-btn{cursor:pointer;transition:transform .12s, box-shadow .12s}
 .icon-btn:hover{transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.1)}
+.la-lbl{font-size:11px;color:#666;font-weight:600;display:block;margin-bottom:3px}
 [contenteditable]:empty:before{content:attr(data-placeholder);color:#bbb;pointer-events:none}
 .sb-grp-head{display:flex;align-items:center;gap:8px;padding:9px 14px;cursor:pointer;font-size:11px;font-weight:700;color:rgba(255,255,255,.62);text-transform:uppercase;letter-spacing:.5px;user-select:none;transition:background .15s}
 .sb-grp-head:hover{background:rgba(255,255,255,.06)}
@@ -635,6 +636,7 @@ body{font-size:14px !important; line-height:1.5}
     <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><span class="sb-nav-ic">&#10003;</span><span>Tasks</span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
     <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><span class="sb-nav-ic">&#128202;</span><span>Analytics</span></a>
     <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><span class="sb-nav-ic">&#129302;</span><span>WhatsApp AI</span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
+    <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><span class="sb-nav-ic">&#127970;</span><span>Clients (CRM)</span></a>
     <a href="#bd" class="sb-gear" id="sb-bd" onclick="return navClick(event,openBd)"><span class="sb-nav-ic">&#128188;</span><span>BD Command Center</span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
     <a href="#ai" class="sb-gear" id="sb-ai" onclick="return navClick(event,openAI)"><span class="sb-nav-ic">&#10038;</span><span>AI Insights</span></a>
     <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></a>
@@ -842,6 +844,22 @@ body{font-size:14px !important; line-height:1.5}
       </div>
     </div>
     <div id="waai-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
+  </div>
+
+  <!-- ═══ CRM Clients view ═══ -->
+  <div id="crm-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+    <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:28px;height:28px;border-radius:6px;background:#E3EEFB;display:flex;align-items:center;justify-content:center;font-size:14px">&#127970;</div>
+        <div><div style="font-size:14px;font-weight:600">Clients (CRM)</div><div style="font-size:11px;color:#888;margin-top:1px">Companies, contacts &amp; relationship timeline</div></div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <button class="btn" onclick="openClientForm()" style="background:#2D6FB3;color:#fff;border:none;font-size:12px">&#43; Add Client</button>
+        <button class="btn btn-o" onclick="renderCrm()" style="font-size:11px">&#8635;</button>
+        <button class="btn btn-o" onclick="closeCrm()">&#10005; Close</button>
+      </div>
+    </div>
+    <div id="crm-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
   </div>
 
   <!-- ═══ BD Command Center view ═══ -->
@@ -1344,7 +1362,7 @@ async function readHash() {
     // Overlay views
     var overlayMap = { central: openCentralDB, ai: openAI, admin: openAdmin,
                        tasks: openTasks, responses: openResponses, analytics: openAnalytics,
-                       waai: openWaAi, bd: openBd };
+                       waai: openWaAi, bd: openBd, crm: openCrm };
     if (overlayMap[head]) {
       // admin overlay only for admins
       if (head === 'admin' && !(S.currentUser && S.currentUser.role === 'admin')) {
@@ -7579,6 +7597,400 @@ async function updateBdBadge(){
   }catch(e){}
 }
 setInterval(updateBdBadge, 5*60*1000);
+
+// ═══════════════════════════════════════════════════════════════════════
+//  CRM CLIENTS PAGE — UI
+// ═══════════════════════════════════════════════════════════════════════
+var _crmState = { q:'', status:'', industry:'', city:'', sort:'created_at', dir:'desc', page:1 };
+var _crmMeta = { industries:[], cities:[], statuses:[] };
+
+function openCrm(){
+  closeSidebarOnMobile();
+  ['ai-view','admin-view','settings-view','central-view','cdb-view','responses-view',
+   'tasks-view','analytics-view','waai-view','bd-view'].forEach(function(id){
+    var el=document.getElementById(id); if(el) el.style.display='none';
+  });
+  ['sb-ai','sb-admin','sb-tasks','sb-analytics','sb-responses','sb-central','sb-waai','sb-bd']
+    .forEach(function(id){ var e=document.getElementById(id); if(e) e.className='sb-gear'; });
+  document.getElementById('mandate-view').style.display='none';
+  document.getElementById('crm-view').style.display='flex';
+  document.getElementById('sb-crm').className='sb-gear active';
+  S.settingsOpen=false;
+  renderCrm();
+  writeHash();
+}
+function closeCrm(){
+  document.getElementById('crm-view').style.display='none';
+  document.getElementById('mandate-view').style.display='flex';
+  document.getElementById('sb-crm').className='sb-gear';
+}
+
+async function renderCrm(){
+  var body=document.getElementById('crm-body');
+  if(!body) return;
+  body.innerHTML='<div class="loading"><div class="spinner"></div>Loading clients...</div>';
+
+  // Load meta (filters) once
+  if(!_crmMeta.statuses.length){
+    var m=await req('GET','/crm/meta');
+    if(m.ok){ _crmMeta={industries:m.industries||[],cities:m.cities||[],statuses:m.statuses||[]}; }
+  }
+
+  var params=[];
+  if(_crmState.q) params.push('q='+encodeURIComponent(_crmState.q));
+  if(_crmState.status) params.push('status='+_crmState.status);
+  if(_crmState.industry) params.push('industry='+encodeURIComponent(_crmState.industry));
+  if(_crmState.city) params.push('city='+encodeURIComponent(_crmState.city));
+  params.push('sort='+_crmState.sort); params.push('dir='+_crmState.dir);
+  params.push('page='+_crmState.page); params.push('per_page=25');
+
+  var r=await req('GET','/crm/clients?'+params.join('&'));
+  if(!r.ok){ body.innerHTML='<div style="padding:20px;color:#E24B4A">Failed to load clients</div>'; return; }
+  var clients=r.clients||[];
+
+  var html='<div style="max-width:1080px;margin:0 auto">';
+
+  // Search + filter bar
+  html+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">';
+  html+='<input id="crm-search" class="inp" placeholder="&#128269; Search clients, city, GSTIN..." value="'+esc(_crmState.q)+'" '
+    +'oninput="_crmDebounceSearch(this.value)" style="flex:1;min-width:200px;font-size:12.5px">';
+  // Status filter
+  html+='<select class="inp" onchange="_crmSetFilter(\'status\',this.value)" style="font-size:12px;width:auto">';
+  html+='<option value="">All Status</option>';
+  _crmMeta.statuses.forEach(function(s){
+    html+='<option value="'+s+'"'+(_crmState.status===s?' selected':'')+'>'+s.charAt(0).toUpperCase()+s.slice(1)+'</option>';
+  });
+  html+='</select>';
+  // Industry filter
+  if(_crmMeta.industries.length){
+    html+='<select class="inp" onchange="_crmSetFilter(\'industry\',this.value)" style="font-size:12px;width:auto">';
+    html+='<option value="">All Industries</option>';
+    _crmMeta.industries.forEach(function(i){
+      html+='<option value="'+esc(i)+'"'+(_crmState.industry===i?' selected':'')+'>'+esc(i)+'</option>';
+    });
+    html+='</select>';
+  }
+  // Sort
+  html+='<select class="inp" onchange="_crmSetSort(this.value)" style="font-size:12px;width:auto">';
+  [['created_at:desc','Newest'],['created_at:asc','Oldest'],['name:asc','Name A-Z'],['name:desc','Name Z-A'],['city:asc','City']].forEach(function(o){
+    var cur=_crmState.sort+':'+_crmState.dir;
+    html+='<option value="'+o[0]+'"'+(cur===o[0]?' selected':'')+'>'+o[1]+'</option>';
+  });
+  html+='</select>';
+  html+='</div>';
+
+  // Result count
+  html+='<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">'+r.total+' client'+(r.total!==1?'s':'')
+    +(_crmState.q||_crmState.status||_crmState.industry?' (filtered)':'')+'</div>';
+
+  if(!clients.length){
+    html+='<div style="text-align:center;padding:60px 20px;color:var(--muted);background:#fff;border:0.5px solid var(--line);border-radius:12px">'
+      +'<div style="font-size:34px;margin-bottom:10px">&#127970;</div>'
+      +'<div style="font-size:14px;font-weight:600;color:var(--ink)">'+(_crmState.q||_crmState.status?'No clients match':'No clients yet')+'</div>'
+      +'<div style="font-size:12px;margin-top:6px">'+(_crmState.q||_crmState.status?'Try clearing filters':'Click "Add Client" to get started')+'</div></div>';
+  } else {
+    html+='<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;overflow:hidden">';
+    clients.forEach(function(c){
+      var statusColor=_crmStatusColor(c.status);
+      html+='<div onclick="openClientDetail('+c.id+')" style="display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:0.5px solid var(--line);cursor:pointer;transition:background .1s" '
+        +'onmouseover="this.style.background=\'#F7F6F3\'" onmouseout="this.style.background=\'\'">'
+        +'<div style="width:40px;height:40px;border-radius:9px;background:'+statusColor.bg+';display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:'+statusColor.fg+';flex-shrink:0">'+esc((c.name||'?').charAt(0).toUpperCase())+'</div>'
+        +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:13.5px;font-weight:600;color:var(--navy)">'+esc(c.name)+'</div>'
+        +'<div style="font-size:11.5px;color:var(--muted);margin-top:2px">'
+        +(c.industry?esc(c.industry):'')+(c.city?(c.industry?' &middot; ':'')+esc(c.city):'')
+        +(c.contact_count?' &middot; '+c.contact_count+' contact'+(c.contact_count!==1?'s':''):'')+'</div></div>'
+        +'<span style="font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;background:'+statusColor.bg+';color:'+statusColor.fg+'">'+esc(c.status)+'</span>'
+        +'</div>';
+    });
+    html+='</div>';
+
+    // Pagination
+    if(r.pages>1){
+      html+='<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:16px">';
+      html+='<button class="btn btn-o" style="font-size:11px" '+(_crmState.page<=1?'disabled':'')+' onclick="_crmPage('+(_crmState.page-1)+')">&#8592; Prev</button>';
+      html+='<span style="font-size:12px;color:var(--muted)">Page '+_crmState.page+' of '+r.pages+'</span>';
+      html+='<button class="btn btn-o" style="font-size:11px" '+(_crmState.page>=r.pages?'disabled':'')+' onclick="_crmPage('+(_crmState.page+1)+')">Next &#8594;</button>';
+      html+='</div>';
+    }
+  }
+  html+='</div>';
+  body.innerHTML=html;
+}
+
+function _crmStatusColor(s){
+  var m={active:{bg:'#E7F3EE',fg:'#0F6E56'},prospect:{bg:'#E6F0FF',fg:'#2D6FB3'},
+         inactive:{bg:'#F1F0EC',fg:'#888'},lost:{bg:'#FBE9E4',fg:'#C0522B'}};
+  return m[s]||{bg:'#F1F0EC',fg:'#666'};
+}
+
+var _crmSearchTimer=null;
+function _crmDebounceSearch(v){
+  clearTimeout(_crmSearchTimer);
+  _crmSearchTimer=setTimeout(function(){ _crmState.q=v; _crmState.page=1; renderCrm(); }, 350);
+}
+function _crmSetFilter(k,v){ _crmState[k]=v; _crmState.page=1; renderCrm(); }
+function _crmSetSort(v){ var p=v.split(':'); _crmState.sort=p[0]; _crmState.dir=p[1]; renderCrm(); }
+function _crmPage(p){ _crmState.page=p; renderCrm(); }
+
+// ─── Client Add/Edit form ──────────────────────────────────────────────
+async function openClientForm(clientId){
+  var client={};
+  if(clientId){
+    var r=await req('GET','/crm/clients/'+clientId);
+    if(r.ok) client=r.client||{};
+  }
+  var isEdit=!!clientId;
+  var statusOpts=['active','prospect','inactive','lost'].map(function(s){
+    return '<option value="'+s+'"'+((client.status||'active')===s?' selected':'')+'>'+s.charAt(0).toUpperCase()+s.slice(1)+'</option>';
+  }).join('');
+
+  var inner='<div style="display:flex;flex-direction:column;gap:11px">'
+    +'<div><label class="la-lbl">Company Name *</label><input id="cf-name" class="inp" style="width:100%" value="'+esc(client.name||'')+'" placeholder="e.g. Infosys Ltd"></div>'
+    +'<div class="g2" style="gap:10px">'
+    +'<div><label class="la-lbl">Industry</label><input id="cf-industry" class="inp" style="width:100%" value="'+esc(client.industry||'')+'" placeholder="IT / Manufacturing"></div>'
+    +'<div><label class="la-lbl">Status</label><select id="cf-status" class="inp" style="width:100%">'+statusOpts+'</select></div>'
+    +'</div>'
+    +'<div class="g2" style="gap:10px">'
+    +'<div><label class="la-lbl">City</label><input id="cf-city" class="inp" style="width:100%" value="'+esc(client.city||'')+'"></div>'
+    +'<div><label class="la-lbl">State</label><input id="cf-state" class="inp" style="width:100%" value="'+esc(client.state||'')+'"></div>'
+    +'</div>'
+    +'<div class="g2" style="gap:10px">'
+    +'<div><label class="la-lbl">Website</label><input id="cf-website" class="inp" style="width:100%" value="'+esc(client.website||'')+'" placeholder="https://"></div>'
+    +'<div><label class="la-lbl">GSTIN</label><input id="cf-gstin" class="inp" style="width:100%" value="'+esc(client.gstin||'')+'"></div>'
+    +'</div>'
+    +'<div><label class="la-lbl">Address</label><input id="cf-address" class="inp" style="width:100%" value="'+esc(client.address||'')+'"></div>'
+    +'<div><label class="la-lbl">Notes</label><textarea id="cf-notes" class="inp" rows="2" style="width:100%">'+esc(client.notes||'')+'</textarea></div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
+    +'<button class="btn btn-o" onclick="_waCloseModal()" style="font-size:11px">Cancel</button>'
+    +'<button class="btn" onclick="saveClient('+(clientId||'null')+')" style="background:#2D6FB3;color:#fff;border:none;font-size:11px">'+(isEdit?'Save Changes':'Add Client')+'</button>'
+    +'</div></div>';
+  _waOpenModal(isEdit?'Edit Client':'Add New Client', inner);
+}
+
+async function saveClient(clientId){
+  var payload={
+    name:document.getElementById('cf-name').value.trim(),
+    industry:document.getElementById('cf-industry').value.trim(),
+    status:document.getElementById('cf-status').value,
+    city:document.getElementById('cf-city').value.trim(),
+    state:document.getElementById('cf-state').value.trim(),
+    website:document.getElementById('cf-website').value.trim(),
+    gstin:document.getElementById('cf-gstin').value.trim(),
+    address:document.getElementById('cf-address').value.trim(),
+    notes:document.getElementById('cf-notes').value.trim()
+  };
+  if(!payload.name){ toast('ERR','Company name zaroori hai'); return; }
+  var r=clientId
+    ? await req('PUT','/crm/clients/'+clientId,payload)
+    : await req('POST','/crm/clients',payload);
+  if(r.ok){
+    toast('OK', clientId?'Client updated':'Client added');
+    _crmMeta.statuses=[]; // force meta reload
+    _waCloseModal();
+    if(clientId) openClientDetail(clientId); else renderCrm();
+  } else {
+    toast('ERR', r.error||'Failed'+(r.existing_id?' (duplicate)':''));
+  }
+}
+
+// ─── Client Detail (with tabs: Overview / Contacts / Timeline) ─────────
+var _cdTab='overview';
+async function openClientDetail(clientId){
+  _cdTab='overview';
+  await _renderClientDetail(clientId);
+}
+async function _renderClientDetail(clientId){
+  var r=await req('GET','/crm/clients/'+clientId);
+  if(!r.ok){ toast('ERR','Client not found'); return; }
+  var c=r.client||{};
+  var contacts=r.contacts||[];
+  var sc=_crmStatusColor(c.status);
+
+  var inner='<div style="max-height:74vh;overflow:auto">';
+  // Header
+  inner+='<div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px">'
+    +'<div style="width:52px;height:52px;border-radius:12px;background:'+sc.bg+';display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:'+sc.fg+';flex-shrink:0">'+esc((c.name||'?').charAt(0).toUpperCase())+'</div>'
+    +'<div style="flex:1"><div style="font-size:17px;font-weight:700;color:var(--navy)">'+esc(c.name)+'</div>'
+    +'<div style="font-size:12px;color:var(--muted);margin-top:2px">'
+    +(c.industry?esc(c.industry):'')+(c.city?(c.industry?' &middot; ':'')+esc(c.city):'')
+    +'</div></div>'
+    +'<span style="font-size:10.5px;font-weight:600;padding:4px 10px;border-radius:7px;background:'+sc.bg+';color:'+sc.fg+'">'+esc(c.status)+'</span>'
+    +'<button class="btn btn-o" onclick="openClientForm('+clientId+')" style="font-size:11px">&#9998; Edit</button>'
+    +'</div>';
+
+  // Tabs
+  inner+='<div style="display:flex;gap:2px;border-bottom:0.5px solid var(--line);margin-bottom:14px">';
+  [['overview','Overview'],['contacts','Contacts ('+contacts.length+')'],['timeline','Timeline']].forEach(function(t){
+    var active=_cdTab===t[0];
+    inner+='<button onclick="_cdSwitchTab('+clientId+',\''+t[0]+'\')" style="border:none;background:none;font-size:12.5px;padding:8px 14px;cursor:pointer;'
+      +(active?'color:#2D6FB3;font-weight:600;border-bottom:2px solid #2D6FB3':'color:var(--muted);border-bottom:2px solid transparent')+'">'+t[1]+'</button>';
+  });
+  inner+='</div>';
+
+  inner+='<div id="cd-tab-body">';
+  if(_cdTab==='overview') inner+=_cdOverview(c);
+  else if(_cdTab==='contacts') inner+=_cdContacts(clientId,contacts);
+  else if(_cdTab==='timeline') inner+='<div class="loading" style="padding:30px"><div class="spinner"></div>Loading...</div>';
+  inner+='</div>';
+
+  inner+='</div>';
+  _waOpenModal('Client Details', inner);
+
+  if(_cdTab==='timeline') _cdLoadTimeline(clientId);
+}
+
+function _cdSwitchTab(clientId, tab){
+  _cdTab=tab;
+  _renderClientDetail(clientId);
+}
+
+function _cdOverview(c){
+  var row=function(label,val,link){
+    if(!val) return '';
+    var v=link?'<a href="'+esc(val)+'" target="_blank" style="color:#2D6FB3;text-decoration:none">'+esc(val)+'</a>':esc(val);
+    return '<div style="display:flex;padding:8px 0;border-bottom:0.5px solid var(--line)"><div style="width:130px;font-size:11.5px;color:var(--muted);flex-shrink:0">'+label+'</div><div style="font-size:12.5px;color:var(--ink)">'+v+'</div></div>';
+  };
+  var html='<div>';
+  html+=row('Industry',c.industry);
+  html+=row('Website',c.website,true);
+  html+=row('City',c.city);
+  html+=row('State',c.state);
+  html+=row('Country',c.country);
+  html+=row('GSTIN',c.gstin);
+  html+=row('Address',c.address);
+  if(c.notes) html+='<div style="margin-top:12px;padding:12px;background:#FAFAF9;border-radius:8px;font-size:12.5px;color:#5F5E5A;white-space:pre-wrap;line-height:1.5">'+esc(c.notes)+'</div>';
+  // Quick actions
+  html+='<div style="display:flex;gap:8px;margin-top:16px">'
+    +'<button class="btn" onclick="openLogActivity('+c.id+')" style="background:#0F6E56;color:#fff;border:none;font-size:11px">&#43; Log Activity</button>'
+    +'<button class="btn btn-o" onclick="_cdSwitchTab('+c.id+',\'timeline\')" style="font-size:11px">View Timeline</button>'
+    +'</div>';
+  html+='</div>';
+  return html;
+}
+
+function _cdContacts(clientId, contacts){
+  var html='<div>';
+  html+='<div style="display:flex;justify-content:flex-end;margin-bottom:10px">'
+    +'<button class="btn btn-o" onclick="openContactForm('+clientId+')" style="font-size:11px">&#43; Add Contact</button></div>';
+  if(!contacts.length){
+    html+='<div style="text-align:center;color:var(--muted);padding:30px;font-size:12px">No contacts yet. Add the decision makers &amp; hiring managers.</div>';
+  } else {
+    contacts.forEach(function(ct){
+      html+='<div style="display:flex;align-items:flex-start;gap:10px;padding:12px 0;border-bottom:0.5px solid var(--line)">'
+        +avatarHtml(ct.name,36)
+        +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:13px;font-weight:600;color:var(--navy)">'+esc(ct.name)
+        +(ct.is_primary?'<span style="font-size:9px;background:#E7F3EE;color:#0F6E56;padding:1px 6px;border-radius:5px;margin-left:6px">PRIMARY</span>':'')
+        +(ct.is_decision_maker?'<span style="font-size:9px;background:#FDF6E9;color:#8A5A0B;padding:1px 6px;border-radius:5px;margin-left:4px">DECISION MAKER</span>':'')
+        +'</div>'
+        +(ct.designation?'<div style="font-size:11.5px;color:var(--muted)">'+esc(ct.designation)+'</div>':'')
+        +'<div style="font-size:11.5px;color:#5F5E5A;margin-top:3px">'
+        +(ct.phone?'&#128222; '+esc(ct.phone):'')
+        +(ct.email?(ct.phone?' &middot; ':'')+'&#9993; '+esc(ct.email):'')+'</div>'
+        +(ct.linkedin?'<a href="'+esc(ct.linkedin)+'" target="_blank" style="font-size:11px;color:#0A66C2;text-decoration:none">&#128279; LinkedIn</a>':'')
+        +'</div>'
+        +'<div style="display:flex;gap:4px;flex-shrink:0">'
+        +'<button class="btn btn-o" onclick="openContactForm('+clientId+','+ct.id+')" style="font-size:10px;padding:3px 7px">&#9998;</button>'
+        +'<button class="btn btn-o" onclick="deleteContact('+clientId+','+ct.id+')" style="font-size:10px;padding:3px 7px;color:#E24B4A;border-color:#F5C4C0">&times;</button>'
+        +'</div></div>';
+    });
+  }
+  html+='</div>';
+  return html;
+}
+
+async function _cdLoadTimeline(clientId){
+  var r=await req('GET','/bd/clients/'+clientId+'/timeline');
+  var el=document.getElementById('cd-tab-body');
+  if(!el) return;
+  if(!r.ok){ el.innerHTML='<div style="color:#E24B4A;padding:20px">Failed to load timeline</div>'; return; }
+  var acts=r.activities||[];
+  var html='<div>';
+  html+='<div style="display:flex;justify-content:flex-end;margin-bottom:10px">'
+    +'<button class="btn btn-o" onclick="openLogActivity('+clientId+')" style="font-size:11px">&#43; Log Activity</button></div>';
+  if(!acts.length){
+    html+='<div style="text-align:center;color:var(--muted);padding:30px;font-size:12px">No activity yet.</div>';
+  } else {
+    html+='<div style="position:relative;padding-left:22px">';
+    html+='<div style="position:absolute;left:6px;top:6px;bottom:6px;width:2px;background:#E8E5DE"></div>';
+    acts.forEach(function(a){
+      var icon=_bdTypeIcon(a.activity_type);
+      var statusColor=a.status==='done'?'#0F6E56':a.status==='cancelled'?'#999':'#C7841E';
+      var when=a.created_at?_fmtDateTime(a.created_at):(a.due_at?_fmtDateTime(a.due_at):'');
+      html+='<div style="position:relative;padding:0 0 16px 0">'
+        +'<div style="position:absolute;left:-22px;top:0;width:14px;height:14px;border-radius:50%;background:#fff;border:2px solid '+statusColor+'"></div>'
+        +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">'
+        +'<span style="font-size:13px">'+icon+'</span>'
+        +'<span style="font-size:12.5px;font-weight:600;color:var(--ink)">'+esc(a.subject||a.activity_type)+'</span>'
+        +'<span style="font-size:9.5px;padding:1px 6px;border-radius:5px;background:'+(a.status==='done'?'#E7F3EE':'#FDF6E9')+';color:'+statusColor+'">'+a.status+'</span></div>'
+        +'<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">'+when+' &middot; '+esc(a.activity_type)+'</div>'
+        +(a.body?'<div style="font-size:12px;color:#5F5E5A;white-space:pre-wrap;line-height:1.45">'+esc(a.body)+'</div>':'')
+        +(a.outcome?'<div style="font-size:11.5px;color:#0F6E56;margin-top:3px">&#8594; '+esc(a.outcome)+'</div>':'')
+        +'</div>';
+    });
+    html+='</div>';
+  }
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+// ─── Contact Add/Edit ──────────────────────────────────────────────────
+async function openContactForm(clientId, contactId){
+  var ct={};
+  if(contactId){
+    // fetch current contacts to find this one
+    var r=await req('GET','/crm/clients/'+clientId);
+    if(r.ok) (r.contacts||[]).forEach(function(x){ if(x.id===contactId) ct=x; });
+  }
+  var isEdit=!!contactId;
+  var inner='<div style="display:flex;flex-direction:column;gap:11px">'
+    +'<div><label class="la-lbl">Contact Name *</label><input id="ctf-name" class="inp" style="width:100%" value="'+esc(ct.name||'')+'"></div>'
+    +'<div class="g2" style="gap:10px">'
+    +'<div><label class="la-lbl">Designation</label><input id="ctf-designation" class="inp" style="width:100%" value="'+esc(ct.designation||'')+'" placeholder="HR Head"></div>'
+    +'<div><label class="la-lbl">Phone</label><input id="ctf-phone" class="inp" style="width:100%" value="'+esc(ct.phone||'')+'"></div>'
+    +'</div>'
+    +'<div class="g2" style="gap:10px">'
+    +'<div><label class="la-lbl">Email</label><input id="ctf-email" class="inp" style="width:100%" value="'+esc(ct.email||'')+'"></div>'
+    +'<div><label class="la-lbl">LinkedIn</label><input id="ctf-linkedin" class="inp" style="width:100%" value="'+esc(ct.linkedin||'')+'"></div>'
+    +'</div>'
+    +'<div style="display:flex;gap:18px;padding:4px 0">'
+    +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="ctf-primary" '+(ct.is_primary?'checked':'')+'> Primary contact</label>'
+    +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="ctf-dm" '+(ct.is_decision_maker?'checked':'')+'> Decision maker</label>'
+    +'</div>'
+    +'<div><label class="la-lbl">Notes</label><textarea id="ctf-notes" class="inp" rows="2" style="width:100%">'+esc(ct.notes||'')+'</textarea></div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
+    +'<button class="btn btn-o" onclick="openClientDetail('+clientId+')" style="font-size:11px">Cancel</button>'
+    +'<button class="btn" onclick="saveContact('+clientId+','+(contactId||'null')+')" style="background:#2D6FB3;color:#fff;border:none;font-size:11px">'+(isEdit?'Save':'Add Contact')+'</button>'
+    +'</div></div>';
+  _waOpenModal(isEdit?'Edit Contact':'Add Contact', inner);
+}
+
+async function saveContact(clientId, contactId){
+  var payload={
+    name:document.getElementById('ctf-name').value.trim(),
+    designation:document.getElementById('ctf-designation').value.trim(),
+    phone:document.getElementById('ctf-phone').value.trim(),
+    email:document.getElementById('ctf-email').value.trim(),
+    linkedin:document.getElementById('ctf-linkedin').value.trim(),
+    is_primary:document.getElementById('ctf-primary').checked,
+    is_decision_maker:document.getElementById('ctf-dm').checked,
+    notes:document.getElementById('ctf-notes').value.trim()
+  };
+  if(!payload.name){ toast('ERR','Contact name zaroori hai'); return; }
+  var r=contactId
+    ? await req('PUT','/crm/contacts/'+contactId,payload)
+    : await req('POST','/crm/clients/'+clientId+'/contacts',payload);
+  if(r.ok){ toast('OK', contactId?'Contact updated':'Contact added'); _cdTab='contacts'; openClientDetail(clientId); }
+  else toast('ERR', r.error||'Failed');
+}
+
+async function deleteContact(clientId, contactId){
+  if(!confirm('Delete this contact?')) return;
+  var r=await req('DELETE','/crm/contacts/'+contactId);
+  if(r.ok){ toast('OK','Contact deleted'); _cdTab='contacts'; openClientDetail(clientId); }
+  else toast('ERR', r.error||'Failed');
+}
 
 async function renderStageCandidatesPage(stagesStr){
   // Reuse the analytics view shell for a full-page candidate list
