@@ -1430,6 +1430,11 @@ def init_db():
         c.execute("ALTER TABLE mandates ADD COLUMN email_templates TEXT DEFAULT '[]'")
     except sqlite3.OperationalError:
         pass
+    # Link a mandate to a CRM client (Option B: proper foreign key)
+    try:
+        c.execute("ALTER TABLE mandates ADD COLUMN crm_client_id INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     try:
         c.execute("ALTER TABLE submissions ADD COLUMN task_snoozed_until TEXT DEFAULT ''")
     except sqlite3.OperationalError:
@@ -3328,12 +3333,116 @@ def create_mandate():
     if not d.get('client') or not d.get('role'):
         return jsonify({'error': 'Client and Role required'}), 400
     conn = get_db(); c = conn.cursor()
-    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,status,created_at,owner_id,assigned_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    # Resolve CRM client link (Option B). If a crm_client_id is passed, use it.
+    # Otherwise try to auto-match by normalised name so existing CRM clients link up.
+    crm_client_id = int(d.get('crm_client_id') or 0)
+    if not crm_client_id and d.get('client'):
+        try:
+            crm_client_id = _match_crm_client_by_name(conn, effective_company_id(), d['client'])
+        except Exception:
+            crm_client_id = 0
+    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,status,created_at,owner_id,assigned_user_id,crm_client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
               (d['client'], d['role'], d.get('location',''), d.get('division',''),
-               float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('jd',''), 'active', ts(), effective_company_id(), real_user_id()))
+               float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('jd',''), 'active', ts(), effective_company_id(), real_user_id(), crm_client_id))
     mid = c.lastrowid; conn.commit(); conn.close()
     log_activity('create_mandate', d['role'] + ' @ ' + d['client'])
-    return jsonify({'ok': True, 'id': mid})
+    return jsonify({'ok': True, 'id': mid, 'crm_client_id': crm_client_id})
+
+
+def _norm_client_name(name):
+    """Normalise a company name for fuzzy matching (mirror of CRM logic)."""
+    import re as _re
+    s = (name or '').lower().strip()
+    # strip common suffixes and punctuation
+    s = _re.sub(r'[.,&\-/()]', ' ', s)
+    for suffix in ['private limited', 'pvt ltd', 'pvt. ltd', 'private ltd',
+                   'limited', 'ltd', 'llp', 'inc', 'incorporated', 'corporation',
+                   'corp', 'technologies', 'technology', 'solutions', 'services',
+                   'india', 'pvt', 'and', 'company', 'co']:
+        s = _re.sub(r'\b' + _re.escape(suffix) + r'\b', ' ', s)
+    s = _re.sub(r'\s+', ' ', s).strip()
+    return s
+
+
+def _match_crm_client_by_name(conn, company_id, client_name):
+    """Return crm_clients.id whose normalised name matches, else 0."""
+    target = _norm_client_name(client_name)
+    if not target:
+        return 0
+    rows = conn.execute(
+        'SELECT id, name FROM crm_clients WHERE company_id=? AND is_active=1',
+        (company_id,)).fetchall()
+    for r in rows:
+        if _norm_client_name(r['name']) == target:
+            return r['id']
+    return 0
+
+
+@app.route('/api/mandates/<int:mid>/link-client', methods=['POST'])
+@login_required
+def link_mandate_client(mid):
+    """Manually set (or clear) the CRM client a mandate belongs to."""
+    d = request.json or {}
+    crm_client_id = int(d.get('crm_client_id') or 0)
+    conn = get_db()
+    m = conn.execute('SELECT id, owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
+    if not m or m['owner_id'] != effective_company_id():
+        conn.close(); return jsonify({'error': 'Mandate not found'}), 404
+    # Validate the client belongs to this tenant (if non-zero)
+    if crm_client_id:
+        cl = conn.execute('SELECT id FROM crm_clients WHERE id=? AND company_id=? AND is_active=1',
+                          (crm_client_id, effective_company_id())).fetchone()
+        if not cl:
+            conn.close(); return jsonify({'error': 'CRM client not found'}), 404
+    conn.execute('UPDATE mandates SET crm_client_id=? WHERE id=?', (crm_client_id, mid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'crm_client_id': crm_client_id})
+
+
+@app.route('/api/crm-link/auto-map', methods=['POST'])
+@login_required
+def auto_map_mandates():
+    """One-click: link every unlinked mandate to a CRM client by name match.
+    Returns how many were mapped and which couldn't be matched."""
+    conn = get_db()
+    company_id = effective_company_id()
+    mandates = conn.execute(
+        'SELECT id, client, crm_client_id FROM mandates WHERE owner_id=?',
+        (company_id,)).fetchall()
+    mapped, unmatched = 0, []
+    for m in mandates:
+        if m['crm_client_id']:
+            continue  # already linked
+        cid = _match_crm_client_by_name(conn, company_id, m['client'])
+        if cid:
+            conn.execute('UPDATE mandates SET crm_client_id=? WHERE id=?', (cid, m['id']))
+            mapped += 1
+        else:
+            if m['client'] and m['client'] not in unmatched:
+                unmatched.append(m['client'])
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'mapped': mapped, 'unmatched': unmatched})
+
+
+@app.route('/api/crm-link/client/<int:crm_client_id>/mandates', methods=['GET'])
+@login_required
+def client_mandates(crm_client_id):
+    """List all mandates linked to a CRM client (for the client detail page)."""
+    conn = get_db()
+    company_id = effective_company_id()
+    rows = conn.execute(
+        'SELECT id, role, location, status, created_at FROM mandates '
+        'WHERE owner_id=? AND crm_client_id=? ORDER BY created_at DESC',
+        (company_id, crm_client_id)).fetchall()
+    # Attach candidate counts
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['candidate_count'] = conn.execute(
+            'SELECT COUNT(*) n FROM candidates WHERE mandate_id=?', (r['id'],)).fetchone()['n']
+        out.append(d)
+    conn.close()
+    return jsonify({'ok': True, 'mandates': out})
 
 @app.route('/api/mandates/<int:mid>', methods=['GET'])
 @login_required

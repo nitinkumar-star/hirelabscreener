@@ -854,6 +854,7 @@ body{font-size:14px !important; line-height:1.5}
         <div><div style="font-size:14px;font-weight:600">Clients (CRM)</div><div style="font-size:11px;color:#888;margin-top:1px">Companies, contacts &amp; relationship timeline</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <button class="btn btn-o" onclick="autoMapJobs()" style="font-size:11px" title="Link existing job postings to CRM clients by name">&#128279; Auto-map Jobs</button>
         <button class="btn" onclick="openClientForm()" style="background:#2D6FB3;color:#fff;border:none;font-size:12px">&#43; Add Client</button>
         <button class="btn btn-o" onclick="renderCrm()" style="font-size:11px">&#8635;</button>
         <button class="btn btn-o" onclick="closeCrm()">&#10005; Close</button>
@@ -7821,7 +7822,7 @@ async function _renderClientDetail(clientId){
 
   // Tabs
   inner+='<div style="display:flex;gap:2px;border-bottom:0.5px solid var(--line);margin-bottom:14px">';
-  [['overview','Overview'],['contacts','Contacts ('+contacts.length+')'],['orgchart','Org Chart'],['timeline','Timeline']].forEach(function(t){
+  [['overview','Overview'],['contacts','Contacts ('+contacts.length+')'],['jobs','Jobs'],['orgchart','Org Chart'],['timeline','Timeline']].forEach(function(t){
     var active=_cdTab===t[0];
     inner+='<button onclick="_cdSwitchTab('+clientId+',\''+t[0]+'\')" style="border:none;background:none;font-size:12.5px;padding:8px 14px;cursor:pointer;'
       +(active?'color:#2D6FB3;font-weight:600;border-bottom:2px solid #2D6FB3':'color:var(--muted);border-bottom:2px solid transparent')+'">'+t[1]+'</button>';
@@ -7831,6 +7832,7 @@ async function _renderClientDetail(clientId){
   inner+='<div id="cd-tab-body">';
   if(_cdTab==='overview') inner+=_cdOverview(c);
   else if(_cdTab==='contacts') inner+=_cdContacts(clientId,contacts);
+  else if(_cdTab==='jobs') inner+='<div class="loading" style="padding:30px"><div class="spinner"></div>Loading jobs...</div>';
   else if(_cdTab==='orgchart') inner+='<div class="loading" style="padding:30px"><div class="spinner"></div>Building org chart...</div>';
   else if(_cdTab==='timeline') inner+='<div class="loading" style="padding:30px"><div class="spinner"></div>Loading...</div>';
   inner+='</div>';
@@ -7840,6 +7842,7 @@ async function _renderClientDetail(clientId){
 
   if(_cdTab==='timeline') _cdLoadTimeline(clientId);
   else if(_cdTab==='orgchart') _cdLoadOrgChart(clientId);
+  else if(_cdTab==='jobs') _cdLoadJobs(clientId);
 }
 
 function _cdSwitchTab(clientId, tab){
@@ -7985,6 +7988,47 @@ function _orgTreeHtml(nodes, clientId){
   return html;
 }
 
+async function _cdLoadJobs(clientId){
+  var r=await req('GET','/crm-link/client/'+clientId+'/mandates');
+  var el=document.getElementById('cd-tab-body');
+  if(!el) return;
+  if(!r.ok){ el.innerHTML='<div style="color:#E24B4A;padding:20px">Failed to load jobs</div>'; return; }
+  var mandates=r.mandates||[];
+  var html='<div>';
+  if(!mandates.length){
+    html+='<div style="text-align:center;color:var(--muted);padding:30px;font-size:12px">'
+      +'No job positions linked to this client yet.<br>'
+      +'<span style="font-size:11px">Naye mandates automatically link honge. Purane ke liye CRM page pe "Auto-map Jobs" dabayein.</span></div>';
+  } else {
+    html+='<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">'+mandates.length+' job position'+(mandates.length!==1?'s':'')+' linked</div>';
+    mandates.forEach(function(m){
+      var stColor=m.status==='active'?'#0F6E56':m.status==='closed'?'#888':'#C7841E';
+      var stBg=m.status==='active'?'#E7F3EE':'#F1F0EC';
+      html+='<div onclick="_waCloseModal();openMandateFromCrm('+m.id+')" style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:0.5px solid var(--line);cursor:pointer">'
+        +'<div style="width:36px;height:36px;border-radius:8px;background:#EAE6FB;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">&#128188;</div>'
+        +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:13px;font-weight:600;color:var(--navy)">'+esc(m.role)+'</div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:2px">'+(m.location?esc(m.location):'')
+        +' &middot; '+m.candidate_count+' candidate'+(m.candidate_count!==1?'s':'')+'</div></div>'
+        +'<span style="font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;background:'+stBg+';color:'+stColor+'">'+esc(m.status||'active')+'</span>'
+        +'</div>';
+    });
+  }
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+function openMandateFromCrm(mid){
+  // Close CRM, navigate to the mandate in the main ATS
+  closeCrm();
+  location.hash='mandate/'+mid;
+  if(typeof selectMandate==='function'){
+    selectMandate(mid);
+  } else {
+    location.reload();
+  }
+}
+
 async function _cdLoadTimeline(clientId){
   var r=await req('GET','/bd/clients/'+clientId+'/timeline');
   var el=document.getElementById('cd-tab-body');
@@ -8106,6 +8150,21 @@ async function deleteContact(clientId, contactId){
   var r=await req('DELETE','/crm/contacts/'+contactId);
   if(r.ok){ toast('OK','Contact deleted'); _cdTab='contacts'; openClientDetail(clientId); }
   else toast('ERR', r.error||'Failed');
+}
+
+async function autoMapJobs(){
+  if(!confirm('Existing job postings ko CRM clients se naam ke basis pe link karein?\n\nJinke naam match honge woh automatically jud jayenge.')) return;
+  toast('...','Mapping jobs...');
+  var r=await req('POST','/crm-link/auto-map',{});
+  if(r.ok){
+    var msg=r.mapped+' job'+(r.mapped!==1?'s':'')+' linked';
+    if(r.unmatched && r.unmatched.length){
+      msg+='. '+r.unmatched.length+' unmatched: '+r.unmatched.slice(0,3).join(', ')+(r.unmatched.length>3?'...':'');
+    }
+    toast('OK', msg);
+  } else {
+    toast('ERR', r.error||'Failed');
+  }
 }
 
 async function renderStageCandidatesPage(stagesStr){
