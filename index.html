@@ -7529,8 +7529,12 @@ async function setResponseFromDropdown(cid, resp) {
 // Close popups when clicking outside
 document.addEventListener('click', function(e) {
   if (e.target.closest('.rem-pop') || e.target.closest('.wa-pop')) return;
-  if (e.target.closest('button') && (e.target.textContent||'').indexOf('Reminder')>=0) return;
-  if (e.target.closest('button') && (e.target.textContent||'').indexOf('WhatsApp')>=0) return;
+  // Don't close if the click was on a button that toggles these popups
+  var btn = e.target.closest('button');
+  if (btn) {
+    var oc = btn.getAttribute('onclick') || '';
+    if (oc.indexOf('toggleWAPop') >= 0 || oc.indexOf('toggleReminderPop') >= 0) return;
+  }
   document.querySelectorAll('.rem-pop, .wa-pop').forEach(function(p){ p.style.display = 'none'; });
 });
 
