@@ -7821,7 +7821,7 @@ async function _renderClientDetail(clientId){
 
   // Tabs
   inner+='<div style="display:flex;gap:2px;border-bottom:0.5px solid var(--line);margin-bottom:14px">';
-  [['overview','Overview'],['contacts','Contacts ('+contacts.length+')'],['timeline','Timeline']].forEach(function(t){
+  [['overview','Overview'],['contacts','Contacts ('+contacts.length+')'],['orgchart','Org Chart'],['timeline','Timeline']].forEach(function(t){
     var active=_cdTab===t[0];
     inner+='<button onclick="_cdSwitchTab('+clientId+',\''+t[0]+'\')" style="border:none;background:none;font-size:12.5px;padding:8px 14px;cursor:pointer;'
       +(active?'color:#2D6FB3;font-weight:600;border-bottom:2px solid #2D6FB3':'color:var(--muted);border-bottom:2px solid transparent')+'">'+t[1]+'</button>';
@@ -7831,6 +7831,7 @@ async function _renderClientDetail(clientId){
   inner+='<div id="cd-tab-body">';
   if(_cdTab==='overview') inner+=_cdOverview(c);
   else if(_cdTab==='contacts') inner+=_cdContacts(clientId,contacts);
+  else if(_cdTab==='orgchart') inner+='<div class="loading" style="padding:30px"><div class="spinner"></div>Building org chart...</div>';
   else if(_cdTab==='timeline') inner+='<div class="loading" style="padding:30px"><div class="spinner"></div>Loading...</div>';
   inner+='</div>';
 
@@ -7838,6 +7839,7 @@ async function _renderClientDetail(clientId){
   _waOpenModal('Client Details', inner);
 
   if(_cdTab==='timeline') _cdLoadTimeline(clientId);
+  else if(_cdTab==='orgchart') _cdLoadOrgChart(clientId);
 }
 
 function _cdSwitchTab(clientId, tab){
@@ -7869,22 +7871,35 @@ function _cdOverview(c){
   return html;
 }
 
+function _roleTagBadge(tag){
+  var labels={decision_maker:'Decision Maker',spoc:'SPOC',hiring_manager:'Hiring Manager',
+              approver:'Approver',influencer:'Influencer',gatekeeper:'Gatekeeper'};
+  var colors={decision_maker:['#FDF0E9','#C0522B'],spoc:['#E6F0FF','#2D6FB3'],
+              hiring_manager:['#E7F3EE','#0F6E56'],approver:['#F3EAFB','#7A4FB5'],
+              influencer:['#FDF6E9','#8A5A0B'],gatekeeper:['#F1F0EC','#666']};
+  var c=colors[tag]||['#F1F0EC','#666'];
+  return '<span style="font-size:9px;background:'+c[0]+';color:'+c[1]+';padding:1px 6px;border-radius:5px;margin-right:3px">'+(labels[tag]||tag)+'</span>';
+}
+
 function _cdContacts(clientId, contacts){
   var html='<div>';
-  html+='<div style="display:flex;justify-content:flex-end;margin-bottom:10px">'
+  html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+    +'<button class="btn btn-o" onclick="_cdSwitchTab('+clientId+',\'orgchart\')" style="font-size:11px">&#127959;&#65039; View Org Chart</button>'
     +'<button class="btn btn-o" onclick="openContactForm('+clientId+')" style="font-size:11px">&#43; Add Contact</button></div>';
   if(!contacts.length){
     html+='<div style="text-align:center;color:var(--muted);padding:30px;font-size:12px">No contacts yet. Add the decision makers &amp; hiring managers.</div>';
   } else {
     contacts.forEach(function(ct){
+      var roles=ct.role_tags||[];
+      var roleBadges=roles.map(_roleTagBadge).join('');
       html+='<div style="display:flex;align-items:flex-start;gap:10px;padding:12px 0;border-bottom:0.5px solid var(--line)">'
         +avatarHtml(ct.name,36)
         +'<div style="flex:1;min-width:0">'
         +'<div style="font-size:13px;font-weight:600;color:var(--navy)">'+esc(ct.name)
         +(ct.is_primary?'<span style="font-size:9px;background:#E7F3EE;color:#0F6E56;padding:1px 6px;border-radius:5px;margin-left:6px">PRIMARY</span>':'')
-        +(ct.is_decision_maker?'<span style="font-size:9px;background:#FDF6E9;color:#8A5A0B;padding:1px 6px;border-radius:5px;margin-left:4px">DECISION MAKER</span>':'')
         +'</div>'
-        +(ct.designation?'<div style="font-size:11.5px;color:var(--muted)">'+esc(ct.designation)+'</div>':'')
+        +(ct.designation||ct.department?'<div style="font-size:11.5px;color:var(--muted)">'+esc(ct.designation||'')+(ct.department?' &middot; '+esc(ct.department):'')+'</div>':'')
+        +(roleBadges?'<div style="margin-top:4px">'+roleBadges+'</div>':'')
         +'<div style="font-size:11.5px;color:#5F5E5A;margin-top:3px">'
         +(ct.phone?'&#128222; '+esc(ct.phone):'')
         +(ct.email?(ct.phone?' &middot; ':'')+'&#9993; '+esc(ct.email):'')+'</div>'
@@ -7897,6 +7912,76 @@ function _cdContacts(clientId, contacts){
     });
   }
   html+='</div>';
+  return html;
+}
+
+async function _cdLoadOrgChart(clientId){
+  var r=await req('GET','/crm/clients/'+clientId+'/org-chart');
+  var el=document.getElementById('cd-tab-body');
+  if(!el) return;
+  if(!r.ok){ el.innerHTML='<div style="color:#E24B4A;padding:20px">Failed to load org chart</div>'; return; }
+
+  var html='<div>';
+  html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">'
+    +'<div style="font-size:11.5px;color:var(--muted)">'+r.total_contacts+' contacts &middot; reporting hierarchy</div>'
+    +'<button class="btn btn-o" onclick="openContactForm('+clientId+')" style="font-size:11px">&#43; Add Contact</button></div>';
+
+  if(!r.total_contacts){
+    html+='<div style="text-align:center;color:var(--muted);padding:40px;font-size:12px">No contacts to chart yet.<br>Add contacts and set "Reports To" to build the hierarchy.</div>';
+    html+='</div>'; el.innerHTML=html; return;
+  }
+
+  // Reporting tree (visual)
+  if(r.tree && r.tree.length){
+    html+='<div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:10px">&#127959;&#65039; Reporting Structure</div>';
+    html+='<div style="overflow-x:auto;padding:8px 0">';
+    html+=_orgTreeHtml(r.tree, clientId);
+    html+='</div>';
+  }
+
+  // Department grouping
+  if(r.departments && r.departments.length){
+    html+='<div style="font-size:12px;font-weight:600;color:var(--navy);margin:18px 0 10px">&#127970; By Department</div>';
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">';
+    r.departments.forEach(function(d){
+      html+='<div style="background:#FAFAF9;border:0.5px solid var(--line);border-radius:10px;padding:12px">'
+        +'<div style="font-size:11px;font-weight:700;color:#2D6FB3;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">'+esc(d.department)+'</div>';
+      d.contacts.forEach(function(ct){
+        var roles=(ct.role_tags||[]).map(_roleTagBadge).join('');
+        html+='<div style="padding:6px 0;border-top:0.5px solid var(--line)">'
+          +'<div style="font-size:12.5px;font-weight:600;color:var(--ink)">'+esc(ct.name)+'</div>'
+          +(ct.designation?'<div style="font-size:10.5px;color:var(--muted)">'+esc(ct.designation)+'</div>':'')
+          +(roles?'<div style="margin-top:3px">'+roles+'</div>':'')
+          +'</div>';
+      });
+      html+='</div>';
+    });
+    html+='</div>';
+  }
+
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+function _orgTreeHtml(nodes, clientId){
+  var html='<ul style="list-style:none;margin:0;padding:0">';
+  nodes.forEach(function(n){
+    var roles=(n.role_tags||[]).map(_roleTagBadge).join('');
+    html+='<li style="margin:0 0 6px 0">'
+      +'<div onclick="openContactForm('+clientId+','+n.id+')" style="display:inline-flex;flex-direction:column;background:#fff;border:0.5px solid var(--line);border-left:3px solid #2D6FB3;border-radius:8px;padding:8px 12px;cursor:pointer;min-width:160px" '
+      +'onmouseover="this.style.background=\'#F7F6F3\'" onmouseout="this.style.background=\'#fff\'">'
+      +'<span style="font-size:12.5px;font-weight:600;color:var(--navy)">'+esc(n.name)
+      +(n.is_primary?' <span style="font-size:8px;background:#E7F3EE;color:#0F6E56;padding:1px 4px;border-radius:4px">PRIMARY</span>':'')+'</span>'
+      +(n.designation?'<span style="font-size:10.5px;color:var(--muted)">'+esc(n.designation)+(n.department?' &middot; '+esc(n.department):'')+'</span>':'')
+      +(roles?'<span style="margin-top:3px">'+roles+'</span>':'')
+      +'</div>';
+    if(n.children && n.children.length){
+      html+='<div style="margin-left:22px;border-left:1.5px dashed #D5D2CA;padding-left:14px;margin-top:6px">'
+        +_orgTreeHtml(n.children, clientId)+'</div>';
+    }
+    html+='</li>';
+  });
+  html+='</ul>';
   return html;
 }
 
@@ -7936,27 +8021,53 @@ async function _cdLoadTimeline(clientId){
 }
 
 // ─── Contact Add/Edit ──────────────────────────────────────────────────
+var _crmRoleTags=[];  // loaded from meta
 async function openContactForm(clientId, contactId){
   var ct={};
-  if(contactId){
-    // fetch current contacts to find this one
-    var r=await req('GET','/crm/clients/'+clientId);
-    if(r.ok) (r.contacts||[]).forEach(function(x){ if(x.id===contactId) ct=x; });
+  var allContacts=[];
+  var r=await req('GET','/crm/clients/'+clientId);
+  if(r.ok){
+    allContacts=r.contacts||[];
+    if(contactId) allContacts.forEach(function(x){ if(x.id===contactId) ct=x; });
+  }
+  // Load role tags meta once
+  if(!_crmRoleTags.length){
+    var m=await req('GET','/crm/meta');
+    if(m.ok) _crmRoleTags=m.role_tags||[];
   }
   var isEdit=!!contactId;
+  var ctRoles=ct.role_tags||[];
+
+  // Role tag checkboxes
+  var roleChecks=_crmRoleTags.map(function(t){
+    var checked=ctRoles.indexOf(t.value)>=0;
+    return '<label style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer;background:'+(checked?'#E7F3EE':'#F7F6F3')+';padding:5px 10px;border-radius:7px;border:0.5px solid '+(checked?'#0F6E56':'var(--line)')+'">'
+      +'<input type="checkbox" class="ctf-role" value="'+t.value+'"'+(checked?' checked':'')+'> '+esc(t.label)+'</label>';
+  }).join('');
+
+  // Reports-to dropdown (exclude self)
+  var reportsOpts='<option value="0">— None (top level) —</option>';
+  allContacts.forEach(function(x){
+    if(x.id===contactId) return;
+    reportsOpts+='<option value="'+x.id+'"'+(ct.reports_to===x.id?' selected':'')+'>'+esc(x.name)+(x.designation?' ('+esc(x.designation)+')':'')+'</option>';
+  });
+
   var inner='<div style="display:flex;flex-direction:column;gap:11px">'
     +'<div><label class="la-lbl">Contact Name *</label><input id="ctf-name" class="inp" style="width:100%" value="'+esc(ct.name||'')+'"></div>'
     +'<div class="g2" style="gap:10px">'
     +'<div><label class="la-lbl">Designation</label><input id="ctf-designation" class="inp" style="width:100%" value="'+esc(ct.designation||'')+'" placeholder="HR Head"></div>'
-    +'<div><label class="la-lbl">Phone</label><input id="ctf-phone" class="inp" style="width:100%" value="'+esc(ct.phone||'')+'"></div>'
+    +'<div><label class="la-lbl">Department</label><input id="ctf-department" class="inp" style="width:100%" value="'+esc(ct.department||'')+'" placeholder="HR / Engineering / Finance" list="dept-list"></div>'
     +'</div>'
+    +'<datalist id="dept-list"><option>HR</option><option>Engineering</option><option>Finance</option><option>Procurement</option><option>Operations</option><option>Management</option></datalist>'
     +'<div class="g2" style="gap:10px">'
+    +'<div><label class="la-lbl">Phone</label><input id="ctf-phone" class="inp" style="width:100%" value="'+esc(ct.phone||'')+'"></div>'
     +'<div><label class="la-lbl">Email</label><input id="ctf-email" class="inp" style="width:100%" value="'+esc(ct.email||'')+'"></div>'
-    +'<div><label class="la-lbl">LinkedIn</label><input id="ctf-linkedin" class="inp" style="width:100%" value="'+esc(ct.linkedin||'')+'"></div>'
     +'</div>'
-    +'<div style="display:flex;gap:18px;padding:4px 0">'
-    +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="ctf-primary" '+(ct.is_primary?'checked':'')+'> Primary contact</label>'
-    +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="ctf-dm" '+(ct.is_decision_maker?'checked':'')+'> Decision maker</label>'
+    +'<div><label class="la-lbl">LinkedIn</label><input id="ctf-linkedin" class="inp" style="width:100%" value="'+esc(ct.linkedin||'')+'"></div>'
+    +'<div><label class="la-lbl">Reports To (manager at this client)</label><select id="ctf-reports" class="inp" style="width:100%">'+reportsOpts+'</select></div>'
+    +'<div><label class="la-lbl">Role in Deal (tick all that apply)</label><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px">'+roleChecks+'</div></div>'
+    +'<div style="display:flex;gap:18px;padding:2px 0">'
+    +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="ctf-primary" '+(ct.is_primary?'checked':'')+'> Primary contact (your main SPOC)</label>'
     +'</div>'
     +'<div><label class="la-lbl">Notes</label><textarea id="ctf-notes" class="inp" rows="2" style="width:100%">'+esc(ct.notes||'')+'</textarea></div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
@@ -7967,14 +8078,19 @@ async function openContactForm(clientId, contactId){
 }
 
 async function saveContact(clientId, contactId){
+  var roles=[];
+  document.querySelectorAll('.ctf-role:checked').forEach(function(cb){ roles.push(cb.value); });
   var payload={
     name:document.getElementById('ctf-name').value.trim(),
     designation:document.getElementById('ctf-designation').value.trim(),
+    department:document.getElementById('ctf-department').value.trim(),
     phone:document.getElementById('ctf-phone').value.trim(),
     email:document.getElementById('ctf-email').value.trim(),
     linkedin:document.getElementById('ctf-linkedin').value.trim(),
+    reports_to:parseInt(document.getElementById('ctf-reports').value)||0,
+    role_tags:roles,
     is_primary:document.getElementById('ctf-primary').checked,
-    is_decision_maker:document.getElementById('ctf-dm').checked,
+    is_decision_maker:roles.indexOf('decision_maker')>=0,
     notes:document.getElementById('ctf-notes').value.trim()
   };
   if(!payload.name){ toast('ERR','Contact name zaroori hai'); return; }
