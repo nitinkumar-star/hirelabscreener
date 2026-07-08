@@ -637,6 +637,7 @@ body{font-size:14px !important; line-height:1.5}
     <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><span class="sb-nav-ic">&#128202;</span><span>Analytics</span></a>
     <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><span class="sb-nav-ic">&#129302;</span><span>WhatsApp AI</span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
     <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><span class="sb-nav-ic">&#127970;</span><span>Clients (CRM)</span></a>
+    <a href="#freelancers" class="sb-gear" id="sb-freelancers" onclick="return navClick(event,openFreelancerAdmin)"><span class="sb-nav-ic">&#129309;</span><span>Freelancers</span></a>
     <a href="#bd" class="sb-gear" id="sb-bd" onclick="return navClick(event,openBd)"><span class="sb-nav-ic">&#128188;</span><span>BD Command Center</span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
     <a href="#ai" class="sb-gear" id="sb-ai" onclick="return navClick(event,openAI)"><span class="sb-nav-ic">&#10038;</span><span>AI Insights</span></a>
     <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></a>
@@ -867,6 +868,22 @@ body{font-size:14px !important; line-height:1.5}
   <div id="client-detail-view" style="display:none;flex:1;flex-direction:column;overflow:hidden;background:#F5F6F8">
     <div id="cd-header" style="flex-shrink:0"></div>
     <div id="cd-columns" style="flex:1;overflow:hidden;display:flex"></div>
+  </div>
+
+  <!-- ═══ Freelancer Management (admin) ═══ -->
+  <div id="freelancers-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+    <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:28px;height:28px;border-radius:6px;background:#E7F0EC;display:flex;align-items:center;justify-content:center;font-size:14px">&#129309;</div>
+        <div><div style="font-size:14px;font-weight:600">Freelancer Sourcers</div><div style="font-size:11px;color:#888;margin-top:1px">Manage sourcers &amp; assign mandates</div></div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <button class="btn" onclick="openFreelancerForm()" style="background:#0F6E56;color:#fff;border:none;font-size:12px">&#43; Add Freelancer</button>
+        <button class="btn btn-o" onclick="renderFreelancerAdmin()" style="font-size:11px">&#8635;</button>
+        <button class="btn btn-o" onclick="closeFreelancerAdmin()">&#10005; Close</button>
+      </div>
+    </div>
+    <div id="freelancers-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
   </div>
 
   <!-- ═══ BD Command Center view ═══ -->
@@ -1204,6 +1221,34 @@ body{font-size:14px !important; line-height:1.5}
 </div>
 
 <div id="toast"><span id="toast-icon"></span><span id="toast-msg"></span></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     FREELANCER SOURCER — dedicated restricted interface
+     Completely separate from the main ATS. Shown only for
+     role === 'freelancer_sourcer'.
+═══════════════════════════════════════════════════════════════════ -->
+<div id="fl-app" style="display:none;min-height:100vh;background:#F5F6F8;font-family:inherit">
+  <!-- Top bar -->
+  <div style="background:#0A2540;color:#fff;padding:0 24px;height:56px;display:flex;align-items:center;gap:14px">
+    <div style="width:30px;height:30px;border-radius:8px;background:#0F6E56;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800">H</div>
+    <div style="font-size:15px;font-weight:700;letter-spacing:-.01em">HireLab <span style="font-weight:400;color:#9BB0C5">Sourcing</span></div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:16px">
+      <span id="fl-username" style="font-size:13px;color:#C9D6E3"></span>
+      <button onclick="flLogout()" style="background:rgba(255,255,255,.1);border:none;color:#fff;font-size:12.5px;padding:6px 14px;border-radius:7px;cursor:pointer">Logout</button>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div style="background:#fff;border-bottom:1px solid #E4E7EC;padding:0 24px;display:flex;gap:4px">
+    <button id="fl-tab-dash" onclick="flShowTab('dash')" class="fl-tab" style="border:none;background:none;font-size:13.5px;font-weight:600;padding:14px 16px;cursor:pointer;color:#0F6E56;border-bottom:2px solid #0F6E56">Dashboard</button>
+    <button id="fl-tab-cands" onclick="flShowTab('cands')" class="fl-tab" style="border:none;background:none;font-size:13.5px;font-weight:600;padding:14px 16px;cursor:pointer;color:#667085;border-bottom:2px solid transparent">My Candidates</button>
+    <button id="fl-tab-mandates" onclick="flShowTab('mandates')" class="fl-tab" style="border:none;background:none;font-size:13.5px;font-weight:600;padding:14px 16px;cursor:pointer;color:#667085;border-bottom:2px solid transparent">My Mandates</button>
+  </div>
+
+  <!-- Body -->
+  <div id="fl-body" style="padding:24px;max-width:1100px;margin:0 auto"></div>
+</div>
+
 <script>
 // ─── CENTRAL DB GLOBALS ──────────────────────────
 var _cdbPage = 1;
@@ -1375,7 +1420,8 @@ async function readHash() {
     // Overlay views
     var overlayMap = { central: openCentralDB, ai: openAI, admin: openAdmin,
                        tasks: openTasks, responses: openResponses, analytics: openAnalytics,
-                       waai: openWaAi, bd: openBd, crm: openCrm };
+                       waai: openWaAi, bd: openBd, crm: openCrm,
+                       freelancers: openFreelancerAdmin };
     if (overlayMap[head]) {
       // admin overlay only for admins
       if (head === 'admin' && !(S.currentUser && S.currentUser.role === 'admin')) {
@@ -1478,6 +1524,13 @@ async function init(){
   S.viewingAs = status.viewing_as || null;
   S.pendingCount = status.pending_count || 0;
 
+  // ── Freelancer Sourcer gets a completely separate, restricted interface ──
+  if (S.currentUser && S.currentUser.role === 'freelancer_sourcer') {
+    document.getElementById('app').style.display = 'none';
+    bootFreelancerApp();
+    return;
+  }
+
   let settings = await req('GET','/settings');
   S.settings = settings || {};
   if (S.settings.error) { showConnError(S.settings.error); return; }
@@ -1498,6 +1551,376 @@ async function init(){
     if (__restoringHash) return;
     if (S.currentUser) readHash();
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  FREELANCER MANAGEMENT (Admin) — Phase 4
+// ═══════════════════════════════════════════════════════════════════════
+function openFreelancerAdmin(){
+  closeSidebarOnMobile();
+  _hideAllViews();
+  document.getElementById('freelancers-view').style.display='flex';
+  document.getElementById('sb-freelancers').className='sb-gear active';
+  S.settingsOpen=false;
+  renderFreelancerAdmin();
+  writeHash();
+}
+function closeFreelancerAdmin(){
+  document.getElementById('freelancers-view').style.display='none';
+  document.getElementById('mandate-view').style.display='flex';
+  document.getElementById('sb-freelancers').className='sb-gear';
+}
+
+async function renderFreelancerAdmin(){
+  var body=document.getElementById('freelancers-body');
+  if(!body) return;
+  body.innerHTML='<div class="loading"><div class="spinner"></div>Loading freelancers...</div>';
+  var r=await req('GET','/freelancers');
+  if(!r.ok){
+    body.innerHTML='<div style="padding:20px;color:#D92D20">'+(r.error||'Failed to load')+(r.error==='Admin only'?' — sirf admin freelancers manage kar sakta hai.':'')+'</div>';
+    return;
+  }
+  var fls=r.freelancers||[];
+  var html='<div style="max-width:1000px;margin:0 auto">';
+
+  if(!fls.length){
+    html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
+      +'<div style="font-size:34px;margin-bottom:10px">&#129309;</div>'
+      +'<div style="font-size:15px;font-weight:600;color:#101828">Abhi koi freelancer nahi</div>'
+      +'<div style="font-size:13px;margin-top:6px;color:#667085">"Add Freelancer" se ek sourcer account banayein.</div>'
+      +'<button class="btn" onclick="openFreelancerForm()" style="margin-top:14px;background:#0F6E56;color:#fff;border:none;font-size:12.5px">+ Add Freelancer</button>'
+      +'</div></div>';
+    body.innerHTML=html; return;
+  }
+
+  html+='<div style="font-size:12.5px;color:#667085;margin-bottom:10px">'+fls.length+' freelancer'+(fls.length!==1?'s':'')+'</div>';
+  html+='<div style="display:flex;flex-direction:column;gap:12px">';
+  fls.forEach(function(f){
+    var st=f.stats||{};
+    var disabled=f.status==='disabled';
+    html+='<div style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;padding:16px 18px'+(disabled?';opacity:.6':'')+'">'
+      +'<div style="display:flex;align-items:center;gap:12px">'
+      +avatarHtml(f.display_name||f.username,38)
+      +'<div style="flex:1;min-width:0"><div style="font-size:14.5px;font-weight:700;color:#101828">'+esc(f.display_name||f.username)
+      +(disabled?' <span style="font-size:10px;background:#FEF3F2;color:#B42318;padding:1px 7px;border-radius:5px">DISABLED</span>':'')+'</div>'
+      +'<div style="font-size:12px;color:#667085">@'+esc(f.username)+' &middot; '+(f.mandate_count||0)+' mandate'+((f.mandate_count||0)!==1?'s':'')+' assigned</div></div>'
+      +'<div style="display:flex;gap:6px">'
+      +'<button class="btn btn-o" onclick="openAssignMandates('+f.id+',\''+esc(f.display_name||f.username).replace(/'/g,"")+'\')" style="font-size:11px">Assign Mandates</button>'
+      +(disabled
+        ? '<button class="btn btn-o" onclick="reactivateFreelancer('+f.id+')" style="font-size:11px;color:#0F6E56">Reactivate</button>'
+        : '<button class="btn btn-o" onclick="deactivateFreelancer('+f.id+')" style="font-size:11px;color:#B42318;border-color:#F5C4C0">Disable</button>')
+      +'</div></div>'
+      // stats strip
+      +'<div style="display:flex;gap:20px;margin-top:14px;padding-top:14px;border-top:1px solid #F2F4F7">'
+      +_flStat('Uploaded', st.uploaded||0, '#101828')
+      +_flStat('Screening', st.screening||0, '#2D6FB3')
+      +_flStat('Interested', st.interested||0, '#0F6E56')
+      +_flStat('Placed', st.placed||0, '#8A5A0B')
+      +'</div></div>';
+  });
+  html+='</div></div>';
+  body.innerHTML=html;
+}
+
+function _flStat(label,val,color){
+  return '<div><div style="font-size:20px;font-weight:800;color:'+color+';line-height:1">'+val+'</div>'
+    +'<div style="font-size:10.5px;color:#98A2B3;text-transform:uppercase;letter-spacing:.3px;margin-top:3px">'+label+'</div></div>';
+}
+
+// ─── Add Freelancer ────────────────────────────────────────────────────
+function openFreelancerForm(){
+  var inner='<div style="display:flex;flex-direction:column;gap:11px">'
+    +'<div style="font-size:12px;color:#667085;background:#F0F6FF;border:1px solid #D3E4FB;border-radius:8px;padding:10px 12px;line-height:1.5">'
+    +'Freelancer ko ye username/password dena hoga. Wo login karke sirf apna dashboard aur sourced candidates dekh payega.</div>'
+    +'<div><label class="la-lbl">Full Name *</label><input id="ff-name" class="inp" style="width:100%" placeholder="Ramesh Kumar"></div>'
+    +'<div><label class="la-lbl">Username *</label><input id="ff-username" class="inp" style="width:100%" placeholder="ramesh (login ke liye)" autocomplete="off"></div>'
+    +'<div><label class="la-lbl">Password *</label><input id="ff-password" class="inp" style="width:100%" placeholder="kam se kam 6 characters" autocomplete="new-password"></div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
+    +'<button class="btn btn-o" onclick="_waCloseModal()" style="font-size:11px">Cancel</button>'
+    +'<button class="btn" onclick="saveFreelancer()" style="background:#0F6E56;color:#fff;border:none;font-size:11px">Create Freelancer</button>'
+    +'</div></div>';
+  _waOpenModal('Add Freelancer Sourcer', inner);
+}
+
+async function saveFreelancer(){
+  var payload={
+    display_name:document.getElementById('ff-name').value.trim(),
+    username:document.getElementById('ff-username').value.trim().toLowerCase(),
+    password:document.getElementById('ff-password').value
+  };
+  if(!payload.display_name||!payload.username||!payload.password){ toast('ERR','Sab fields zaroori hain'); return; }
+  if(payload.password.length<6){ toast('ERR','Password kam se kam 6 characters'); return; }
+  var r=await req('POST','/freelancers',payload);
+  if(r.ok){ toast('OK','Freelancer ban gaya'); _waCloseModal(); renderFreelancerAdmin(); }
+  else toast('ERR', r.error||'Failed');
+}
+
+async function deactivateFreelancer(uid){
+  if(!confirm('Is freelancer ko disable karein? Wo login nahi kar payega aur uske mandate assignments hat jayenge.')) return;
+  var r=await req('POST','/freelancers/'+uid+'/deactivate');
+  if(r.ok){ toast('OK','Freelancer disabled'); renderFreelancerAdmin(); }
+  else toast('ERR', r.error||'Failed');
+}
+async function reactivateFreelancer(uid){
+  var r=await req('POST','/freelancers/'+uid+'/reactivate');
+  if(r.ok){ toast('OK','Freelancer reactivated'); renderFreelancerAdmin(); }
+  else toast('ERR', r.error||'Failed');
+}
+
+// ─── Assign Mandates to a Freelancer ───────────────────────────────────
+var _assignFreelancerId=0;
+async function openAssignMandates(uid, name){
+  _assignFreelancerId=uid;
+  var inner='<div id="assign-body"><div class="loading" style="padding:20px"><div class="spinner"></div>Loading mandates...</div></div>';
+  _waOpenModal('Assign Mandates — '+name, inner);
+  // Load all mandates + which are already assigned
+  var mr=await req('GET','/mandates');
+  var mandates=(mr&&Array.isArray(mr))?mr:[];
+  // get currently-assigned mandate ids for this freelancer
+  var assigned={};
+  for(var i=0;i<mandates.length;i++){
+    // check assignment via mandate freelancers endpoint would be N calls; instead use my-mandates style
+  }
+  // Simpler: fetch assignments per mandate is heavy. We'll fetch the freelancer's assigned list.
+  var far=await req('GET','/mandates'); // list all
+  var body=document.getElementById('assign-body');
+  if(!body) return;
+  if(!mandates.length){ body.innerHTML='<div style="color:#667085;padding:16px;font-size:12.5px">Koi mandate nahi. Pehle mandate banayein.</div>'; return; }
+
+  // We need assignment state — fetch each mandate's freelancers is expensive;
+  // instead call a helper: reuse /mandates/<id>/freelancers for the small set.
+  var html='<div style="max-height:60vh;overflow:auto">';
+  html+='<div style="font-size:12px;color:#667085;margin-bottom:12px">Jin mandates par ye freelancer source kar sakta hai unhe tick karein:</div>';
+  for(var j=0;j<mandates.length;j++){
+    var m=mandates[j];
+    html+='<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #E4E7EC;border-radius:9px;margin-bottom:8px;cursor:pointer">'
+      +'<input type="checkbox" class="assign-cb" data-mid="'+m.id+'" onchange="_toggleAssign('+m.id+',this.checked)">'
+      +'<div style="flex:1"><div style="font-size:13px;font-weight:600;color:#101828">'+esc(m.role)+'</div>'
+      +'<div style="font-size:11.5px;color:#667085">'+esc(m.client||'')+(m.location?' &middot; '+esc(m.location):'')+'</div></div>'
+      +'<span id="assign-status-'+m.id+'" style="font-size:11px;color:#98A2B3"></span>'
+      +'</label>';
+  }
+  html+='</div>';
+  html+='<div style="margin-top:8px;font-size:11.5px;color:#667085">Tick/untick karte hi save ho jayega.</div>';
+  body.innerHTML=html;
+
+  // Mark currently assigned ones by querying each mandate's freelancer list
+  for(var k=0;k<mandates.length;k++){
+    (function(mid){
+      req('GET','/mandates/'+mid+'/freelancers').then(function(fr){
+        if(fr && fr.ok){
+          var has=(fr.freelancers||[]).some(function(x){ return x.uid===_assignFreelancerId; });
+          var cb=document.querySelector('.assign-cb[data-mid="'+mid+'"]');
+          if(cb) cb.checked=has;
+          var st=document.getElementById('assign-status-'+mid);
+          if(st && has) st.textContent='Assigned';
+        }
+      });
+    })(mandates[k].id);
+  }
+}
+
+async function _toggleAssign(mid, checked){
+  var st=document.getElementById('assign-status-'+mid);
+  if(checked){
+    var r=await req('POST','/mandates/'+mid+'/freelancers',{freelancer_user_id:_assignFreelancerId});
+    if(r.ok){ if(st) st.textContent='Assigned'; toast('OK','Assigned'); }
+    else { toast('ERR', r.error||'Failed'); }
+  } else {
+    var r2=await req('DELETE','/mandates/'+mid+'/freelancers/'+_assignFreelancerId);
+    if(r2.ok){ if(st) st.textContent=''; toast('OK','Removed'); }
+    else { toast('ERR', r2.error||'Failed'); }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  FREELANCER SOURCER APP  (Phase 2)
+//  A self-contained restricted interface. Freelancers never see the ATS.
+// ═══════════════════════════════════════════════════════════════════════
+var _flTab='dash';
+async function bootFreelancerApp(){
+  document.getElementById('fl-app').style.display='block';
+  var u=S.currentUser||{};
+  document.getElementById('fl-username').textContent=u.display_name||u.username||'';
+  flShowTab('dash');
+}
+
+function flLogout(){
+  // reuse the app's logout
+  if(typeof logout==='function'){ logout(); return; }
+  req('POST','/auth/logout').then(function(){ location.reload(); });
+}
+
+function flShowTab(tab){
+  _flTab=tab;
+  ['dash','cands','mandates'].forEach(function(t){
+    var b=document.getElementById('fl-tab-'+t);
+    if(b){
+      var on=(t===tab);
+      b.style.color=on?'#0F6E56':'#667085';
+      b.style.borderBottom=on?'2px solid #0F6E56':'2px solid transparent';
+    }
+  });
+  if(tab==='dash') flRenderDash();
+  else if(tab==='cands') flRenderCands();
+  else if(tab==='mandates') flRenderMandates();
+}
+
+// ─── Dashboard ─────────────────────────────────────────────────────────
+async function flRenderDash(){
+  var body=document.getElementById('fl-body');
+  body.innerHTML='<div class="loading"><div class="spinner"></div>Loading dashboard...</div>';
+  var r=await req('GET','/freelancer/dashboard');
+  if(!r.ok){ body.innerHTML='<div style="color:#D92D20;padding:20px">Failed to load</div>'; return; }
+  var s=r.stats||{};
+  var u=S.currentUser||{};
+
+  var card=function(label,val,color,bg){
+    return '<div style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;padding:20px 22px">'
+      +'<div style="font-size:12px;color:#667085;font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">'+label+'</div>'
+      +'<div style="font-size:32px;font-weight:800;color:'+color+';line-height:1">'+val+'</div></div>';
+  };
+
+  var html='<div style="margin-bottom:22px">'
+    +'<div style="font-size:22px;font-weight:800;color:#101828;letter-spacing:-.02em">Namaste, '+esc(u.display_name||u.username||'')+' &#128075;</div>'
+    +'<div style="font-size:13.5px;color:#667085;margin-top:3px">Aapke sourcing ka overview</div></div>';
+
+  html+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px">';
+  html+=card('Total Uploaded', s.uploaded||0, '#101828');
+  html+=card('In Screening', s.screening||0, '#2D6FB3');
+  html+=card('Interested / Shared', s.interested||0, '#0F6E56');
+  html+=card('Placed', s.placed||0, '#8A5A0B');
+  html+='</div>';
+
+  // Assigned mandates count + quick action
+  html+='<div style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;padding:20px 22px;display:flex;align-items:center;gap:16px">'
+    +'<div style="width:44px;height:44px;border-radius:11px;background:#EEF4FF;display:flex;align-items:center;justify-content:center;font-size:20px">&#128188;</div>'
+    +'<div style="flex:1"><div style="font-size:15px;font-weight:700;color:#101828">'+(r.mandate_count||0)+' mandate'+((r.mandate_count||0)!==1?'s':'')+' assigned</div>'
+    +'<div style="font-size:12.5px;color:#667085">In par aap candidates source kar sakte ho</div></div>'
+    +'<button onclick="flShowTab(\'mandates\')" class="btn" style="background:#0F6E56;color:#fff;border:none;font-size:12.5px">View Mandates &#8594;</button>'
+    +'</div>';
+
+  // How-to hint
+  html+='<div style="background:#F0F6FF;border:1px solid #D3E4FB;border-radius:12px;padding:16px 18px;margin-top:18px;font-size:12.5px;color:#2D5B8E;line-height:1.6">'
+    +'<b>Kaise source karein?</b><br>'
+    +'1. Naukri Chrome extension kholein &nbsp; 2. Apna assigned mandate select karein &nbsp; 3. Candidate ka CV upload karein.<br>'
+    +'Extension aapko bata dega agar candidate pehle se us mandate par hai (duplicate).</div>';
+
+  body.innerHTML=html;
+}
+
+// ─── My Candidates ─────────────────────────────────────────────────────
+var _flCandMandate='';
+async function flRenderCands(){
+  var body=document.getElementById('fl-body');
+  body.innerHTML='<div class="loading"><div class="spinner"></div>Loading candidates...</div>';
+  // load mandates for the filter
+  var mr=await req('GET','/freelancer/my-mandates');
+  var mandates=(mr.ok&&mr.mandates)||[];
+  var url='/freelancer/my-candidates'+(_flCandMandate?('?mandate_id='+_flCandMandate):'');
+  var r=await req('GET',url);
+  if(!r.ok){ body.innerHTML='<div style="color:#D92D20;padding:20px">Failed to load</div>'; return; }
+  var cands=r.candidates||[];
+
+  var html='<div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">'
+    +'<div style="font-size:20px;font-weight:800;color:#101828">My Candidates</div>'
+    +'<span style="font-size:12.5px;color:#667085">'+cands.length+' total</span>'
+    +'<select onchange="_flCandMandate=this.value;flRenderCands()" style="margin-left:auto;font-size:12.5px;padding:7px 10px;border:1px solid #D0D5DD;border-radius:8px;background:#fff;color:#344054">'
+    +'<option value="">All mandates</option>';
+  mandates.forEach(function(m){
+    html+='<option value="'+m.id+'"'+(_flCandMandate==String(m.id)?' selected':'')+'>'+esc(m.role)+' @ '+esc(m.client)+'</option>';
+  });
+  html+='</select></div>';
+
+  if(!cands.length){
+    html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
+      +'<div style="font-size:32px;margin-bottom:10px">&#128203;</div>'
+      +'<div style="font-size:15px;font-weight:600;color:#101828">Abhi tak koi candidate nahi</div>'
+      +'<div style="font-size:13px;margin-top:6px;color:#667085">Naukri extension se CV upload karein.</div></div>';
+    body.innerHTML=html; return;
+  }
+
+  html+='<div style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;overflow:hidden">';
+  html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
+  html+='<thead><tr style="background:#F9FAFB;border-bottom:1px solid #E4E7EC">'
+    +'<th style="padding:11px 14px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Candidate</th>'
+    +'<th style="padding:11px 14px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Contact</th>'
+    +'<th style="padding:11px 14px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Mandate</th>'
+    +'<th style="padding:11px 14px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Stage</th>'
+    +'</tr></thead><tbody>';
+  cands.forEach(function(c){
+    var stg=_flStageBadge(c.stage);
+    html+='<tr style="border-bottom:1px solid #F2F4F7">'
+      +'<td style="padding:12px 14px"><div style="font-size:13px;font-weight:600;color:#101828">'+esc(c.name)+'</div>'
+      +(c.designation||c.company?'<div style="font-size:11px;color:#667085">'+esc(c.designation||'')+(c.company?' &middot; '+esc(c.company):'')+'</div>':'')
+      +(c.experience?'<div style="font-size:11px;color:#98A2B3">'+c.experience+' yrs exp</div>':'')+'</td>'
+      +'<td style="padding:12px 14px;font-size:12px;color:#475467">'
+      +(c.phone?'&#128222; '+esc(c.phone)+'<br>':'')
+      +(c.email?'<span style="color:#667085">&#9993; '+esc(c.email)+'</span>':'')+'</td>'
+      +'<td style="padding:12px 14px;font-size:12px;color:#475467">'+esc(c.mandate_role||'')+(c.mandate_client?'<br><span style="color:#98A2B3">'+esc(c.mandate_client)+'</span>':'')+'</td>'
+      +'<td style="padding:12px 14px">'+stg+'</td>'
+      +'</tr>';
+  });
+  html+='</tbody></table></div></div>';
+  body.innerHTML=html;
+}
+
+function _flStageBadge(stage){
+  var s=stage||'';
+  var map={
+    'Placed':['#ECFDF3','#0F6E56'],
+    'Interested':['#ECFDF3','#0F6E56'],
+    'Shared with Client':['#EEF4FF','#2D6FB3'],
+    'Interview Inprocess':['#EEF4FF','#2D6FB3'],
+    'Not Interested':['#FEF3F2','#B42318'],
+    'Not Suitable':['#FEF3F2','#B42318'],
+    'Client Rejected on Paper':['#FEF3F2','#B42318'],
+    'Client Rejected After Interview':['#FEF3F2','#B42318'],
+    'Screening':['#FFFAEB','#B54708'],
+    'Follow Up 1':['#FFFAEB','#B54708'],
+    'Follow Up 2':['#FFFAEB','#B54708']
+  };
+  var c=map[s]||['#F2F4F7','#475467'];
+  return '<span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:6px;background:'+c[0]+';color:'+c[1]+'">'+esc(s||'—')+'</span>';
+}
+
+// ─── My Mandates ───────────────────────────────────────────────────────
+async function flRenderMandates(){
+  var body=document.getElementById('fl-body');
+  body.innerHTML='<div class="loading"><div class="spinner"></div>Loading mandates...</div>';
+  var r=await req('GET','/freelancer/my-mandates');
+  if(!r.ok){ body.innerHTML='<div style="color:#D92D20;padding:20px">Failed to load</div>'; return; }
+  var mandates=r.mandates||[];
+
+  var html='<div style="font-size:20px;font-weight:800;color:#101828;margin-bottom:6px">My Assigned Mandates</div>'
+    +'<div style="font-size:13px;color:#667085;margin-bottom:18px">Sirf in mandates par aap candidates source kar sakte ho</div>';
+
+  if(!mandates.length){
+    html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
+      +'<div style="font-size:32px;margin-bottom:10px">&#128188;</div>'
+      +'<div style="font-size:15px;font-weight:600;color:#101828">Koi mandate assign nahi hua</div>'
+      +'<div style="font-size:13px;margin-top:6px;color:#667085">Admin aapko mandate assign karega, phir yahan dikhega.</div></div>';
+    body.innerHTML=html; return;
+  }
+
+  html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px">';
+  mandates.forEach(function(m){
+    var stC=m.status==='active'?'#0F6E56':'#98A2B3';
+    var stBg=m.status==='active'?'#ECFDF3':'#F2F4F7';
+    html+='<div style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;padding:18px">'
+      +'<div style="display:flex;align-items:flex-start;gap:12px">'
+      +'<div style="width:40px;height:40px;border-radius:10px;background:#EEF4FF;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">&#128188;</div>'
+      +'<div style="flex:1;min-width:0"><div style="font-size:14.5px;font-weight:700;color:#101828">'+esc(m.role)+'</div>'
+      +'<div style="font-size:12.5px;color:#667085;margin-top:1px">'+esc(m.client)+(m.location?' &middot; '+esc(m.location):'')+'</div></div>'
+      +'<span style="font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:6px;background:'+stBg+';color:'+stC+'">'+esc(m.status||'active')+'</span>'
+      +'</div>'
+      +'<div style="margin-top:14px;padding-top:14px;border-top:1px solid #F2F4F7;display:flex;align-items:center;justify-content:space-between">'
+      +'<span style="font-size:12.5px;color:#667085">Aapne source kiye</span>'
+      +'<span style="font-size:20px;font-weight:800;color:#0F6E56">'+(m.my_sourced||0)+'</span>'
+      +'</div></div>';
+  });
+  html+='</div>';
+  body.innerHTML=html;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1584,6 +2007,9 @@ async function submitAuth(mode) {
 function renderUserBar() {
   // Show/hide admin-only sidebar button
   var adminBtn = document.getElementById('sb-admin');
+  // Freelancers management is admin-only too
+  var flBtn = document.getElementById('sb-freelancers');
+  if (flBtn) flBtn.style.display = (S.currentUser && (S.currentUser.role==='admin' || S.currentUser.is_company_admin) && !S.viewingAs) ? 'flex' : 'none';
   if (adminBtn) {
     adminBtn.style.display = (S.currentUser && S.currentUser.role==='admin' && !S.viewingAs) ? 'flex' : 'none';
     var existingBadge = adminBtn.querySelector('.pending-badge');
@@ -6466,9 +6892,9 @@ var aiActiveTab = 'search';
 // Every open* function calls this first so views can never overlap.
 var _ALL_VIEWS = ['mandate-view','settings-view','central-view','cdb-view',
   'responses-view','tasks-view','admin-view','ai-view','analytics-view',
-  'waai-view','bd-view','crm-view','client-detail-view','cs-view','pd-view','we-view'];
+  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view'];
 var _ALL_SB = ['sb-tasks','sb-responses','sb-central','sb-admin','sb-ai',
-  'sb-analytics','sb-waai','sb-bd','sb-crm'];
+  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers'];
 function _hideAllViews(){
   _ALL_VIEWS.forEach(function(id){
     var v=document.getElementById(id); if(v) v.style.display='none';

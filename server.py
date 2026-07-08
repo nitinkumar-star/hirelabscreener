@@ -1556,6 +1556,8 @@ def init_db():
         ('update_submitted_at', "TEXT DEFAULT ''"),
         ('linkedin_url', "TEXT DEFAULT ''"),
         ('ai_insight_cv', "TEXT DEFAULT ''"),
+        ('sourced_by', "INTEGER DEFAULT 0"),
+        ('sourced_at', "TEXT DEFAULT ''"),
     ]:
         try:
             c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {defn}')
@@ -2658,12 +2660,26 @@ def extension_push():
     if not mid:
         return jsonify({'error': 'Please select a mandate'}), 400
 
-    # Verify the mandate belongs to the current (effective) user
+    # Verify the mandate belongs to the current (effective) user.
+    # Freelancers are allowed if the mandate is ASSIGNED to them.
     _conn = get_db()
     _own = _conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
-    _conn.close()
-    if not _own or _own['owner_id'] != effective_user_id():
-        return jsonify({'error': 'That mandate is not in your workspace'}), 403
+    _is_freelancer_upload = False
+    _cu = current_user()
+    if _cu and _cu.get('role') == 'freelancer_sourcer':
+        _is_freelancer_upload = True
+        try:
+            from modules.freelancer import freelancer_can_access_mandate
+            ok_access = freelancer_can_access_mandate(_conn, real_user_id(), int(mid), effective_company_id())
+        except Exception:
+            ok_access = False
+        _conn.close()
+        if not ok_access:
+            return jsonify({'error': 'This mandate is not assigned to you'}), 403
+    else:
+        _conn.close()
+        if not _own or _own['owner_id'] != effective_user_id():
+            return jsonify({'error': 'That mandate is not in your workspace'}), 403
     if not name:
         return jsonify({'error': 'Candidate name missing'}), 400
     if not phone and not email:
@@ -2689,6 +2705,30 @@ def extension_push():
     # Same email in a DIFFERENT mandate -> still create a NEW entry here
     #   (each mandate has its own pipeline); we just tell the user it exists
     #   elsewhere so they have context.
+    # Duplicate check. For FREELANCERS this is a hard block (per spec):
+    # if the candidate already exists on this mandate (phone OR email match),
+    # reject the upload entirely.
+    if _is_freelancer_upload:
+        import re as _re
+        pd = _re.sub(r'[^0-9]', '', phone or '')
+        dup = None
+        if pd and len(pd) >= 10:
+            dup = c.execute(
+                "SELECT id, name FROM candidates WHERE mandate_id=? AND "
+                "REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'+','') LIKE ?",
+                (mid, '%' + pd[-10:])).fetchone()
+        if not dup and email:
+            dup = c.execute('SELECT id, name FROM candidates WHERE mandate_id=? AND LOWER(email)=LOWER(?)',
+                            (mid, email)).fetchone()
+        if not dup and name:
+            dup = c.execute('SELECT id, name FROM candidates WHERE mandate_id=? AND LOWER(name)=LOWER(?)',
+                            (mid, name)).fetchone()
+        if dup:
+            conn.close()
+            return jsonify({'error': 'duplicate',
+                            'message': 'This candidate is already sourced on this mandate.',
+                            'existing_name': dup['name']}), 409
+
     existing = None
     other_mandates = []
     if email:
@@ -2737,6 +2777,10 @@ def extension_push():
     c.execute('UPDATE candidates SET qualification=?, preferred_location=?, linkedin_url=?, ai_insight_cv=? WHERE id=?',
               (d.get('qualification',''), d.get('preferred_location',''),
                d.get('linkedin_url',''), d.get('ai_insight_cv',''), cid))
+    # If a freelancer sourced this candidate, stamp attribution
+    if _is_freelancer_upload:
+        c.execute('UPDATE candidates SET sourced_by=?, sourced_at=? WHERE id=?',
+                  (real_user_id(), ts(), cid))
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
               (cid, '', 'Screening', 'Pushed from Naukri extension', ts()))
     _save_wh_for(conn, cid, d.get('work_history'))
@@ -2757,10 +2801,21 @@ def extension_mandates():
     if not session.get('user_id'):
         return jsonify({'error': 'auth_required', 'message': 'Please log into HireLab in this browser first.'}), 401
     conn = get_db()
-    rows = conn.execute(
-        "SELECT id, role, client, location FROM mandates WHERE status='active' AND owner_id=? ORDER BY created_at DESC",
-        (effective_user_id(),)
-    ).fetchall()
+    # Freelancers only see mandates ASSIGNED to them; recruiters/admin see their own.
+    cu = current_user()
+    if cu and cu.get('role') == 'freelancer_sourcer':
+        rows = conn.execute(
+            "SELECT m.id, m.role, m.client, m.location FROM mandate_freelancers mf "
+            "JOIN mandates m ON m.id=mf.mandate_id "
+            "WHERE mf.freelancer_user_id=? AND mf.company_id=? AND mf.is_active=1 "
+            "AND m.status='active' ORDER BY m.created_at DESC",
+            (real_user_id(), effective_company_id())
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, role, client, location FROM mandates WHERE status='active' AND owner_id=? ORDER BY created_at DESC",
+            (effective_user_id(),)
+        ).fetchall()
     conn.close()
     return jsonify({'ok': True, 'mandates': [dict(r) for r in rows]})
 
@@ -4496,7 +4551,16 @@ def update_candidate(cid):
     return jsonify({'ok': True})
 
 @app.route('/api/candidates/<int:cid>/stage', methods=['POST'])
+@login_required
 def move_stage(cid):
+    # Freelancers cannot change stages
+    try:
+        from modules.freelancer import block_if_freelancer
+        blocked = block_if_freelancer()
+        if blocked:
+            return blocked
+    except Exception:
+        pass
     d = request.json or {}
     conn = get_db()
     r = conn.execute('SELECT stage FROM candidates WHERE id=?', (cid,)).fetchone()
