@@ -1586,7 +1586,7 @@ async function renderFreelancerAdmin(){
   if(!fls.length){
     html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
       +'<div style="font-size:34px;margin-bottom:10px">&#129309;</div>'
-      +'<div style="font-size:15px;font-weight:600;color:#101828">Abhi koi freelancer nahi</div>'
+      +'<div style="font-size:15px;font-weight:600;color:#101828">No freelancers yet</div>'
       +'<div style="font-size:13px;margin-top:6px;color:#667085">Add a sourcer account using "Add Freelancer".</div>'
       +'<button class="btn" onclick="openFreelancerForm()" style="margin-top:14px;background:#0F6E56;color:#fff;border:none;font-size:12.5px">+ Add Freelancer</button>'
       +'</div></div>';
@@ -1835,7 +1835,7 @@ async function flRenderCands(){
   if(!cands.length){
     html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
       +'<div style="font-size:32px;margin-bottom:10px">&#128203;</div>'
-      +'<div style="font-size:15px;font-weight:600;color:#101828">Abhi tak koi candidate nahi</div>'
+      +'<div style="font-size:15px;font-weight:600;color:#101828">No candidates yet</div>'
       +'<div style="font-size:13px;margin-top:6px;color:#667085">Upload CVs via the Naukri extension.</div></div>';
     body.innerHTML=html; return;
   }
@@ -1907,7 +1907,9 @@ async function flRenderMandates(){
   mandates.forEach(function(m){
     var stC=m.status==='active'?'#0F6E56':'#98A2B3';
     var stBg=m.status==='active'?'#ECFDF3':'#F2F4F7';
-    html+='<div style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;padding:18px">'
+    html+='<div onclick="flOpenPipeline('+m.id+')" style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;padding:18px;cursor:pointer;transition:box-shadow .12s,transform .12s" '
+      +'onmouseover="this.style.boxShadow=\'0 4px 14px rgba(16,24,40,.08)\';this.style.transform=\'translateY(-1px)\'" '
+      +'onmouseout="this.style.boxShadow=\'\';this.style.transform=\'\'">'
       +'<div style="display:flex;align-items:flex-start;gap:12px">'
       +'<div style="width:40px;height:40px;border-radius:10px;background:#EEF4FF;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">&#128188;</div>'
       +'<div style="flex:1;min-width:0"><div style="font-size:14.5px;font-weight:700;color:#101828">'+esc(m.role)+'</div>'
@@ -1917,11 +1919,82 @@ async function flRenderMandates(){
       +'<div style="margin-top:14px;padding-top:14px;border-top:1px solid #F2F4F7;display:flex;align-items:center;justify-content:space-between">'
       +'<span style="font-size:12.5px;color:#667085">Sourced by you</span>'
       +'<span style="font-size:20px;font-weight:800;color:#0F6E56">'+(m.my_sourced||0)+'</span>'
-      +'</div></div>';
+      +'</div>'
+      +'<div style="margin-top:10px;font-size:11.5px;color:#2D6FB3;font-weight:600">View pipeline &#8594;</div>'
+      +'</div>';
   });
   html+='</div>';
   body.innerHTML=html;
 }
+
+// ─── Freelancer Pipeline (Kanban) — own candidates only ────────────────
+async function flOpenPipeline(mandateId){
+  var body=document.getElementById('fl-body');
+  body.innerHTML='<div class="loading"><div class="spinner"></div>Loading pipeline...</div>';
+  // Load this mandate's info + my candidates on it
+  var mr=await req('GET','/freelancer/my-mandates');
+  var mandate=null;
+  if(mr.ok) (mr.mandates||[]).forEach(function(m){ if(m.id===mandateId) mandate=m; });
+  var r=await req('GET','/freelancer/my-candidates?mandate_id='+mandateId);
+  if(!r.ok){ body.innerHTML='<div style="color:#D92D20;padding:20px">Failed to load pipeline</div>'; return; }
+  var cands=r.candidates||[];
+
+  // Group candidates by stage
+  var byStage={};
+  PIPELINE_STAGES.forEach(function(s){ byStage[s.id]=[]; });
+  cands.forEach(function(c){
+    var st=c.stage||'Screening';
+    if(!byStage[st]) byStage[st]=[];
+    byStage[st].push(c);
+  });
+
+  // Header
+  var html='<div style="margin-bottom:18px">'
+    +'<button onclick="flShowTab(\'mandates\')" style="background:none;border:none;color:#2D6FB3;font-size:12.5px;cursor:pointer;padding:0;margin-bottom:8px">&#8592; My Mandates</button>'
+    +'<div style="display:flex;align-items:center;gap:12px">'
+    +'<div style="font-size:20px;font-weight:800;color:#101828">'+(mandate?esc(mandate.role):'Pipeline')+'</div>'
+    +(mandate?'<span style="font-size:13px;color:#667085">'+esc(mandate.client||'')+(mandate.location?' &middot; '+esc(mandate.location):'')+'</span>':'')
+    +'</div>'
+    +'<div style="font-size:12.5px;color:#667085;margin-top:3px">'+cands.length+' candidate'+(cands.length!==1?'s':'')+' sourced by you &middot; showing your candidates only</div>'
+    +'</div>';
+
+  if(!cands.length){
+    html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
+      +'<div style="font-size:32px;margin-bottom:10px">&#128203;</div>'
+      +'<div style="font-size:15px;font-weight:600;color:#101828">No candidates yet</div>'
+      +'<div style="font-size:13px;margin-top:6px;color:#667085">Upload CVs for this mandate via the Naukri extension.</div></div>';
+    body.innerHTML=html; return;
+  }
+
+  // Kanban columns — only show stages that have candidates OR the early ones
+  html+='<div style="display:flex;gap:14px;overflow-x:auto;padding-bottom:16px">';
+  PIPELINE_STAGES.forEach(function(st){
+    var list=byStage[st.id]||[];
+    // Skip empty stages to keep it clean, but always show if it has candidates
+    if(!list.length) return;
+    html+='<div style="flex:0 0 260px;min-width:260px">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:0 2px">'
+      +'<span style="width:9px;height:9px;border-radius:50%;background:'+st.color+'"></span>'
+      +'<span style="font-size:12.5px;font-weight:700;color:#101828">'+esc(st.id)+'</span>'
+      +'<span style="font-size:11px;color:#98A2B3;background:#F2F4F7;padding:1px 7px;border-radius:10px">'+list.length+'</span>'
+      +'</div>'
+      +'<div style="display:flex;flex-direction:column;gap:10px">';
+    list.forEach(function(c){
+      html+='<div style="background:#fff;border:1px solid #E4E7EC;border-radius:12px;padding:12px 14px">'
+        +'<div style="font-size:13px;font-weight:600;color:#101828">'+esc(c.name)+'</div>'
+        +(c.designation||c.company?'<div style="font-size:11px;color:#667085;margin-top:2px">'+esc(c.designation||'')+(c.company?' &middot; '+esc(c.company):'')+'</div>':'')
+        +(c.experience?'<div style="font-size:11px;color:#98A2B3;margin-top:1px">'+c.experience+' yrs exp</div>':'')
+        +'<div style="font-size:11.5px;color:#475467;margin-top:8px;padding-top:8px;border-top:1px solid #F2F4F7">'
+        +(c.phone?'&#128222; '+esc(c.phone):'')
+        +(c.email?'<br><span style="color:#667085">&#9993; '+esc(c.email)+'</span>':'')+'</div>'
+        +'</div>';
+    });
+    html+='</div></div>';
+  });
+  html+='</div>';
+  body.innerHTML=html;
+}
+
 
 // ═══════════════════════════════════════════════════════════
 //  AUTH SCREENS (setup / login) + user bar
@@ -2289,7 +2362,7 @@ function openMoveCandidate(cid){
     + '<div style="padding:16px 18px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between">'
     + '<div style="font-size:15px;font-weight:700;color:var(--navy)">&#8644; Move Candidate to...</div>'
     + '<button onclick="document.getElementById(\'move-cand-modal\').remove()" style="background:none;border:none;font-size:20px;color:#999;cursor:pointer">&times;</button></div>'
-    + '<div style="font-size:11.5px;color:var(--muted);padding:10px 18px 4px">Kis mandate mein move karna hai? Candidate uss mandate ki pipeline mein chala jaayega.</div>'
+    + '<div style="font-size:11.5px;color:var(--muted);padding:10px 18px 4px">Which mandate should this move to? The candidate will enter that mandate&#39;s pipeline.</div>'
     + '<div style="flex:1;overflow-y:auto;padding:8px 12px">' + listHtml + '</div>'
     + '</div>';
   document.body.appendChild(modal);
@@ -7301,14 +7374,14 @@ async function renderAnalytics(){
     });
     html += '</div><div style="font-size:11px;color:var(--muted);margin-top:12px">Share of placed candidates by source</div>';
   } else {
-    html += '<div style="font-size:12px;color:var(--muted);padding:8px 0">Abhi koi placement nahi &mdash; source data yahan aayega.</div>';
+    html += '<div style="font-size:12px;color:var(--muted);padding:8px 0">No placements yet &mdash; source data will appear here.</div>';
   }
   html += '</div></div>';
 
   // Stale mandates alert
   if(r.stale_mandates.length){
     html += '<div style="background:#FDF6E9;border:0.5px solid #F3DFB0;border-radius:12px;padding:12px 18px;margin-bottom:8px">';
-    html += '<div style="font-size:12.5px;font-weight:600;color:#8A5A0B;margin-bottom:8px">&#9888;&#65039; '+r.stale_mandates.length+' mandate'+(r.stale_mandates.length>1?'s':'')+' mein '+r.stale_days+'+ din se koi movement nahi</div>';
+    html += '<div style="font-size:12.5px;font-weight:600;color:#8A5A0B;margin-bottom:8px">&#9888;&#65039; '+r.stale_mandates.length+' mandate'+(r.stale_mandates.length>1?'s':'')+' with no movement for '+r.stale_days+' days</div>';
     r.stale_mandates.forEach(function(m){
       html += '<div onclick="selectMandate('+m.id+')" style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12px;cursor:pointer;border-top:0.5px solid #F3DFB0">'
         + '<span style="width:7px;height:7px;border-radius:50%;background:#C7841E;flex-shrink:0"></span>'
@@ -7392,7 +7465,7 @@ async function renderWaConversations(){
   if(!convs.length){
     html += '<div style="text-align:center;padding:60px 20px;color:var(--muted);background:#fff;border:0.5px solid var(--line);border-radius:12px">'
       + '<div style="font-size:34px;margin-bottom:10px">&#128172;</div>'
-      + '<div style="font-size:14px;font-weight:600;color:var(--ink)">Koi conversation nahi</div>'
+      + '<div style="font-size:14px;font-weight:600;color:var(--ink)">No conversations</div>'
       + '<div style="font-size:12px;margin-top:6px">Start by clicking the WhatsApp icon on a candidate profile.</div>'
       + '</div>';
     html += '</div>';
@@ -7476,7 +7549,7 @@ async function openWaConv(convId){
 
   inner += '<div id="wa-msg-stream" style="flex:1;overflow-y:auto;padding:12px 4px;background:#F1F0EC;border-radius:8px;display:flex;flex-direction:column;gap:8px">';
   if(!msgs.length){
-    inner += '<div style="text-align:center;color:var(--muted);padding:40px;font-size:12px">Koi message nahi</div>';
+    inner += '<div style="text-align:center;color:var(--muted);padding:40px;font-size:12px">No messages</div>';
   } else {
     msgs.forEach(function(m){
       var isOut = m.direction === 'outbound';
@@ -8397,7 +8470,7 @@ async function _cdRenderCenter(clientId){
   if(!acts.length){
     feed.innerHTML='<div style="text-align:center;padding:44px 20px;color:#98A2B3">'
       +'<div style="font-size:30px;margin-bottom:8px">&#128203;</div>'
-      +'<div style="font-size:13px;color:#667085;font-weight:500">Abhi tak koi activity nahi</div>'
+      +'<div style="font-size:13px;color:#667085;font-weight:500">No activity yet</div>'
       +'<div style="font-size:12px;margin-top:4px">Click above to log the first activity.</div></div>';
     return;
   }
@@ -8841,10 +8914,10 @@ async function renderStageCandidatesPage(stagesStr){
     + '<a href="#analytics" style="font-size:12px;color:var(--teal-deep);text-decoration:none">&#8592; Analytics</a></div>';
   html += '<div style="font-size:18px;font-weight:700;color:var(--navy);margin-bottom:4px">'+esc(stages.join(' / '))+'</div>';
   html += '<div style="font-size:12px;color:var(--muted);margin-bottom:16px">'+cands.length+' candidate'+(cands.length!==1?'s':'')+' across all positions'
-    + (staleCount?' &middot; <span style="color:#C0522B;font-weight:600">'+staleCount+' inactive '+r.stale_days+'+ din se</span>':'')+'</div>';
+    + (staleCount?' &middot; <span style="color:#C0522B;font-weight:600">'+staleCount+' inactive '+r.stale_days+'+ days</span>':'')+'</div>';
 
   if(!cands.length){
-    html += '<div style="text-align:center;padding:50px;color:var(--muted)">Is stage mein koi candidate nahi.</div>';
+    html += '<div style="text-align:center;padding:50px;color:var(--muted)">No candidates in this stage.</div>';
   } else {
     html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;overflow:hidden">';
     cands.forEach(function(c){
