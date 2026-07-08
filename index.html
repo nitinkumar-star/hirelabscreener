@@ -1587,7 +1587,7 @@ async function renderFreelancerAdmin(){
     html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
       +'<div style="font-size:34px;margin-bottom:10px">&#129309;</div>'
       +'<div style="font-size:15px;font-weight:600;color:#101828">Abhi koi freelancer nahi</div>'
-      +'<div style="font-size:13px;margin-top:6px;color:#667085">"Add Freelancer" se ek sourcer account banayein.</div>'
+      +'<div style="font-size:13px;margin-top:6px;color:#667085">Add a sourcer account using "Add Freelancer".</div>'
       +'<button class="btn" onclick="openFreelancerForm()" style="margin-top:14px;background:#0F6E56;color:#fff;border:none;font-size:12.5px">+ Add Freelancer</button>'
       +'</div></div>';
     body.innerHTML=html; return;
@@ -1631,10 +1631,10 @@ function _flStat(label,val,color){
 function openFreelancerForm(){
   var inner='<div style="display:flex;flex-direction:column;gap:11px">'
     +'<div style="font-size:12px;color:#667085;background:#F0F6FF;border:1px solid #D3E4FB;border-radius:8px;padding:10px 12px;line-height:1.5">'
-    +'Freelancer ko ye username/password dena hoga. Wo login karke sirf apna dashboard aur sourced candidates dekh payega.</div>'
+    +'Share this username/password with the freelancer. They can log in to see only their own dashboard and sourced candidates.</div>'
     +'<div><label class="la-lbl">Full Name *</label><input id="ff-name" class="inp" style="width:100%" placeholder="Ramesh Kumar"></div>'
     +'<div><label class="la-lbl">Username *</label><input id="ff-username" class="inp" style="width:100%" placeholder="ramesh (login ke liye)" autocomplete="off"></div>'
-    +'<div><label class="la-lbl">Password *</label><input id="ff-password" class="inp" style="width:100%" placeholder="kam se kam 6 characters" autocomplete="new-password"></div>'
+    +'<div><label class="la-lbl">Password *</label><input id="ff-password" class="inp" style="width:100%" placeholder="at least 6 characters" autocomplete="new-password"></div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
     +'<button class="btn btn-o" onclick="_waCloseModal()" style="font-size:11px">Cancel</button>'
     +'<button class="btn" onclick="saveFreelancer()" style="background:#0F6E56;color:#fff;border:none;font-size:11px">Create Freelancer</button>'
@@ -1648,15 +1648,15 @@ async function saveFreelancer(){
     username:document.getElementById('ff-username').value.trim().toLowerCase(),
     password:document.getElementById('ff-password').value
   };
-  if(!payload.display_name||!payload.username||!payload.password){ toast('ERR','Sab fields zaroori hain'); return; }
-  if(payload.password.length<6){ toast('ERR','Password kam se kam 6 characters'); return; }
+  if(!payload.display_name||!payload.username||!payload.password){ toast('ERR','All fields are required'); return; }
+  if(payload.password.length<6){ toast('ERR','Password at least 6 characters'); return; }
   var r=await req('POST','/freelancers',payload);
   if(r.ok){ toast('OK','Freelancer ban gaya'); _waCloseModal(); renderFreelancerAdmin(); }
   else toast('ERR', r.error||'Failed');
 }
 
 async function deactivateFreelancer(uid){
-  if(!confirm('Is freelancer ko disable karein? Wo login nahi kar payega aur uske mandate assignments hat jayenge.')) return;
+  if(!confirm('Disable this freelancer? They will not be able to log in and their mandate assignments will be removed.')) return;
   var r=await req('POST','/freelancers/'+uid+'/deactivate');
   if(r.ok){ toast('OK','Freelancer disabled'); renderFreelancerAdmin(); }
   else toast('ERR', r.error||'Failed');
@@ -1685,12 +1685,12 @@ async function openAssignMandates(uid, name){
   var far=await req('GET','/mandates'); // list all
   var body=document.getElementById('assign-body');
   if(!body) return;
-  if(!mandates.length){ body.innerHTML='<div style="color:#667085;padding:16px;font-size:12.5px">Koi mandate nahi. Pehle mandate banayein.</div>'; return; }
+  if(!mandates.length){ body.innerHTML='<div style="color:#667085;padding:16px;font-size:12.5px">No mandates yet. Create a mandate first.</div>'; return; }
 
   // We need assignment state — fetch each mandate's freelancers is expensive;
   // instead call a helper: reuse /mandates/<id>/freelancers for the small set.
   var html='<div style="max-height:60vh;overflow:auto">';
-  html+='<div style="font-size:12px;color:#667085;margin-bottom:12px">Jin mandates par ye freelancer source kar sakta hai unhe tick karein:</div>';
+  html+='<div style="font-size:12px;color:#667085;margin-bottom:12px">Tick the mandates this freelancer is allowed to source on:</div>';
   for(var j=0;j<mandates.length;j++){
     var m=mandates[j];
     html+='<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #E4E7EC;border-radius:9px;margin-bottom:8px;cursor:pointer">'
@@ -1701,7 +1701,7 @@ async function openAssignMandates(uid, name){
       +'</label>';
   }
   html+='</div>';
-  html+='<div style="margin-top:8px;font-size:11.5px;color:#667085">Tick/untick karte hi save ho jayega.</div>';
+  html+='<div style="margin-top:8px;font-size:11.5px;color:#667085">Changes save automatically as you tick/untick.</div>';
   body.innerHTML=html;
 
   // Mark currently assigned ones by querying each mandate's freelancer list
@@ -1782,8 +1782,8 @@ async function flRenderDash(){
   };
 
   var html='<div style="margin-bottom:22px">'
-    +'<div style="font-size:22px;font-weight:800;color:#101828;letter-spacing:-.02em">Namaste, '+esc(u.display_name||u.username||'')+' &#128075;</div>'
-    +'<div style="font-size:13.5px;color:#667085;margin-top:3px">Aapke sourcing ka overview</div></div>';
+    +'<div style="font-size:22px;font-weight:800;color:#101828;letter-spacing:-.02em">Hello, '+esc(u.display_name||u.username||'')+' &#128075;</div>'
+    +'<div style="font-size:13.5px;color:#667085;margin-top:3px">Your sourcing overview</div></div>';
 
   html+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px">';
   html+=card('Total Uploaded', s.uploaded||0, '#101828');
@@ -1796,15 +1796,15 @@ async function flRenderDash(){
   html+='<div style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;padding:20px 22px;display:flex;align-items:center;gap:16px">'
     +'<div style="width:44px;height:44px;border-radius:11px;background:#EEF4FF;display:flex;align-items:center;justify-content:center;font-size:20px">&#128188;</div>'
     +'<div style="flex:1"><div style="font-size:15px;font-weight:700;color:#101828">'+(r.mandate_count||0)+' mandate'+((r.mandate_count||0)!==1?'s':'')+' assigned</div>'
-    +'<div style="font-size:12.5px;color:#667085">In par aap candidates source kar sakte ho</div></div>'
+    +'<div style="font-size:12.5px;color:#667085">You can source candidates on these</div></div>'
     +'<button onclick="flShowTab(\'mandates\')" class="btn" style="background:#0F6E56;color:#fff;border:none;font-size:12.5px">View Mandates &#8594;</button>'
     +'</div>';
 
   // How-to hint
   html+='<div style="background:#F0F6FF;border:1px solid #D3E4FB;border-radius:12px;padding:16px 18px;margin-top:18px;font-size:12.5px;color:#2D5B8E;line-height:1.6">'
-    +'<b>Kaise source karein?</b><br>'
-    +'1. Naukri Chrome extension kholein &nbsp; 2. Apna assigned mandate select karein &nbsp; 3. Candidate ka CV upload karein.<br>'
-    +'Extension aapko bata dega agar candidate pehle se us mandate par hai (duplicate).</div>';
+    +'<b>How to source</b><br>'
+    +'1. Open the Naukri Chrome extension &nbsp; 2. Select your assigned mandate &nbsp; 3. Upload the candidate&#39;s CV.<br>'
+    +'The extension will warn you if the candidate is already on that mandate (duplicate).</div>';
 
   body.innerHTML=html;
 }
@@ -1836,7 +1836,7 @@ async function flRenderCands(){
     html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
       +'<div style="font-size:32px;margin-bottom:10px">&#128203;</div>'
       +'<div style="font-size:15px;font-weight:600;color:#101828">Abhi tak koi candidate nahi</div>'
-      +'<div style="font-size:13px;margin-top:6px;color:#667085">Naukri extension se CV upload karein.</div></div>';
+      +'<div style="font-size:13px;margin-top:6px;color:#667085">Upload CVs via the Naukri extension.</div></div>';
     body.innerHTML=html; return;
   }
 
@@ -1893,13 +1893,13 @@ async function flRenderMandates(){
   var mandates=r.mandates||[];
 
   var html='<div style="font-size:20px;font-weight:800;color:#101828;margin-bottom:6px">My Assigned Mandates</div>'
-    +'<div style="font-size:13px;color:#667085;margin-bottom:18px">Sirf in mandates par aap candidates source kar sakte ho</div>';
+    +'<div style="font-size:13px;color:#667085;margin-bottom:18px">You can only source candidates on these mandates</div>';
 
   if(!mandates.length){
     html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
       +'<div style="font-size:32px;margin-bottom:10px">&#128188;</div>'
-      +'<div style="font-size:15px;font-weight:600;color:#101828">Koi mandate assign nahi hua</div>'
-      +'<div style="font-size:13px;margin-top:6px;color:#667085">Admin aapko mandate assign karega, phir yahan dikhega.</div></div>';
+      +'<div style="font-size:15px;font-weight:600;color:#101828">No mandates assigned yet</div>'
+      +'<div style="font-size:13px;margin-top:6px;color:#667085">The admin will assign mandates to you, and they will appear here.</div></div>';
     body.innerHTML=html; return;
   }
 
@@ -1915,7 +1915,7 @@ async function flRenderMandates(){
       +'<span style="font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:6px;background:'+stBg+';color:'+stC+'">'+esc(m.status||'active')+'</span>'
       +'</div>'
       +'<div style="margin-top:14px;padding-top:14px;border-top:1px solid #F2F4F7;display:flex;align-items:center;justify-content:space-between">'
-      +'<span style="font-size:12.5px;color:#667085">Aapne source kiye</span>'
+      +'<span style="font-size:12.5px;color:#667085">Sourced by you</span>'
       +'<span style="font-size:20px;font-weight:800;color:#0F6E56">'+(m.my_sourced||0)+'</span>'
       +'</div></div>';
   });
@@ -2081,7 +2081,7 @@ async function loadMandates(){
   S.mandates=data; renderSidebar();
 }
 function downloadSubmissionExcel(){
-  if(!S.activeMandate){ toast('ERR','Pehle koi mandate select karein'); return; }
+  if(!S.activeMandate){ toast('ERR','Please select a mandate first'); return; }
   var existing = document.getElementById('xl-stage-modal');
   if(existing) existing.remove();
   var modal = document.createElement('div');
@@ -2197,7 +2197,7 @@ function _ivPayload(){
 
 async function buildInterviewMessage(){
   var p=_ivPayload();
-  if(!p.scheduled_at){ toast('ERR','Date/time choose karein'); return; }
+  if(!p.scheduled_at){ toast('ERR','Please choose a date/time'); return; }
   // Save the interview
   var r = await req('POST','/candidates/'+p.cid+'/interviews', p);
   if(!r.ok){ toast('ERR', r.error||'Failed'); return; }
@@ -2214,7 +2214,7 @@ async function buildInterviewMessage(){
 
 async function sendInterviewEmail(cid, email){
   var msg=document.getElementById('iv-msg').value;
-  if(!email){ toast('ERR','Candidate ka email nahi hai'); return; }
+  if(!email){ toast('ERR','Candidate has no email'); return; }
   var subject='Interview Scheduled';
   var r=await req('POST','/candidates/'+cid+'/send-email',{to:email,subject:subject,body:msg,body_html:esc(msg).replace(/\n/g,'<br>')});
   if(r.ok){ toast('OK','Interview email sent!'); }
@@ -2223,7 +2223,7 @@ async function sendInterviewEmail(cid, email){
 
 function sendInterviewWhatsApp(phone){
   var msg=document.getElementById('iv-msg').value;
-  if(!phone){ toast('ERR','Candidate ka phone nahi hai'); return; }
+  if(!phone){ toast('ERR','Candidate has no phone number'); return; }
   var num=phone.replace(/[^0-9]/g,'');
   if(num.length===10) num='91'+num;
   window.open('https://wa.me/'+num+'?text='+encodeURIComponent(msg),'_blank');
@@ -2237,7 +2237,7 @@ async function promptInterviewResult(iid, cid){
 }
 
 async function deleteInterview(iid, cid){
-  if(!confirm('Yeh interview round delete karein?')) return;
+  if(!confirm('Delete this interview round?')) return;
   var r=await req('DELETE','/interviews/'+iid);
   if(r.ok){ toast('OK','Deleted'); openInterviewModal(cid); }
 }
@@ -2258,7 +2258,7 @@ async function startAiWhatsApp(cid, mid){
 }
 
 async function requestUpdate(cid){
-  if(!confirm('Candidate ko ek email jayega jisme apni profile update karne + resume upload karne ka secure link hoga. Bhejein?')) return;
+  if(!confirm('The candidate will receive an email with a secure link to update their profile and upload their resume. Send it?')) return;
   toast('...', 'Sending request...');
   var r = await req('POST', '/candidates/' + cid + '/request-update', {});
   if(r.ok){ toast('OK', 'Update request email sent!'); if(S._journeyCid===cid) loadJourneyBody(cid); }
@@ -2269,7 +2269,7 @@ async function requestUpdate(cid){
 function openMoveCandidate(cid){
   var current = S.activeMandate ? S.activeMandate.id : null;
   var opts = S.mandates.filter(function(m){ return m.id !== current; });
-  if(!opts.length){ toast('ERR','Koi doosra mandate nahi hai'); return; }
+  if(!opts.length){ toast('ERR','No other mandate available'); return; }
   var existing = document.getElementById('move-cand-modal');
   if(existing) existing.remove();
   var modal = document.createElement('div');
@@ -3679,7 +3679,7 @@ function renderSettings(){
   body.innerHTML='<div style="max-width:680px">'
     // ── My Profile (every user) ──
     +'<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head"><span style="font-weight:500">&#128100; My Profile &amp; Email Signature</span></div><div class="card-body">'
-    +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Yeh details aapke email signature mein aur AI-composed emails mein automatically use hongi.</div>'
+    +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">These details are used automatically in your email signature and AI-composed emails.</div>'
     +'<div class="g2">'
     +'<div class="fg-row"><label>Full Name</label><input class="inp" id="mp-name" value="" placeholder="e.g. Nitin Kumar"></div>'
     +'<div class="fg-row"><label>Designation / Title</label><input class="inp" id="mp-designation" value="" placeholder="e.g. Practice Lead | Talent Acquisition"></div>'
@@ -3763,7 +3763,7 @@ async function saveMyProfile(){
 
 function savedTemplatesHTML(s){
   return '<div style="margin-top:12px;font-size:11px;color:var(--muted);background:#F3F8FF;border:0.5px solid #C5DEFF;border-radius:8px;padding:10px 12px;color:#1565C0">'
-    + '&#128161; Email templates ab <b>har job position (mandate)</b> ke apne hote hain. Email compose panel mein "New" / "Update" se templates banayein ya badlein.'
+    + '&#128161; Email templates are now specific to <b>each job position (mandate)</b>. Create or edit templates using "New" / "Update" in the email compose panel.'
     + '</div>';
 }
 
@@ -3809,11 +3809,11 @@ function emailConfigHTML(s){
     + '<div class="fg-row"><label>App Password</label><input class="inp" id="s-smtp_app_password" type="password" value="' + esc(s.smtp_app_password||'') + '" placeholder="xxxx xxxx xxxx xxxx"></div>'
     + '<div class="fg-row"><label>Display Name (optional)</label><input class="inp" id="s-smtp_display_name" value="' + esc(s.smtp_display_name||'') + '" placeholder="e.g. HireLab Talent"></div>'
     + '<div style="background:#F3F8FF;border:0.5px solid #C5DEFF;border-radius:8px;padding:12px;margin-top:10px;font-size:11px;color:#1565C0;line-height:1.6">'
-    + '<div style="font-weight:700;margin-bottom:4px">&#128273; Gmail App Password kaise banayein:</div>'
-    + '1. Google Account → <b>Security</b> → <b>2-Step Verification</b> ON karein<br>'
+    + '<div style="font-weight:700;margin-bottom:4px">&#128273; How to create a Gmail App Password:</div>'
+    + '1. Google Account → <b>Security</b> → turn ON <b>2-Step Verification</b><br>'
     + '2. Phir <b>Security → App passwords</b> par jaayen<br>'
     + '3. App name daalein (e.g. "HireLab ATS") → <b>Create</b> dabayein<br>'
-    + '4. Jo 16-character password mile, woh upar paste karein<br>'
+    + '4. Paste the 16-character password you receive above<br>'
     + '<div style="margin-top:6px;color:#0D47A1">&#128279; <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:#0D47A1;text-decoration:underline">Direct link: Google App Passwords</a></div>'
     + '</div>'
     + savedTemplatesHTML(s)
@@ -4050,7 +4050,7 @@ async function exportAll(){
 }
 async function importAll(input){
   const file=input.files[0];if(!file)return;input.value='';
-  if(!confirm('"'+file.name+'" import karna chahte ho?\n\nYeh data existing data ke SAATH add hoga.\n\nContinue?'))return;
+  if(!confirm('"'+file.name+'" — do you want to import it?\n\nThis data will be ADDED to your existing data.\n\nContinue?'))return;
   const setSt=s=>{const el=document.getElementById('db-status');if(el)el.textContent=s;};
   setSt('Importing...');
   try{
@@ -4371,7 +4371,7 @@ function applyEmailTemplate(){
 }
 
 async function saveAsEmailTemplate(){
-  if(!S._emailMandateId){ toast('ERR','Yeh candidate kisi mandate se linked nahi hai'); return; }
+  if(!S._emailMandateId){ toast('ERR','This candidate is not linked to any mandate'); return; }
   var subject = (document.getElementById('email-subject') || {}).value || '';
   var body = _getEmailBodyHtml();
   if(!subject.trim() && !body.trim()){ toast('ERR','Subject ya message likhein pehle'); return; }
@@ -4390,13 +4390,13 @@ async function saveAsEmailTemplate(){
 
 async function updateEmailTemplate(){
   var sel = document.getElementById('email-tpl');
-  if(!sel || sel.value === ''){ toast('ERR','Pehle ek template select karein jise update karna hai'); return; }
+  if(!sel || sel.value === ''){ toast('ERR','Please select a template to update first'); return; }
   var idx = parseInt(sel.value);
   var t = (S._mandTemplates || [])[idx];
   if(!t) return;
   var subject = (document.getElementById('email-subject') || {}).value || '';
   var body = _getEmailBodyHtml();
-  if(!confirm('Template "'+t.name+'" ko current email se update karein?')) return;
+  if(!confirm('Template "'+t.name+'" with the current email?')) return;
   S._mandTemplates[idx] = {name: t.name, subject: subject, body: body};
   await _saveMandTemplates();
   toast('OK', 'Template "'+t.name+'" updated!');
@@ -4486,7 +4486,7 @@ async function sendEmailFromPanel(){
   var body = _getEmailBody();
   var bodyHtml = _getEmailBodyHtml();
   if(!to.trim() || !subject.trim() || !body.trim()){
-    toast('ERR', 'To, Subject aur Message teenon zaroori hain'); return;
+    toast('ERR', 'To, Subject and Message are all required'); return;
   }
   var btn = document.getElementById('email-send-btn');
   var status = document.getElementById('email-send-status');
@@ -5821,7 +5821,7 @@ function attachEmailHandler(cand) {
     btn.addEventListener('click', function() {
       var email = cand.email || '';
       if (!email) {
-        toast('ERR', 'Email ID nahi hai — pehle email add karo profile mein');
+        toast('ERR', 'No email ID — please add an email in the profile first');
         var emailEl = document.getElementById('pf-email');
         if (emailEl) { emailEl.focus(); emailEl.style.border = '2px solid #E24B4A'; }
         return;
@@ -7195,7 +7195,7 @@ function setAnalyticsRange(r){
 function applyCustomRange(){
   var f=(document.getElementById('an-from')||{}).value;
   var t=(document.getElementById('an-to')||{}).value;
-  if(!f||!t){ toast('ERR','From aur To dono choose karein'); return; }
+  if(!f||!t){ toast('ERR','Please choose both From and To'); return; }
   _analyticsRange='custom'; _analyticsFrom=f; _analyticsTo=t;
   renderAnalytics();
 }
@@ -7257,7 +7257,7 @@ async function renderAnalytics(){
   html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
     + '<div style="font-size:13px;font-weight:600">Pipeline funnel</div>'
     + '<span style="font-size:10.5px;color:var(--muted);background:#F1F0EC;padding:2px 8px;border-radius:6px">current snapshot</span></div>';
-  html += '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">Kisi bhi stage par click karein &mdash; us stage ke saare candidates (sabhi positions se) naye tab mein khulenge.</div>';
+  html += '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">Click any stage &mdash; all candidates in that stage (across all positions) will open in a new tab.</div>';
   html += '<div style="display:flex;flex-direction:column;gap:7px">';
   r.funnel.forEach(function(f){
     var pct = Math.round(f.count*100/maxFunnel);
@@ -7393,7 +7393,7 @@ async function renderWaConversations(){
     html += '<div style="text-align:center;padding:60px 20px;color:var(--muted);background:#fff;border:0.5px solid var(--line);border-radius:12px">'
       + '<div style="font-size:34px;margin-bottom:10px">&#128172;</div>'
       + '<div style="font-size:14px;font-weight:600;color:var(--ink)">Koi conversation nahi</div>'
-      + '<div style="font-size:12px;margin-top:6px">Candidate profile par WhatsApp icon dabaakar shuru karein.</div>'
+      + '<div style="font-size:12px;margin-top:6px">Start by clicking the WhatsApp icon on a candidate profile.</div>'
       + '</div>';
     html += '</div>';
     body.innerHTML = html;
@@ -7921,7 +7921,7 @@ async function openLogActivity(preClientId){
   var r=await req('GET','/crm/clients?per_page=100&sort=name&dir=asc');
   var clients=(r.ok&&r.clients)?r.clients:[];
   if(!clients.length){
-    toast('ERR','Pehle CRM mein ek client add karein');
+    toast('ERR','Please add a client in CRM first');
     return;
   }
   var opts=clients.map(function(c){
@@ -7974,7 +7974,7 @@ async function saveLogActivity(){
     due_at=dueEl.value.length===16?dueEl.value+':00':dueEl.value;
   }
   if((activity_type==='followup'||activity_type==='task') && !due_at){
-    toast('ERR','Follow-up/task ke liye due date zaroori hai');
+    toast('ERR','A due date is required for a follow-up/task');
     return;
   }
   var payload={client_id:parseInt(client_id),activity_type:activity_type,
@@ -8260,7 +8260,7 @@ async function saveClient(clientId){
     address:document.getElementById('cf-address').value.trim(),
     notes:document.getElementById('cf-notes').value.trim()
   };
-  if(!payload.name){ toast('ERR','Company name zaroori hai'); return; }
+  if(!payload.name){ toast('ERR','Company name is required'); return; }
   var r=clientId
     ? await req('PUT','/crm/clients/'+clientId,payload)
     : await req('POST','/crm/clients',payload);
@@ -8382,7 +8382,7 @@ async function _cdRenderCenter(clientId){
 
   // Inline "log activity" prompt
   var logger='<div onclick="openLogActivity('+clientId+')" style="background:#fff;border:1px solid #E4E7EC;border-radius:10px;padding:12px 14px;margin-bottom:18px;cursor:text;color:#98A2B3;font-size:12.5px;display:flex;align-items:center;gap:8px">'
-    +'<span style="font-size:15px">&#9998;</span> Note, call, meeting log karne ke liye click karein...</div>';
+    +'<span style="font-size:15px">&#9998;</span> Click to log a note, call, or meeting...</div>';
 
   el.innerHTML=tabs+logger+'<div id="cd-activity-feed"><div class="loading" style="padding:20px"><div class="spinner"></div>Loading activity...</div></div>';
 
@@ -8398,7 +8398,7 @@ async function _cdRenderCenter(clientId){
     feed.innerHTML='<div style="text-align:center;padding:44px 20px;color:#98A2B3">'
       +'<div style="font-size:30px;margin-bottom:8px">&#128203;</div>'
       +'<div style="font-size:13px;color:#667085;font-weight:500">Abhi tak koi activity nahi</div>'
-      +'<div style="font-size:12px;margin-top:4px">Upar click karke pehli activity log karein.</div></div>';
+      +'<div style="font-size:12px;margin-top:4px">Click above to log the first activity.</div></div>';
     return;
   }
 
@@ -8500,7 +8500,7 @@ async function _cdOpenOrgChartModal(clientId){
     inner+='<div style="font-size:12px;font-weight:600;color:#101828;margin-bottom:10px">Reporting structure</div>';
     inner+='<div style="overflow-x:auto">'+_orgTreeHtml(r.tree, clientId)+'</div>';
   } else {
-    inner+='<div style="text-align:center;color:#98A2B3;padding:30px;font-size:12px">Contacts pe "Reports To" set karein org chart ke liye.</div>';
+    inner+='<div style="text-align:center;color:#98A2B3;padding:30px;font-size:12px">Set "Reports To" on contacts to build the org chart.</div>';
   }
   inner+='</div>';
   _waOpenModal(esc(r.client_name)+' — Org Chart', inner);
@@ -8794,7 +8794,7 @@ async function saveContact(clientId, contactId){
     is_decision_maker:roles.indexOf('decision_maker')>=0,
     notes:document.getElementById('ctf-notes').value.trim()
   };
-  if(!payload.name){ toast('ERR','Contact name zaroori hai'); return; }
+  if(!payload.name){ toast('ERR','Contact name is required'); return; }
   var r=contactId
     ? await req('PUT','/crm/contacts/'+contactId,payload)
     : await req('POST','/crm/clients/'+clientId+'/contacts',payload);
@@ -8810,7 +8810,7 @@ async function deleteContact(clientId, contactId){
 }
 
 async function autoMapJobs(){
-  if(!confirm('Existing job postings ko CRM clients se naam ke basis pe link karein?\n\nJinke naam match honge woh automatically jud jayenge.')) return;
+  if(!confirm('Link existing job postings to CRM clients by name?\n\nMatching names will be linked automatically.')) return;
   toast('...','Mapping jobs...');
   var r=await req('POST','/crm-link/auto-map',{});
   if(r.ok){
@@ -9008,7 +9008,7 @@ async function doSnooze(type, refId, isoDateTime){
 function doSnoozeCustom(type, refId){
   var d = (document.getElementById('snooze-date') || {}).value;
   var t = (document.getElementById('snooze-time') || {}).value || '09:00';
-  if (!d) { toast('ERR', 'Date choose karein'); return; }
+  if (!d) { toast('ERR', 'Please choose a date'); return; }
   doSnooze(type, refId, d + 'T' + t + ':00');
 }
 
@@ -9042,7 +9042,7 @@ function _maybeNotify(overdueCount){
 }
 
 async function enableTaskNotifications(){
-  if (typeof Notification === 'undefined') { toast('ERR', 'Is browser mein notifications support nahi hain'); return; }
+  if (typeof Notification === 'undefined') { toast('ERR', 'This browser does not support notifications'); return; }
   var perm = await Notification.requestPermission();
   if (perm === 'granted') {
     localStorage.setItem('hl_notif_enabled', '1');
@@ -9050,7 +9050,7 @@ async function enableTaskNotifications(){
     var btn = document.getElementById('notif-toggle-btn');
     if (btn) { btn.textContent = '\u2705 Notifications On'; btn.disabled = true; }
   } else {
-    toast('ERR', 'Permission denied. Browser settings mein allow karein.');
+    toast('ERR', 'Permission denied. Please allow it in your browser settings.');
   }
 }
 
