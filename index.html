@@ -1577,7 +1577,7 @@ async function renderFreelancerAdmin(){
   body.innerHTML='<div class="loading"><div class="spinner"></div>Loading freelancers...</div>';
   var r=await req('GET','/freelancers');
   if(!r.ok){
-    body.innerHTML='<div style="padding:20px;color:#D92D20">'+(r.error||'Failed to load')+(r.error==='Admin only'?' — sirf admin freelancers manage kar sakta hai.':'')+'</div>';
+    body.innerHTML='<div style="padding:20px;color:#D92D20">'+(r.error||'Failed to load')+(r.error==='Admin only'?' — only admins can manage freelancers.':'')+'</div>';
     return;
   }
   var fls=r.freelancers||[];
@@ -1633,7 +1633,7 @@ function openFreelancerForm(){
     +'<div style="font-size:12px;color:#667085;background:#F0F6FF;border:1px solid #D3E4FB;border-radius:8px;padding:10px 12px;line-height:1.5">'
     +'Share this username/password with the freelancer. They can log in to see only their own dashboard and sourced candidates.</div>'
     +'<div><label class="la-lbl">Full Name *</label><input id="ff-name" class="inp" style="width:100%" placeholder="Ramesh Kumar"></div>'
-    +'<div><label class="la-lbl">Username *</label><input id="ff-username" class="inp" style="width:100%" placeholder="ramesh (login ke liye)" autocomplete="off"></div>'
+    +'<div><label class="la-lbl">Username *</label><input id="ff-username" class="inp" style="width:100%" placeholder="ramesh (for login)" autocomplete="off"></div>'
     +'<div><label class="la-lbl">Password *</label><input id="ff-password" class="inp" style="width:100%" placeholder="at least 6 characters" autocomplete="new-password"></div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
     +'<button class="btn btn-o" onclick="_waCloseModal()" style="font-size:11px">Cancel</button>'
@@ -2230,7 +2230,7 @@ function sendInterviewWhatsApp(phone){
 }
 
 async function promptInterviewResult(iid, cid){
-  var res=prompt('Interview ka result / feedback likhein (e.g. Selected for next round, On hold, Rejected):');
+  var res=prompt('Enter the interview result / feedback (e.g. Selected for next round, On hold, Rejected):');
   if(res===null) return;
   var r=await req('POST','/interviews/'+iid+'/result',{result:res});
   if(r.ok){ toast('OK','Result saved'); openInterviewModal(cid); }
@@ -3812,7 +3812,7 @@ function emailConfigHTML(s){
     + '<div style="font-weight:700;margin-bottom:4px">&#128273; How to create a Gmail App Password:</div>'
     + '1. Google Account → <b>Security</b> → turn ON <b>2-Step Verification</b><br>'
     + '2. Phir <b>Security → App passwords</b> par jaayen<br>'
-    + '3. App name daalein (e.g. "HireLab ATS") → <b>Create</b> dabayein<br>'
+    + '3. Enter an app name (e.g. "HireLab ATS") → click <b>Create</b><br>'
     + '4. Paste the 16-character password you receive above<br>'
     + '<div style="margin-top:6px;color:#0D47A1">&#128279; <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:#0D47A1;text-decoration:underline">Direct link: Google App Passwords</a></div>'
     + '</div>'
@@ -4067,7 +4067,7 @@ async function importAll(input){
       var errMsg = r.error || r.detail || 'Import failed';
       toast('ERR','Error: '+errMsg);
       setSt('&#9888; Failed');
-      alert('Import failed:\n\n'+errMsg+'\n\nScreenshot lo aur share karo.');
+      alert('Import failed:\n\n'+errMsg+'\n\nTake a screenshot and share it.');
     }
   }catch(e){
     toast('ERR','Import error: '+e.message);
@@ -4374,7 +4374,7 @@ async function saveAsEmailTemplate(){
   if(!S._emailMandateId){ toast('ERR','This candidate is not linked to any mandate'); return; }
   var subject = (document.getElementById('email-subject') || {}).value || '';
   var body = _getEmailBodyHtml();
-  if(!subject.trim() && !body.trim()){ toast('ERR','Subject ya message likhein pehle'); return; }
+  if(!subject.trim() && !body.trim()){ toast('ERR','Please enter a subject or message first'); return; }
   var name = prompt('Template ka naam dein:', subject.trim().substring(0,40) || 'My Template');
   if(!name) return;
   S._mandTemplates = S._mandTemplates || [];
@@ -4426,7 +4426,7 @@ async function loadEmailHistory(cid){
 
 async function aiComposeEmail(){
   var cmd = (document.getElementById('ai-compose-cmd') || {}).value || '';
-  if(!cmd.trim()){ toast('ERR','Command likhein, jaise "Write follow up email"'); return; }
+  if(!cmd.trim()){ toast('ERR','Enter a command, e.g. "Write follow up email"'); return; }
   var cid = S._emailCid;
   var currentDraft = _getEmailBody();
   var currentSubject = (document.getElementById('email-subject') || {}).value || '';
@@ -7634,7 +7634,7 @@ async function resolveEscalation(escId, alsoLearn){
   var learn = alsoLearn || (learnEl && learnEl.checked);
   var intent_label = (intentEl && intentEl.value||'').trim();
   if(learn && !intent_label){
-    if(!confirm('Learn ke liye intent label chahiye (e.g. company_ask). Bina label ke sirf send karें?')){
+    if(!confirm('An intent label is required to Learn (e.g. company_ask). Send without a label?')){
       intentEl.focus(); return;
     }
     learn = false;
@@ -8655,7 +8655,7 @@ async function _cdLoadJobs(clientId){
   if(!mandates.length){
     html+='<div style="text-align:center;color:var(--muted);padding:30px;font-size:12px">'
       +'No job positions linked to this client yet.<br>'
-      +'<span style="font-size:11px">Naye mandates automatically link honge. Purane ke liye CRM page pe "Auto-map Jobs" dabayein.</span></div>';
+      +'<span style="font-size:11px">New mandates link automatically. For existing ones, click "Auto-map Jobs" on the CRM page.</span></div>';
   } else {
     html+='<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">'+mandates.length+' job position'+(mandates.length!==1?'s':'')+' linked</div>';
     mandates.forEach(function(m){
