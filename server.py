@@ -4225,10 +4225,13 @@ def _sync_imap_inbox(company_id):
     email address, and store new incoming messages. Returns (new_count, error)."""
     import imaplib, email as _email, re as _re
 
-    smtp_email = get_setting('smtp_email', '')
-    smtp_pass = get_setting('smtp_app_password', '')
+    smtp_email = (get_setting('smtp_email', '') or '').strip()
+    smtp_pass = (get_setting('smtp_app_password', '') or '')
     if not smtp_email or not smtp_pass:
         return 0, 'Email not configured. Add your Gmail + App Password in Settings.'
+    # Gmail app passwords are shown with spaces ("xxxx xxxx xxxx xxxx") but must be
+    # sent without spaces. Strip them defensively.
+    smtp_pass = smtp_pass.replace(' ', '').strip()
 
     host = _imap_host_for(smtp_email)
 
