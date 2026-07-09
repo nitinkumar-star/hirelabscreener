@@ -313,7 +313,7 @@ def my_mandates():
     company_id = effective_company_id()
     uid = real_user_id()
     rows = conn.execute(
-        'SELECT m.id, m.role, m.client, m.location, m.status '
+        'SELECT m.id, m.role, m.client, m.location, m.status, m.jd '
         'FROM mandate_freelancers mf JOIN mandates m ON m.id=mf.mandate_id '
         'WHERE mf.freelancer_user_id=? AND mf.company_id=? AND mf.is_active=1 '
         'ORDER BY m.created_at DESC',

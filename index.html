@@ -891,7 +891,7 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:28px;height:28px;border-radius:6px;background:#EAE6FB;display:flex;align-items:center;justify-content:center;font-size:14px">&#128188;</div>
-        <div><div style="font-size:14px;font-weight:600">BD Command Center</div><div style="font-size:11px;color:#888;margin-top:1px">Aaj ke follow-ups, meetings, stale clients &amp; requirements</div></div>
+        <div><div style="font-size:14px;font-weight:600">BD Command Center</div><div style="font-size:11px;color:#888;margin-top:1px">Today's follow-ups, meetings, stale clients &amp; requirements</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <div id="bd-scope-toggle" style="display:none;border:0.5px solid var(--line);border-radius:8px;overflow:hidden">
@@ -1951,9 +1951,10 @@ async function flOpenPipeline(mandateId){
   // Header
   var html='<div style="margin-bottom:18px">'
     +'<button onclick="flShowTab(\'mandates\')" style="background:none;border:none;color:#2D6FB3;font-size:12.5px;cursor:pointer;padding:0;margin-bottom:8px">&#8592; My Mandates</button>'
-    +'<div style="display:flex;align-items:center;gap:12px">'
+    +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
     +'<div style="font-size:20px;font-weight:800;color:#101828">'+(mandate?esc(mandate.role):'Pipeline')+'</div>'
     +(mandate?'<span style="font-size:13px;color:#667085">'+esc(mandate.client||'')+(mandate.location?' &middot; '+esc(mandate.location):'')+'</span>':'')
+    +(mandate&&mandate.jd?'<button onclick="flViewJD('+mandateId+')" class="btn btn-o" style="font-size:11.5px;margin-left:auto">&#128196; View JD</button>':'')
     +'</div>'
     +'<div style="font-size:12.5px;color:#667085;margin-top:3px">'+cands.length+' candidate'+(cands.length!==1?'s':'')+' sourced by you &middot; showing your candidates only</div>'
     +'</div>';
@@ -1993,6 +1994,22 @@ async function flOpenPipeline(mandateId){
   });
   html+='</div>';
   body.innerHTML=html;
+}
+
+// Freelancer: view JD read-only (cannot edit)
+async function flViewJD(mandateId){
+  var mandate=null;
+  var mr=await req('GET','/freelancer/my-mandates');
+  if(mr.ok) (mr.mandates||[]).forEach(function(m){ if(m.id===mandateId) mandate=m; });
+  if(!mandate){ toast('ERR','Mandate not found'); return; }
+  var jd=mandate.jd||'';
+  var inner='<div style="max-height:70vh;overflow:auto">'
+    +'<div style="font-size:12px;color:#667085;margin-bottom:12px">'+esc(mandate.role)+(mandate.client?' &middot; '+esc(mandate.client):'')+'</div>'
+    +(jd
+      ? '<div style="font-size:13px;color:#344054;line-height:1.65;white-space:pre-wrap">'+esc(jd)+'</div>'
+      : '<div style="color:#98A2B3;font-size:13px;padding:20px;text-align:center">No job description available for this mandate.</div>')
+    +'</div>';
+  _waOpenModal('Job Description', inner);
 }
 
 
@@ -2475,24 +2492,11 @@ function toggleMandGroup(key){
 }
 async function selectMandate(id){
   closeSidebarOnMobile();
-  // Hide the newer overlay views (CRM/BD/WhatsApp AI/Analytics) so they don't linger
-  ['crm-view','bd-view','waai-view','analytics-view'].forEach(function(vid){
-    var el=document.getElementById(vid); if(el) el.style.display='none';
-  });
-  ['sb-crm','sb-bd','sb-waai','sb-analytics'].forEach(function(bid){
-    var b=document.getElementById(bid); if(b) b.className='sb-gear';
-  });
-  var av=document.getElementById('ai-view'); if(av) av.style.display='none';
-  var sa=document.getElementById('sb-ai'); if(sa) sa.className='sb-gear';
-  var adv=document.getElementById('admin-view'); if(adv) adv.style.display='none';
-  var sad=document.getElementById('sb-admin'); if(sad && !(S.currentUser&&S.currentUser.role==='admin'&&!S.viewingAs)) sad.style.display='none'; else if(sad) sad.className='sb-gear';
-  var tv=document.getElementById('tasks-view'); if(tv) tv.style.display='none';
-  var st=document.getElementById('sb-tasks'); if(st) st.className='sb-gear';
-  var cv=document.getElementById('cdb-view'); if(cv) cv.style.display='none';
-  var cv2=document.getElementById('central-view'); if(cv2) cv2.style.display='none';
-  var scdb=document.getElementById('sb-central'); if(scdb) scdb.className='sb-gear';
+  // Hide ALL overlay views centrally so nothing lingers/overlaps
+  _hideAllViews();
   document.getElementById('mandate-view').style.display='flex';
   S.activeMandate=S.mandates.find(m=>m.id===id);
+  if(S.activeMandate){ document.title = (S.activeMandate.role||'Mandate')+' · '+(S.activeMandate.client||'')+' · HireLab'; }
   S.settingsOpen=false; S.batchResult=null; S.sopMsgs=[]; S.selectedCandidateId=null;
   S.sortables.forEach(s=>{try{s.destroy();}catch(e){}});S.sortables=[];
   document.getElementById('sb-gear').className='sb-gear';
@@ -2618,7 +2622,7 @@ async function renderDashboard(el){
   var tasks = '<div style="background:#fff;border-top:1px solid var(--line);padding:18px 20px">';
   tasks += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">';
   tasks += '<div style="font-size:13px;font-weight:700;color:var(--navy);display:flex;align-items:center;gap:8px">';
-  tasks += '&#9989; Aaj ke Follow-ups';
+  tasks += '&#9989; Today&#39;s Follow-ups';
   if (hasAny) tasks += '<span style="background:#E24B4A;color:#fff;font-size:10px;padding:1px 8px;border-radius:8px;font-weight:600">' + ((counts.overdue||0)+(counts.today||0)) + '</span>';
   tasks += '</div>';
   tasks += '<span onclick="openTasks()" style="font-size:11.5px;color:var(--teal-deep);cursor:pointer;font-weight:600">View all &#8594;</span>';
@@ -2716,9 +2720,60 @@ function renderMandateSetup(el){
     +'</div><div class="fg-row"><label>Job Description</label>'
     + buildJDEditor('ms-jd', m.jd||'')
     +'</div>'
-    +'</div></div>' + adminCard;
+    +'</div></div>'
+    + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
+    + '<span style="font-weight:500">&#128273; Client Notes <span style="font-size:10.5px;color:var(--muted);font-weight:400">(private &mdash; used by AI rating, never shared with candidates)</span></span></div>'
+    + '<div class="card-body">'
+    + '<div style="display:flex;gap:8px;margin-bottom:12px">'
+    + '<input id="cn-input" class="inp" style="flex:1" placeholder="e.g. Client wants only candidates from Tier-1 colleges" onkeydown="if(event.key===\'Enter\')addClientNote()">'
+    + '<button class="btn btn-g" onclick="addClientNote()">Add</button></div>'
+    + '<div id="cn-list"><div style="font-size:12px;color:var(--muted)">Loading notes...</div></div>'
+    + '</div></div>'
+    + adminCard;
   attachJDToolbar();
+  loadClientNotes();
   if (S.currentUser && S.currentUser.is_company_admin) loadTeamForAssign(m.assigned_user_id);
+}
+
+async function loadClientNotes(){
+  if(!S.activeMandate) return;
+  var el=document.getElementById('cn-list');
+  if(!el) return;
+  var r=await req('GET','/mandates/'+S.activeMandate.id+'/client-notes');
+  if(!r.ok){ el.innerHTML='<div style="font-size:12px;color:#C0522B">Could not load notes</div>'; return; }
+  var notes=r.notes||[];
+  if(!notes.length){
+    el.innerHTML='<div style="font-size:12px;color:var(--muted);padding:8px 0">No client notes yet. Add intel from the client here &mdash; it helps the AI rate candidates the way the client wants.</div>';
+    return;
+  }
+  var html='';
+  notes.forEach(function(n){
+    var when=n.created_at?_fmtDateTime(n.created_at):'';
+    html+='<div style="display:flex;gap:10px;padding:10px 0;border-bottom:0.5px solid var(--line)">'
+      +'<div style="flex:1"><div style="font-size:12.5px;color:var(--ink);line-height:1.5">'+esc(n.note)+'</div>'
+      +'<div style="font-size:10.5px;color:var(--muted);margin-top:3px">'+when+(n.author?' &middot; '+esc(n.author):'')+'</div></div>'
+      +'<button class="btn btn-o" onclick="deleteClientNote('+n.id+')" style="font-size:10px;padding:2px 7px;color:#C0522B;border-color:#E8C4C4;align-self:flex-start">&times;</button>'
+      +'</div>';
+  });
+  el.innerHTML=html;
+}
+
+async function addClientNote(){
+  if(!S.activeMandate) return;
+  var inp=document.getElementById('cn-input');
+  var note=(inp.value||'').trim();
+  if(!note){ toast('ERR','Please type a note'); return; }
+  var r=await req('POST','/mandates/'+S.activeMandate.id+'/client-notes',{note:note});
+  if(r.ok){ inp.value=''; toast('OK','Note added'); loadClientNotes(); }
+  else toast('ERR', r.error||'Failed');
+}
+
+async function deleteClientNote(nid){
+  if(!S.activeMandate) return;
+  if(!confirm('Delete this client note?')) return;
+  var r=await req('DELETE','/mandates/'+S.activeMandate.id+'/client-notes/'+nid);
+  if(r.ok){ toast('OK','Note deleted'); loadClientNotes(); }
+  else toast('ERR', r.error||'Failed');
 }
 
 async function loadTeamForAssign(currentAssigned) {
@@ -3265,6 +3320,11 @@ function pqPill(icon, text) {
 
 function renderProfileDetail(c){
   const el=document.getElementById('prof-detail');if(!el)return;
+  // Update the browser tab title so opened-in-new-tab windows are identifiable
+  if(c && c.name){
+    var mroleT = (S.activeMandate && S.activeMandate.role) ? ' — '+S.activeMandate.role : '';
+    document.title = c.name + mroleT + ' · HireLab';
+  }
   const skills=c.key_skills||[];const hist=c.history||[];const hasCv=!!(c.cv_path&&c.cv_path!=='');
   let html='';
   // Sticky header
@@ -8993,7 +9053,7 @@ async function renderTasksView() {
   // ── My Day: Overdue + Today combined, always expanded ──────────────────
   var myDay = overdue.concat(today);
   if (myDay.length) {
-    html += '<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">&#9728;&#65039; Aaj ke Follow-ups</div>';
+    html += '<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">&#9728;&#65039; Today&#39;s Follow-ups</div>';
     html += '<div style="font-size:11px;color:var(--muted);margin-bottom:12px">' + myDay.length + ' to tackle today' + (overdue.length ? ' \u00b7 ' + overdue.length + ' overdue' : '') + '</div>';
     myDay.forEach(function(t){ html += taskCard(t); });
     html += '<div style="height:14px"></div>';

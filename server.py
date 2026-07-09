@@ -1435,6 +1435,20 @@ def init_db():
         c.execute("ALTER TABLE mandates ADD COLUMN crm_client_id INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
+    # Timestamped client notes per mandate (hidden from candidates, used in AI rating)
+    c.execute('''CREATE TABLE IF NOT EXISTS mandate_client_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mandate_id INTEGER NOT NULL,
+        owner_id INTEGER NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        created_by INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT '',
+        is_active INTEGER DEFAULT 1
+    )''')
+    try:
+        c.execute('CREATE INDEX IF NOT EXISTS idx_mcn_mandate ON mandate_client_notes(mandate_id, is_active)')
+    except sqlite3.OperationalError:
+        pass
     try:
         c.execute("ALTER TABLE submissions ADD COLUMN task_snoozed_until TEXT DEFAULT ''")
     except sqlite3.OperationalError:
@@ -2973,6 +2987,20 @@ def rate_candidate(cid):
                 f"CTC band: {m['ctc_min']}-{m['ctc_max']} LPA\n"
                 + (f"Job Description:\n{jd_text}" if jd_text.strip() else "Job Description: (not provided)"))
 
+    # Pull hidden client notes for this mandate (recruiter's private intel from client)
+    client_notes = ''
+    try:
+        note_rows = conn.execute(
+            'SELECT note, created_at FROM mandate_client_notes WHERE mandate_id=? AND is_active=1 '
+            'ORDER BY created_at ASC', (c['mandate_id'],)).fetchall()
+        if note_rows:
+            client_notes = '\n'.join('- ' + (r['note'] or '') for r in note_rows if (r['note'] or '').strip())
+    except Exception:
+        client_notes = ''
+    if client_notes.strip():
+        role_ctx += ("\n\nIMPORTANT — Private client requirements & preferences "
+                     "(shared confidentially by the client; weigh these heavily):\n" + client_notes)
+
     cand_ctx = (f"Name: {c['name']}\n"
                 f"Current: {c['designation']} at {c['company']}\n"
                 f"Experience: {c['experience']} years\n"
@@ -3380,6 +3408,53 @@ def list_mandates():
                             (effective_company_id(), real_user_id())).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
+
+@app.route('/api/mandates/<int:mid>/client-notes', methods=['GET'])
+@login_required
+def get_client_notes(mid):
+    conn = get_db()
+    m = conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
+    if not m or m['owner_id'] != effective_company_id():
+        conn.close(); return jsonify({'error': 'Mandate not found'}), 404
+    rows = conn.execute(
+        'SELECT n.id, n.note, n.created_at, n.created_by, u.display_name AS author '
+        'FROM mandate_client_notes n LEFT JOIN users u ON u.id=n.created_by '
+        'WHERE n.mandate_id=? AND n.is_active=1 ORDER BY n.created_at DESC',
+        (mid,)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'notes': [dict(r) for r in rows]})
+
+
+@app.route('/api/mandates/<int:mid>/client-notes', methods=['POST'])
+@login_required
+def add_client_note(mid):
+    d = request.json or {}
+    note = (d.get('note') or '').strip()
+    if not note:
+        return jsonify({'error': 'Note text required'}), 400
+    conn = get_db()
+    m = conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
+    if not m or m['owner_id'] != effective_company_id():
+        conn.close(); return jsonify({'error': 'Mandate not found'}), 404
+    conn.execute(
+        'INSERT INTO mandate_client_notes (mandate_id, owner_id, note, created_by, created_at, is_active) '
+        'VALUES (?,?,?,?,?,1)',
+        (mid, effective_company_id(), note, real_user_id(), ts()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/mandates/<int:mid>/client-notes/<int:nid>', methods=['DELETE'])
+@login_required
+def delete_client_note(mid, nid):
+    conn = get_db()
+    m = conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
+    if not m or m['owner_id'] != effective_company_id():
+        conn.close(); return jsonify({'error': 'Mandate not found'}), 404
+    conn.execute('UPDATE mandate_client_notes SET is_active=0 WHERE id=? AND mandate_id=?', (nid, mid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
 
 @app.route('/api/mandates', methods=['POST'])
 @login_required
