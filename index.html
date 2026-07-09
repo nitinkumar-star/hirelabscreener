@@ -4576,12 +4576,25 @@ async function syncEmailThread(cid){
   var el = document.getElementById('email-thread');
   if(el){ el.innerHTML = '<div class="loading" style="padding:12px"><div class="spinner"></div>Checking inbox for replies...</div>'; }
   var r = await req('POST', '/email/sync');
-  if(r.ok){
-    toast('OK', (r.new_messages||0) + ' new message' + ((r.new_messages||0)!==1?'s':'') + ' fetched');
+  if(r && r.ok){
+    var n = r.new_messages || 0;
+    toast('OK', n + ' new message' + (n!==1?'s':'') + ' fetched');
     loadEmailThread(cid);
+    if(n===0 && el){
+      // Show a hint after reload if nothing came in
+      setTimeout(function(){
+        var t=document.getElementById('email-thread');
+        if(t && t.innerHTML.indexOf('No emails yet')>=0){
+          t.innerHTML += '<div style="font-size:10.5px;color:#98A2B3;margin-top:8px;padding:8px;background:#F9FAFB;border-radius:8px;line-height:1.5">No new replies found. Make sure:<br>1. IMAP is enabled in your Gmail settings<br>2. The candidate has replied from the same email you have on file</div>';
+        }
+      }, 400);
+    }
   } else {
-    toast('ERR', r.error || 'Sync failed');
-    loadEmailThread(cid);
+    var errMsg = (r && r.error) ? r.error : 'Sync failed — the email endpoint may not be deployed yet, or your email is not configured in Settings.';
+    toast('ERR', errMsg);
+    if(el){
+      el.innerHTML = '<div style="font-size:11.5px;color:#B42318;padding:12px;background:#FEF3F2;border-radius:8px;line-height:1.55">&#9888;&#65039; '+esc(errMsg)+'</div>';
+    }
   }
 }
 
