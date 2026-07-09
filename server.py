@@ -1449,6 +1449,30 @@ def init_db():
         c.execute('CREATE INDEX IF NOT EXISTS idx_mcn_mandate ON mandate_client_notes(mandate_id, is_active)')
     except sqlite3.OperationalError:
         pass
+    # 2-way email: stores both sent and received messages, threaded by Message-ID
+    c.execute('''CREATE TABLE IF NOT EXISTS email_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        candidate_id INTEGER DEFAULT 0,
+        direction TEXT DEFAULT 'sent',
+        from_addr TEXT DEFAULT '',
+        to_addr TEXT DEFAULT '',
+        subject TEXT DEFAULT '',
+        body TEXT DEFAULT '',
+        message_id TEXT DEFAULT '',
+        in_reply_to TEXT DEFAULT '',
+        sent_at TEXT DEFAULT '',
+        created_at TEXT DEFAULT ''
+    )''')
+    for sql in [
+        'CREATE INDEX IF NOT EXISTS idx_em_candidate ON email_messages(candidate_id, sent_at)',
+        'CREATE INDEX IF NOT EXISTS idx_em_company ON email_messages(company_id)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_em_msgid ON email_messages(company_id, message_id)',
+    ]:
+        try:
+            c.execute(sql)
+        except sqlite3.OperationalError:
+            pass
     try:
         c.execute("ALTER TABLE submissions ADD COLUMN task_snoozed_until TEXT DEFAULT ''")
     except sqlite3.OperationalError:
@@ -2849,6 +2873,7 @@ TENANT_SETTINGS = {
     'fu1_hours', 'fu2_hours',
     'workflow_mode',   # 'agency' (default) or 'corporate'
     'smtp_email', 'smtp_app_password', 'smtp_display_name',
+    'imap_enabled', 'imap_last_uid',
     'email_templates',  # JSON array of {name, subject, body}
     'custom_status_tags',  # JSON array of user-created quick tags
     'stale_days', 'promise_hours',  # follow-up task detection thresholds
@@ -4067,6 +4092,12 @@ def send_candidate_email(cid):
     msg['From'] = f'{smtp_name} <{smtp_email}>' if smtp_name else smtp_email
     msg['To'] = to_email
     msg['Subject'] = subject
+    # Generate a stable Message-ID so replies can be threaded back to this email
+    import email.utils as _eut
+    domain = smtp_email.split('@')[-1] if '@' in smtp_email else 'hirelab.local'
+    gen_msg_id = _eut.make_msgid(domain=domain)
+    msg['Message-ID'] = gen_msg_id
+    msg['Date'] = _eut.formatdate(localtime=True)
     # Send as both plain text and HTML
     msg.attach(MIMEText(body, 'plain', 'utf-8'))
     body_html = (d.get('body_html') or '').strip()
@@ -4106,7 +4137,207 @@ def send_candidate_email(cid):
         full_log += f'\n— {who}'
     log_candidate_event(cid, 'email', full_log)
 
+    # Store in the 2-way email thread table
+    try:
+        conn = get_db()
+        conn.execute(
+            'INSERT OR IGNORE INTO email_messages (company_id, candidate_id, direction, '
+            'from_addr, to_addr, subject, body, message_id, in_reply_to, sent_at, created_at) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            (effective_company_id(), cid, 'sent', smtp_email, to_email, subject, body,
+             gen_msg_id, '', ts(), ts()))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
     return jsonify({'ok': True, 'message': 'Email sent successfully'})
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  2-WAY EMAIL — IMAP inbox sync + candidate threads
+# ═══════════════════════════════════════════════════════════════════════
+def _imap_host_for(email_addr):
+    e = (email_addr or '').lower()
+    if '@gmail' in e or '@googlemail' in e:
+        return 'imap.gmail.com'
+    if '@outlook' in e or '@hotmail' in e or '@live' in e:
+        return 'outlook.office365.com'
+    if '@yahoo' in e:
+        return 'imap.mail.yahoo.com'
+    return 'imap.gmail.com'
+
+
+def _decode_mime_header(raw):
+    """Decode an email header that may be MIME-encoded."""
+    from email.header import decode_header
+    if not raw:
+        return ''
+    parts = decode_header(raw)
+    out = ''
+    for txt, enc in parts:
+        if isinstance(txt, bytes):
+            try:
+                out += txt.decode(enc or 'utf-8', errors='replace')
+            except Exception:
+                out += txt.decode('utf-8', errors='replace')
+        else:
+            out += txt
+    return out
+
+
+def _extract_plain_body(msg):
+    """Get a plain-text body from an email.message.Message."""
+    body = ''
+    if msg.is_multipart():
+        for part in msg.walk():
+            ctype = part.get_content_type()
+            disp = str(part.get('Content-Disposition') or '')
+            if ctype == 'text/plain' and 'attachment' not in disp:
+                try:
+                    payload = part.get_payload(decode=True)
+                    charset = part.get_content_charset() or 'utf-8'
+                    body += payload.decode(charset, errors='replace')
+                except Exception:
+                    pass
+        if not body:
+            # fall back to html stripped
+            for part in msg.walk():
+                if part.get_content_type() == 'text/html':
+                    try:
+                        payload = part.get_payload(decode=True)
+                        charset = part.get_content_charset() or 'utf-8'
+                        body += html_to_text(payload.decode(charset, errors='replace'))
+                    except Exception:
+                        pass
+    else:
+        try:
+            payload = msg.get_payload(decode=True)
+            charset = msg.get_content_charset() or 'utf-8'
+            body = payload.decode(charset, errors='replace')
+        except Exception:
+            body = str(msg.get_payload())
+    return body.strip()
+
+
+def _sync_imap_inbox(company_id):
+    """Connect via IMAP, fetch recent inbox messages, match to candidates by
+    email address, and store new incoming messages. Returns (new_count, error)."""
+    import imaplib, email as _email, re as _re
+
+    smtp_email = get_setting('smtp_email', '')
+    smtp_pass = get_setting('smtp_app_password', '')
+    if not smtp_email or not smtp_pass:
+        return 0, 'Email not configured. Add your Gmail + App Password in Settings.'
+
+    host = _imap_host_for(smtp_email)
+
+    # Build a map of candidate email -> candidate_id for this tenant
+    conn = get_db()
+    cand_rows = conn.execute(
+        "SELECT id, email FROM candidates WHERE owner_id=? AND email IS NOT NULL AND email!=''",
+        (company_id,)).fetchall()
+    email_to_cid = {}
+    for r in cand_rows:
+        em = (r['email'] or '').strip().lower()
+        if em:
+            email_to_cid[em] = r['id']
+
+    if not email_to_cid:
+        conn.close()
+        return 0, None  # no candidates with emails, nothing to match
+
+    new_count = 0
+    try:
+        M = imaplib.IMAP4_SSL(host, 993)
+        M.login(smtp_email, smtp_pass)
+        M.select('INBOX')
+        # Search last 60 days to keep it light
+        import datetime as _dt
+        since = (_dt.datetime.utcnow() - _dt.timedelta(days=60)).strftime('%d-%b-%Y')
+        typ, data = M.search(None, f'(SINCE {since})')
+        if typ != 'OK':
+            M.logout(); conn.close()
+            return 0, 'IMAP search failed'
+        ids = data[0].split()
+        # Only look at the most recent ~200 to bound work
+        ids = ids[-200:]
+        for num in ids:
+            typ, msg_data = M.fetch(num, '(RFC822)')
+            if typ != 'OK' or not msg_data or not msg_data[0]:
+                continue
+            raw = msg_data[0][1]
+            m = _email.message_from_bytes(raw)
+            from_hdr = _decode_mime_header(m.get('From', ''))
+            # extract bare email
+            fmatch = _re.search(r'[\w\.\-\+]+@[\w\.\-]+', from_hdr)
+            from_email = (fmatch.group(0).lower() if fmatch else '')
+            if from_email not in email_to_cid:
+                continue  # not from a known candidate
+            cid = email_to_cid[from_email]
+            message_id = (m.get('Message-ID', '') or '').strip()
+            if not message_id:
+                continue
+            # Dedup: skip if we already stored this message_id
+            exists = conn.execute(
+                'SELECT id FROM email_messages WHERE company_id=? AND message_id=?',
+                (company_id, message_id)).fetchone()
+            if exists:
+                continue
+            subject = _decode_mime_header(m.get('Subject', ''))
+            in_reply_to = (m.get('In-Reply-To', '') or '').strip()
+            body = _extract_plain_body(m)
+            import email.utils as _eut
+            date_hdr = m.get('Date', '')
+            try:
+                dt = _eut.parsedate_to_datetime(date_hdr)
+                sent_at = dt.strftime('%Y-%m-%dT%H:%M:%S')
+            except Exception:
+                sent_at = ts()
+            conn.execute(
+                'INSERT OR IGNORE INTO email_messages (company_id, candidate_id, direction, '
+                'from_addr, to_addr, subject, body, message_id, in_reply_to, sent_at, created_at) '
+                'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                (company_id, cid, 'received', from_email, smtp_email, subject, body,
+                 message_id, in_reply_to, sent_at, ts()))
+            new_count += 1
+        conn.commit()
+        M.logout()
+    except imaplib.IMAP4.error as e:
+        conn.close()
+        return 0, f'IMAP login failed. Check your email & app password. ({str(e)[:80]})'
+    except Exception as e:
+        conn.close()
+        return 0, f'IMAP sync error: {str(e)[:100]}'
+    conn.close()
+    return new_count, None
+
+
+@app.route('/api/email/sync', methods=['POST'])
+@login_required
+def email_sync():
+    """Manually trigger an IMAP inbox sync to pull candidate replies."""
+    new_count, err = _sync_imap_inbox(effective_company_id())
+    if err:
+        return jsonify({'error': err}), 400
+    return jsonify({'ok': True, 'new_messages': new_count})
+
+
+@app.route('/api/candidates/<int:cid>/email-thread', methods=['GET'])
+@login_required
+def candidate_email_thread(cid):
+    """Return the full email conversation (sent + received) for a candidate,
+    chronological order. Optionally sync IMAP first if ?sync=1."""
+    if request.args.get('sync') == '1':
+        _sync_imap_inbox(effective_company_id())
+    conn = get_db()
+    rows = conn.execute(
+        'SELECT id, direction, from_addr, to_addr, subject, body, sent_at '
+        'FROM email_messages WHERE company_id=? AND candidate_id=? '
+        'ORDER BY sent_at ASC, id ASC',
+        (effective_company_id(), cid)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'messages': [dict(r) for r in rows]})
 
 
 def _smtp_send(to_email, subject, plain_body, html_body=None):

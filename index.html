@@ -3935,7 +3935,7 @@ function emailConfigHTML(s){
     + '<span style="font-size:15px">&#9993;&#65039;</span>'
     + '<div style="font-size:15px;font-weight:700;color:var(--navy)">Email Configuration</div></div>'
     + '<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5">'
-    + 'Connect your Gmail to send emails directly from the ATS. Each agency can set their own email.'
+    + 'Connect your Gmail to send emails from the ATS and receive candidate replies (2-way). The same App Password enables both sending and reading replies. Each agency can set their own email.'
     + '</div>'
     + '<div class="card"><div class="card-body">'
     + '<div class="fg-row"><label>Gmail Address</label><input class="inp" id="s-smtp_email" value="' + esc(s.smtp_email||'') + '" placeholder="you@gmail.com"></div>'
@@ -3944,7 +3944,7 @@ function emailConfigHTML(s){
     + '<div style="background:#F3F8FF;border:0.5px solid #C5DEFF;border-radius:8px;padding:12px;margin-top:10px;font-size:11px;color:#1565C0;line-height:1.6">'
     + '<div style="font-weight:700;margin-bottom:4px">&#128273; How to create a Gmail App Password:</div>'
     + '1. Google Account → <b>Security</b> → turn ON <b>2-Step Verification</b><br>'
-    + '2. Phir <b>Security → App passwords</b> par jaayen<br>'
+    + '2. Then go to <b>Security → App passwords</b><br>'
     + '3. Enter an app name (e.g. "HireLab ATS") → click <b>Create</b><br>'
     + '4. Paste the 16-character password you receive above<br>'
     + '<div style="margin-top:6px;color:#0D47A1">&#128279; <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:#0D47A1;text-decoration:underline">Direct link: Google App Passwords</a></div>'
@@ -4455,10 +4455,13 @@ function openEmailPanel(cid, candidateEmail, mandateId){
     + '<button onclick="aiComposeEmail()" class="btn" style="background:#534AB7;color:#fff;border:none;font-size:11px;padding:6px 12px;white-space:nowrap">Generate</button></div>'
     + '<div id="ai-compose-status" style="font-size:10.5px;color:var(--muted);margin-top:4px;min-height:14px"></div>'
     + '</div>'
-    // Sent Email History
+    // Full 2-way conversation thread (sent + received)
     + '<div style="border-top:0.5px solid var(--line);padding-top:12px;margin-top:14px">'
-    + '<div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">&#128229; Sent Emails</div>'
-    + '<div id="email-history" style="font-size:11.5px;color:var(--muted)">Loading...</div>'
+    + '<div style="display:flex;align-items:center;margin-bottom:8px">'
+    + '<span style="font-size:12px;font-weight:600;color:var(--navy)">&#128172; Conversation</span>'
+    + '<button onclick="syncEmailThread(' + cid + ')" class="btn btn-o" style="margin-left:auto;font-size:10.5px;padding:4px 10px" title="Fetch replies from your inbox">&#8635; Sync inbox</button>'
+    + '</div>'
+    + '<div id="email-thread" style="font-size:12px;color:var(--muted)">Loading...</div>'
     + '</div></div>';
 
   var main = document.getElementById('main');
@@ -4467,7 +4470,7 @@ function openEmailPanel(cid, candidateEmail, mandateId){
   setTimeout(function(){ document.addEventListener('mousedown', _emailOutside); }, 50);
 
   loadMandateTemplates();
-  loadEmailHistory(cid);
+  loadEmailThread(cid);
 
   setTimeout(function(){
     var subj = document.getElementById('email-subject');
@@ -4535,6 +4538,49 @@ async function updateEmailTemplate(){
   toast('OK', 'Template "'+t.name+'" updated!');
 }
 
+async function loadEmailThread(cid){
+  var el = document.getElementById('email-thread');
+  if(!el) return;
+  var r = await req('GET', '/candidates/' + cid + '/email-thread');
+  if(!r.ok){ el.innerHTML = '<div style="color:#C0522B;font-size:11.5px">Could not load conversation.</div>'; return; }
+  var msgs = r.messages || [];
+  if(!msgs.length){
+    el.innerHTML = '<div style="color:#98A2B3;font-size:11.5px">No emails yet. Send one above, then use "Sync inbox" to pull replies.</div>';
+    return;
+  }
+  el.innerHTML = msgs.map(function(m){
+    var sent = (m.direction === 'sent');
+    var align = sent ? 'flex-end' : 'flex-start';
+    var bg = sent ? '#E7F0FB' : '#F2F4F7';
+    var fg = sent ? '#1B3A5B' : '#344054';
+    var who = sent ? 'You' : (m.from_addr || 'Candidate');
+    var when = m.sent_at ? (_journeyDateLabel(m.sent_at) + ' ' + _journeyTime(m.sent_at)) : '';
+    return '<div style="display:flex;justify-content:' + align + ';margin-bottom:10px">'
+      + '<div style="max-width:88%;background:' + bg + ';border-radius:12px;padding:9px 12px">'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">'
+      + '<span style="font-size:10.5px;font-weight:700;color:' + fg + '">' + (sent ? '&#8599; ' : '&#8600; ') + esc(who) + '</span>'
+      + '<span style="font-size:9.5px;color:#98A2B3;margin-left:auto">' + when + '</span></div>'
+      + (m.subject ? '<div style="font-size:11px;font-weight:600;color:' + fg + ';margin-bottom:3px">' + esc(m.subject) + '</div>' : '')
+      + '<div style="font-size:11.5px;color:#475467;white-space:pre-wrap;line-height:1.5">' + esc((m.body||'').slice(0, 2000)) + ((m.body||'').length>2000?'…':'') + '</div>'
+      + '</div></div>';
+  }).join('');
+  // scroll to bottom
+  el.scrollTop = el.scrollHeight;
+}
+
+async function syncEmailThread(cid){
+  var el = document.getElementById('email-thread');
+  if(el){ el.innerHTML = '<div class="loading" style="padding:12px"><div class="spinner"></div>Checking inbox for replies...</div>'; }
+  var r = await req('POST', '/email/sync');
+  if(r.ok){
+    toast('OK', (r.new_messages||0) + ' new message' + ((r.new_messages||0)!==1?'s':'') + ' fetched');
+    loadEmailThread(cid);
+  } else {
+    toast('ERR', r.error || 'Sync failed');
+    loadEmailThread(cid);
+  }
+}
+
 async function loadEmailHistory(cid){
   var el = document.getElementById('email-history');
   if(!el) return;
@@ -4564,7 +4610,7 @@ async function aiComposeEmail(){
   var currentDraft = _getEmailBody();
   var currentSubject = (document.getElementById('email-subject') || {}).value || '';
   var status = document.getElementById('ai-compose-status');
-  if(status){ status.textContent = '🤖 AI likh raha hai...'; status.style.color = '#534AB7'; }
+  if(status){ status.textContent = '🤖 AI is writing...'; status.style.color = '#534AB7'; }
 
   var r = await req('POST', '/candidates/' + cid + '/ai-compose', {
     command: cmd.trim(),
