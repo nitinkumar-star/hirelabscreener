@@ -211,8 +211,15 @@ def record_changes(entity_type, entity_id, before: dict, after: dict, fields,
     return changes
 
 
+def _ist_now():
+    """Current time in IST (India Standard Time, UTC+5:30).
+    Render servers run in UTC, so we add the offset to get correct local time."""
+    return datetime.datetime.utcnow() + datetime.timedelta(hours=5, minutes=30)
+
+
 def utcnow_iso():
-    return datetime.datetime.now().isoformat()
+    # Despite the name, we return IST so timestamps match the user's local time.
+    return _ist_now().isoformat()
 
 
 def login_required(f):
@@ -579,6 +586,174 @@ def push_call():
 # ── FCM V1 helper: get OAuth2 access token from service account JSON ─────
 _fcm_token_cache = {'token': '', 'expires': 0, 'project_id': ''}
 
+
+def _send_fcm_to_user(uid, data_payload):
+    """Send a data-only FCM push to all of a user's active devices.
+    data_payload: dict of string->string. Returns number of devices reached."""
+    conn = get_db()
+    tokens = conn.execute('SELECT fcm_token FROM devices WHERE user_id=? AND is_active=1',
+                          (uid,)).fetchall()
+    conn.close()
+    if not tokens:
+        return 0
+    access_token, project_id, err = _get_fcm_access_token()
+    if err:
+        print(f'[fcm] token error: {err}')
+        return 0
+    # FCM data values must all be strings
+    data = {k: (str(v) if v is not None else '') for k, v in data_payload.items()}
+    sent = 0
+    for row in tokens:
+        try:
+            resp = requests.post(
+                f'https://fcm.googleapis.com/v1/projects/{project_id}/messages:send',
+                json={'message': {
+                    'token': row['fcm_token'],
+                    'data': data,
+                    'android': {'priority': 'high'},
+                }},
+                headers={'Authorization': f'Bearer {access_token}',
+                         'Content-Type': 'application/json'},
+                timeout=10)
+            if resp.status_code == 200:
+                sent += 1
+            else:
+                print(f'[fcm] error {resp.status_code}: {resp.text[:150]}')
+        except Exception as e:
+            print(f'[fcm] send failed: {e}')
+    return sent
+
+
+def _reminder_candidate_details(conn, r):
+    """Build a rich detail payload for a reminder's candidate (for the push)."""
+    cid = r['candidate_id']
+    cand = conn.execute(
+        'SELECT name, phone, company, designation, stage FROM candidates WHERE id=?',
+        (cid,)).fetchone()
+    # last note = most recent candidate event of type 'note' or the reminder note
+    last_note = r['note'] or ''
+    try:
+        ev = conn.execute(
+            "SELECT detail FROM candidate_events WHERE candidate_id=? AND event_type='note' "
+            "ORDER BY created_at DESC LIMIT 1", (cid,)).fetchone()
+        if ev and ev['detail']:
+            last_note = ev['detail']
+    except Exception:
+        pass
+    name = (cand['name'] if cand else '') or r['candidate_name'] or 'Candidate'
+    return {
+        'action': 'reminder',
+        'reminder_id': r['id'],
+        'candidate_id': cid,
+        'name': name,
+        'phone': (cand['phone'] if cand else '') or '',
+        'company': (cand['company'] if cand else '') or '',
+        'designation': (cand['designation'] if cand else '') or '',
+        'stage': (cand['stage'] if cand else '') or '',
+        'mandate_label': r['mandate_label'] or '',
+        'note': (last_note or '')[:400],
+        'due_at': r['due_at'] or '',
+    }
+
+
+def _reminder_scheduler_loop():
+    """Background loop: every 60s, check for due reminders and send push
+    notifications. Repeats every 5 min until the reminder is done or snoozed.
+    Also sends an early warning 5-10 min before the due time."""
+    import time as _time
+    # Small delay so the app is fully up before first check
+    _time.sleep(15)
+    while True:
+        try:
+            now = _ist_now()
+            now_iso = now.isoformat(timespec='seconds')
+            conn = get_db()
+            # All active reminders not yet done
+            rows = conn.execute(
+                'SELECT * FROM reminders WHERE done=0 AND due_at IS NOT NULL AND due_at!=""'
+            ).fetchall()
+            for r in rows:
+                try:
+                    due_str = r['due_at']
+                    # normalise: reminders may be 'YYYY-MM-DDTHH:MM' or with seconds
+                    due = None
+                    for fmt in ('%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M'):
+                        try:
+                            due = datetime.datetime.strptime(due_str[:19], fmt)
+                            break
+                        except Exception:
+                            continue
+                    if not due:
+                        continue
+
+                    owner = r['owner_id'] if ('owner_id' in r.keys()) else 0
+                    if not owner:
+                        continue
+
+                    snoozed_until = r['snoozed_until'] if ('snoozed_until' in r.keys()) else ''
+                    if snoozed_until:
+                        try:
+                            su = datetime.datetime.strptime(snoozed_until[:19], '%Y-%m-%dT%H:%M:%S')
+                            if now < su:
+                                continue  # still snoozed
+                        except Exception:
+                            pass
+
+                    early_warned = r['early_warned'] if ('early_warned' in r.keys()) else 0
+                    notified_at = r['notified_at'] if ('notified_at' in r.keys()) else ''
+
+                    mins_to_due = (due - now).total_seconds() / 60.0
+
+                    # EARLY WARNING: 5-10 min before due
+                    if not early_warned and 0 < mins_to_due <= 10:
+                        payload = _reminder_candidate_details(conn, r)
+                        payload['kind'] = 'early'
+                        payload['title'] = 'Upcoming: ' + payload['name']
+                        _send_fcm_to_user(owner, payload)
+                        conn.execute('UPDATE reminders SET early_warned=1 WHERE id=?', (r['id'],))
+                        conn.commit()
+                        continue
+
+                    # DUE NOW (or overdue): notify, then repeat every 5 min
+                    if mins_to_due <= 0:
+                        send = False
+                        if not notified_at:
+                            send = True
+                        else:
+                            try:
+                                last = datetime.datetime.strptime(notified_at[:19], '%Y-%m-%dT%H:%M:%S')
+                                if (now - last).total_seconds() >= 300:  # 5 min
+                                    send = True
+                            except Exception:
+                                send = True
+                        if send:
+                            payload = _reminder_candidate_details(conn, r)
+                            payload['kind'] = 'due'
+                            payload['title'] = 'Reminder: ' + payload['name']
+                            _send_fcm_to_user(owner, payload)
+                            conn.execute('UPDATE reminders SET notified_at=? WHERE id=?',
+                                         (now_iso, r['id']))
+                            conn.commit()
+                except Exception as _re:
+                    print(f'[reminder-scheduler] row error: {_re}')
+            conn.close()
+        except Exception as e:
+            print(f'[reminder-scheduler] loop error: {e}')
+        _time.sleep(60)
+
+
+_reminder_thread_started = False
+def _start_reminder_scheduler():
+    global _reminder_thread_started
+    if _reminder_thread_started:
+        return
+    _reminder_thread_started = True
+    import threading
+    t = threading.Thread(target=_reminder_scheduler_loop, daemon=True)
+    t.start()
+    print('[reminder-scheduler] background thread started')
+
+
 def _get_fcm_access_token():
     """Get a short-lived OAuth2 access token for FCM V1 API.
     Reads the service account JSON from either:
@@ -824,7 +999,7 @@ def admin_api_usage():
         days = int(request.args.get('days', 30))
     except Exception:
         days = 30
-    since = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
+    since = (_ist_now() - datetime.timedelta(days=days)).isoformat()
     conn = get_db()
     companies = conn.execute('SELECT id, name FROM companies ORDER BY id').fetchall()
     name_map = {c['id']: c['name'] for c in companies}
@@ -871,7 +1046,7 @@ def compute_company_bill(company_id, days=30):
         conn.close(); return None
     recruiters = conn.execute("SELECT COUNT(*) n FROM users WHERE company_id=? AND status='approved'",
                               (company_id,)).fetchone()['n']
-    since = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
+    since = (_ist_now() - datetime.timedelta(days=days)).isoformat()
     token_usd = conn.execute('SELECT COALESCE(SUM(cost_usd),0) c FROM api_usage WHERE company_id=? AND created_at>=?',
                              (company_id, since)).fetchone()['c'] or 0
     conn.close()
@@ -1136,7 +1311,7 @@ def esc_html(s):
             .replace('>', '&gt;').replace('"', '&quot;'))
 
 def ts():
-    return datetime.datetime.now().isoformat(timespec='seconds')
+    return _ist_now().isoformat(timespec='seconds')
 
 def html_to_text(html):
     """Convert JD rich-text HTML to clean plain text for AI prompts / exports."""
@@ -1599,6 +1774,18 @@ def init_db():
     ]:
         try:
             c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {defn}')
+        except Exception:
+            pass
+
+    # Migrate: reminder scheduler columns (push notifications + snooze)
+    for col, defn in [
+        ('notified_at', "TEXT DEFAULT ''"),       # last time a push was sent
+        ('snoozed_until', "TEXT DEFAULT ''"),      # if snoozed, don't notify until this time
+        ('early_warned', "INTEGER DEFAULT 0"),     # sent the 5-10 min advance warning?
+        ('owner_id', "INTEGER DEFAULT 0"),
+    ]:
+        try:
+            c.execute(f'ALTER TABLE reminders ADD COLUMN {col} {defn}')
         except Exception:
             pass
 
@@ -2147,13 +2334,47 @@ def add_reminder():
     return jsonify({'ok': True})
 
 @app.route('/api/reminders/<int:rid>/done', methods=['POST'])
+@login_required
 def mark_reminder_done(rid):
+    # Works from webapp AND mobile app — both hit the same reminder, so marking
+    # done here stops mobile notifications and clears it from the webapp list.
     conn = get_db()
     conn.execute('UPDATE reminders SET done=1 WHERE id=?', (rid,))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
+
+@app.route('/api/reminders/<int:rid>/snooze', methods=['POST'])
+@login_required
+def snooze_reminder(rid):
+    """Snooze a reminder. Body: {"minutes": 10} or {"until": "tomorrow"}.
+    Supported: 10, 30, 60 minutes, or 'tomorrow' (9am next day IST)."""
+    d = request.json or {}
+    now = _ist_now()
+    until = None
+    if d.get('until') == 'tomorrow' or d.get('minutes') == 'tomorrow':
+        tomorrow = (now + datetime.timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+        until = tomorrow
+    else:
+        try:
+            mins = int(d.get('minutes', 10))
+        except Exception:
+            mins = 10
+        if mins not in (10, 30, 60):
+            mins = 10
+        until = now + datetime.timedelta(minutes=mins)
+    until_iso = until.isoformat(timespec='seconds')
+    conn = get_db()
+    # Reset notification state so it fires fresh after the snooze window
+    conn.execute(
+        'UPDATE reminders SET snoozed_until=?, notified_at="", early_warned=0 WHERE id=?',
+        (until_iso, rid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'snoozed_until': until_iso})
+
+
 @app.route('/api/reminders/<int:rid>', methods=['DELETE'])
+@login_required
 def delete_reminder(rid):
     conn = get_db()
     conn.execute('DELETE FROM reminders WHERE id=?', (rid,))
@@ -2179,7 +2400,7 @@ def analytics():
     admin = is_company_admin() and not scope_me
 
     stale_days = float(get_setting('analytics_stale_days', '7') or 7)
-    now = datetime.datetime.now()
+    now = _ist_now()
 
     # ── Date range for time-based metrics (placements, added, time-to-fill, sources) ──
     range_from, range_to = None, None
@@ -2379,7 +2600,7 @@ def analytics_stage_candidates():
     if not mandate_ids:
         conn.close(); return jsonify({'ok': True, 'candidates': []})
     stale_days = float(get_setting('analytics_stale_days', '7') or 7)
-    now = datetime.datetime.now()
+    now = _ist_now()
     ph = '(' + ','.join('?' for _ in mandate_ids) + ')'
     sph = '(' + ','.join('?' for _ in stages) + ')'
     rows = conn.execute(
@@ -2413,7 +2634,7 @@ def get_tasks():
     and new submissions. Each task carries a 'section' for Overdue/Today/
     Tomorrow/Upcoming grouping on the frontend."""
     conn = get_db()
-    now = datetime.datetime.now()
+    now = _ist_now()
     today = now.date()
     uid = effective_user_id()
     stale_days = float(get_setting('stale_days', '7') or 7)
@@ -2648,7 +2869,7 @@ def task_done():
         # naturally resurfaces later if still untouched, rather than being
         # silenced forever.
         days = float(get_setting('stale_days', '7') or 7) if ttype == 'stale' else 1
-        push_to = (datetime.datetime.now() + datetime.timedelta(days=days)).isoformat()
+        push_to = (_ist_now() + datetime.timedelta(days=days)).isoformat()
         conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=?', (push_to, ref_id))
     elif ttype == 'updated':
         conn.execute("UPDATE candidates SET update_submitted_at='' WHERE id=?", (ref_id,))
@@ -4324,6 +4545,72 @@ def email_sync():
     if err:
         return jsonify({'error': err}), 400
     return jsonify({'ok': True, 'new_messages': new_count})
+
+
+@app.route('/api/email/diagnose', methods=['GET'])
+@login_required
+def email_diagnose():
+    """Step-by-step IMAP diagnostic so we can see exactly where sync fails."""
+    import imaplib
+    steps = []
+    smtp_email = (get_setting('smtp_email', '') or '').strip()
+    smtp_pass = (get_setting('smtp_app_password', '') or '').replace(' ', '').strip()
+
+    steps.append({'step': 'Email configured', 'ok': bool(smtp_email),
+                  'detail': smtp_email or 'No email set in Settings'})
+    steps.append({'step': 'App password set', 'ok': bool(smtp_pass),
+                  'detail': f'{len(smtp_pass)} characters' if smtp_pass else 'No app password set'})
+    if not smtp_email or not smtp_pass:
+        return jsonify({'ok': False, 'steps': steps})
+
+    host = _imap_host_for(smtp_email)
+    steps.append({'step': 'IMAP server', 'ok': True, 'detail': host + ':993'})
+
+    # Try connect
+    try:
+        M = imaplib.IMAP4_SSL(host, 993)
+        steps.append({'step': 'Connect to server', 'ok': True, 'detail': 'Connected'})
+    except Exception as e:
+        steps.append({'step': 'Connect to server', 'ok': False, 'detail': str(e)[:120]})
+        return jsonify({'ok': False, 'steps': steps})
+
+    # Try login
+    try:
+        M.login(smtp_email, smtp_pass)
+        steps.append({'step': 'Login', 'ok': True, 'detail': 'Login successful'})
+    except imaplib.IMAP4.error as e:
+        msg = str(e)
+        hint = ''
+        if 'Invalid credentials' in msg or 'AUTHENTICATIONFAILED' in msg:
+            hint = ' — The app password is wrong, or this Workspace account requires a fresh App Password. Also confirm 2-Step Verification is ON.'
+        steps.append({'step': 'Login', 'ok': False, 'detail': msg[:120] + hint})
+        try: M.logout()
+        except Exception: pass
+        return jsonify({'ok': False, 'steps': steps})
+
+    # Try select inbox
+    try:
+        typ, data = M.select('INBOX')
+        cnt = data[0].decode() if data and data[0] else '?'
+        steps.append({'step': 'Open INBOX', 'ok': typ == 'OK', 'detail': f'{cnt} total messages in inbox'})
+    except Exception as e:
+        steps.append({'step': 'Open INBOX', 'ok': False, 'detail': str(e)[:120]})
+        try: M.logout()
+        except Exception: pass
+        return jsonify({'ok': False, 'steps': steps})
+
+    # Count candidates with emails
+    conn = get_db()
+    ccount = conn.execute(
+        "SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND email IS NOT NULL AND email!=''",
+        (effective_company_id(),)).fetchone()['n']
+    conn.close()
+    steps.append({'step': 'Candidates with email on file', 'ok': ccount > 0,
+                  'detail': f'{ccount} candidates have an email address (needed to match replies)'})
+
+    try: M.logout()
+    except Exception: pass
+    return jsonify({'ok': True, 'steps': steps})
 
 
 @app.route('/api/candidates/<int:cid>/email-thread', methods=['GET'])
@@ -6114,6 +6401,11 @@ try:
     _PERSISTENCE = check_storage_persistence()
     auto_restore_if_empty()
     daily_backup()
+    # Start the reminder push-notification scheduler (background thread)
+    try:
+        _start_reminder_scheduler()
+    except Exception as _sched_err:
+        print(f'[reminder-scheduler] failed to start: {_sched_err}')
     _ucount = _db_user_count(DB_PATH)
     print('\n' + '=' * 56)
     print('  HireLab Screener — startup')
