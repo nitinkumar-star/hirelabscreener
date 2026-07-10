@@ -4464,6 +4464,7 @@ function openEmailPanel(cid, candidateEmail, mandateId){
     + '<div style="display:flex;align-items:center;margin-bottom:8px">'
     + '<span style="font-size:12px;font-weight:600;color:var(--navy)">&#128172; Conversation</span>'
     + '<button onclick="syncEmailThread(' + cid + ')" class="btn btn-o" style="margin-left:auto;font-size:10.5px;padding:4px 10px" title="Fetch replies from your inbox">&#8635; Sync inbox</button>'
+    + '<button onclick="diagnoseEmail()" class="btn btn-o" style="font-size:10.5px;padding:4px 10px;margin-left:6px" title="Test the email connection">&#128295; Test</button>'
     + '</div>'
     + '<div id="email-thread" style="font-size:12px;color:var(--muted)">Loading...</div>'
     + '</div></div>';
@@ -4570,6 +4571,28 @@ async function loadEmailThread(cid){
   }).join('');
   // scroll to bottom
   el.scrollTop = el.scrollHeight;
+}
+
+async function diagnoseEmail(){
+  var el = document.getElementById('email-thread');
+  if(el){ el.innerHTML = '<div class="loading" style="padding:12px"><div class="spinner"></div>Testing email connection...</div>'; }
+  var r = await req('GET', '/email/diagnose');
+  if(!r || (!r.steps)){
+    if(el) el.innerHTML = '<div style="font-size:11.5px;color:#B42318;padding:12px;background:#FEF3F2;border-radius:8px">&#9888;&#65039; Diagnostic endpoint not found — the latest server.py may not be deployed yet.</div>';
+    return;
+  }
+  var html = '<div style="background:#F9FAFB;border:1px solid #E4E7EC;border-radius:10px;padding:12px">';
+  html += '<div style="font-size:12px;font-weight:700;color:#101828;margin-bottom:10px">Email Connection Test</div>';
+  r.steps.forEach(function(s){
+    var icon = s.ok ? '<span style="color:#0F6E56">&#10003;</span>' : '<span style="color:#B42318">&#10007;</span>';
+    html += '<div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid #F2F4F7">'
+      + '<div style="flex-shrink:0;width:16px;text-align:center">'+icon+'</div>'
+      + '<div style="flex:1"><div style="font-size:12px;font-weight:600;color:#344054">'+esc(s.step)+'</div>'
+      + '<div style="font-size:11px;color:#667085;margin-top:1px">'+esc(s.detail||'')+'</div></div>'
+      + '</div>';
+  });
+  html += '</div>';
+  if(el) el.innerHTML = html;
 }
 
 async function syncEmailThread(cid){
@@ -9073,72 +9096,141 @@ async function renderTasksView() {
   if (!r.ok) { body.innerHTML = '<div style="padding:20px;color:#E24B4A">Failed to load tasks</div>'; return; }
 
   var filter = (document.getElementById('task-filter') || {}).value || '';
-  var tasks = (r.tasks || []).filter(function(t){ return !filter || t.type === filter; });
-  S._allTasks = r.tasks || [];  // keep unfiltered for badge/notification use
+  var allTasks = (r.tasks || []);
+  S._allTasks = allTasks;
+  var tasks = allTasks.filter(function(t){ return !filter || t.type === filter; });
 
-  if (!tasks.length) {
-    body.innerHTML = '<div style="text-align:center;padding:60px 20px"><div style="font-size:48px;margin-bottom:12px">&#127881;</div>'
-      + '<div style="font-size:16px;font-weight:600;color:var(--navy);margin-bottom:6px">All caught up!</div>'
-      + '<div style="font-size:13px;color:var(--muted)">No pending follow-ups right now.</div></div>';
-    return;
+  // counts for the summary cards (unfiltered)
+  var cOver = allTasks.filter(function(t){return t.section==='overdue';}).length;
+  var cToday = allTasks.filter(function(t){return t.section==='today';}).length;
+  var cUp = allTasks.filter(function(t){return t.section==='tomorrow'||t.section==='upcoming';}).length;
+  var cStale = allTasks.filter(function(t){return t.type==='stale';}).length;
+
+  function initials(name){
+    var p = (name||'').trim().split(/\s+/);
+    return ((p[0]||'')[0]||'').toUpperCase() + ((p[1]||'')[0]||'').toUpperCase();
+  }
+  function avatarColors(section, type){
+    if (section==='overdue') return ['#FCEBEB','#A32D2D'];
+    if (type==='stale') return ['#FAEEDA','#854F0B'];
+    if (type==='submission') return ['#E1F5EE','#0F6E56'];
+    return ['#E6F1FB','#185FA5'];
   }
 
-  function taskCard(t){
-    var col = _taskColor(t.type, t.section);
+  function taskRow(t){
     var dueLabel = '';
-    if (t.type === 'reminder') {
+    if (t.due_at) {
       try {
         var due = new Date(t.due_at);
         dueLabel = due.toLocaleDateString('en-IN',{day:'numeric',month:'short'}) + ' ' + due.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
       } catch(e){}
     }
-    var callBtn = t.phone ? '<a href="tel:'+esc(t.phone)+'" class="btn btn-o" style="font-size:11px;padding:5px 9px;text-decoration:none" title="Call" onclick="event.stopPropagation()">&#128222;</a>' : '';
-    return '<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:9px;margin-bottom:8px;background:#fff;border:0.5px solid var(--line);box-shadow:var(--shadow-sm)">'
-      + '<span style="width:8px;height:8px;border-radius:50%;background:'+col+';flex-shrink:0"></span>'
+    var ac = avatarColors(t.section, t.type);
+    var meta = esc(t.subtitle||'');
+    if (t.section==='overdue') meta += ' &middot; <span style="color:var(--danger,#A32D2D)">overdue</span>';
+    else if (dueLabel) meta += ' &middot; <span style="color:#185FA5">'+dueLabel+'</span>';
+
+    var callBtn = t.phone
+      ? '<a href="tel:'+esc(t.phone)+'" class="btn btn-o" style="font-size:11px;padding:6px 11px;text-decoration:none;display:flex;align-items:center;gap:4px" onclick="event.stopPropagation()">&#128222; Call</a>'
+      : '';
+    // edit only makes sense for reminders (has ref_id + editable time/note)
+    var editBtn = (t.type==='reminder')
+      ? '<button class="btn btn-o" style="font-size:11px;padding:6px 9px" title="Edit" onclick="event.stopPropagation();openEditReminder('+t.ref_id+',\''+esc(t.title).replace(/&#39;/g,"").replace(/\x27/g,"")+'\',\''+(t.due_at||'')+'\')">&#9998;</button>'
+      : '';
+    var snoozeBtn = '<button class="btn btn-o" style="font-size:11px;padding:6px 9px" title="Snooze" onclick="event.stopPropagation();openSnoozeModal(\''+t.type+'\','+t.ref_id+',\''+esc(t.title).replace(/&#39;/g,"").replace(/\x27/g,"")+'\')">&#9200;</button>';
+
+    return '<div style="background:#fff;padding:13px 15px;display:flex;align-items:center;gap:12px">'
+      + '<div style="width:38px;height:38px;border-radius:50%;background:'+ac[0]+';display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:600;color:'+ac[1]+';flex-shrink:0">'+esc(initials(t.title))+'</div>'
       + '<div style="flex:1;min-width:0;cursor:pointer" onclick="'+(t.candidate_id?('openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')'):'openResponses()')+'">'
-      + '<div style="font-size:13px;font-weight:600;color:var(--navy)">'+_taskIcon(t.type)+' '+esc(t.title)+'</div>'
-      + '<div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+esc(t.subtitle||'')+'</div>'
-      + (dueLabel ? '<div style="font-size:11px;color:'+col+';margin-top:3px;font-weight:500">&#9200; '+dueLabel+(t.section==='overdue'?' \u00b7 OVERDUE':'')+'</div>' : '')
+      + '<div style="font-size:14px;font-weight:600;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(t.title)+'</div>'
+      + '<div style="font-size:12px;color:var(--muted);margin-top:1px">'+meta+'</div>'
       + '</div>'
-      + callBtn
-      + '<button class="btn btn-o" style="font-size:11px;padding:5px 9px" title="Snooze" onclick="event.stopPropagation();openSnoozeModal(\''+t.type+'\','+t.ref_id+',\''+esc(t.title).replace(/'/g,"")+'\')">&#9200;</button>'
-      + '<button class="btn btn-g" style="font-size:11px;padding:5px 10px" onclick="event.stopPropagation();markTaskDone(\''+t.type+'\','+t.ref_id+')">&#10003;</button>'
-      + '</div>';
+      + '<div style="display:flex;gap:5px;flex-shrink:0;align-items:center">'
+      + callBtn + editBtn + snoozeBtn
+      + '<button class="btn btn-g" style="font-size:11px;padding:6px 10px" title="Done" onclick="event.stopPropagation();markTaskDone(\''+t.type+'\','+t.ref_id+')">&#10003;</button>'
+      + '</div></div>';
+  }
+
+  function section(title, color, list){
+    if (!list.length) return '';
+    var h = '<div style="font-size:12.5px;font-weight:600;color:'+color+';margin:0 0 8px;display:flex;align-items:center;gap:6px">'+title+'</div>';
+    h += '<div style="display:flex;flex-direction:column;gap:1px;background:var(--line);border-radius:12px;overflow:hidden;margin-bottom:20px">';
+    list.forEach(function(t){ h += taskRow(t); });
+    h += '</div>';
+    return h;
   }
 
   var overdue = tasks.filter(function(t){ return t.section === 'overdue'; });
   var today   = tasks.filter(function(t){ return t.section === 'today'; });
   var tomorrow = tasks.filter(function(t){ return t.section === 'tomorrow'; });
   var upcoming = tasks.filter(function(t){ return t.section === 'upcoming'; });
+  var stale   = tasks.filter(function(t){ return t.type === 'stale' && t.section !== 'overdue' && t.section !== 'today'; });
 
-  var html = '<div style="max-width:780px;margin:0 auto">';
+  var html = '<div style="max-width:820px;margin:0 auto">';
 
-  // ── My Day: Overdue + Today combined, always expanded ──────────────────
-  var myDay = overdue.concat(today);
-  if (myDay.length) {
-    html += '<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">&#9728;&#65039; Today&#39;s Follow-ups</div>';
-    html += '<div style="font-size:11px;color:var(--muted);margin-bottom:12px">' + myDay.length + ' to tackle today' + (overdue.length ? ' \u00b7 ' + overdue.length + ' overdue' : '') + '</div>';
-    myDay.forEach(function(t){ html += taskCard(t); });
-    html += '<div style="height:14px"></div>';
-  }
+  // Summary cards
+  html += '<div style="display:flex;gap:10px;margin-bottom:22px">'
+    + _sumCard(cOver, 'Overdue', '#FCEBEB', '#A32D2D')
+    + _sumCard(cToday, 'Due today', '#E6F1FB', '#185FA5')
+    + _sumCard(cUp, 'Upcoming', 'var(--surface-1,#F1EFE8)', 'var(--navy)')
+    + _sumCard(cStale, 'Stale', '#FAEEDA', '#854F0B')
+    + '</div>';
 
-  // ── Tomorrow ──
-  if (tomorrow.length) {
-    html += '<div style="font-size:12px;font-weight:600;color:var(--muted);margin:14px 0 8px">Tomorrow \u00b7 ' + tomorrow.length + '</div>';
-    tomorrow.forEach(function(t){ html += taskCard(t); });
-  }
-
-  // ── Upcoming (collapsed by default) ──
-  if (upcoming.length) {
-    html += '<div style="font-size:12px;font-weight:600;color:var(--muted);margin:14px 0 8px;cursor:pointer;display:flex;align-items:center;gap:6px" onclick="_toggleUpcoming()">'
-      + '<span id="upcoming-arrow" style="transition:transform .15s;display:inline-block">&#9656;</span> Upcoming \u00b7 ' + upcoming.length + '</div>';
-    html += '<div id="upcoming-body" style="display:none">';
-    upcoming.forEach(function(t){ html += taskCard(t); });
+  if (!tasks.length) {
+    html += '<div style="text-align:center;padding:50px 20px"><div style="font-size:40px;margin-bottom:10px">&#127881;</div>'
+      + '<div style="font-size:15px;font-weight:600;color:var(--navy)">All caught up</div>'
+      + '<div style="font-size:13px;color:var(--muted);margin-top:4px">No pending tasks right now.</div></div>';
     html += '</div>';
+    body.innerHTML = html;
+    return;
   }
+
+  html += section('&#9888;&#65039; Overdue', '#A32D2D', overdue);
+  html += section('&#9200; Today', '#185FA5', today);
+  html += section('&#128197; Tomorrow', 'var(--muted)', tomorrow);
+  html += section('&#128198; Upcoming', 'var(--muted)', upcoming);
+  html += section('&#128164; Stale candidates', '#854F0B', stale);
 
   html += '</div>';
   body.innerHTML = html;
+}
+
+function _sumCard(num, label, bg, fg){
+  return '<div style="flex:1;background:'+bg+';border-radius:12px;padding:12px 14px">'
+    + '<div style="font-size:24px;font-weight:700;color:'+fg+';line-height:1">'+num+'</div>'
+    + '<div style="font-size:12px;color:'+fg+';margin-top:4px">'+label+'</div></div>';
+}
+
+// ── Edit reminder (time/date + note) ──────────────────────────────────
+function openEditReminder(rid, title, dueAt){
+  var dtVal = '';
+  if (dueAt) { try { dtVal = dueAt.slice(0,16); } catch(e){} }
+  var inner = '<div style="display:flex;flex-direction:column;gap:12px">'
+    + '<div style="font-size:12.5px;color:var(--muted)">'+esc(title)+'</div>'
+    + '<div><label class="la-lbl">Date &amp; time</label>'
+    + '<input type="datetime-local" id="er-datetime" class="inp" style="width:100%" value="'+esc(dtVal)+'"></div>'
+    + '<div><label class="la-lbl">Note</label>'
+    + '<textarea id="er-note" class="inp" style="width:100%;min-height:70px" placeholder="What is this reminder about?"></textarea></div>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
+    + '<button class="btn btn-o" onclick="_waCloseModal()" style="font-size:11px">Cancel</button>'
+    + '<button class="btn btn-g" onclick="saveEditReminder('+rid+')" style="font-size:11px">Save changes</button>'
+    + '</div></div>';
+  _waOpenModal('Edit reminder', inner);
+  // load the current note into the box
+  req('GET','/reminders').then(function(r){
+    if(r.ok){ (r.reminders||[]).forEach(function(x){ if(x.id===rid){ var n=document.getElementById('er-note'); if(n) n.value=x.note||''; } }); }
+  });
+}
+
+async function saveEditReminder(rid){
+  var dt = (document.getElementById('er-datetime')||{}).value || '';
+  var note = (document.getElementById('er-note')||{}).value || '';
+  var payload = {};
+  if (dt) payload.due_at = dt.length===16 ? dt+':00' : dt;
+  payload.note = note;
+  var r = await req('POST','/reminders/'+rid+'/edit', payload);
+  if (r.ok){ toast('OK','Reminder updated'); _waCloseModal(); renderTasksView(); updateTasksBadge(); }
+  else toast('ERR', r.error||'Failed');
 }
 
 function _toggleUpcoming(){

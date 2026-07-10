@@ -2376,6 +2376,38 @@ def snooze_reminder(rid):
     return jsonify({'ok': True, 'snoozed_until': until_iso})
 
 
+@app.route('/api/reminders/<int:rid>/edit', methods=['POST'])
+@login_required
+def edit_reminder(rid):
+    """Edit a reminder's due time and/or note. Used by webapp and mobile."""
+    d = request.json or {}
+    conn = get_db()
+    r = conn.execute('SELECT owner_id FROM reminders WHERE id=?', (rid,)).fetchone()
+    if not r or r['owner_id'] != effective_user_id():
+        conn.close()
+        return jsonify({'error': 'Reminder not found'}), 404
+    fields = []
+    params = []
+    if 'due_at' in d and (d.get('due_at') or '').strip():
+        fields.append('due_at=?')
+        params.append((d.get('due_at') or '').strip())
+        # editing the time resets notification state so it fires fresh
+        fields.append('notified_at=""')
+        fields.append('early_warned=0')
+        fields.append('snoozed_until=""')
+    if 'note' in d:
+        fields.append('note=?')
+        params.append((d.get('note') or '').strip())
+    if not fields:
+        conn.close()
+        return jsonify({'error': 'Nothing to update'}), 400
+    params.append(rid)
+    conn.execute(f'UPDATE reminders SET {", ".join(fields)} WHERE id=?', params)
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
 @app.route('/api/reminders/<int:rid>', methods=['DELETE'])
 @login_required
 def delete_reminder(rid):
@@ -2653,7 +2685,9 @@ def get_tasks():
 
     # ── 1. Manual reminders ──────────────────────────────────────────────
     rem_rows = conn.execute(
-        "SELECT r.* FROM reminders r LEFT JOIN mandates m ON m.id = r.mandate_id "
+        "SELECT r.*, c.phone AS cand_phone FROM reminders r "
+        "LEFT JOIN mandates m ON m.id = r.mandate_id "
+        "LEFT JOIN candidates c ON c.id = r.candidate_id "
         "WHERE r.done=0 AND r.owner_id=? AND (m.id IS NULL OR m.status NOT IN ('hold','closed')) "
         "ORDER BY r.due_at ASC", (uid,)
     ).fetchall()
@@ -2667,6 +2701,7 @@ def get_tasks():
             'candidate_id': r['candidate_id'], 'mandate_id': r['mandate_id'],
             'title': r['candidate_name'] or 'Candidate',
             'subtitle': (r['note'] or 'Reminder') + (' \u00b7 ' + r['mandate_label'] if r['mandate_label'] else ''),
+            'phone': (r['cand_phone'] if ('cand_phone' in r.keys()) else '') or '',
             'due_at': r['due_at'], 'section': section_for(due),
         })
 
