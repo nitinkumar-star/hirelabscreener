@@ -2300,7 +2300,10 @@ def shorten_jd():
 def get_reminders():
     conn = get_db()
     rows = conn.execute(
-        'SELECT * FROM reminders WHERE done=0 AND owner_id=? ORDER BY due_at ASC',
+        'SELECT r.*, c.phone AS cand_phone, c.company AS cand_company, '
+        'c.designation AS cand_designation, c.stage AS cand_stage '
+        'FROM reminders r LEFT JOIN candidates c ON c.id = r.candidate_id '
+        'WHERE r.done=0 AND r.owner_id=? ORDER BY r.due_at ASC',
         (effective_user_id(),)
     ).fetchall()
     conn.close()
