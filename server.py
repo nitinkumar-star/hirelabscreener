@@ -1744,6 +1744,233 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # already exists
 
+    # Migrate: embedding METADATA columns (Feature 2 — versioning). Lets us
+    # migrate embedding models later without breaking existing vectors.
+    # embedded_at already added above. All idempotent.
+    for col, typ in [
+        ('embedding_model',        'TEXT DEFAULT ""'),
+        ('embedding_version',      'TEXT DEFAULT ""'),
+        ('embedding_dimension',    'INTEGER DEFAULT 0'),
+        ('embedding_status',       'TEXT DEFAULT ""'),
+        ('embedding_error',        'TEXT DEFAULT ""'),
+        ('embedding_duration_ms',  'INTEGER DEFAULT 0'),
+        ('embedding_text_version', 'TEXT DEFAULT ""'),
+        ('embedding_vec',          'BLOB'),  # Sprint 4: float32 fast-read cache
+    ]:
+        try:
+            c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {typ}')
+        except sqlite3.OperationalError:
+            pass  # already exists
+
+    # Backfill metadata for pre-existing vectors (one-time, idempotent: only
+    # rows with no status yet are touched, so this is a no-op on later boots).
+    # Existing vectors were built by the OLD text builder -> template v1.
+    try:
+        unstamped = c.execute(
+            "SELECT id, embedding FROM candidates "
+            "WHERE embedding_status IS NULL OR embedding_status=''").fetchall()
+        bf_completed = bf_missing = bf_pending = 0
+        for row in unstamped:
+            emb = row['embedding']
+            if emb is None or emb == '':
+                # never embedded
+                c.execute("UPDATE candidates SET embedding_status='pending' WHERE id=?", (row['id'],))
+                bf_pending += 1
+                continue
+            dim = 0
+            try:
+                v = json.loads(emb)
+                dim = len(v) if isinstance(v, list) else 0
+            except Exception:
+                dim = 0
+            if dim > 0:
+                c.execute(
+                    "UPDATE candidates SET embedding_status='completed', embedding_model=?, "
+                    "embedding_version=?, embedding_dimension=?, embedding_text_version=? WHERE id=?",
+                    ('gemini-embedding-001', 'v1', dim, 'candidate-template-v1', row['id']))
+                bf_completed += 1
+            else:
+                # embedding was '[]' (blank text) or unparseable -> missing
+                c.execute(
+                    "UPDATE candidates SET embedding_status='missing', embedding_model=?, "
+                    "embedding_version=?, embedding_dimension=0, embedding_text_version=? WHERE id=?",
+                    ('gemini-embedding-001', 'v1', 'candidate-template-v1', row['id']))
+                bf_missing += 1
+        if unstamped:
+            conn.commit()
+            print(f'[embed-migrate] backfilled metadata: completed={bf_completed} '
+                  f'missing={bf_missing} pending={bf_pending}')
+    except sqlite3.OperationalError:
+        pass  # candidates table not ready yet on a fresh DB; nothing to backfill
+
+    # Migrate: embedding job QUEUE (Sprint 3). Persistent so queued/failed jobs
+    # survive a cloud restart and resume automatically. One row per embedding
+    # attempt lifecycle for a candidate.
+    c.execute('''CREATE TABLE IF NOT EXISTS embedding_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        candidate_id INTEGER NOT NULL,
+        status TEXT DEFAULT 'pending',      -- pending/processing/completed/failed/retrying/cancelled
+        retry_count INTEGER DEFAULT 0,
+        max_retries INTEGER DEFAULT 5,
+        last_error TEXT DEFAULT '',
+        duration_ms INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT '',
+        started_at TEXT DEFAULT '',
+        completed_at TEXT DEFAULT '',
+        next_attempt_at TEXT DEFAULT ''
+    )''')
+    # Poll index (find due jobs fast) + candidate index (idempotency checks).
+    for idx_sql in (
+        "CREATE INDEX IF NOT EXISTS idx_embjobs_due ON embedding_jobs(status, next_attempt_at)",
+        "CREATE INDEX IF NOT EXISTS idx_embjobs_cand ON embedding_jobs(candidate_id)",
+    ):
+        try:
+            c.execute(idx_sql)
+        except sqlite3.OperationalError:
+            pass
+
+    # ══════════════════════════════════════════════════════════════════
+    #  RECRUITMENT MEMORY ENGINE (Sprint 5) — architecture foundation.
+    #  Three generic, cross-entity tables that let ANY business object
+    #  (candidate, job, client, company, recruiter, skill, industry, ...)
+    #  carry long-term memories, an event timeline, and relationships.
+    #  Namespaced rme_* so they COMPLEMENT (not replace) the existing
+    #  candidate_events / activity_log / stage_history tables. Nothing is
+    #  auto-generated yet — this sprint builds the shape only.
+    #  Extensibility: JSON metadata columns + schema_version mean future
+    #  fields need no migration.
+    # ══════════════════════════════════════════════════════════════════
+    c.execute('''CREATE TABLE IF NOT EXISTS rme_memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL,          -- candidate/job/client/company/recruiter/skill/...
+        entity_id   TEXT NOT NULL,          -- id or slug of the entity (stored as text = flexible)
+        memory_type TEXT DEFAULT 'fact',    -- fact/event/relationship/observation/preference/ai_insight/recruiter_note/system_note/interaction
+        title       TEXT DEFAULT '',
+        content     TEXT DEFAULT '',
+        source      TEXT DEFAULT 'system',  -- recruiter/system/ai/import
+        created_by  TEXT DEFAULT '',        -- username / user id / 'system'
+        created_at  TEXT DEFAULT '',
+        updated_at  TEXT DEFAULT '',
+        visibility  TEXT DEFAULT 'internal',-- internal/team/private/candidate_visible
+        confidence  REAL DEFAULT 1.0,       -- 0..1 (mainly for ai_insight)
+        importance  INTEGER DEFAULT 0,      -- 0..5 priority
+        tags        TEXT DEFAULT '[]',      -- JSON array
+        metadata    TEXT DEFAULT '{}',      -- JSON, free-form future fields
+        status      TEXT DEFAULT 'active',  -- active/archived/deleted
+        schema_version INTEGER DEFAULT 1
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS rme_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type  TEXT NOT NULL,          -- candidate_created/resume_uploaded/interview_scheduled/...
+        entity_type TEXT NOT NULL,
+        entity_id   TEXT NOT NULL,
+        actor       TEXT DEFAULT 'system',  -- who/what caused it
+        summary     TEXT DEFAULT '',
+        data        TEXT DEFAULT '{}',      -- JSON payload
+        related_entity_type TEXT DEFAULT '',-- optional cross-link (e.g. candidate event about a job)
+        related_entity_id   TEXT DEFAULT '',
+        created_at  TEXT DEFAULT '',
+        schema_version INTEGER DEFAULT 1
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS rme_relationships (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_type TEXT NOT NULL, from_id TEXT NOT NULL,
+        to_type   TEXT NOT NULL, to_id   TEXT NOT NULL,
+        rel_type  TEXT NOT NULL,            -- works_at/has_skill/uses_technology/in_industry/managed_by/prefers/...
+        weight     REAL DEFAULT 1.0,        -- strength
+        confidence REAL DEFAULT 1.0,
+        source     TEXT DEFAULT 'system',
+        metadata   TEXT DEFAULT '{}',
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT '',
+        status     TEXT DEFAULT 'active',
+        schema_version INTEGER DEFAULT 1
+    )''')
+    for idx_sql in (
+        "CREATE INDEX IF NOT EXISTS idx_rme_mem_entity ON rme_memories(entity_type, entity_id)",
+        "CREATE INDEX IF NOT EXISTS idx_rme_mem_type   ON rme_memories(memory_type)",
+        "CREATE INDEX IF NOT EXISTS idx_rme_mem_status ON rme_memories(status)",
+        "CREATE INDEX IF NOT EXISTS idx_rme_evt_entity ON rme_events(entity_type, entity_id)",
+        "CREATE INDEX IF NOT EXISTS idx_rme_evt_type   ON rme_events(event_type)",
+        "CREATE INDEX IF NOT EXISTS idx_rme_evt_time   ON rme_events(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_rme_rel_from   ON rme_relationships(from_type, from_id)",
+        "CREATE INDEX IF NOT EXISTS idx_rme_rel_to     ON rme_relationships(to_type, to_id)",
+        "CREATE INDEX IF NOT EXISTS idx_rme_rel_type   ON rme_relationships(rel_type)",
+        # one row per (from, to, rel_type) — enables upsert, prevents dup edges
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_rme_rel ON rme_relationships(from_type, from_id, to_type, to_id, rel_type)",
+    ):
+        try:
+            c.execute(idx_sql)
+        except sqlite3.OperationalError:
+            pass
+
+    # ══════════════════════════════════════════════════════════════════
+    #  RECRUITMENT KNOWLEDGE GRAPH (Sprint 7) — architecture foundation.
+    #  A canonical CONCEPT registry (rkg_entities) + typed edges (rkg_edges).
+    #  Distinct from rme_relationships (which links business objects by id):
+    #  the RKG deduplicates concepts via normalization + aliases, so "MCC",
+    #  "Motor Control Centre" and "Motor Control Center" collapse to ONE node.
+    #  All access goes through rkg_* functions (a repository layer) so a real
+    #  graph engine (Neo4j, etc.) can replace the storage later without any
+    #  business-logic change. No extraction/reasoning yet — shape only.
+    # ══════════════════════════════════════════════════════════════════
+    c.execute('''CREATE TABLE IF NOT EXISTS rkg_entities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type     TEXT NOT NULL,       -- skill/technology/company/certification/industry/product/location/...
+        display_name    TEXT NOT NULL,       -- human form, e.g. "Motor Control Centre"
+        normalized_name TEXT NOT NULL,       -- canonical dedup key, e.g. "motorcontrolcentre"
+        aliases         TEXT DEFAULT '[]',   -- JSON array of surface forms
+        description     TEXT DEFAULT '',
+        status          TEXT DEFAULT 'active',
+        metadata        TEXT DEFAULT '{}',
+        created_at      TEXT DEFAULT '',
+        updated_at      TEXT DEFAULT ''
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS rkg_edges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id  INTEGER NOT NULL,         -- -> rkg_entities.id
+        target_id  INTEGER NOT NULL,         -- -> rkg_entities.id
+        rel_type   TEXT NOT NULL,            -- WORKED_AT/HAS_SKILL/MANUFACTURES/REQUIRES_SKILL/...
+        confidence REAL DEFAULT 1.0,
+        source     TEXT DEFAULT 'system',
+        status     TEXT DEFAULT 'active',
+        metadata   TEXT DEFAULT '{}',
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT ''
+    )''')
+    for idx_sql in (
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_rkg_entity ON rkg_entities(entity_type, normalized_name)",
+        "CREATE INDEX IF NOT EXISTS idx_rkg_entity_type ON rkg_entities(entity_type)",
+        "CREATE INDEX IF NOT EXISTS idx_rkg_entity_norm ON rkg_entities(normalized_name)",
+        "CREATE INDEX IF NOT EXISTS idx_rkg_edge_src  ON rkg_edges(source_id)",
+        "CREATE INDEX IF NOT EXISTS idx_rkg_edge_tgt  ON rkg_edges(target_id)",
+        "CREATE INDEX IF NOT EXISTS idx_rkg_edge_type ON rkg_edges(rel_type)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_rkg_edge ON rkg_edges(source_id, target_id, rel_type)",
+    ):
+        try:
+            c.execute(idx_sql)
+        except sqlite3.OperationalError:
+            pass
+
+    # Alias resolution table — makes normalization DATA-driven (not a hardcoded
+    # dictionary): every surface form maps to its canonical entity so future
+    # lookups of a learned alias resolve to the same node.
+    c.execute('''CREATE TABLE IF NOT EXISTS rkg_aliases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_id        INTEGER NOT NULL,
+        entity_type      TEXT NOT NULL,
+        normalized_alias TEXT NOT NULL,
+        created_at       TEXT DEFAULT ''
+    )''')
+    for idx_sql in (
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_rkg_alias ON rkg_aliases(entity_type, normalized_alias)",
+        "CREATE INDEX IF NOT EXISTS idx_rkg_alias_entity ON rkg_aliases(entity_id)",
+    ):
+        try:
+            c.execute(idx_sql)
+        except sqlite3.OperationalError:
+            pass
+
     # Migrate: add reminders table if not exists
     c.execute('''CREATE TABLE IF NOT EXISTS reminders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3082,7 +3309,7 @@ def extension_push():
               (cid, '', 'Screening', 'Pushed from Naukri extension', ts()))
     _save_wh_for(conn, cid, d.get('work_history'))
     conn.commit(); conn.close()
-    embed_candidate_async(cid)  # auto-index for semantic search
+    queue_embedding_job(cid)  # async: enqueue, background worker embeds (never blocks add)
     resp = {'ok': True, 'action': 'added', 'candidate_id': cid, 'name': name}
     if other_mandates:
         resp['also_in'] = other_mandates
@@ -3243,11 +3470,27 @@ def _as_list_str(raw):
 
 # Bumped whenever candidate_embed_text() changes shape, so we can tell which
 # vectors were built with the old text vs the new structured text and reindex
-# selectively. (Metadata columns land in Feature 2; this constant is defined
-# here because it describes THIS function's output.)
+# selectively.
 #   v1 = legacy 6-field concat
 #   v2 = structured labelled profile + Career History + full CV resume text
 EMBED_TEXT_VERSION = 2
+
+# ── Embedding pipeline metadata (Feature 2) ─────────────────────────────
+# Stamped onto every vector so we can migrate embedding models in future
+# without breaking existing vectors. Nothing here is hardcoded into search;
+# it is descriptive metadata only.
+EMBEDDING_MODEL    = 'gemini-embedding-001'          # the model gemini_embed() calls
+EMBEDDING_VERSION  = 'v1'                             # our embedding-pipeline version
+EMBED_TEXT_TEMPLATE = f'candidate-template-v{EMBED_TEXT_VERSION}'  # which text builder produced it
+
+import array as _array
+def _vec_to_blob(vec):
+    """Pack a float vector into compact float32 bytes for the embedding_vec
+    cache. ~5.6x smaller than the JSON form and ~1000x faster to read back."""
+    try:
+        return _array.array('f', vec).tobytes()
+    except Exception:
+        return None
 
 # How much raw resume text to fold into the embedding. The structured labelled
 # fields (high signal) always come first, so if the total exceeds the Gemini
@@ -3475,28 +3718,354 @@ def rate_candidate(cid):
     return jsonify({'ok': True, 'suitability': suit, 'selection_probability': prob,
                     'reasoning': data.get('reasoning', '')})
 
-def embed_candidate_async(cid):
-    """Best-effort: embed a single candidate right after creation. Failures are
-    silent so they never block the main add flow; reindex can catch them later."""
+def _record_embedding(conn, cid, status, *, vec=None, txt=None, error='', duration_ms=0):
+    """Single authoritative writer for a candidate's embedding + all metadata.
+    Centralised so every code path (single add, batch reindex, future model
+    migration) stamps identical metadata. Commits itself.
+
+    status:
+      'completed' -> store the vector, text and full metadata
+      'missing'   -> no embeddable text; mark embedding='[]' so it is not
+                     re-selected as pending, but flag it missing
+      'failed'    -> Gemini/API error; leave embedding UNTOUCHED (stays '' so
+                     the existing pending query retries it) and record the error
+    """
+    dim = len(vec) if isinstance(vec, list) else 0
+    if status == 'completed' and isinstance(vec, list) and vec:
+        conn.execute(
+            'UPDATE candidates SET embedding=?, embedding_vec=?, embedding_text=?, embedded_at=?, '
+            'embedding_model=?, embedding_version=?, embedding_dimension=?, '
+            'embedding_status=?, embedding_error=?, embedding_duration_ms=?, '
+            'embedding_text_version=? WHERE id=?',
+            (json.dumps(vec), _vec_to_blob(vec), txt, ts(), EMBEDDING_MODEL, EMBEDDING_VERSION, dim,
+             'completed', '', int(duration_ms or 0), EMBED_TEXT_TEMPLATE, cid))
+    elif status == 'missing':
+        conn.execute(
+            "UPDATE candidates SET embedding='[]', embedded_at=?, embedding_dimension=0, "
+            "embedding_model=?, embedding_version=?, embedding_status='missing', "
+            "embedding_error=?, embedding_duration_ms=?, embedding_text_version=? WHERE id=?",
+            (ts(), EMBEDDING_MODEL, EMBEDDING_VERSION, (error or 'no embeddable text')[:500],
+             int(duration_ms or 0), EMBED_TEXT_TEMPLATE, cid))
+    else:  # 'failed' — DO NOT touch the embedding column, so it stays retryable
+        conn.execute(
+            "UPDATE candidates SET embedding_status='failed', embedding_error=?, "
+            "embedding_duration_ms=?, embedding_model=?, embedding_version=?, "
+            "embedding_text_version=? WHERE id=?",
+            ((error or 'unknown error')[:500], int(duration_ms or 0), EMBEDDING_MODEL,
+             EMBEDDING_VERSION, EMBED_TEXT_TEMPLATE, cid))
+    conn.commit()
+
+
+def embed_candidate_row(conn, c, api_key):
+    """Build the embed text for candidate row `c`, call Gemini (timed), and
+    store the vector + metadata via _record_embedding. Returns a small status
+    dict. Never raises. This is the ONE embedding code path used by both the
+    single-add flow and the batch reindex."""
+    import time as _time
+    cid = c['id']
+    txt = candidate_embed_text(c, conn)
+    if not txt.strip():
+        _record_embedding(conn, cid, 'missing', error='no embeddable text')
+        print(f'[embed] cid={cid} missing (no embeddable text)')
+        return {'status': 'missing', 'cid': cid}
+
+    print(f'[embed] cid={cid} started model={EMBEDDING_MODEL} chars={len(txt)}')
+    t0 = _time.perf_counter()
+    vec = gemini_embed(txt, api_key)
+    dur = int((_time.perf_counter() - t0) * 1000)
+
+    if isinstance(vec, dict) and vec.get('error'):
+        _record_embedding(conn, cid, 'failed', txt=txt, error=vec['error'], duration_ms=dur)
+        print(f'[embed] cid={cid} FAILED in {dur}ms: {str(vec["error"])[:140]}')
+        return {'status': 'failed', 'cid': cid, 'error': vec['error'], 'duration_ms': dur}
+    if not vec:
+        _record_embedding(conn, cid, 'failed', txt=txt, error='empty vector', duration_ms=dur)
+        print(f'[embed] cid={cid} FAILED in {dur}ms: empty vector')
+        return {'status': 'failed', 'cid': cid, 'error': 'empty vector', 'duration_ms': dur}
+
+    _record_embedding(conn, cid, 'completed', vec=vec, txt=txt, duration_ms=dur)
+    print(f'[embed] cid={cid} completed dim={len(vec)} in {dur}ms model={EMBEDDING_MODEL}')
+    return {'status': 'completed', 'cid': cid, 'dimension': len(vec), 'duration_ms': dur}
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  ASYNC EMBEDDING QUEUE (Sprint 3)
+#  A lightweight, persistent job queue on top of the existing SQLite +
+#  daemon-thread architecture (same pattern as the reminder scheduler).
+#  Goals: candidate creation never waits on Gemini; failed embeds retry
+#  with exponential backoff; jobs survive restarts; API bursts are throttled.
+# ══════════════════════════════════════════════════════════════════════
+
+# Tunables — all overridable at runtime via Settings (get_setting), so you can
+# adjust throughput/retries without a redeploy. Defaults are safe for Render.
+_EMBED_CFG_DEFAULTS = {
+    'embed_max_retries':     5,     # attempts before a job is marked failed
+    'embed_batch_per_cycle': 10,    # jobs processed per worker wake (throughput)
+    'embed_interval_ms':     1200,  # gap between Gemini calls (anti-burst / rate limit)
+    'embed_poll_sec':        5,     # how often the worker wakes to look for jobs
+    'embed_backoff_base_sec': 10,   # backoff = base * 2^(retry-1)
+    'embed_backoff_cap_sec': 600,   # backoff never exceeds this
+    'embed_reconcile_cap':   200,   # max un-embedded candidates auto-queued per sweep
+}
+
+def _embed_cfg(key):
+    """Read a queue tunable from Settings, falling back to the default. Values
+    are coerced to the default's type so callers always get an int."""
+    default = _EMBED_CFG_DEFAULTS[key]
     try:
-        api_key = get_setting('gemini_api_key')
-        if not api_key:
-            return
-        conn = get_db()
-        c = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
-        if not c:
-            conn.close(); return
-        txt = candidate_embed_text(c, conn)
-        if not txt.strip():
-            conn.close(); return
-        vec = gemini_embed(txt, api_key)
-        if isinstance(vec, list) and vec:
-            conn.execute('UPDATE candidates SET embedding=?, embedding_text=?, embedded_at=? WHERE id=?',
-                         (json.dumps(vec), txt, ts(), cid))
-            conn.commit()
-        conn.close()
+        v = get_setting(key)
+        if v is None or str(v).strip() == '':
+            return default
+        return type(default)(v)
     except Exception:
-        pass
+        return default
+
+
+# Error substrings that mean "do NOT retry" — auth/permission/validation are
+# permanent; retrying only wastes quota. Everything else (timeout, network,
+# rate limit / RESOURCE_EXHAUSTED, 5xx, INTERNAL, DEADLINE) is transient.
+_EMBED_PERMANENT_MARKERS = (
+    'API KEY', 'API_KEY', 'PERMISSION', 'UNAUTHENTICATED',
+    'INVALID_ARGUMENT', 'NOT_FOUND', 'FAILED_PRECONDITION',
+)
+
+def _is_retryable_embed_error(err):
+    e = str(err or '').upper()
+    return not any(m in e for m in _EMBED_PERMANENT_MARKERS)
+
+
+def _embed_backoff_seconds(retry_count):
+    base = _embed_cfg('embed_backoff_base_sec')
+    cap = _embed_cfg('embed_backoff_cap_sec')
+    return min(cap, base * (2 ** max(0, retry_count - 1)))
+
+
+def queue_embedding_job(cid, conn=None):
+    """Enqueue an embedding job for a candidate and return immediately. This is
+    what candidate-creation calls instead of embedding inline — it is a single
+    cheap INSERT, so the upload/add response is instant.
+
+    Idempotent: if the candidate already has an ACTIVE job (pending/processing/
+    retrying) we don't create a duplicate. `conn` optional (reused if given)."""
+    own = False
+    try:
+        if conn is None:
+            conn = get_db(); own = True
+        active = conn.execute(
+            "SELECT id FROM embedding_jobs WHERE candidate_id=? "
+            "AND status IN ('pending','processing','retrying') LIMIT 1", (cid,)).fetchone()
+        if active:
+            return active['id']
+        conn.execute(
+            "INSERT INTO embedding_jobs (candidate_id, status, retry_count, max_retries, "
+            "created_at, next_attempt_at) VALUES (?, 'pending', 0, ?, ?, ?)",
+            (cid, _embed_cfg('embed_max_retries'), ts(), ts()))
+        conn.commit()
+        jid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
+        print(f'[embed-queue] job {jid} created for cid={cid}')
+        return jid
+    except Exception as e:
+        print(f'[embed-queue] enqueue error cid={cid}: {e}')
+        return None
+    finally:
+        if own and conn is not None:
+            try: conn.close()
+            except Exception: pass
+
+
+def _claim_next_job(conn):
+    """Atomically claim the next due job. The conditional UPDATE (…WHERE status
+    IN pending/retrying) means even if two workers race — or a future multi-
+    worker deploy runs several copies — only one claims each job."""
+    now = ts()
+    row = conn.execute(
+        "SELECT id FROM embedding_jobs WHERE status IN ('pending','retrying') "
+        "AND (next_attempt_at IS NULL OR next_attempt_at='' OR next_attempt_at<=?) "
+        "ORDER BY created_at ASC, id ASC LIMIT 1", (now,)).fetchone()
+    if not row:
+        return None
+    cur = conn.execute(
+        "UPDATE embedding_jobs SET status='processing', started_at=? "
+        "WHERE id=? AND status IN ('pending','retrying')", (now, row['id']))
+    conn.commit()
+    if cur.rowcount != 1:
+        return None  # lost the race; another claimer got it
+    return conn.execute('SELECT * FROM embedding_jobs WHERE id=?', (row['id'],)).fetchone()
+
+
+def _process_job(conn, job, api_key):
+    """Run one claimed job through the shared embed path and update its status.
+    Reuses embed_candidate_row (Sprint 2) — there is still ONE embedding code
+    path; the queue only decides WHEN it runs and whether to retry."""
+    jid = job['id']; cid = job['candidate_id']
+    c = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not c:
+        conn.execute("UPDATE embedding_jobs SET status='cancelled', last_error='candidate deleted', "
+                     "completed_at=? WHERE id=?", (ts(), jid))
+        conn.commit()
+        print(f'[embed-queue] job {jid} cancelled (cid={cid} gone)')
+        return 'cancelled'
+
+    res = embed_candidate_row(conn, c, api_key)   # writes vector + metadata
+    st = res.get('status')
+    dur = int(res.get('duration_ms', 0) or 0)
+
+    if st in ('completed', 'missing'):
+        conn.execute("UPDATE embedding_jobs SET status='completed', duration_ms=?, "
+                     "completed_at=?, last_error='' WHERE id=?", (dur, ts(), jid))
+        conn.commit()
+        return 'completed'
+
+    # failed — decide retry vs give up
+    err = res.get('error', 'unknown error')
+    if _is_retryable_embed_error(err) and (job['retry_count'] + 1) <= job['max_retries']:
+        rc = job['retry_count'] + 1
+        nxt = (_ist_now() + datetime.timedelta(seconds=_embed_backoff_seconds(rc))).isoformat(timespec='seconds')
+        conn.execute("UPDATE embedding_jobs SET status='retrying', retry_count=?, last_error=?, "
+                     "next_attempt_at=?, duration_ms=? WHERE id=?", (rc, str(err)[:500], nxt, dur, jid))
+        conn.commit()
+        print(f'[embed-queue] job {jid} retry {rc}/{job["max_retries"]} in '
+              f'{_embed_backoff_seconds(rc)}s ({str(err)[:80]})')
+        return 'retrying'
+    else:
+        reason = 'permanent' if not _is_retryable_embed_error(err) else 'max retries'
+        conn.execute("UPDATE embedding_jobs SET status='failed', last_error=?, completed_at=?, "
+                     "duration_ms=? WHERE id=?", (str(err)[:500], ts(), dur, jid))
+        conn.commit()
+        print(f'[embed-queue] job {jid} FAILED ({reason}): {str(err)[:100]}')
+        return 'failed'
+
+
+def _backfill_embedding_blobs(conn, cap):
+    """Convert legacy JSON embeddings into the float32 embedding_vec cache in the
+    background (no API calls — pure local). Runs a bounded batch per idle sweep
+    so existing candidates gradually gain the fast search path."""
+    try:
+        rows = conn.execute(
+            "SELECT id, embedding FROM candidates "
+            "WHERE embedding_vec IS NULL AND embedding IS NOT NULL "
+            "AND embedding NOT IN ('', '[]') LIMIT ?", (cap,)).fetchall()
+        n = 0
+        for r in rows:
+            try:
+                vec = json.loads(r['embedding'])
+            except Exception:
+                continue
+            blob = _vec_to_blob(vec)
+            if blob is not None:
+                conn.execute("UPDATE candidates SET embedding_vec=? WHERE id=?", (blob, r['id']))
+                n += 1
+        if n:
+            conn.commit()
+            print(f'[embed-blob] backfilled {n} float32 vector-cache row(s)')
+        return n
+    except Exception as e:
+        print(f'[embed-blob] backfill error: {e}')
+        return 0
+
+
+def _reconcile_missing_embeddings(conn, cap):
+    """Self-healing: enqueue candidates that have no embedding and no active OR
+    failed job. This is what covers the non-Naukri creation paths (manual add,
+    import, public apply) without touching each endpoint — and it re-queues
+    nothing that already failed permanently, so it can't loop."""
+    try:
+        rows = conn.execute(
+            "SELECT id FROM candidates WHERE (embedding='' OR embedding IS NULL) "
+            "AND id NOT IN (SELECT candidate_id FROM embedding_jobs "
+            "               WHERE status IN ('pending','processing','retrying','failed')) "
+            "ORDER BY id LIMIT ?", (cap,)).fetchall()
+        n = 0
+        for r in rows:
+            if queue_embedding_job(r['id'], conn):
+                n += 1
+        if n:
+            print(f'[embed-queue] reconciler queued {n} un-embedded candidate(s)')
+        return n
+    except Exception as e:
+        print(f'[embed-queue] reconcile error: {e}')
+        return 0
+
+
+def _embedding_worker_loop():
+    """Background daemon: drains the embedding_jobs queue with retry, backoff
+    and anti-burst throttling. Mirrors the reminder scheduler's shape."""
+    import time as _time
+    _time.sleep(20)  # let the app finish booting
+
+    # RESTART RECOVERY: any job left 'processing' when the process died is
+    # requeued so nothing is stranded mid-flight.
+    try:
+        conn = get_db()
+        n = conn.execute("UPDATE embedding_jobs SET status='pending', started_at='' "
+                         "WHERE status='processing'").rowcount
+        conn.commit(); conn.close()
+        if n:
+            print(f'[embed-worker] recovered {n} in-flight job(s) after restart')
+    except Exception as e:
+        print(f'[embed-worker] recovery error: {e}')
+
+    reconcile_every = 6  # run the self-heal sweep roughly every 6 idle-ish cycles
+    cycle = 0
+    while True:
+        cycle += 1
+        try:
+            api_key = get_setting('gemini_api_key')
+            if not api_key:
+                _time.sleep(30)  # nothing to do without a key
+                continue
+
+            interval = max(0, _embed_cfg('embed_interval_ms')) / 1000.0
+            conn = get_db()
+            processed = 0
+            for _ in range(_embed_cfg('embed_batch_per_cycle')):
+                job = _claim_next_job(conn)
+                if not job:
+                    break
+                try:
+                    _process_job(conn, job, api_key)
+                except Exception as je:
+                    # never let one bad job kill the worker
+                    try:
+                        nxt = (_ist_now() + datetime.timedelta(seconds=30)).isoformat(timespec='seconds')
+                        conn.execute("UPDATE embedding_jobs SET status='retrying', last_error=?, "
+                                     "next_attempt_at=? WHERE id=?", (str(je)[:500], nxt, job['id']))
+                        conn.commit()
+                    except Exception:
+                        pass
+                    print(f'[embed-worker] job {job["id"]} crashed: {je}')
+                processed += 1
+                _time.sleep(interval)  # throttle between API calls
+
+            # If the queue was empty this cycle, periodically sweep for
+            # un-embedded candidates and backfill the float32 vector cache.
+            if processed == 0 and (cycle % reconcile_every == 0):
+                _reconcile_missing_embeddings(conn, _embed_cfg('embed_reconcile_cap'))
+                _backfill_embedding_blobs(conn, _embed_cfg('embed_reconcile_cap'))
+
+            conn.close()
+        except Exception as e:
+            print(f'[embed-worker] loop error: {e}')
+        _time.sleep(_embed_cfg('embed_poll_sec'))
+
+
+_embedding_worker_started = False
+def _start_embedding_worker():
+    global _embedding_worker_started
+    if _embedding_worker_started:
+        return
+    _embedding_worker_started = True
+    import threading
+    t = threading.Thread(target=_embedding_worker_loop, daemon=True)
+    t.start()
+    print('[embed-worker] background thread started')
+
+
+def embed_candidate_async(cid):
+    """Backward-compat shim: previously this embedded inline (blocking). It now
+    just ENQUEUES a background job so callers return instantly. Kept so any
+    existing caller keeps working unchanged."""
+    return queue_embedding_job(cid)
 
 
 @app.route('/api/ai/index-status', methods=['GET'])
@@ -3505,10 +4074,88 @@ def ai_index_status():
     conn = get_db()
     total = conn.execute('SELECT COUNT(*) n FROM candidates').fetchone()['n']
     done = conn.execute("SELECT COUNT(*) n FROM candidates WHERE embedding!='' AND embedding IS NOT NULL").fetchone()['n']
+    # Optional metadata breakdown (additive — existing keys unchanged).
+    by_status, by_model = {}, {}
+    try:
+        for r in conn.execute(
+                "SELECT COALESCE(NULLIF(embedding_status,''),'unknown') s, COUNT(*) n "
+                "FROM candidates GROUP BY s").fetchall():
+            by_status[r['s']] = r['n']
+        for r in conn.execute(
+                "SELECT COALESCE(NULLIF(embedding_model,''),'none') m, COUNT(*) n "
+                "FROM candidates GROUP BY m").fetchall():
+            by_model[r['m']] = r['n']
+    except sqlite3.OperationalError:
+        pass  # metadata columns not present yet (pre-migration)
     conn.close()
     has_key = bool(get_setting('gemini_api_key'))
     return jsonify({'ok': True, 'total': total, 'indexed': done,
-                    'pending': total - done, 'has_gemini_key': has_key})
+                    'pending': total - done, 'has_gemini_key': has_key,
+                    'by_status': by_status, 'by_model': by_model,
+                    'text_template': EMBED_TEXT_TEMPLATE, 'model': EMBEDDING_MODEL})
+
+
+@app.route('/api/ai/queue/status', methods=['GET'])
+@login_required
+def ai_queue_status():
+    """Live embedding-queue metrics for monitoring."""
+    conn = get_db()
+    counts = {'pending': 0, 'processing': 0, 'retrying': 0,
+              'completed': 0, 'failed': 0, 'cancelled': 0}
+    try:
+        for r in conn.execute("SELECT status, COUNT(*) n FROM embedding_jobs GROUP BY status").fetchall():
+            counts[r['status']] = r['n']
+        avg_row = conn.execute("SELECT AVG(duration_ms) a FROM embedding_jobs "
+                               "WHERE status='completed' AND duration_ms>0").fetchone()
+        avg_ms = int(avg_row['a']) if avg_row and avg_row['a'] else 0
+        retried = conn.execute("SELECT COUNT(*) n FROM embedding_jobs WHERE retry_count>0").fetchone()['n']
+        oldest = conn.execute("SELECT MIN(created_at) c FROM embedding_jobs "
+                              "WHERE status IN ('pending','retrying')").fetchone()['c'] or ''
+    except sqlite3.OperationalError:
+        avg_ms = retried = 0; oldest = ''
+    conn.close()
+    waiting = counts['pending'] + counts['retrying']
+    return jsonify({'ok': True,
+                    'queue_length': waiting + counts['processing'],
+                    'waiting': waiting,
+                    'running': counts['processing'],
+                    'failed': counts['failed'],
+                    'retried': retried,
+                    'avg_processing_ms': avg_ms,
+                    'oldest_waiting_at': oldest,
+                    'by_status': counts,
+                    'worker_running': _embedding_worker_started,
+                    'config': {k: _embed_cfg(k) for k in _EMBED_CFG_DEFAULTS}})
+
+
+@app.route('/api/ai/queue/enqueue-missing', methods=['POST'])
+@login_required
+def ai_queue_enqueue_missing():
+    """Queue every un-embedded candidate that has no active/failed job. This is
+    the entry point for large imports ('500 resumes -> queue all'). Non-blocking:
+    it only creates job rows; the background worker does the embedding."""
+    d = request.json or {}
+    cap = int(d.get('cap') or 5000)
+    conn = get_db()
+    n = _reconcile_missing_embeddings(conn, cap)
+    conn.close()
+    return jsonify({'ok': True, 'queued': n})
+
+
+@app.route('/api/ai/queue/retry-failed', methods=['POST'])
+@login_required
+def ai_queue_retry_failed():
+    """Reset failed jobs back to pending (e.g. after fixing an API key). The
+    worker will pick them up on its next cycle."""
+    conn = get_db()
+    try:
+        n = conn.execute("UPDATE embedding_jobs SET status='pending', retry_count=0, "
+                         "last_error='', next_attempt_at=? WHERE status='failed'", (ts(),)).rowcount
+        conn.commit()
+    except sqlite3.OperationalError:
+        n = 0
+    conn.close()
+    return jsonify({'ok': True, 'requeued': n})
 
 
 @app.route('/api/ai/reindex', methods=['POST'])
@@ -3531,7 +4178,7 @@ def ai_reindex():
         # without embedding first; force re-embeds everything across calls by
         # clearing embeddings up front on the first force call.
         if d.get('reset'):
-            conn.execute("UPDATE candidates SET embedding=''")
+            conn.execute("UPDATE candidates SET embedding='', embedding_status='pending'")
             conn.commit()
             rows = conn.execute('SELECT * FROM candidates ORDER BY id LIMIT ?', (batch,)).fetchall()
     rows = conn.execute("SELECT * FROM candidates WHERE embedding='' OR embedding IS NULL ORDER BY id LIMIT ?", (batch,)).fetchall()
@@ -3539,29 +4186,22 @@ def ai_reindex():
     done, failed, skipped = 0, 0, 0
     first_error = ''
     for c in rows:
-        txt = candidate_embed_text(c, conn)
-        if not txt.strip():
-            # mark as embedded-empty so we don't loop forever on blanks
-            conn.execute("UPDATE candidates SET embedding='[]', embedded_at=? WHERE id=?", (ts(), c['id']))
-            conn.commit()
+        r = embed_candidate_row(conn, c, api_key)
+        st = r['status']
+        if st == 'missing':
             skipped += 1
-            continue
-        vec = gemini_embed(txt, api_key)
-        if isinstance(vec, dict) and vec.get('error'):
+        elif st == 'failed':
             failed += 1
-            first_error = vec['error']
-            if 'API key' in vec['error'] or 'PERMISSION' in vec['error'].upper() or 'API_KEY' in vec['error'].upper():
+            first_error = r.get('error', '')
+            eu = str(first_error).upper()
+            # Auth/permission errors won't fix themselves within this batch —
+            # abort so we don't burn the whole batch (unchanged behaviour).
+            if 'API KEY' in eu or 'PERMISSION' in eu or 'API_KEY' in eu:
                 conn.close()
-                return jsonify({'error': 'Gemini error: ' + vec['error'],
+                return jsonify({'error': 'Gemini error: ' + first_error,
                                 'indexed': done, 'failed': failed}), 400
-            continue
-        if not vec:
-            failed += 1
-            continue
-        conn.execute('UPDATE candidates SET embedding=?, embedding_text=?, embedded_at=? WHERE id=?',
-                     (json.dumps(vec), txt, ts(), c['id']))
-        conn.commit()
-        done += 1
+        else:
+            done += 1
 
     # remaining count
     pending = conn.execute("SELECT COUNT(*) n FROM candidates WHERE embedding='' OR embedding IS NULL").fetchone()['n']
@@ -3570,46 +4210,170 @@ def ai_reindex():
                     'pending': pending, 'first_error': first_error})
 
 
-@app.route('/api/ai/search', methods=['POST'])
-@login_required
-def ai_search():
-    """Semantic talent search across ALL candidates (ignores mandate
-    boundaries) so someone saved under one role surfaces for another."""
-    d = request.json or {}
-    query = (d.get('query') or '').strip()
-    top_k = int(d.get('top_k') or 10)
-    if not query:
-        return jsonify({'error': 'Empty query'}), 400
+# ══════════════════════════════════════════════════════════════════════
+#  SEMANTIC SEARCH — performance layer (Sprint 4)
+#  Streaming chunked scan + heap top-N + optional numpy + query cache.
+#  No new infrastructure: pure in-process, SQLite-backed.
+# ══════════════════════════════════════════════════════════════════════
+import heapq as _heapq
+import collections as _collections
+import threading as _search_threading
 
-    api_key = get_setting('gemini_api_key')
-    if not api_key:
-        return jsonify({'error': 'Gemini API key not set. Add it in Settings.'}), 400
+try:
+    import numpy as _np
+    _HAS_NUMPY = True
+except Exception:
+    _HAS_NUMPY = False
 
-    qvec = gemini_embed(query, api_key)
-    if isinstance(qvec, dict) and qvec.get('error'):
-        return jsonify({'error': 'Gemini error: ' + qvec['error']}), 400
-    if not qvec:
-        return jsonify({'error': 'Could not embed query'}), 400
+_SEARCH_CFG_DEFAULTS = {
+    'search_max_candidates': 100000,  # hard cap on candidates evaluated
+    'search_max_results':    200,     # ranked pool kept for pagination
+    'search_min_score':      -1.0,    # min cosine (-1..1) to include; -1 = keep all
+    'search_chunk_size':     2000,    # streaming chunk size
+    'search_slow_ms':        1500,    # log searches slower than this
+    'search_cache_ttl_sec':  120,     # query cache TTL
+    'search_cache_max':      64,      # max cached queries
+}
 
-    conn = get_db()
+def _search_cfg(key):
+    dflt = _SEARCH_CFG_DEFAULTS[key]
+    try:
+        v = get_setting(key)
+        if v is None or str(v).strip() == '':
+            return dflt
+        return float(v) if isinstance(dflt, float) else int(float(v))
+    except Exception:
+        return dflt
+
+# In-memory query cache + rolling metrics (bounded; no Redis).
+_SEARCH_CACHE = {}
+_SEARCH_CACHE_LOCK = _search_threading.Lock()
+_SEARCH_METRICS = _collections.deque(maxlen=500)      # (duration_ms, scanned)
+_SEARCH_METRICS_LOCK = _search_threading.Lock()
+
+def _search_cache_get(key):
+    import time as _time
+    with _SEARCH_CACHE_LOCK:
+        e = _SEARCH_CACHE.get(key)
+        if not e:
+            return None
+        if _time.time() - e['ts'] > _search_cfg('search_cache_ttl_sec'):
+            _SEARCH_CACHE.pop(key, None)
+            return None
+        return e
+
+def _search_cache_put(key, payload):
+    import time as _time
+    with _SEARCH_CACHE_LOCK:
+        payload = dict(payload); payload['ts'] = _time.time()
+        _SEARCH_CACHE[key] = payload
+        # evict oldest beyond cap
+        cap = _search_cfg('search_cache_max')
+        if len(_SEARCH_CACHE) > cap:
+            for k in sorted(_SEARCH_CACHE, key=lambda k: _SEARCH_CACHE[k]['ts'])[:len(_SEARCH_CACHE) - cap]:
+                _SEARCH_CACHE.pop(k, None)
+
+def _search_metric_record(duration_ms, scanned):
+    with _SEARCH_METRICS_LOCK:
+        _SEARCH_METRICS.append((duration_ms, scanned))
+
+
+def _search_rank(conn, qvec, min_score, max_cands, pool):
+    """Stream candidate vectors in chunks, score against qvec, keep a top-`pool`
+    heap. Returns (ranked, scanned) where ranked is a descending list of
+    (similarity, candidate_id). Memory stays bounded regardless of table size
+    because we never hold all vectors at once and keep only `pool` results."""
+    d = len(qvec)
+    chunk = _search_cfg('search_chunk_size')
+    q_norm = math.sqrt(sum(x * x for x in qvec)) or 1e-9
+    q_np = _np.asarray(qvec, dtype=_np.float32) if _HAS_NUMPY else None
+
+    heap = []   # min-heap of (sim, id)
+    scanned = 0
+
+    def _push(sim, cid):
+        if sim < min_score:
+            return
+        if len(heap) < pool:
+            _heapq.heappush(heap, (sim, cid))
+        elif sim > heap[0][0]:
+            _heapq.heappushpop(heap, (sim, cid))
+
+    cur = conn.execute(
+        "SELECT id, embedding_vec, embedding FROM candidates "
+        "WHERE embedding IS NOT NULL AND embedding NOT IN ('', '[]')")
+    while True:
+        batch = cur.fetchmany(chunk)
+        if not batch:
+            break
+        ids, mats = [], []
+        for r in batch:
+            if scanned >= max_cands:
+                break
+            scanned += 1
+            vec = None
+            blob = r['embedding_vec']
+            if blob:                                   # fast path: float32 bytes
+                try:
+                    if _HAS_NUMPY:
+                        vec = _np.frombuffer(blob, dtype=_np.float32)
+                    else:
+                        vec = _array.array('f'); vec.frombytes(blob)
+                except Exception:
+                    vec = None
+            if vec is None:                            # fallback: legacy JSON
+                try:
+                    vec = json.loads(r['embedding'])
+                except Exception:
+                    continue
+            if vec is None or len(vec) != d:
+                continue
+            if _HAS_NUMPY:
+                ids.append(r['id']); mats.append(vec)
+            else:
+                dot = 0.0; nb = 0.0
+                for x, y in zip(qvec, vec):
+                    dot += x * y; nb += y * y
+                nb = math.sqrt(nb)
+                if nb:
+                    _push(dot / (nb * q_norm), r['id'])
+        if _HAS_NUMPY and ids:
+            m = _np.asarray(mats, dtype=_np.float32)          # (n, d)
+            dots = m @ q_np                                    # (n,)
+            norms = _np.sqrt((m * m).sum(axis=1))
+            norms[norms == 0] = 1e-9
+            sims = dots / (norms * q_norm)
+            for cid, sim in zip(ids, sims):
+                _push(float(sim), cid)
+            del m, dots, norms, sims                           # release chunk memory
+        if scanned >= max_cands:
+            break
+
+    ranked = sorted(heap, key=lambda x: x[0], reverse=True)
+    return ranked, scanned
+
+
+def _search_hydrate(conn, page_slice):
+    """Load full display fields (with mandate join) ONLY for the ranked page.
+    Preserves ranked order and attaches the score. Same result shape as before."""
+    if not page_slice:
+        return []
+    score_map = {cid: sim for sim, cid in page_slice}
+    ids = [cid for _, cid in page_slice]
+    ph = ','.join('?' * len(ids))
     rows = conn.execute(
-        "SELECT c.*, m.role AS mandate_role, m.client AS mandate_client, m.status AS mandate_status "
+        "SELECT c.id, c.name, c.designation, c.company, c.experience, c.location, "
+        "c.ctc_current, c.ctc_expected, c.notice_period, c.phone, c.email, c.key_skills, "
+        "c.mandate_id, c.stage, m.role AS mandate_role, m.client AS mandate_client, "
+        "m.status AS mandate_status "
         "FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
-        "WHERE c.embedding!='' AND c.embedding IS NOT NULL"
-    ).fetchall()
-
-    scored = []
-    for c in rows:
-        try:
-            vec = json.loads(c['embedding'])
-        except Exception:
-            continue
-        sim = cosine(qvec, vec)
-        scored.append((sim, c))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
+        f"WHERE c.id IN ({ph})", ids).fetchall()
+    rowmap = {r['id']: r for r in rows}
     results = []
-    for sim, c in scored[:top_k]:
+    for cid in ids:  # preserve ranked order
+        c = rowmap.get(cid)
+        if not c:
+            continue
         try:
             skills = json.loads(c['key_skills'] or '[]')
         except Exception:
@@ -3624,13 +4388,428 @@ def ai_search():
             'mandate_id': c['mandate_id'], 'mandate_role': c['mandate_role'],
             'mandate_client': c['mandate_client'], 'mandate_status': c['mandate_status'],
             'stage': c['stage'],
-            'score': round(sim * 100, 1),
+            'score': round(score_map[cid] * 100, 1),
         })
+    return results
 
-    # Optional AI reasoning over the top results (why they fit)
-    explain = bool(d.get('explain'))
+
+# ══════════════════════════════════════════════════════════════════════
+#  HYBRID SEARCH ENGINE (Sprint 6)
+#  Layers structured understanding + business-rule scoring on top of the
+#  Sprint-4 semantic retrieval. Design principle: NL-extracted signals only
+#  RE-RANK (never exclude) so recall is preserved and a filter-less query
+#  scores exactly like pure semantic search (perfect backward compatibility).
+#  Hard exclusion happens only for explicitly-supplied mandatory filters.
+# ══════════════════════════════════════════════════════════════════════
+
+_HYBRID_CFG_DEFAULTS = {
+    'hybrid_enabled':      1,      # default-on; harmless for filter-less queries
+    'hybrid_pool':         300,    # semantic top-N to re-rank structurally
+    'hybrid_w_semantic':   0.55,
+    'hybrid_w_skills':     0.20,
+    'hybrid_w_industry':   0.06,
+    'hybrid_w_company':    0.06,
+    'hybrid_w_experience': 0.07,
+    'hybrid_w_location':   0.06,
+    'hybrid_w_recency':    0.0,    # off by default
+    'hybrid_taxo_ttl_sec': 600,    # taxonomy cache lifetime
+    'hybrid_taxo_sample':  20000,  # candidates sampled to build the vocabulary
+}
+def _hybrid_cfg(key):
+    dflt = _HYBRID_CFG_DEFAULTS[key]
+    try:
+        v = get_setting(key)
+        if v is None or str(v).strip() == '':
+            return dflt
+        return float(v) if isinstance(dflt, float) else int(float(v))
+    except Exception:
+        return dflt
+
+# Noise tokens dropped from company/location vocab so "electric", "india" etc.
+# don't cause spurious matches.
+_HYBRID_STOP = {'electric', 'electricals', 'ltd', 'limited', 'pvt', 'private', 'india',
+                'technologies', 'technology', 'solutions', 'systems', 'system', 'group',
+                'co', 'company', 'corp', 'inc', 'llp', 'the', 'and', 'engineering',
+                'services', 'industries', 'international', 'global'}
+
+def _lc_tokens(s):
+    return [t for t in re.findall(r'[a-z0-9]+', (s or '').lower()) if len(t) > 1]
+
+def _parse_tag_list(raw):
+    """Parse a candidate tag column (JSON list / comma string) into a lowercased
+    phrase set. Reuses the same tolerant parsing as the embedder."""
+    txt = _as_list_str(raw)  # 'a, b, c'
+    out = set()
+    for p in txt.split(','):
+        p = p.strip().lower()
+        if p:
+            out.add(p)
+    return out
+
+
+_HYBRID_TAXO = {'ts': 0.0, 'data': None}
+def _hybrid_taxonomy(conn):
+    """Vocabulary built from EXISTING candidate data (the 'existing taxonomy'
+    the brief refers to) — skill phrases, company tokens, location tokens,
+    industry phrases. Cached with TTL so it isn't rebuilt every search."""
+    import time as _time
+    now = _time.time()
+    if _HYBRID_TAXO['data'] is not None and now - _HYBRID_TAXO['ts'] < _hybrid_cfg('hybrid_taxo_ttl_sec'):
+        return _HYBRID_TAXO['data']
+    skills, companies, locations, industries = set(), set(), set(), set()
+    try:
+        sample = _hybrid_cfg('hybrid_taxo_sample')
+        rows = conn.execute(
+            "SELECT key_skill_tags, key_skills, secondary_skills, domain_tags, product_handles, "
+            "function_tags, company, industry_background, location, preferred_location "
+            "FROM candidates LIMIT ?", (sample,)).fetchall()
+        for r in rows:
+            for col in ('key_skill_tags', 'key_skills', 'secondary_skills', 'domain_tags',
+                        'product_handles', 'function_tags'):
+                skills |= _parse_tag_list(r[col])
+            for tok in _lc_tokens(r['company']):
+                if tok not in _HYBRID_STOP:
+                    companies.add(tok)
+            for col in ('location', 'preferred_location'):
+                for tok in _lc_tokens(r[col]):
+                    if tok not in _HYBRID_STOP:
+                        locations.add(tok)
+            industries |= _parse_tag_list(r['industry_background'])
+        # previous employers too
+        for r in conn.execute("SELECT DISTINCT company FROM work_history LIMIT ?", (sample,)).fetchall():
+            for tok in _lc_tokens(r['company']):
+                if tok not in _HYBRID_STOP:
+                    companies.add(tok)
+    except sqlite3.OperationalError:
+        pass
+    skills = {s for s in skills if len(s) > 1 and not s.isdigit()}
+    data = {'skills': skills, 'companies': companies, 'locations': locations, 'industries': industries}
+    _HYBRID_TAXO['data'] = data; _HYBRID_TAXO['ts'] = now
+    return data
+
+
+def _query_grams(query):
+    toks = re.findall(r'[a-z0-9]+', query.lower())
+    grams = set(toks)
+    for n in (2, 3):
+        for i in range(len(toks) - n + 1):
+            grams.add(' '.join(toks[i:i + n]))
+    return grams, set(toks)
+
+
+def _extract_query_filters(query, taxo):
+    """Detect structured signals from a natural-language recruiter query using
+    the existing taxonomy + light regex. All soft (re-rank) unless promoted to
+    mandatory by the caller. O(query length) via n-gram intersection, so it
+    scales regardless of vocabulary size."""
+    grams, toks = _query_grams(query)
+    ql = ' ' + query.lower() + ' '
+    detected = {'skills': [], 'companies': [], 'locations': [], 'industries': [],
+                'min_experience': None, 'max_experience': None, 'education': [],
+                'immediate': False, 'salary_max': None, 'employment_type': None}
+
+    detected['skills']     = sorted(g for g in grams if g in taxo['skills'])
+    detected['industries'] = sorted(g for g in grams if g in taxo['industries'])
+    detected['companies']  = sorted(t for t in toks if t in taxo['companies'])
+    detected['locations']  = sorted(t for t in toks if t in taxo['locations'])
+
+    mrange = re.search(r'(\d+)\s*(?:-|to)\s*(\d+)\s*(?:\+?\s*)?(?:years?|yrs?)', ql)
+    if mrange:
+        detected['min_experience'] = float(mrange.group(1)); detected['max_experience'] = float(mrange.group(2))
+    else:
+        mexp = re.search(r'(\d+)\s*\+?\s*(?:years?|yrs?)', ql)
+        if mexp:
+            detected['min_experience'] = float(mexp.group(1))
+
+    for pat, label in [(r'\bb\.?tech\b', 'btech'), (r'\bm\.?tech\b', 'mtech'),
+                       (r'\bb\.?e\b', 'be'), (r'\bmba\b', 'mba'),
+                       (r'\bdiploma\b', 'diploma'), (r'\bphd\b', 'phd'), (r'\bb\.?sc\b', 'bsc')]:
+        if re.search(pat, ql):
+            detected['education'].append(label)
+    if re.search(r'\bimmediate(ly)?\b|\bimmediate joiner\b', ql):
+        detected['immediate'] = True
+    msal = re.search(r'(\d+(?:\.\d+)?)\s*(?:lpa|lakhs?|lac|l)\b', ql)
+    if msal:
+        detected['salary_max'] = float(msal.group(1))
+    if re.search(r'\bcontract\b|\bcontractual\b', ql):
+        detected['employment_type'] = 'contract'
+    elif re.search(r'\bpermanent\b|\bfull[- ]?time\b', ql):
+        detected['employment_type'] = 'permanent'
+    elif re.search(r'\bfreelanc', ql):
+        detected['employment_type'] = 'freelance'
+    return detected
+
+
+def _candidate_signal_sets(c, wh_companies):
+    """Build the comparable sets for one candidate row (skills phrases, company
+    tokens, location tokens, industry phrases)."""
+    skills = set()
+    for col in ('key_skill_tags', 'key_skills', 'secondary_skills', 'domain_tags',
+                'product_handles', 'function_tags'):
+        try:
+            skills |= _parse_tag_list(c[col])
+        except Exception:
+            pass
+    comp_toks = set(t for t in _lc_tokens(c['company']) if t not in _HYBRID_STOP)
+    for co in (wh_companies or []):
+        comp_toks |= set(t for t in _lc_tokens(co) if t not in _HYBRID_STOP)
+    loc_toks = set(_lc_tokens(c['location'])) | set(_lc_tokens(c['preferred_location']))
+    industries = set()
+    try:
+        industries |= _parse_tag_list(c['industry_background'])
+    except Exception:
+        pass
+    return skills, comp_toks, loc_toks, industries
+
+
+def _hybrid_score_one(sem, c, wh_companies, detected, weights, mandatory_skills):
+    """Return (hybrid_score 0..1, structured_score 0..1, explain). Only signals
+    actually present in the query contribute — so a filter-less query collapses
+    to hybrid == semantic (identical to the old engine)."""
+    cskills, ccomp, cloc, cind = _candidate_signal_sets(c, wh_companies)
+    signals = {'semantic': max(0.0, min(1.0, sem))}
+    active = {'semantic': weights['semantic']}
+    explain = {'matched_skills': [], 'matched_industries': [], 'matched_companies': [],
+               'matched_experience': None, 'missing_mandatory_skills': []}
+
+    if detected['skills']:
+        matched = [s for s in detected['skills'] if s in cskills]
+        signals['skills'] = len(matched) / len(detected['skills'])
+        active['skills'] = weights['skills']; explain['matched_skills'] = matched
+    if detected['industries']:
+        matched = [s for s in detected['industries'] if s in cind]
+        signals['industry'] = 1.0 if matched else 0.0
+        active['industry'] = weights['industry']; explain['matched_industries'] = matched
+    if detected['companies']:
+        matched = [s for s in detected['companies'] if s in ccomp]
+        signals['company'] = 1.0 if matched else 0.0
+        active['company'] = weights['company']; explain['matched_companies'] = matched
+    if detected['locations']:
+        matched = [s for s in detected['locations'] if s in cloc]
+        signals['location'] = 1.0 if matched else 0.0
+        active['location'] = weights['location']
+        explain['matched_location'] = matched
+    if detected['min_experience'] is not None:
+        try:
+            exp = float(c['experience'] or 0)
+        except Exception:
+            exp = 0.0
+        need = detected['min_experience']
+        ok = exp >= need
+        signals['experience'] = 1.0 if ok else max(0.0, exp / need if need else 1.0)
+        active['experience'] = weights['experience']
+        explain['matched_experience'] = {'candidate': exp, 'required_min': need, 'ok': ok}
+
+    tot = sum(active.values()) or 1.0
+    hybrid = sum(signals[k] * active[k] for k in active) / tot
+    struct_w = {k: v for k, v in active.items() if k != 'semantic'}
+    structured = (sum(signals[k] * struct_w[k] for k in struct_w) / (sum(struct_w.values()) or 1.0)) if struct_w else 0.0
+
+    if mandatory_skills:
+        explain['missing_mandatory_skills'] = [s for s in mandatory_skills if s not in cskills]
+    return hybrid, structured, explain
+
+
+def _hybrid_process(conn, query, ranked, d):
+    """Re-rank the semantic pool with structured signals. Returns
+    (scored_results, filters_detected). Each scored result is a full display
+    dict (same shape as _search_hydrate) plus 'semantic_score' and 'explain'."""
+    weights = {
+        'semantic':   _hybrid_cfg('hybrid_w_semantic'),
+        'skills':     _hybrid_cfg('hybrid_w_skills'),
+        'industry':   _hybrid_cfg('hybrid_w_industry'),
+        'company':    _hybrid_cfg('hybrid_w_company'),
+        'experience': _hybrid_cfg('hybrid_w_experience'),
+        'location':   _hybrid_cfg('hybrid_w_location'),
+        'recency':    _hybrid_cfg('hybrid_w_recency'),
+    }
+    taxo = _hybrid_taxonomy(conn)
+    detected = _extract_query_filters(query, taxo)
+
+    # merge explicit filters (opt-in, can be mandatory/hard)
+    exp_filters = d.get('filters') or {}
+    if exp_filters.get('skills'):
+        detected['skills'] = sorted(set(detected['skills']) | {s.lower() for s in exp_filters['skills']})
+    if exp_filters.get('min_experience') is not None:
+        detected['min_experience'] = float(exp_filters['min_experience'])
+    if exp_filters.get('location'):
+        detected['locations'] = sorted(set(detected['locations']) | set(_lc_tokens(exp_filters['location'])))
+    mandatory_skills = [s.lower() for s in (d.get('mandatory_skills') or [])]
+    hard_location = _lc_tokens(exp_filters.get('location', '')) if exp_filters.get('mandatory_location') else []
+    hard_min_exp = float(exp_filters['min_experience']) if (exp_filters.get('min_experience') is not None
+                        and exp_filters.get('mandatory_experience')) else None
+
+    pool_ids = [cid for _, cid in ranked[:_hybrid_cfg('hybrid_pool')]]
+    sem_map = {cid: sim for sim, cid in ranked}
+    if not pool_ids:
+        return [], detected
+
+    ph = ','.join('?' * len(pool_ids))
+    rows = conn.execute(
+        "SELECT c.id, c.name, c.designation, c.company, c.experience, c.location, c.preferred_location, "
+        "c.ctc_current, c.ctc_expected, c.notice_period, c.phone, c.email, c.key_skills, "
+        "c.secondary_skills, c.key_skill_tags, c.domain_tags, c.product_handles, c.function_tags, "
+        "c.industry_background, c.mandate_id, c.stage, "
+        "m.role AS mandate_role, m.client AS mandate_client, m.status AS mandate_status "
+        "FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
+        f"WHERE c.id IN ({ph})", pool_ids).fetchall()
+    rowmap = {r['id']: r for r in rows}
+    # batch previous-employer companies for the pool
+    wh_map = {}
+    try:
+        for r in conn.execute(f"SELECT candidate_id, company FROM work_history WHERE candidate_id IN ({ph})",
+                              pool_ids).fetchall():
+            wh_map.setdefault(r['candidate_id'], []).append(r['company'])
+    except sqlite3.OperationalError:
+        pass
+
+    scored = []
+    for cid in pool_ids:
+        c = rowmap.get(cid)
+        if c is None:
+            continue
+        # hard (mandatory) exclusion — opt-in only
+        if mandatory_skills or hard_location or hard_min_exp is not None:
+            cskills, ccomp, cloc, _ = _candidate_signal_sets(c, wh_map.get(cid))
+            if mandatory_skills and any(s not in cskills for s in mandatory_skills):
+                continue
+            if hard_location and not (set(hard_location) & cloc):
+                continue
+            if hard_min_exp is not None:
+                try:
+                    if float(c['experience'] or 0) < hard_min_exp:
+                        continue
+                except Exception:
+                    continue
+        sem = sem_map.get(cid, 0.0)
+        hyb, structured, explain = _hybrid_score_one(sem, c, wh_map.get(cid), detected, weights, mandatory_skills)
+        try:
+            skills = json.loads(c['key_skills'] or '[]')
+        except Exception:
+            skills = []
+        scored.append({
+            'id': c['id'], 'name': c['name'], 'designation': c['designation'],
+            'company': c['company'], 'experience': c['experience'], 'location': c['location'],
+            'ctc_current': c['ctc_current'], 'ctc_expected': c['ctc_expected'],
+            'notice_period': c['notice_period'], 'phone': c['phone'], 'email': c['email'],
+            'key_skills': skills, 'mandate_id': c['mandate_id'], 'mandate_role': c['mandate_role'],
+            'mandate_client': c['mandate_client'], 'mandate_status': c['mandate_status'],
+            'stage': c['stage'],
+            'score': round(hyb * 100, 1),
+            'semantic_score': round(sem * 100, 1),
+            'structured_score': round(structured * 100, 1),
+            'explain': explain,
+            '_sem': sem,
+        })
+    # sort by hybrid score desc, tie-break on semantic
+    scored.sort(key=lambda x: (x['score'], x['_sem']), reverse=True)
+    for x in scored:
+        x.pop('_sem', None)
+    return scored, detected
+
+
+def _rme_capture_search(query, detected, result_count, user):
+    """Log the search into the Recruitment Memory Engine as a search_activity
+    event (Sprint 5). Best-effort, never blocks or breaks search."""
+    try:
+        conn = get_db()
+        rme_add_event(conn, 'search_activity', 'recruiter',
+                      str((user or {}).get('id', 'system')),
+                      actor=str((user or {}).get('username', 'system')),
+                      summary=query[:200],
+                      data={'skills': detected.get('skills', []),
+                            'companies': detected.get('companies', []),
+                            'locations': detected.get('locations', []),
+                            'industries': detected.get('industries', []),
+                            'min_experience': detected.get('min_experience'),
+                            'results': result_count})
+        conn.close()
+    except Exception:
+        pass
+
+
+@app.route('/api/ai/search', methods=['POST'])
+@login_required
+def ai_search():
+    """Semantic talent search across ALL candidates (ignores mandate
+    boundaries). Sprint 4: streams candidate vectors in chunks (bounded
+    memory), keeps a top-N heap, loads full display fields only for the
+    returned page, and caches query embeddings + ranked results."""
+    import time as _time
+    t_start = _time.perf_counter()
+    d = request.json or {}
+    query = (d.get('query') or '').strip()
+    if not query:
+        return jsonify({'error': 'Empty query'}), 400
+
+    # ── Params / config ────────────────────────────────────────────────
+    top_k       = int(d.get('top_k') or 10)
+    page        = max(1, int(d.get('page') or 1))
+    page_size   = int(d.get('page_size') or top_k)
+    max_cands   = int(d.get('max_candidates') or _search_cfg('search_max_candidates'))
+    min_score   = float(d.get('min_score') if d.get('min_score') is not None else _search_cfg('search_min_score'))
+    pool        = max(_search_cfg('search_max_results'), page * page_size)
+    no_cache    = bool(d.get('no_cache'))
+    offset      = (page - 1) * page_size
+
+    api_key = get_setting('gemini_api_key')
+    if not api_key:
+        return jsonify({'error': 'Gemini API key not set. Add it in Settings.'}), 400
+
+    timing = {}
+    ckey = f'{query.lower()}|{min_score}|{max_cands}|{pool}'
+
+    # ── 1) Query embedding (cache) ─────────────────────────────────────
+    t0 = _time.perf_counter()
+    cached = None if no_cache else _search_cache_get(ckey)
+    if cached:
+        qvec = cached['qvec']; ranked = cached['ranked']; scanned = cached['scanned']
+        timing['embed_ms'] = 0; timing['scan_ms'] = 0; from_cache = True
+    else:
+        qvec = gemini_embed(query, api_key)
+        if isinstance(qvec, dict) and qvec.get('error'):
+            return jsonify({'error': 'Gemini error: ' + qvec['error']}), 400
+        if not qvec:
+            return jsonify({'error': 'Could not embed query'}), 400
+        timing['embed_ms'] = int((_time.perf_counter() - t0) * 1000)
+        from_cache = False
+
+    conn = get_db()
+
+    # ── 2) Stream + score + rank (only when not cached) ────────────────
+    if not from_cache:
+        t0 = _time.perf_counter()
+        ranked, scanned = _search_rank(conn, qvec, min_score, max_cands, pool)
+        timing['scan_ms'] = int((_time.perf_counter() - t0) * 1000)
+        if not no_cache:
+            _search_cache_put(ckey, {'qvec': qvec, 'ranked': ranked, 'scanned': scanned})
+
+    total = len(ranked)
+
+    # ── 2b) Hybrid re-rank (Sprint 6) ──────────────────────────────────
+    # Default-on but soft: with no detectable structured signals it collapses
+    # to pure semantic order (identical to the old engine). Opt out with hybrid=false.
+    hybrid_on = bool(d.get('hybrid')) if ('hybrid' in d) else bool(_hybrid_cfg('hybrid_enabled'))
+    filters_detected = {}
+    if hybrid_on:
+        t0 = _time.perf_counter()
+        scored_pool, filters_detected = _hybrid_process(conn, query, ranked, d)
+        timing['hybrid_ms'] = int((_time.perf_counter() - t0) * 1000)
+        total = len(scored_pool)
+        page_items = scored_pool[offset:offset + page_size]
+        results = page_items
+        timing['hydrate_ms'] = 0
+        page_slice = [(it['semantic_score'] / 100.0, it['id']) for it in page_items]
+    else:
+        # ── 3) Two-phase: full fields for THIS page only (semantic-only) ──
+        t0 = _time.perf_counter()
+        page_slice = ranked[offset:offset + page_size]
+        results = _search_hydrate(conn, page_slice)
+        timing['hydrate_ms'] = int((_time.perf_counter() - t0) * 1000)
+
+    # ── 4) Optional AI reasoning over the page (unchanged behaviour) ───
     reasoning = ''
-    if explain and results:
+    if bool(d.get('explain')) and results:
         ds_key = get_setting('deepseek_api_key')
         if ds_key:
             cand_lines = []
@@ -3654,8 +4833,636 @@ def ai_search():
                 pass
 
     conn.close()
-    return jsonify({'ok': True, 'results': results, 'reasoning': reasoning,
-                    'searched': len(scored)})
+
+    total_ms = int((_time.perf_counter() - t_start) * 1000)
+    timing['total_ms'] = total_ms
+    avg_sim = round(sum(s for s, _ in page_slice) / len(page_slice), 4) if page_slice else 0.0
+    _search_metric_record(total_ms, scanned)
+
+    # Capture the search into the Recruitment Memory Engine — only on a fresh
+    # first page, so scrolling/pagination doesn't spam duplicate events.
+    if hybrid_on and page == 1 and not from_cache:
+        _rme_capture_search(query, filters_detected, total, current_user())
+
+    # slow-search + per-search logging
+    if total_ms >= _search_cfg('search_slow_ms'):
+        print(f'[search] SLOW {total_ms}ms q="{query[:40]}" scanned={scanned} '
+              f'returned={len(results)} hybrid={hybrid_on} cache={"hit" if from_cache else "miss"} {timing}')
+    else:
+        print(f'[search] {total_ms}ms q="{query[:40]}" scanned={scanned} '
+              f'returned={len(results)} hybrid={hybrid_on} cache={"hit" if from_cache else "miss"}')
+
+    return jsonify({
+        'ok': True,
+        'results': results,
+        'reasoning': reasoning,
+        'searched': scanned,       # backward-compatible key (candidates scanned)
+        'total': total,            # total ranked (pagination pool)
+        'page': page, 'page_size': page_size,
+        'has_more': offset + page_size < total,
+        'avg_similarity': avg_sim,
+        'from_cache': from_cache,
+        'hybrid': hybrid_on,
+        'filters_detected': filters_detected,
+        'timing': timing,
+    })
+
+
+@app.route('/api/ai/search/metrics', methods=['GET'])
+@login_required
+def ai_search_metrics():
+    """Rolling search performance metrics (in-memory, last N searches)."""
+    with _SEARCH_METRICS_LOCK:
+        durs = sorted(x[0] for x in _SEARCH_METRICS)
+        scans = [x[1] for x in _SEARCH_METRICS]
+    if not durs:
+        return jsonify({'ok': True, 'samples': 0})
+    def _pct(a, p):
+        if not a: return 0
+        i = min(len(a) - 1, int(round((p / 100.0) * (len(a) - 1))))
+        return a[i]
+    return jsonify({'ok': True, 'samples': len(durs),
+                    'avg_ms': int(sum(durs) / len(durs)),
+                    'p95_ms': _pct(durs, 95),
+                    'max_ms': durs[-1],
+                    'avg_candidates_scanned': int(sum(scans) / len(scans)) if scans else 0})
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  RECRUITMENT MEMORY ENGINE (Sprint 5) — primitives + thin API.
+#  These are the reusable write/read functions future sprints will call to
+#  attach memories, log events and record relationships on any entity.
+#  Nothing here auto-generates data; existing flows are untouched.
+# ══════════════════════════════════════════════════════════════════════
+
+# Canonical vocabularies (documentation + /status breakdown + light validation).
+# New values are allowed (extensibility) — these are the known-good set.
+RME_ENTITY_TYPES = ('candidate', 'job', 'client', 'company', 'recruiter', 'placement',
+                    'interview', 'submission', 'communication', 'skill', 'technology', 'industry')
+RME_MEMORY_TYPES = ('fact', 'event', 'relationship', 'observation', 'preference',
+                    'ai_insight', 'recruiter_note', 'system_note', 'interaction')
+RME_EVENT_TYPES = ('candidate_created', 'resume_uploaded', 'candidate_updated',
+                   'interview_scheduled', 'interview_feedback', 'submission',
+                   'offer_released', 'offer_accepted', 'placement', 'communication',
+                   'status_change', 'search_activity')
+RME_VISIBILITY = ('internal', 'team', 'private', 'candidate_visible')
+RME_STATUS = ('active', 'archived', 'deleted')
+
+
+def _rme_json(v, default):
+    """Coerce a value to a JSON string for storage (accepts list/dict/str)."""
+    if v is None:
+        return default
+    if isinstance(v, (list, dict)):
+        try:
+            return json.dumps(v)
+        except Exception:
+            return default
+    return str(v)
+
+
+def rme_add_memory(conn, entity_type, entity_id, memory_type='fact', title='', content='',
+                   source='system', created_by='', visibility='internal', confidence=1.0,
+                   importance=0, tags=None, metadata=None, status='active'):
+    """Attach a memory to any entity. Returns the new memory id. This is the
+    core primitive future sprints (AI insights, recruiter notes) build on."""
+    now = ts()
+    cur = conn.execute(
+        "INSERT INTO rme_memories (entity_type, entity_id, memory_type, title, content, source, "
+        "created_by, created_at, updated_at, visibility, confidence, importance, tags, metadata, status) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (str(entity_type), str(entity_id), memory_type, title, content, source, str(created_by),
+         now, now, visibility, float(confidence), int(importance),
+         _rme_json(tags, '[]'), _rme_json(metadata, '{}'), status))
+    conn.commit()
+    return cur.lastrowid
+
+
+def rme_add_event(conn, event_type, entity_type, entity_id, actor='system', summary='',
+                  data=None, related_entity_type='', related_entity_id=''):
+    """Append an immutable event to the RME timeline. Returns the event id."""
+    cur = conn.execute(
+        "INSERT INTO rme_events (event_type, entity_type, entity_id, actor, summary, data, "
+        "related_entity_type, related_entity_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (str(event_type), str(entity_type), str(entity_id), str(actor), summary,
+         _rme_json(data, '{}'), str(related_entity_type), str(related_entity_id), ts()))
+    conn.commit()
+    return cur.lastrowid
+
+
+def rme_set_relationship(conn, from_type, from_id, to_type, to_id, rel_type,
+                         weight=1.0, confidence=1.0, source='system', metadata=None):
+    """Upsert a relationship edge (unique per from/to/rel_type). Returns row id."""
+    now = ts()
+    conn.execute(
+        "INSERT INTO rme_relationships (from_type, from_id, to_type, to_id, rel_type, weight, "
+        "confidence, source, metadata, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(from_type, from_id, to_type, to_id, rel_type) DO UPDATE SET "
+        "weight=excluded.weight, confidence=excluded.confidence, source=excluded.source, "
+        "metadata=excluded.metadata, updated_at=excluded.updated_at, status='active'",
+        (str(from_type), str(from_id), str(to_type), str(to_id), str(rel_type),
+         float(weight), float(confidence), source, _rme_json(metadata, '{}'), now, now))
+    conn.commit()
+    row = conn.execute(
+        "SELECT id FROM rme_relationships WHERE from_type=? AND from_id=? AND to_type=? "
+        "AND to_id=? AND rel_type=?",
+        (str(from_type), str(from_id), str(to_type), str(to_id), str(rel_type))).fetchone()
+    return row['id'] if row else None
+
+
+def _rme_row(r):
+    return {k: r[k] for k in r.keys()}
+
+
+@app.route('/api/rme/memory', methods=['GET', 'POST'])
+@login_required
+def rme_memory():
+    if request.method == 'POST':
+        d = request.json or {}
+        et, eid = (d.get('entity_type') or '').strip(), str(d.get('entity_id') or '').strip()
+        if not et or not eid:
+            return jsonify({'error': 'entity_type and entity_id are required'}), 400
+        conn = get_db()
+        mid = rme_add_memory(
+            conn, et, eid,
+            memory_type=(d.get('memory_type') or 'fact'),
+            title=d.get('title', ''), content=d.get('content', ''),
+            source=d.get('source', 'recruiter'),
+            created_by=str((current_user() or {}).get('username', '')),
+            visibility=d.get('visibility', 'internal'),
+            confidence=d.get('confidence', 1.0), importance=d.get('importance', 0),
+            tags=d.get('tags'), metadata=d.get('metadata'))
+        conn.close()
+        return jsonify({'ok': True, 'id': mid})
+    # GET — list memories for an entity
+    et = (request.args.get('entity_type') or '').strip()
+    eid = str(request.args.get('entity_id') or '').strip()
+    if not et or not eid:
+        return jsonify({'error': 'entity_type and entity_id are required'}), 400
+    limit = min(int(request.args.get('limit') or 100), 500)
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM rme_memories WHERE entity_type=? AND entity_id=? AND status!='deleted' "
+        "ORDER BY importance DESC, created_at DESC LIMIT ?", (et, eid, limit)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'memories': [_rme_row(r) for r in rows]})
+
+
+@app.route('/api/rme/memory/<int:mid>/archive', methods=['POST'])
+@login_required
+def rme_memory_archive(mid):
+    conn = get_db()
+    conn.execute("UPDATE rme_memories SET status='archived', updated_at=? WHERE id=?", (ts(), mid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/rme/event', methods=['GET', 'POST'])
+@login_required
+def rme_event():
+    if request.method == 'POST':
+        d = request.json or {}
+        etype = (d.get('event_type') or '').strip()
+        et, eid = (d.get('entity_type') or '').strip(), str(d.get('entity_id') or '').strip()
+        if not etype or not et or not eid:
+            return jsonify({'error': 'event_type, entity_type and entity_id are required'}), 400
+        conn = get_db()
+        evid = rme_add_event(conn, etype, et, eid,
+                             actor=str((current_user() or {}).get('username', 'system')),
+                             summary=d.get('summary', ''), data=d.get('data'),
+                             related_entity_type=d.get('related_entity_type', ''),
+                             related_entity_id=d.get('related_entity_id', ''))
+        conn.close()
+        return jsonify({'ok': True, 'id': evid})
+    et = (request.args.get('entity_type') or '').strip()
+    eid = str(request.args.get('entity_id') or '').strip()
+    limit = min(int(request.args.get('limit') or 100), 500)
+    conn = get_db()
+    if et and eid:
+        rows = conn.execute("SELECT * FROM rme_events WHERE entity_type=? AND entity_id=? "
+                            "ORDER BY created_at DESC, id DESC LIMIT ?", (et, eid, limit)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM rme_events ORDER BY created_at DESC, id DESC LIMIT ?",
+                            (limit,)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'events': [_rme_row(r) for r in rows]})
+
+
+@app.route('/api/rme/relationship', methods=['GET', 'POST'])
+@login_required
+def rme_relationship():
+    if request.method == 'POST':
+        d = request.json or {}
+        req = ['from_type', 'from_id', 'to_type', 'to_id', 'rel_type']
+        if not all(str(d.get(k) or '').strip() for k in req):
+            return jsonify({'error': 'from_type, from_id, to_type, to_id, rel_type are required'}), 400
+        conn = get_db()
+        rid = rme_set_relationship(conn, d['from_type'], d['from_id'], d['to_type'], d['to_id'],
+                                   d['rel_type'], weight=d.get('weight', 1.0),
+                                   confidence=d.get('confidence', 1.0),
+                                   source=d.get('source', 'recruiter'), metadata=d.get('metadata'))
+        conn.close()
+        return jsonify({'ok': True, 'id': rid})
+    ft = (request.args.get('from_type') or '').strip()
+    fid = str(request.args.get('from_id') or '').strip()
+    limit = min(int(request.args.get('limit') or 200), 1000)
+    conn = get_db()
+    if ft and fid:
+        rows = conn.execute("SELECT * FROM rme_relationships WHERE from_type=? AND from_id=? "
+                            "AND status='active' ORDER BY weight DESC LIMIT ?", (ft, fid, limit)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM rme_relationships WHERE status='active' "
+                            "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'relationships': [_rme_row(r) for r in rows]})
+
+
+@app.route('/api/rme/status', methods=['GET'])
+@login_required
+def rme_status():
+    """Confirms the RME architecture is live and reports counts. Useful to
+    verify the foundation without any memories having been generated yet."""
+    conn = get_db()
+    def _count(t):
+        try:
+            return conn.execute(f'SELECT COUNT(*) n FROM {t}').fetchone()['n']
+        except sqlite3.OperationalError:
+            return None
+    mem_by_type, evt_by_type = {}, {}
+    try:
+        for r in conn.execute("SELECT memory_type m, COUNT(*) n FROM rme_memories GROUP BY m"):
+            mem_by_type[r['m']] = r['n']
+        for r in conn.execute("SELECT event_type e, COUNT(*) n FROM rme_events GROUP BY e"):
+            evt_by_type[r['e']] = r['n']
+    except sqlite3.OperationalError:
+        pass
+    out = {'ok': True,
+           'memories': _count('rme_memories'),
+           'events': _count('rme_events'),
+           'relationships': _count('rme_relationships'),
+           'memories_by_type': mem_by_type,
+           'events_by_type': evt_by_type,
+           'vocab': {'entity_types': RME_ENTITY_TYPES, 'memory_types': RME_MEMORY_TYPES,
+                     'event_types': RME_EVENT_TYPES}}
+    conn.close()
+    return jsonify(out)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  RECRUITMENT KNOWLEDGE GRAPH (Sprint 7) — repository layer + interfaces.
+#  Everything the rest of RecruitOS touches goes through these rkg_* helpers,
+#  never raw SQL — that abstraction is what lets a graph DB replace SQLite
+#  later without changing callers. Architecture only: no extraction, no
+#  reasoning, no recommendations.
+# ══════════════════════════════════════════════════════════════════════
+
+RKG_ENTITY_TYPES = ('candidate', 'company', 'job', 'client', 'recruiter', 'skill', 'technology',
+                    'certification', 'industry', 'product', 'location', 'education',
+                    'institution', 'project', 'role', 'designation')
+RKG_REL_TYPES = (
+    # candidate
+    'WORKED_AT', 'HAS_SKILL', 'HAS_CERTIFICATION', 'KNOWS_TECHNOLOGY', 'WORKED_ON',
+    'LOCATED_IN', 'HAS_EDUCATION', 'REPORTS_TO', 'REFERRED_BY',
+    # company
+    'OPERATES_IN', 'COMPETES_WITH', 'USES_TECHNOLOGY', 'MANUFACTURES', 'HIRES_FOR',
+    'SUPPLIES', 'PARTNERS_WITH',
+    # job
+    'REQUIRES_SKILL', 'REQUIRES_CERTIFICATION', 'REQUIRES_TECHNOLOGY',
+    'BELONGS_TO_INDUSTRY', 'POSTED_BY',
+    # recruiter
+    'MANAGES', 'PLACED', 'WORKS_WITH', 'SEARCHED', 'CONTACTED',
+    # generic concept graph
+    'RELATED_TO',
+)
+
+# Seed alias map — small on purpose (architecture, not a big dictionary).
+# Maps a canonical normalized key -> known surface variants. Extend freely.
+_RKG_ALIAS_SEED = {
+    'motorcontrolcentre': ['mcc', 'motor control center', 'motor control centre', 'intelligent mcc'],
+    'powercontrolcentre': ['pcc', 'power control center', 'power control centre'],
+    'lowvoltage':         ['lv', 'l v', 'low voltage'],
+    'iec61439':           ['iec 61439', 'iec61439'],
+}
+
+
+def rkg_normalize(name):
+    """Canonical dedup key: lowercase, punctuation/separators removed, spaces
+    stripped. Collapses spacing/punctuation variants of code-like terms, e.g.
+    'IEC 61439' / 'I.E.C-61439' / 'iec61439' -> 'iec61439'. Abbreviation and
+    spelling variants (MCC, centre/center) are handled by the alias layer."""
+    s = (name or '').lower().strip()
+    s = re.sub(r'[^a-z0-9]+', '', s)
+    return s
+
+
+def _rkg_canonical_norm(name):
+    """Resolve a surface form to its canonical normalized key via the seed alias
+    map, falling back to the plain normalized form. Returns (canonical, norm)."""
+    norm = rkg_normalize(name)
+    if not norm:
+        return '', ''
+    if norm in _RKG_ALIAS_SEED:
+        return norm, norm
+    for canon, variants in _RKG_ALIAS_SEED.items():
+        if norm == canon or any(rkg_normalize(v) == norm for v in variants):
+            return canon, norm
+    return norm, norm
+
+
+def _rkg_register_alias(conn, entity_id, entity_type, surface):
+    """Record a surface form -> entity mapping so later lookups of this alias
+    resolve to the same canonical node. Idempotent; ignores conflicts."""
+    na = rkg_normalize(surface)
+    if not na:
+        return
+    try:
+        conn.execute("INSERT OR IGNORE INTO rkg_aliases (entity_id, entity_type, normalized_alias, created_at) "
+                     "VALUES (?,?,?,?)", (entity_id, entity_type, na, ts()))
+    except sqlite3.OperationalError:
+        pass
+
+
+def _rkg_lookup(conn, entity_type, name):
+    """Resolve a surface form to an existing entity id, trying (1) canonical
+    normalized_name, then (2) the learned alias table. Returns id or None."""
+    canon, norm = _rkg_canonical_norm(name)
+    if not canon:
+        return None
+    row = conn.execute("SELECT id FROM rkg_entities WHERE entity_type=? AND normalized_name=?",
+                       (entity_type, canon)).fetchone()
+    if row:
+        return row['id']
+    try:
+        arow = conn.execute("SELECT entity_id FROM rkg_aliases WHERE entity_type=? AND normalized_alias=?",
+                            (entity_type, norm)).fetchone()
+        if arow:
+            return arow['entity_id']
+    except sqlite3.OperationalError:
+        pass
+    return None
+
+
+def rkg_get_or_create_entity(conn, entity_type, name, description='', metadata=None, source='system'):
+    """Idempotently resolve/create a canonical entity. Same concept under a
+    different surface form returns the SAME id (and records the new alias).
+    This is THE entry point for putting anything into the graph."""
+    display = (name or '').strip()
+    if not display:
+        return None
+    canon, norm = _rkg_canonical_norm(display)
+    if not canon:
+        return None
+    eid = _rkg_lookup(conn, entity_type, display)
+    if eid:
+        # record a newly-seen surface form (on the entity + alias table)
+        row = conn.execute("SELECT aliases FROM rkg_entities WHERE id=?", (eid,)).fetchone()
+        try:
+            al = json.loads(row['aliases'] or '[]') if row else []
+        except Exception:
+            al = []
+        if display.lower() not in [a.lower() for a in al]:
+            al.append(display)
+            conn.execute("UPDATE rkg_entities SET aliases=?, updated_at=? WHERE id=?",
+                         (json.dumps(al), ts(), eid))
+        _rkg_register_alias(conn, eid, entity_type, display)
+        conn.commit()
+        return eid
+    now = ts()
+    cur = conn.execute(
+        "INSERT INTO rkg_entities (entity_type, display_name, normalized_name, aliases, description, "
+        "metadata, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+        (entity_type, display, canon, json.dumps([display]), description,
+         _rme_json(metadata, '{}'), now, now))
+    eid = cur.lastrowid
+    # register both the canonical form and the surface form as aliases
+    _rkg_register_alias(conn, eid, entity_type, display)
+    _rkg_register_alias(conn, eid, entity_type, canon)
+    conn.commit()
+    return eid
+
+
+def rkg_add_alias(conn, entity_id, alias):
+    row = conn.execute("SELECT entity_type, aliases FROM rkg_entities WHERE id=?", (entity_id,)).fetchone()
+    if not row:
+        return False
+    try:
+        al = json.loads(row['aliases'] or '[]')
+    except Exception:
+        al = []
+    if alias and alias.lower() not in [a.lower() for a in al]:
+        al.append(alias)
+        conn.execute("UPDATE rkg_entities SET aliases=?, updated_at=? WHERE id=?",
+                     (json.dumps(al), ts(), entity_id))
+    # register in the resolution table so this alias now resolves to the node
+    _rkg_register_alias(conn, entity_id, row['entity_type'], alias)
+    conn.commit()
+    return True
+
+
+def rkg_find_entity(conn, entity_type, name):
+    eid = _rkg_lookup(conn, entity_type, name)
+    if not eid:
+        return None
+    row = conn.execute("SELECT * FROM rkg_entities WHERE id=?", (eid,)).fetchone()
+    return dict(row) if row else None
+
+
+def rkg_link(conn, source_id, target_id, rel_type, confidence=1.0, source='system', metadata=None):
+    """Upsert a directed edge between two entities (unique per src/tgt/rel_type)."""
+    now = ts()
+    conn.execute(
+        "INSERT INTO rkg_edges (source_id, target_id, rel_type, confidence, source, metadata, "
+        "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(source_id, target_id, rel_type) DO UPDATE SET "
+        "confidence=excluded.confidence, source=excluded.source, metadata=excluded.metadata, "
+        "updated_at=excluded.updated_at, status='active'",
+        (source_id, target_id, str(rel_type), float(confidence), source,
+         _rme_json(metadata, '{}'), now, now))
+    conn.commit()
+    row = conn.execute("SELECT id FROM rkg_edges WHERE source_id=? AND target_id=? AND rel_type=?",
+                       (source_id, target_id, str(rel_type))).fetchone()
+    return row['id'] if row else None
+
+
+def rkg_neighbors(conn, entity_id, rel_type=None, direction='out', limit=200):
+    """Traverse one hop. direction: 'out' (entity is source), 'in' (target),
+    'both'. Returns connected entities with the edge type + confidence."""
+    out = []
+    def _q(join_on, other):
+        sql = (f"SELECT e.*, k.rel_type AS _rel, k.confidence AS _conf, k.id AS _edge_id "
+               f"FROM rkg_edges k JOIN rkg_entities e ON e.id=k.{other} "
+               f"WHERE k.{join_on}=? AND k.status='active'")
+        args = [entity_id]
+        if rel_type:
+            sql += " AND k.rel_type=?"; args.append(rel_type)
+        sql += " LIMIT ?"; args.append(limit)
+        for r in conn.execute(sql, args).fetchall():
+            d = dict(r); d['_direction'] = ('out' if join_on == 'source_id' else 'in')
+            out.append(d)
+    if direction in ('out', 'both'):
+        _q('source_id', 'target_id')
+    if direction in ('in', 'both'):
+        _q('target_id', 'source_id')
+    return out
+
+
+# ── Memory Engine integration ──────────────────────────────────────────
+# A graph node can carry a memory timeline via the existing RME (Sprint 5),
+# addressed as entity_type='rkg_entity'. No new memory storage needed.
+def rkg_attach_memory(conn, entity_id, memory_type='fact', title='', content='',
+                      source='system', created_by='', confidence=1.0, importance=0,
+                      tags=None, metadata=None):
+    return rme_add_memory(conn, 'rkg_entity', str(entity_id), memory_type=memory_type,
+                          title=title, content=content, source=source, created_by=created_by,
+                          confidence=confidence, importance=importance, tags=tags, metadata=metadata)
+
+def rkg_memories(conn, entity_id, limit=100):
+    rows = conn.execute("SELECT * FROM rme_memories WHERE entity_type='rkg_entity' AND entity_id=? "
+                        "AND status!='deleted' ORDER BY importance DESC, created_at DESC LIMIT ?",
+                        (str(entity_id), limit)).fetchall()
+    return [_rme_row(r) for r in rows]
+
+
+# ── Knowledge-extraction interface (DESIGN ONLY — no implementation) ────
+# Future sprints register extractors that turn raw text (resume, JD, notes,
+# email, WhatsApp) into (entity, relationship) candidates. The registry +
+# signature are defined now so callers and extractors can be built against a
+# stable contract; the default extractor intentionally returns nothing.
+_RKG_EXTRACTORS = {}
+def rkg_register_extractor(source_type, fn):
+    """Register a callable fn(text, context)->{'entities':[...],'edges':[...]}."""
+    _RKG_EXTRACTORS[source_type] = fn
+
+def rkg_extract(source_type, text, context=None):
+    """Dispatch to a registered extractor. No-op until extractors are added in a
+    later sprint (architecture only)."""
+    fn = _RKG_EXTRACTORS.get(source_type)
+    if not fn:
+        return {'entities': [], 'edges': [], 'implemented': False}
+    try:
+        return fn(text, context or {})
+    except Exception as e:
+        return {'entities': [], 'edges': [], 'error': str(e)}
+
+
+# ── Search integration interface (exposed, NOT wired into search yet) ───
+def rkg_resolve_terms(conn, terms):
+    """Map query terms to canonical entities + their aliases. Hybrid search can
+    call this later for synonym expansion; search behaviour is unchanged now."""
+    resolved = []
+    for t in (terms or []):
+        # resolve type-agnostically: direct canonical match, then learned alias
+        canon, norm = _rkg_canonical_norm(t)
+        row = conn.execute("SELECT id, entity_type, display_name, aliases FROM rkg_entities "
+                           "WHERE normalized_name=? LIMIT 1", (canon,)).fetchone()
+        if not row:
+            arow = conn.execute("SELECT entity_id FROM rkg_aliases WHERE normalized_alias=? LIMIT 1",
+                               (norm,)).fetchone()
+            if arow:
+                row = conn.execute("SELECT id, entity_type, display_name, aliases FROM rkg_entities "
+                                   "WHERE id=?", (arow['entity_id'],)).fetchone()
+        if row:
+            try:
+                al = json.loads(row['aliases'] or '[]')
+            except Exception:
+                al = []
+            resolved.append({'term': t, 'entity_id': row['id'], 'entity_type': row['entity_type'],
+                             'canonical': row['display_name'], 'aliases': al})
+        else:
+            resolved.append({'term': t, 'entity_id': None, 'canonical': None, 'aliases': []})
+    return resolved
+
+
+# ── Thin API (additive, login_required) ────────────────────────────────
+@app.route('/api/rkg/entity', methods=['GET', 'POST'])
+@login_required
+def rkg_entity():
+    if request.method == 'POST':
+        d = request.json or {}
+        et, name = (d.get('entity_type') or '').strip(), (d.get('name') or '').strip()
+        if not et or not name:
+            return jsonify({'error': 'entity_type and name are required'}), 400
+        conn = get_db()
+        eid = rkg_get_or_create_entity(conn, et, name, description=d.get('description', ''),
+                                       metadata=d.get('metadata'), source=d.get('source', 'recruiter'))
+        row = conn.execute("SELECT * FROM rkg_entities WHERE id=?", (eid,)).fetchone()
+        conn.close()
+        return jsonify({'ok': True, 'id': eid, 'entity': dict(row) if row else None})
+    conn = get_db()
+    if request.args.get('id'):
+        row = conn.execute("SELECT * FROM rkg_entities WHERE id=?", (request.args.get('id'),)).fetchone()
+        conn.close()
+        return jsonify({'ok': True, 'entity': dict(row) if row else None})
+    et = (request.args.get('entity_type') or '').strip()
+    name = (request.args.get('name') or '').strip()
+    if et and name:
+        ent = rkg_find_entity(conn, et, name); conn.close()
+        return jsonify({'ok': True, 'entity': ent})
+    q = "SELECT * FROM rkg_entities WHERE status='active'"
+    args = []
+    if et:
+        q += " AND entity_type=?"; args.append(et)
+    q += " ORDER BY id DESC LIMIT ?"; args.append(min(int(request.args.get('limit') or 100), 500))
+    rows = conn.execute(q, args).fetchall(); conn.close()
+    return jsonify({'ok': True, 'entities': [dict(r) for r in rows]})
+
+
+@app.route('/api/rkg/entity/<int:eid>/alias', methods=['POST'])
+@login_required
+def rkg_entity_alias(eid):
+    d = request.json or {}
+    conn = get_db(); ok = rkg_add_alias(conn, eid, (d.get('alias') or '').strip()); conn.close()
+    return jsonify({'ok': ok})
+
+
+@app.route('/api/rkg/edge', methods=['POST'])
+@login_required
+def rkg_edge():
+    d = request.json or {}
+    for k in ('source_id', 'target_id', 'rel_type'):
+        if not str(d.get(k) or '').strip():
+            return jsonify({'error': 'source_id, target_id and rel_type are required'}), 400
+    conn = get_db()
+    rid = rkg_link(conn, int(d['source_id']), int(d['target_id']), d['rel_type'],
+                   confidence=d.get('confidence', 1.0), source=d.get('source', 'recruiter'),
+                   metadata=d.get('metadata'))
+    conn.close()
+    return jsonify({'ok': True, 'id': rid})
+
+
+@app.route('/api/rkg/neighbors', methods=['GET'])
+@login_required
+def rkg_neighbors_api():
+    eid = request.args.get('entity_id')
+    if not eid:
+        return jsonify({'error': 'entity_id is required'}), 400
+    conn = get_db()
+    nb = rkg_neighbors(conn, int(eid), rel_type=request.args.get('rel_type'),
+                       direction=request.args.get('direction', 'out'))
+    conn.close()
+    return jsonify({'ok': True, 'neighbors': nb})
+
+
+@app.route('/api/rkg/status', methods=['GET'])
+@login_required
+def rkg_status():
+    conn = get_db()
+    def _c(t):
+        try:
+            return conn.execute(f'SELECT COUNT(*) n FROM {t}').fetchone()['n']
+        except sqlite3.OperationalError:
+            return None
+    by_type = {}
+    try:
+        for r in conn.execute("SELECT entity_type t, COUNT(*) n FROM rkg_entities GROUP BY t"):
+            by_type[r['t']] = r['n']
+    except sqlite3.OperationalError:
+        pass
+    out = {'ok': True, 'entities': _c('rkg_entities'), 'edges': _c('rkg_edges'),
+           'entities_by_type': by_type,
+           'vocab': {'entity_types': RKG_ENTITY_TYPES, 'rel_types': RKG_REL_TYPES}}
+    conn.close()
+    return jsonify(out)
 
 
 @app.route('/api/ai/stats', methods=['POST'])
@@ -6587,6 +8394,11 @@ try:
         _start_reminder_scheduler()
     except Exception as _sched_err:
         print(f'[reminder-scheduler] failed to start: {_sched_err}')
+    # Start the async embedding queue worker (background thread)
+    try:
+        _start_embedding_worker()
+    except Exception as _emb_err:
+        print(f'[embed-worker] failed to start: {_emb_err}')
     _ucount = _db_user_count(DB_PATH)
     print('\n' + '=' * 56)
     print('  HireLab Screener — startup')
