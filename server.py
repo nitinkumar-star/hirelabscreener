@@ -1885,6 +1885,31 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # Migrate: persistent JOB-DESCRIPTION embeddings (Phase 2 / Sprint 9).
+    # One reusable vector per mandate so candidate<->JD matching never re-embeds
+    # the JD. Kept in a SEPARATE table (not a BLOB on mandates) so the mandates
+    # list stays light and JSON-safe.
+    c.execute('''CREATE TABLE IF NOT EXISTS mandate_vectors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mandate_id    INTEGER NOT NULL,
+        embedding_vec BLOB,
+        embedding_text TEXT DEFAULT '',
+        embedding_model TEXT DEFAULT '',
+        embedding_version TEXT DEFAULT '',
+        embedding_dimension INTEGER DEFAULT 0,
+        embedding_text_version TEXT DEFAULT '',
+        status        TEXT DEFAULT 'pending',
+        embedded_at   TEXT DEFAULT ''
+    )''')
+    for idx_sql in (
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_mandvec ON mandate_vectors(mandate_id)",
+        "CREATE INDEX IF NOT EXISTS idx_mandvec_status ON mandate_vectors(status)",
+    ):
+        try:
+            c.execute(idx_sql)
+        except sqlite3.OperationalError:
+            pass
+
     # ══════════════════════════════════════════════════════════════════
     #  RECRUITMENT MEMORY ENGINE (Sprint 5) — architecture foundation.
     #  Three generic, cross-entity tables that let ANY business object
@@ -4189,6 +4214,119 @@ def _backfill_candidate_facets(conn, cap, api_key):
         return 0
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  PERSISTENT JD (JOB-DESCRIPTION) EMBEDDINGS (Phase 2 / Sprint 9)
+#  Embed each mandate's JD ONCE and reuse it, so candidate<->JD matching
+#  never re-embeds the JD. Mandates are few, so this runs on by default.
+# ══════════════════════════════════════════════════════════════════════
+JD_TEXT_VERSION = 1
+JD_TEXT_TEMPLATE = f'jd-template-v{JD_TEXT_VERSION}'
+
+def _jd_cfg_enabled():
+    try:
+        v = get_setting('jd_embed_enabled')
+        return True if (v is None or str(v).strip() == '') else bool(int(float(v)))
+    except Exception:
+        return True
+
+
+def mandate_jd_text(m):
+    """Build the embeddable text for a mandate/JD: role, client, division,
+    location, CTC band and the full JD body. Labelled for the model."""
+    lines = []
+    def add(label, val):
+        v = (val or '').strip() if isinstance(val, str) else val
+        if v:
+            lines.append(f'{label}: {v}')
+    add('Role', str(_row_get(m, 'role')))
+    add('Client', str(_row_get(m, 'client')))
+    add('Division', str(_row_get(m, 'division')))
+    add('Location', str(_row_get(m, 'location')))
+    cmin, cmax = _row_get(m, 'ctc_min', ''), _row_get(m, 'ctc_max', '')
+    if cmin or cmax:
+        add('CTC Range', f'{cmin}-{cmax} LPA')
+    jd = str(_row_get(m, 'jd')).strip()
+    if jd:
+        lines.append('Job Description:\n' + jd[:6000])
+    return '\n'.join(lines)
+
+
+def _store_mandate_vec(conn, mid, vec, txt, status, duration_ms=0):
+    dim = len(vec) if isinstance(vec, list) else 0
+    blob = _vec_to_blob(vec) if (status == 'completed' and vec) else None
+    conn.execute(
+        "INSERT INTO mandate_vectors (mandate_id, embedding_vec, embedding_text, embedding_model, "
+        "embedding_version, embedding_dimension, embedding_text_version, status, embedded_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(mandate_id) DO UPDATE SET embedding_vec=excluded.embedding_vec, "
+        "embedding_text=excluded.embedding_text, embedding_model=excluded.embedding_model, "
+        "embedding_version=excluded.embedding_version, embedding_dimension=excluded.embedding_dimension, "
+        "embedding_text_version=excluded.embedding_text_version, status=excluded.status, "
+        "embedded_at=excluded.embedded_at",
+        (mid, blob, (txt or '')[:20000], EMBEDDING_MODEL, EMBEDDING_VERSION, dim,
+         JD_TEXT_TEMPLATE, status, ts()))
+    conn.commit()
+
+
+def embed_mandate_jd(conn, m, api_key):
+    """Generate + store the JD vector for one mandate. Returns status string."""
+    import time as _time
+    mid = m['id']
+    txt = mandate_jd_text(m)
+    if not txt.strip():
+        _store_mandate_vec(conn, mid, None, '', 'empty')
+        return 'empty'
+    t0 = _time.perf_counter()
+    vec = gemini_embed(txt, api_key)
+    dur = int((_time.perf_counter() - t0) * 1000)
+    if isinstance(vec, dict) and vec.get('error'):
+        _store_mandate_vec(conn, mid, None, txt, 'failed')
+        print(f'[embed-jd] mandate {mid} FAILED: {str(vec["error"])[:100]}')
+        return 'failed'
+    if not vec:
+        _store_mandate_vec(conn, mid, None, txt, 'failed')
+        return 'failed'
+    _store_mandate_vec(conn, mid, vec, txt, 'completed', dur)
+    print(f'[embed-jd] mandate {mid} embedded dim={len(vec)} in {dur}ms')
+    return 'completed'
+
+
+def _backfill_mandate_jd(conn, cap, api_key):
+    """Background pass: embed mandates that have no current JD vector. Enabled by
+    default (mandates are few); gate with jd_embed_enabled=0 to disable."""
+    if not _jd_cfg_enabled() or not api_key:
+        return 0
+    try:
+        rows = conn.execute(
+            "SELECT m.* FROM mandates m WHERE m.id NOT IN ("
+            "  SELECT mandate_id FROM mandate_vectors WHERE status='completed' AND embedding_text_version=?"
+            ") LIMIT ?", (JD_TEXT_TEMPLATE, cap)).fetchall()
+        n = 0
+        for m in rows:
+            embed_mandate_jd(conn, m, api_key)
+            n += 1
+        if n:
+            print(f'[embed-jd] embedded {n} mandate JD(s)')
+        return n
+    except Exception as e:
+        print(f'[embed-jd] backfill error: {e}')
+        return 0
+
+
+def _mandate_jd_vector(conn, mid):
+    """Load a mandate's stored JD vector (or None). No re-embedding."""
+    try:
+        r = conn.execute("SELECT embedding_vec FROM mandate_vectors WHERE mandate_id=? AND status='completed'",
+                         (mid,)).fetchone()
+        if not r or not r['embedding_vec']:
+            return None
+        if _HAS_NUMPY:
+            return list(_np.frombuffer(r['embedding_vec'], dtype=_np.float32))
+        a = _array.array('f'); a.frombytes(r['embedding_vec']); return list(a)
+    except Exception:
+        return None
+
+
 def _reconcile_missing_embeddings(conn, cap):
     """Self-healing: enqueue candidates that have no embedding and no active OR
     failed job. This is what covers the non-Naukri creation paths (manual add,
@@ -4267,6 +4405,11 @@ def _embedding_worker_loop():
             if processed == 0 and (cycle % reconcile_every == 0):
                 _reconcile_missing_embeddings(conn, _embed_cfg('embed_reconcile_cap'))
                 _backfill_embedding_blobs(conn, _embed_cfg('embed_reconcile_cap'))
+                # Multi-vector facet generation (Sprint 8) — no-op unless
+                # multivector_enabled is turned on in Settings.
+                _backfill_candidate_facets(conn, _embed_cfg('embed_reconcile_cap'), api_key)
+                # Persistent JD embeddings (Sprint 9) — mandates are few; on by default.
+                _backfill_mandate_jd(conn, _embed_cfg('embed_reconcile_cap'), api_key)
 
             conn.close()
         except Exception as e:
@@ -4953,6 +5096,139 @@ def _rme_capture_search(query, detected, result_count, user):
         pass
 
 
+# ── Multi-vector (facet) re-rank (Sprint 8) ────────────────────────────
+def _facet_vectors_for(conn, ids):
+    """Bulk-load completed facet vectors for candidate ids.
+    Returns {candidate_id: [vector, ...]}."""
+    if not ids:
+        return {}
+    ph = ','.join('?' * len(ids))
+    out = {}
+    try:
+        for r in conn.execute(
+                f"SELECT candidate_id, embedding_vec FROM candidate_vectors "
+                f"WHERE status='completed' AND embedding_vec IS NOT NULL AND candidate_id IN ({ph})",
+                ids).fetchall():
+            blob = r['embedding_vec']
+            if not blob:
+                continue
+            try:
+                if _HAS_NUMPY:
+                    v = _np.frombuffer(blob, dtype=_np.float32)
+                else:
+                    v = _array.array('f'); v.frombytes(blob)
+            except Exception:
+                continue
+            out.setdefault(r['candidate_id'], []).append(v)
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def _multivector_rerank(conn, qvec, ranked):
+    """Opt-in: blend the whole-profile similarity with the BEST-matching facet
+    (skills/experience/projects) so a focused query surfaces a candidate whose
+    relevant facet matches strongly even if their full-profile vector is diluted
+    by unrelated resume text. Only the semantic pool is touched; candidates with
+    no facet vectors keep their original score. Returns a re-sorted (sim, id) list."""
+    pool_n = _hybrid_cfg('hybrid_pool')
+    pool = ranked[:pool_n]
+    ids = [cid for _, cid in pool]
+    fmap = _facet_vectors_for(conn, ids)
+    if not fmap:
+        return ranked  # no facet vectors yet -> unchanged (backward compatible)
+    wf = _mv_cfg('multivector_w_full'); wx = _mv_cfg('multivector_w_facet')
+    d = len(qvec)
+    qn = math.sqrt(sum(x * x for x in qvec)) or 1e-9
+    q_np = _np.asarray(qvec, dtype=_np.float32) if _HAS_NUMPY else None
+
+    def _cos(v):
+        if len(v) != d:
+            return 0.0
+        if _HAS_NUMPY:
+            nb = float(_np.linalg.norm(v)) or 1e-9
+            return float(_np.dot(q_np, v)) / (nb * qn)
+        dot = 0.0; nb = 0.0
+        for x, y in zip(qvec, v):
+            dot += x * y; nb += y * y
+        nb = math.sqrt(nb) or 1e-9
+        return dot / (nb * qn)
+
+    boosted = []
+    for sim, cid in pool:
+        facets = fmap.get(cid)
+        if facets:
+            best = max(_cos(v) for v in facets)
+            boosted.append((wf * sim + wx * best, cid))
+        else:
+            boosted.append((sim, cid))
+    boosted.sort(key=lambda x: x[0], reverse=True)
+    return boosted + ranked[pool_n:]  # re-ranked pool + untouched tail
+
+
+# ── LLM re-ranking (Sprint 10) ─────────────────────────────────────────
+_RERANK_CFG_DEFAULTS = {'llm_rerank_enabled': 0, 'llm_rerank_top_n': 10}
+def _rerank_cfg(key):
+    dflt = _RERANK_CFG_DEFAULTS[key]
+    try:
+        v = get_setting(key)
+        return dflt if (v is None or str(v).strip() == '') else int(float(v))
+    except Exception:
+        return dflt
+
+
+def _llm_rerank(results, query, top_n, api_key):
+    """Second-stage AI re-rank over the top-N hybrid results. Sends compact
+    candidate summaries to DeepSeek and asks for a fit-ordered list with short
+    reasons. Only the top-N slice is reordered; on ANY failure the original
+    order is returned unchanged (never worse than hybrid)."""
+    subset = results[:top_n]
+    if len(subset) < 2 or not api_key:
+        return results, False
+    lines = []
+    for r in subset:
+        skills = ', '.join((r.get('key_skills') or [])[:8])
+        lines.append(f"id={r['id']} | {r.get('name','')} | {r.get('designation','')} at "
+                     f"{r.get('company','')} | {r.get('experience',0)}y | {r.get('location','')} | "
+                     f"skills: {skills}")
+    prompt = ("You are an expert technical recruiter. Rank these candidates by fit for the "
+              f"search query: \"{query}\".\n\nCandidates:\n" + '\n'.join(lines) +
+              "\n\nReturn ONLY a JSON array, best fit first, each item exactly: "
+              '{"id": <candidate id>, "fit": <0-100 integer>, "reason": "<max 12 words>"}. '
+              "No prose, no markdown.")
+    try:
+        resp = call_deepseek(api_key,
+            {'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 700,
+             'messages': [{'role': 'user', 'content': prompt}]},
+            timeout=60, endpoint='rerank')
+        if resp.status_code != 200:
+            return results, False
+        arr = parse_json(resp.json()['choices'][0]['message']['content'])
+        if not isinstance(arr, list) or not arr:
+            return results, False
+    except Exception:
+        return results, False
+
+    by_id = {r['id']: r for r in subset}
+    ordered, seen = [], set()
+    for item in arr:
+        try:
+            cid = int(item.get('id'))
+        except Exception:
+            continue
+        r = by_id.get(cid)
+        if r and cid not in seen:
+            r = dict(r)
+            r['llm_score'] = item.get('fit')
+            r['llm_reason'] = str(item.get('reason', ''))[:160]
+            ordered.append(r); seen.add(cid)
+    # any top-N candidates the model omitted keep their original relative order
+    for r in subset:
+        if r['id'] not in seen:
+            ordered.append(r)
+    return ordered + results[top_n:], True
+
+
 @app.route('/api/ai/search', methods=['POST'])
 @login_required
 def ai_search():
@@ -5011,6 +5287,16 @@ def ai_search():
 
     total = len(ranked)
 
+    # ── 2a) Multi-vector re-rank (Sprint 8) — opt-in, off by default ────
+    # Blends best-matching facet vector into the ranking. Returns ranked
+    # unchanged if no facet vectors exist, so it's safe even before generation.
+    mv_on = bool(d.get('multivector')) if ('multivector' in d) else bool(_mv_cfg('multivector_enabled'))
+    if mv_on:
+        t0 = _time.perf_counter()
+        ranked = _multivector_rerank(conn, qvec, ranked)
+        timing['multivector_ms'] = int((_time.perf_counter() - t0) * 1000)
+        total = len(ranked)
+
     # ── 2b) Hybrid re-rank (Sprint 6) ──────────────────────────────────
     # Default-on but soft: with no detectable structured signals it collapses
     # to pure semantic order (identical to the old engine). Opt out with hybrid=false.
@@ -5031,6 +5317,18 @@ def ai_search():
         page_slice = ranked[offset:offset + page_size]
         results = _search_hydrate(conn, page_slice)
         timing['hydrate_ms'] = int((_time.perf_counter() - t0) * 1000)
+
+    # ── 3b) LLM re-rank (Sprint 10) — opt-in, page 1 only ──────────────
+    # A second AI pass reorders the top results and attaches fit reasons.
+    # Off by default; one DeepSeek call, and it never worsens hybrid order.
+    rerank_on = bool(d.get('rerank')) if ('rerank' in d) else bool(_rerank_cfg('llm_rerank_enabled'))
+    reranked = False
+    if rerank_on and page == 1 and len(results) >= 2:
+        ds_key = get_setting('deepseek_api_key')
+        if ds_key:
+            t0 = _time.perf_counter()
+            results, reranked = _llm_rerank(results, query, _rerank_cfg('llm_rerank_top_n'), ds_key)
+            timing['rerank_ms'] = int((_time.perf_counter() - t0) * 1000)
 
     # ── 4) Optional AI reasoning over the page (unchanged behaviour) ───
     reasoning = ''
@@ -5088,6 +5386,8 @@ def ai_search():
         'avg_similarity': avg_sim,
         'from_cache': from_cache,
         'hybrid': hybrid_on,
+        'multivector': mv_on,
+        'reranked': reranked,
         'filters_detected': filters_detected,
         'timing': timing,
     })
@@ -5111,6 +5411,132 @@ def ai_search_metrics():
                     'p95_ms': _pct(durs, 95),
                     'max_ms': durs[-1],
                     'avg_candidates_scanned': int(sum(scans) / len(scans)) if scans else 0})
+
+
+@app.route('/api/ai/vectors/status', methods=['GET'])
+@login_required
+def ai_vectors_status():
+    """Multi-vector (facet) coverage + config. Confirms the architecture is live."""
+    conn = get_db()
+    by_facet = {}
+    try:
+        for r in conn.execute("SELECT facet, status, COUNT(*) n FROM candidate_vectors GROUP BY facet, status"):
+            by_facet.setdefault(r['facet'], {})[r['status']] = r['n']
+        fully = conn.execute(
+            "SELECT COUNT(*) n FROM (SELECT candidate_id FROM candidate_vectors "
+            "WHERE status='completed' AND embedding_text_version=? "
+            "GROUP BY candidate_id HAVING COUNT(DISTINCT facet) >= ?)",
+            (MV_TEXT_TEMPLATE, len(MV_FACETS))).fetchone()['n']
+        total_c = conn.execute("SELECT COUNT(*) n FROM candidates WHERE embedding_status='completed'").fetchone()['n']
+    except sqlite3.OperationalError:
+        fully = total_c = 0
+    conn.close()
+    return jsonify({'ok': True, 'enabled': bool(_mv_cfg('multivector_enabled')),
+                    'facets': MV_FACETS, 'template': MV_TEXT_TEMPLATE,
+                    'candidates_fully_faceted': fully, 'candidates_embedded': total_c,
+                    'by_facet': by_facet,
+                    'weights': {'full': _mv_cfg('multivector_w_full'),
+                                'facet': _mv_cfg('multivector_w_facet')}})
+
+
+@app.route('/api/ai/vectors/rebuild', methods=['POST'])
+@login_required
+def ai_vectors_rebuild():
+    """Manually generate facet vectors for candidates that need them (bounded).
+    Explicit intent, so it runs even if multivector_enabled is off — but it still
+    needs a Gemini key. Use `cap` to limit how many candidates per call."""
+    d = request.json or {}
+    cap = min(int(d.get('cap') or 50), 500)
+    api_key = get_setting('gemini_api_key')
+    if not api_key:
+        return jsonify({'error': 'Gemini API key not set. Add it in Settings.'}), 400
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT c.* FROM candidates c WHERE c.embedding_status='completed' AND c.id NOT IN ("
+            "  SELECT candidate_id FROM candidate_vectors WHERE embedding_text_version=? "
+            "  GROUP BY candidate_id HAVING COUNT(DISTINCT facet) >= ?"
+            ") LIMIT ?", (MV_TEXT_TEMPLATE, len(MV_FACETS), cap)).fetchall()
+        done = 0
+        for c in rows:
+            embed_candidate_facets(conn, c, api_key)
+            done += 1
+    finally:
+        conn.close()
+    return jsonify({'ok': True, 'processed': done})
+
+
+@app.route('/api/mandates/<int:mid>/match', methods=['GET'])
+@login_required
+def mandate_match_candidates(mid):
+    """Rank candidates for this mandate using its STORED JD vector — no
+    re-embedding. Reuses the Sprint-4 retrieval + Sprint-6 hydrate."""
+    conn = get_db()
+    jdvec = _mandate_jd_vector(conn, mid)
+    if jdvec is None:
+        conn.close()
+        return jsonify({'ok': False, 'error': 'JD not embedded yet. It will be generated shortly.',
+                        'pending': True, 'results': []})
+    top_k = min(int(request.args.get('top_k') or 20), 100)
+    min_score = float(request.args.get('min_score') or -1.0)
+    pool = max(_search_cfg('search_max_results'), top_k)
+    ranked, scanned = _search_rank(conn, jdvec, min_score, int(_search_cfg('search_max_candidates')), pool)
+    results = _search_hydrate(conn, ranked[:top_k])
+    conn.close()
+    return jsonify({'ok': True, 'mandate_id': mid, 'searched': scanned,
+                    'total': len(ranked), 'results': results})
+
+
+@app.route('/api/candidates/<int:cid>/match-mandates', methods=['GET'])
+@login_required
+def candidate_match_mandates(cid):
+    """Reverse match: given a candidate's vector, rank the open mandates whose
+    stored JD vector best fits. Mandates are few, so this is a trivial scan."""
+    conn = get_db()
+    cr = conn.execute("SELECT embedding_vec FROM candidates WHERE id=?", (cid,)).fetchone()
+    if not cr or not cr['embedding_vec']:
+        conn.close(); return jsonify({'ok': False, 'error': 'Candidate not embedded yet', 'results': []})
+    try:
+        cvec = _np.frombuffer(cr['embedding_vec'], dtype=_np.float32) if _HAS_NUMPY else \
+               (lambda a: (a.frombytes(cr['embedding_vec']) or a))(_array.array('f'))
+    except Exception:
+        conn.close(); return jsonify({'ok': False, 'error': 'Bad candidate vector', 'results': []})
+    rows = conn.execute(
+        "SELECT mv.mandate_id, mv.embedding_vec, m.role, m.client, m.location, m.status "
+        "FROM mandate_vectors mv JOIN mandates m ON m.id=mv.mandate_id "
+        "WHERE mv.status='completed' AND mv.embedding_vec IS NOT NULL AND m.owner_id=?",
+        (effective_company_id(),)).fetchall()
+    out = []
+    for r in rows:
+        try:
+            jv = _np.frombuffer(r['embedding_vec'], dtype=_np.float32) if _HAS_NUMPY else \
+                 (lambda a: (a.frombytes(r['embedding_vec']) or a))(_array.array('f'))
+            sim = cosine(list(cvec), list(jv))
+        except Exception:
+            continue
+        out.append({'mandate_id': r['mandate_id'], 'role': r['role'], 'client': r['client'],
+                    'location': r['location'], 'status': r['status'], 'score': round(sim * 100, 1)})
+    out.sort(key=lambda x: x['score'], reverse=True)
+    conn.close()
+    return jsonify({'ok': True, 'candidate_id': cid, 'results': out[:20]})
+
+
+@app.route('/api/ai/jd/status', methods=['GET'])
+@login_required
+def ai_jd_status():
+    conn = get_db()
+    by_status = {}
+    try:
+        for r in conn.execute("SELECT status, COUNT(*) n FROM mandate_vectors GROUP BY status"):
+            by_status[r['status']] = r['n']
+        total_m = conn.execute("SELECT COUNT(*) n FROM mandates").fetchone()['n']
+        done = conn.execute("SELECT COUNT(*) n FROM mandate_vectors WHERE status='completed' "
+                            "AND embedding_text_version=?", (JD_TEXT_TEMPLATE,)).fetchone()['n']
+    except sqlite3.OperationalError:
+        total_m = done = 0
+    conn.close()
+    return jsonify({'ok': True, 'enabled': _jd_cfg_enabled(), 'template': JD_TEXT_TEMPLATE,
+                    'mandates_total': total_m, 'mandates_embedded': done, 'by_status': by_status})
 
 
 # ══════════════════════════════════════════════════════════════════════
