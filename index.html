@@ -7274,7 +7274,7 @@ async function runAISearch() {
   var res = document.getElementById('ai-search-results');
   res.innerHTML = '<div class="loading"><div class="spinner"></div>Searching your talent pool...</div>';
 
-  var r = await req('POST', '/ai/search', {query: q, top_k: 12, explain: explain});
+  var r = await req('POST', '/ai/search', {query: q, top_k: 200, explain: explain});
   if (!r.ok) {
     res.innerHTML = '<div style="color:#C0522B;padding:12px">' + esc(r.error||'Search failed') + '</div>';
     return;
