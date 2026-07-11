@@ -3201,34 +3201,177 @@ def gemini_embed(text, api_key):
     except Exception as e:
         return {'error': str(e)}
 
-def candidate_embed_text(c):
-    """Build the text blob we embed for a candidate. Mandate-agnostic on
-    purpose so a candidate can surface for ANY role they fit."""
+def _row_get(c, key, default=''):
+    """Safely read a column from a sqlite3.Row. Older/partial rows may lack a
+    column added by a later migration; this returns `default` instead of
+    raising KeyError, so embedding text never crashes on legacy data."""
     try:
-        skills = json.loads(c['key_skills'] or '[]')
+        if key in c.keys():
+            v = c[key]
+            return default if v is None else v
     except Exception:
-        skills = []
-    if isinstance(skills, list):
-        skills = ', '.join(str(s) for s in skills)
-    parts = [
-        c['name'] or '',
-        (c['designation'] or '') + (' at ' + c['company'] if c['company'] else ''),
-        'Experience: ' + str(c['experience'] or 0) + ' years',
-        'Location: ' + (c['location'] or ''),
-        'Skills: ' + str(skills),
-        c['career_summary'] or '',
-    ]
-    # Include product/function tags if present
-    for col in ('product_handles', 'function_tags'):
+        pass
+    return default
+
+
+def _as_list_str(raw):
+    """Normalise a field that may be a JSON list, a comma string, or plain text
+    into a clean 'a, b, c' string. Empty/blank items are dropped."""
+    if raw is None:
+        return ''
+    if isinstance(raw, list):
+        items = raw
+    else:
+        s = str(raw).strip()
+        if not s:
+            return ''
+        if s.startswith('['):
+            try:
+                items = json.loads(s)
+            except Exception:
+                items = [s]
+        else:
+            items = [p for p in s.replace(';', ',').split(',')]
+    seen, out = set(), []
+    for it in items:
+        t = str(it).strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    return ', '.join(out)
+
+
+# Bumped whenever candidate_embed_text() changes shape, so we can tell which
+# vectors were built with the old text vs the new structured text and reindex
+# selectively. (Metadata columns land in Feature 2; this constant is defined
+# here because it describes THIS function's output.)
+#   v1 = legacy 6-field concat
+#   v2 = structured labelled profile + Career History + full CV resume text
+EMBED_TEXT_VERSION = 2
+
+# How much raw resume text to fold into the embedding. The structured labelled
+# fields (high signal) always come first, so if the total exceeds the Gemini
+# input cap it is the resume TAIL that gets clipped, never the structured data.
+CV_EMBED_MAX_CHARS = 5000
+
+
+def _candidate_cv_text(c, max_chars=CV_EMBED_MAX_CHARS):
+    """Return plain text extracted from the candidate's stored CV file (Word or
+    PDF), or '' if there is no file / it can't be read. Reuses the existing
+    extract_text_from_file() so there is ONE resume-parsing code path.
+
+    This is what lets the embedding capture detail the parsed columns miss —
+    projects, tools, software, certifications, languages — straight from the
+    resume the recruiter uploaded. Best-effort: never raises."""
+    try:
+        rel = str(_row_get(c, 'cv_path')).strip()
+        if not rel:
+            return ''
+        fp = os.path.join(CV_DIR, rel)
+        if not os.path.exists(fp):
+            return ''
+        # Prefer the original filename's extension (tells us pdf vs docx);
+        # fall back to the stored name.
+        name = str(_row_get(c, 'cv_original_name')).strip() or rel
+        with open(fp, 'rb') as fh:
+            data = fh.read()
+        text, err = extract_text_from_file(data, name)
+        if err or not text:
+            return ''
+        text = ' '.join(text.split())  # collapse whitespace/newlines
+        return text[:max_chars]
+    except Exception:
+        return ''
+
+
+def candidate_embed_text(c, conn=None):
+    """Build the text blob we embed for a candidate.
+
+    Mandate-agnostic on purpose so a candidate can surface for ANY role they
+    fit. The output is a *labelled, sectioned* profile rather than a blind
+    concatenation: clear field names ("Current Role:", "Domain Expertise:")
+    give the embedding model structure to latch onto, which measurably improves
+    semantic match quality over a bare bag-of-words.
+
+    `conn` is optional and backward compatible: when supplied, previous
+    employers are pulled from the work_history table to capture career depth.
+    Existing callers that pass only `c` keep working unchanged.
+    """
+    lines = []
+
+    def add(label, value):
+        v = (value or '').strip() if isinstance(value, str) else value
+        if v:
+            lines.append(f'{label}: {v}')
+
+    name = str(_row_get(c, 'name')).strip()
+    if name:
+        lines.append(name)
+
+    # ── Current position ────────────────────────────────────────────────
+    desig = str(_row_get(c, 'designation')).strip()
+    company = str(_row_get(c, 'company')).strip()
+    if desig and company:
+        add('Current Role', f'{desig} at {company}')
+    else:
+        add('Current Designation', desig)
+        add('Current Company', company)
+
+    exp = _row_get(c, 'experience', 0)
+    try:
+        if float(exp) > 0:
+            add('Total Experience', f'{exp} years')
+    except Exception:
+        pass
+
+    add('Career Summary', str(_row_get(c, 'career_summary')))
+
+    # ── Previous companies (career depth) ───────────────────────────────
+    if conn is not None:
         try:
-            v = c[col]
-            if v:
-                tags = json.loads(v) if v.strip().startswith('[') else v
-                if isinstance(tags, list): tags = ', '.join(tags)
-                if tags: parts.append(str(tags))
+            wh = conn.execute(
+                'SELECT company, designation FROM work_history '
+                'WHERE candidate_id=? ORDER BY is_current DESC, sort_order ASC, id ASC',
+                (_row_get(c, 'id', 0),)).fetchall()
+            prev = []
+            for w in wh:
+                co = (w['company'] or '').strip()
+                dg = (w['designation'] or '').strip()
+                if co and dg:
+                    prev.append(f'{dg} at {co}')
+                elif co or dg:
+                    prev.append(co or dg)
+            if prev:
+                add('Career History', '; '.join(prev[:8]))
         except Exception:
             pass
-    return '\n'.join(p for p in parts if p and p.strip())
+
+    # ── Skills, domain, products, functional expertise ──────────────────
+    add('Key Skills',       _as_list_str(_row_get(c, 'key_skills')))
+    add('Technical Skills', _as_list_str(_row_get(c, 'key_skill_tags')))
+    add('Secondary Skills', _as_list_str(_row_get(c, 'secondary_skills')))
+    add('Domain Expertise', _as_list_str(_row_get(c, 'domain_tags')))
+    add('Industry',         _as_list_str(_row_get(c, 'industry_background')))
+    add('Products',         _as_list_str(_row_get(c, 'product_handles')))
+    add('Functional Expertise', _as_list_str(_row_get(c, 'function_tags')))
+
+    # ── Education & location ────────────────────────────────────────────
+    add('Education', str(_row_get(c, 'qualification')))
+    loc = str(_row_get(c, 'location')).strip()
+    pref = str(_row_get(c, 'preferred_location')).strip()
+    if loc and pref and pref.lower() != loc.lower():
+        add('Location', f'{loc} (open to {pref})')
+    else:
+        add('Location', loc or pref)
+
+    # ── Full resume text (projects / tools / certs / languages the parsed
+    #    columns don't capture). Appended LAST so structured fields survive
+    #    any truncation at the embedding input cap. ──────────────────────
+    cv_text = _candidate_cv_text(c)
+    if cv_text:
+        lines.append('Resume:\n' + cv_text)
+
+    return '\n'.join(lines)
 
 def cosine(a, b):
     if not a or not b or len(a) != len(b):
@@ -3343,7 +3486,7 @@ def embed_candidate_async(cid):
         c = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
         if not c:
             conn.close(); return
-        txt = candidate_embed_text(c)
+        txt = candidate_embed_text(c, conn)
         if not txt.strip():
             conn.close(); return
         vec = gemini_embed(txt, api_key)
@@ -3396,7 +3539,7 @@ def ai_reindex():
     done, failed, skipped = 0, 0, 0
     first_error = ''
     for c in rows:
-        txt = candidate_embed_text(c)
+        txt = candidate_embed_text(c, conn)
         if not txt.strip():
             # mark as embedded-empty so we don't loop forever on blanks
             conn.execute("UPDATE candidates SET embedding='[]', embedded_at=? WHERE id=?", (ts(), c['id']))
