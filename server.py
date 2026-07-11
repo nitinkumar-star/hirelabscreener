@@ -17,6 +17,34 @@ except ImportError:
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)
+
+# ── Safety net: never let a raw BLOB (e.g. embedding_vec bytes) crash jsonify.
+# Any bytes that reach serialization become null instead of a 500. Defense in
+# depth — list endpoints also strip heavy embedding columns before returning.
+try:
+    from flask.json.provider import DefaultJSONProvider
+
+    class _SafeJSONProvider(DefaultJSONProvider):
+        def default(self, o):
+            if isinstance(o, (bytes, bytearray, memoryview)):
+                return None
+            return super().default(o)
+
+    app.json = _SafeJSONProvider(app)
+except Exception as _json_err:
+    print(f'[json-provider] safe provider not installed: {_json_err}')
+
+
+# Heavy per-candidate columns the UI never needs; stripped from list/detail
+# responses to keep payloads small and memory low (fixes OOM on large mandates).
+_HEAVY_CAND_COLS = ('embedding', 'embedding_text', 'embedding_vec')
+
+def _cand_public(row):
+    """Row -> client-safe dict without the heavy embedding columns."""
+    d = dict(row)
+    for k in _HEAVY_CAND_COLS:
+        d.pop(k, None)
+    return d
 app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024  # 64MB max upload
 
 @app.after_request
@@ -1823,6 +1851,34 @@ def init_db():
     for idx_sql in (
         "CREATE INDEX IF NOT EXISTS idx_embjobs_due ON embedding_jobs(status, next_attempt_at)",
         "CREATE INDEX IF NOT EXISTS idx_embjobs_cand ON embedding_jobs(candidate_id)",
+    ):
+        try:
+            c.execute(idx_sql)
+        except sqlite3.OperationalError:
+            pass
+
+    # Migrate: MULTI-VECTOR embeddings (Phase 2 / Sprint 8). One row per
+    # (candidate, facet) so a query can match the RIGHT part of a profile —
+    # skills vs experience vs projects — instead of one diluted whole-profile
+    # vector. The whole-profile 'full' vector stays on candidates.embedding_vec
+    # (search is unchanged); these are additive, blob-only (no JSON) to save disk.
+    c.execute('''CREATE TABLE IF NOT EXISTS candidate_vectors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        candidate_id  INTEGER NOT NULL,
+        facet         TEXT NOT NULL,        -- skills / experience / projects
+        embedding_vec BLOB,                 -- float32 bytes (same format as candidates.embedding_vec)
+        embedding_text TEXT DEFAULT '',
+        embedding_model TEXT DEFAULT '',
+        embedding_version TEXT DEFAULT '',
+        embedding_dimension INTEGER DEFAULT 0,
+        embedding_text_version TEXT DEFAULT '',
+        status        TEXT DEFAULT 'pending',
+        embedded_at   TEXT DEFAULT ''
+    )''')
+    for idx_sql in (
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_candvec ON candidate_vectors(candidate_id, facet)",
+        "CREATE INDEX IF NOT EXISTS idx_candvec_cand ON candidate_vectors(candidate_id)",
+        "CREATE INDEX IF NOT EXISTS idx_candvec_facet ON candidate_vectors(facet)",
     ):
         try:
             c.execute(idx_sql)
@@ -3964,6 +4020,175 @@ def _backfill_embedding_blobs(conn, cap):
         return 0
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  MULTI-VECTOR (FACET) EMBEDDINGS (Phase 2 / Sprint 8)
+#  Separate vectors for what a candidate can DO (skills), where they've BEEN
+#  (experience) and what they've BUILT (projects). Lets a focused query match
+#  the right facet instead of a diluted whole-profile vector. Generation is
+#  gated OFF by default so no extra Gemini cost until deliberately enabled;
+#  search is unchanged unless a request opts in with multivector=true.
+# ══════════════════════════════════════════════════════════════════════
+MV_FACETS = ('skills', 'experience', 'projects')
+MV_TEXT_VERSION = 1
+MV_TEXT_TEMPLATE = f'facet-template-v{MV_TEXT_VERSION}'
+
+_MV_CFG_DEFAULTS = {
+    'multivector_enabled':   0,      # generate facet vectors in the background?
+    'multivector_batch':     20,     # candidates per background sweep
+    'multivector_w_full':    0.6,    # blend weight: whole-profile vector
+    'multivector_w_facet':   0.4,    # blend weight: best-matching facet
+}
+def _mv_cfg(key):
+    dflt = _MV_CFG_DEFAULTS[key]
+    try:
+        v = get_setting(key)
+        if v is None or str(v).strip() == '':
+            return dflt
+        return float(v) if isinstance(dflt, float) else int(float(v))
+    except Exception:
+        return dflt
+
+
+def candidate_facet_text(c, facet, conn=None):
+    """Build the text for one facet. Reuses the same tolerant field helpers as
+    the full-profile builder so there is one parsing path. Returns '' when the
+    facet has no meaningful content (so we skip embedding empty facets)."""
+    if facet == 'skills':
+        parts = []
+        for label, col in [('Skills', 'key_skills'), ('Technical Skills', 'key_skill_tags'),
+                           ('Secondary Skills', 'secondary_skills'), ('Domain Expertise', 'domain_tags'),
+                           ('Products', 'product_handles'), ('Functional Expertise', 'function_tags')]:
+            v = _as_list_str(_row_get(c, col))
+            if v:
+                parts.append(f'{label}: {v}')
+        desig = str(_row_get(c, 'designation')).strip()
+        if desig:
+            parts.insert(0, f'Role: {desig}')
+        return '\n'.join(parts)
+
+    if facet == 'experience':
+        lines = []
+        desig = str(_row_get(c, 'designation')).strip()
+        company = str(_row_get(c, 'company')).strip()
+        if desig or company:
+            lines.append(f'Current Role: {desig} at {company}'.strip())
+        exp = _row_get(c, 'experience', 0)
+        try:
+            if float(exp) > 0:
+                lines.append(f'Total Experience: {exp} years')
+        except Exception:
+            pass
+        summ = str(_row_get(c, 'career_summary')).strip()
+        if summ:
+            lines.append(f'Summary: {summ}')
+        ind = _as_list_str(_row_get(c, 'industry_background'))
+        if ind:
+            lines.append(f'Industry: {ind}')
+        if conn is not None:
+            try:
+                wh = conn.execute(
+                    'SELECT company, designation FROM work_history WHERE candidate_id=? '
+                    'ORDER BY is_current DESC, sort_order ASC, id ASC', (_row_get(c, 'id', 0),)).fetchall()
+                prev = [f"{(w['designation'] or '').strip()} at {(w['company'] or '').strip()}".strip(' at')
+                        for w in wh if (w['company'] or w['designation'])]
+                prev = [p for p in prev if p]
+                if prev:
+                    lines.append('Career History: ' + '; '.join(prev[:8]))
+            except Exception:
+                pass
+        return '\n'.join(lines)
+
+    if facet == 'projects':
+        chunks = []
+        summ = str(_row_get(c, 'career_summary')).strip()
+        if summ:
+            chunks.append(summ)
+        if conn is not None:
+            try:
+                for w in conn.execute('SELECT description FROM work_history WHERE candidate_id=?',
+                                      (_row_get(c, 'id', 0),)).fetchall():
+                    dsc = (w['description'] or '').strip()
+                    if dsc:
+                        chunks.append(dsc)
+            except Exception:
+                pass
+        cv = _candidate_cv_text(c, max_chars=3000)
+        if cv:
+            chunks.append(cv)
+        return '\n'.join(chunks).strip()
+
+    return ''
+
+
+def _store_facet(conn, cid, facet, vec, txt, status, error='', duration_ms=0):
+    dim = len(vec) if isinstance(vec, list) else 0
+    blob = _vec_to_blob(vec) if (status == 'completed' and vec) else None
+    conn.execute(
+        "INSERT INTO candidate_vectors (candidate_id, facet, embedding_vec, embedding_text, "
+        "embedding_model, embedding_version, embedding_dimension, embedding_text_version, status, embedded_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(candidate_id, facet) DO UPDATE SET embedding_vec=excluded.embedding_vec, "
+        "embedding_text=excluded.embedding_text, embedding_model=excluded.embedding_model, "
+        "embedding_version=excluded.embedding_version, embedding_dimension=excluded.embedding_dimension, "
+        "embedding_text_version=excluded.embedding_text_version, status=excluded.status, "
+        "embedded_at=excluded.embedded_at",
+        (cid, facet, blob, (txt or '')[:20000], EMBEDDING_MODEL, EMBEDDING_VERSION, dim,
+         MV_TEXT_TEMPLATE, status, ts()))
+    conn.commit()
+
+
+def embed_candidate_facets(conn, c, api_key, facets=MV_FACETS):
+    """Generate + store the facet vectors for one candidate. Returns a per-facet
+    status dict. Never raises."""
+    cid = c['id']; out = {}
+    import time as _time
+    for facet in facets:
+        try:
+            txt = candidate_facet_text(c, facet, conn)
+            if not txt.strip():
+                _store_facet(conn, cid, facet, None, '', 'empty')
+                out[facet] = 'empty'; continue
+            t0 = _time.perf_counter()
+            vec = gemini_embed(txt, api_key)
+            dur = int((_time.perf_counter() - t0) * 1000)
+            if isinstance(vec, dict) and vec.get('error'):
+                _store_facet(conn, cid, facet, None, txt, 'failed', error=vec['error'], duration_ms=dur)
+                out[facet] = 'failed'; continue
+            if not vec:
+                _store_facet(conn, cid, facet, None, txt, 'failed', error='empty vector', duration_ms=dur)
+                out[facet] = 'failed'; continue
+            _store_facet(conn, cid, facet, vec, txt, 'completed', duration_ms=dur)
+            out[facet] = 'completed'
+        except Exception as e:
+            out[facet] = f'error:{e}'
+    return out
+
+
+def _backfill_candidate_facets(conn, cap, api_key):
+    """Background pass (gated by multivector_enabled): generate facet vectors for
+    candidates that have a completed full embedding but are missing current-
+    template facet rows. Bounded per sweep so it never floods the API."""
+    if not _mv_cfg('multivector_enabled') or not api_key:
+        return 0
+    try:
+        need = _mv_cfg('multivector_batch')
+        rows = conn.execute(
+            "SELECT c.* FROM candidates c WHERE c.embedding_status='completed' AND c.id NOT IN ("
+            "  SELECT candidate_id FROM candidate_vectors WHERE embedding_text_version=? "
+            "  GROUP BY candidate_id HAVING COUNT(DISTINCT facet) >= ?"
+            ") LIMIT ?", (MV_TEXT_TEMPLATE, len(MV_FACETS), min(cap, need))).fetchall()
+        n = 0
+        for c in rows:
+            embed_candidate_facets(conn, c, api_key)
+            n += 1
+        if n:
+            print(f'[embed-facet] generated facet vectors for {n} candidate(s)')
+        return n
+    except Exception as e:
+        print(f'[embed-facet] backfill error: {e}')
+        return 0
+
+
 def _reconcile_missing_embeddings(conn, cap):
     """Self-healing: enqueue candidates that have no embedding and no active OR
     failed job. This is what covers the non-Naukri creation paths (manual add,
@@ -5934,7 +6159,7 @@ def list_candidates(mid):
     conn.close()
     out = []
     for r in rows:
-        d = dict(r)
+        d = _cand_public(r)   # drop embedding / embedding_text / embedding_vec
         try: d['key_skills'] = json.loads(d['key_skills'] or '[]')
         except: d['key_skills'] = []
         try: d['secondary_skills'] = json.loads(d['secondary_skills'] or '[]')
@@ -7027,7 +7252,7 @@ def get_candidate(cid):
     conn = get_db()
     r = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
     if not r: conn.close(); return jsonify({'error': 'Not found'}), 404
-    d = dict(r)
+    d = _cand_public(r)   # drop embedding / embedding_text / embedding_vec
     try: d['key_skills'] = json.loads(d['key_skills'] or '[]')
     except: d['key_skills'] = []
     try: d['secondary_skills'] = json.loads(d['secondary_skills'] or '[]')
@@ -7772,7 +7997,7 @@ def central_search():
 
     results = []
     for r in rows:
-        d = dict(r)
+        d = _cand_public(r)   # drop embedding / embedding_text / embedding_vec (not needed by UI)
         # Apply filters
         if q:
             searchable = ' '.join([
