@@ -383,6 +383,12 @@ button,input,textarea,select{font-family:inherit}
 .ai-tab-btn:hover{color:var(--ink)}
 .ai-tab-active{color:var(--navy);border-bottom-color:#8B6FCB;font-weight:600}
 
+/* Central Database sub-tab bar (Search / AI Insights / Responses live here now) */
+.cdb-subtab-bar{display:flex;gap:2px;padding:0 16px;background:#fff;border-bottom:0.5px solid #e8e8e8;flex-shrink:0}
+.cdb-subtab{padding:9px 16px;font-size:12px;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;color:#888;font-weight:500}
+.cdb-subtab:hover{color:#534AB7}
+.cdb-subtab.active{border-bottom-color:#534AB7;color:#534AB7;font-weight:600}
+
 .prof-quickbar{padding:12px 16px;border-bottom:0.5px solid var(--line);background:#fff}
 .pq-role{font-size:13px;font-weight:600;color:var(--navy);margin-bottom:8px}
 .pq-pills{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px}
@@ -639,9 +645,7 @@ body{font-size:14px !important; line-height:1.5}
     <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><span class="sb-nav-ic">&#127970;</span><span>Clients (CRM)</span></a>
     <a href="#freelancers" class="sb-gear" id="sb-freelancers" onclick="return navClick(event,openFreelancerAdmin)"><span class="sb-nav-ic">&#129309;</span><span>Freelancers</span></a>
     <a href="#bd" class="sb-gear" id="sb-bd" onclick="return navClick(event,openBd)"><span class="sb-nav-ic">&#128188;</span><span>BD Command Center</span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
-    <a href="#ai" class="sb-gear" id="sb-ai" onclick="return navClick(event,openAI)"><span class="sb-nav-ic">&#10038;</span><span>AI Insights</span></a>
     <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></a>
-    <a href="#responses" class="sb-gear" id="sb-responses" onclick="return navClick(event,openResponses)"><span class="sb-nav-ic">&#9993;</span><span>Responses</span><span class="sb-nav-count" id="nav-resp-count" style="display:none"></span></a>
   </div>
 
   <div class="sb-mand-head"><span class="t">MY MANDATES</span><button class="a" onclick="openModal('modal-mandate')" title="New mandate">+</button></div>
@@ -682,6 +686,12 @@ body{font-size:14px !important; line-height:1.5}
         <div style="font-size:11px;color:#888;margin-top:2px" id="cdb-subtitle">All candidates across all mandates</div>
       </div>
       <button class="btn btn-o" onclick="closeCentralDB()">&#10005; Close</button>
+    </div>
+    <!-- Sub-tabs: Search / AI Insights / Responses (moved in from sidebar) -->
+    <div class="cdb-subtab-bar">
+      <button class="cdb-subtab active" onclick="openCentralDB()">&#128269; Search</button>
+      <button class="cdb-subtab" onclick="openAI()">&#10024; AI Insights</button>
+      <button class="cdb-subtab" onclick="openResponses()">&#9993; Responses</button>
     </div>
     <!-- Search form -->
     <div style="padding:12px 16px;background:#fff;border-bottom:0.5px solid #e8e8e8;flex-shrink:0">
@@ -751,6 +761,12 @@ body{font-size:14px !important; line-height:1.5}
         <button class="btn btn-o" onclick="closeResponses()">&#10005; Close</button>
       </div>
     </div>
+    <!-- Sub-tabs: Search / AI Insights / Responses (shared Central Database bar) -->
+    <div class="cdb-subtab-bar">
+      <button class="cdb-subtab" onclick="openCentralDB()">&#128269; Search</button>
+      <button class="cdb-subtab" onclick="openAI()">&#10024; AI Insights</button>
+      <button class="cdb-subtab active" onclick="openResponses()">&#9993; Responses</button>
+    </div>
     <div id="resp-body" style="flex:1;overflow:auto;background:#f5f5f5"></div>
   </div>
 
@@ -777,6 +793,12 @@ body{font-size:14px !important; line-height:1.5}
         <span id="ai-index-badge" style="font-size:10px;color:#888"></span>
         <button class="btn btn-o" onclick="closeAI()">&#10005; Close</button>
       </div>
+    </div>
+    <!-- Sub-tabs: Search / AI Insights / Responses (shared Central Database bar) -->
+    <div class="cdb-subtab-bar">
+      <button class="cdb-subtab" onclick="openCentralDB()">&#128269; Search</button>
+      <button class="cdb-subtab active" onclick="openAI()">&#10024; AI Insights</button>
+      <button class="cdb-subtab" onclick="openResponses()">&#9993; Responses</button>
     </div>
     <div style="display:flex;gap:4px;padding:10px 16px 0;background:#fff;flex-shrink:0">
       <button class="ai-tab-btn ai-tab-active" id="ai-tab-search" onclick="switchAITab('search')">&#128269; Talent Search</button>
@@ -6271,8 +6293,9 @@ function openResponses() {
   document.getElementById('central-view').style.display = 'none';
   var _cv=document.getElementById('cdb-view'); if(_cv) _cv.style.display='none';
   document.getElementById('responses-view').style.display = 'flex';
-  document.getElementById('sb-responses').className = 'sb-gear active';
-  document.getElementById('sb-central').className = 'sb-gear';
+  // Responses is now a sub-tab of Central Database, so keep the
+  // Central Database sidebar item highlighted (the old sb-responses item is gone).
+  var _sbc2=document.getElementById('sb-central'); if(_sbc2) _sbc2.className='sb-gear active';
   document.getElementById('sb-gear').className = 'sb-gear';
   S.settingsOpen = false;
   _respPage = 1;
@@ -6284,7 +6307,7 @@ function openResponses() {
 function closeResponses() {
   document.getElementById('responses-view').style.display = 'none';
   document.getElementById('mandate-view').style.display = 'flex';
-  document.getElementById('sb-responses').className = 'sb-gear';
+  var _sbc2=document.getElementById('sb-central'); if(_sbc2) _sbc2.className='sb-gear';
 }
 
 function switchRespTab(tab, btn) {
@@ -7128,7 +7151,9 @@ function openAI() {
   closeSidebarOnMobile();
   _hideAllViews();
   document.getElementById('ai-view').style.display = 'flex';
-  document.getElementById('sb-ai').className = 'sb-gear active';
+  // AI Insights is now a sub-tab of Central Database, so keep the
+  // Central Database sidebar item highlighted (the old sb-ai item is gone).
+  var _sbc=document.getElementById('sb-central'); if(_sbc) _sbc.className='sb-gear active';
   S.settingsOpen = false;
   loadAIIndexStatus();
   renderAITab();
@@ -7138,7 +7163,7 @@ function openAI() {
 function closeAI() {
   document.getElementById('ai-view').style.display = 'none';
   document.getElementById('mandate-view').style.display = 'flex';
-  document.getElementById('sb-ai').className = 'sb-gear';
+  var _sbc=document.getElementById('sb-central'); if(_sbc) _sbc.className='sb-gear';
 }
 
 function switchAITab(tab) {
@@ -7370,7 +7395,7 @@ function _taskActionLabel(type){
   return ({reminder:'Reminder', stale:'Stale candidate', promise:'Promised follow-up', submission:'New submission'})[type] || '';
 }
 
-function openAnalytics() {
+function openAnalytics(skipRender) {
   closeSidebarOnMobile();
   _hideAllViews();
   var av=document.getElementById('ai-view'); if(av) av.style.display='none';
@@ -7389,8 +7414,15 @@ function openAnalytics() {
   var sc = document.getElementById('sb-central'); if (sc) sc.className = 'sb-gear';
   document.getElementById('sb-gear').className = 'sb-gear';
   S.settingsOpen = false;
-  renderAnalytics();
-  writeHash();
+  // skipRender: when the funnel stage-candidate page reuses this view shell,
+  // do NOT kick off the dashboard render or rewrite the hash. Otherwise the
+  // dashboard fetch races the stage-list render (both write #analytics-body)
+  // and overwrites the candidate list, so clicking a funnel bar appeared to
+  // "do nothing". The stage page renders the list itself right after this.
+  if (!skipRender) {
+    renderAnalytics();
+    writeHash();
+  }
 }
 function closeAnalytics() {
   document.getElementById('analytics-view').style.display = 'none';
@@ -7476,7 +7508,7 @@ async function renderAnalytics(){
   html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
     + '<div style="font-size:13px;font-weight:600">Pipeline funnel</div>'
     + '<span style="font-size:10.5px;color:var(--muted);background:#F1F0EC;padding:2px 8px;border-radius:6px">current snapshot</span></div>';
-  html += '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">Click any stage &mdash; all candidates in that stage (across all positions) will open in a new tab.</div>';
+  html += '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">Click any stage to see all candidates in that stage, across all positions. (Ctrl/Cmd+click opens it in a new tab.)</div>';
   html += '<div style="display:flex;flex-direction:column;gap:7px">';
   r.funnel.forEach(function(f){
     var pct = Math.round(f.count*100/maxFunnel);
@@ -9044,8 +9076,10 @@ async function autoMapJobs(){
 }
 
 async function renderStageCandidatesPage(stagesStr){
-  // Reuse the analytics view shell for a full-page candidate list
-  openAnalytics();
+  // Reuse the analytics view shell for a full-page candidate list.
+  // Pass skipRender=true so openAnalytics does NOT also render the dashboard
+  // (which previously raced this render and wiped out the list).
+  openAnalytics(true);
   var body = document.getElementById('analytics-body');
   if(!body) return;
   body.innerHTML = '<div class="loading"><div class="spinner"></div>Loading candidates...</div>';
