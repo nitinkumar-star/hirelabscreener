@@ -1275,6 +1275,7 @@ body{font-size:14px !important; line-height:1.5}
 // ─── CENTRAL DB GLOBALS ──────────────────────────
 var _cdbPage = 1;
 var _cdbTotal = 0;
+var _cdbResults = [];  // current search-result candidates, for CV/profile lookup by id
 var _cdbBulkCandidates = [];
 var _resumeQueue = [];
 var _resumeQueueKey = '';
@@ -5322,6 +5323,31 @@ function clearCDBSearch() {
   searchCDB();
 }
 
+// Open a candidate's CV in a separate browser window/tab.
+// PDFs are served directly (/cv/...); Word docs go through the server-side
+// preview (/cv-view/...) since browsers can't render .docx natively.
+function openCvWindow(cvPath) {
+  if (!cvPath) return false;
+  var lower = ('' + cvPath).toLowerCase();
+  var isPdf = lower.slice(-4) === '.pdf';
+  var url = API + (isPdf ? '/cv/' : '/cv-view/') + encodeURI(cvPath);
+  window.open(url, '_blank');
+  return true;
+}
+
+// Row click in Central Database search results: open the CV in a new window.
+// If the candidate has no CV on file, fall back to opening the full profile.
+function openCvFromRow(id) {
+  var c = (_cdbResults || []).find(function(x){ return x.id === id; });
+  if (!c) return;
+  if (c.cv_path) {
+    openCvWindow(c.cv_path);
+  } else {
+    toast('INFO', 'No CV on file — opening profile');
+    openProfileById(c.id, c.mandate_id || null);
+  }
+}
+
 async function searchCDB() {
   var resultsEl = document.getElementById('cdb-results');
   if (!resultsEl) return;
@@ -5346,6 +5372,7 @@ async function searchCDB() {
     }
     _cdbTotal = r.total || 0;
     var cands = r.candidates || [];
+    _cdbResults = cands;
 
     if (!cands.length) {
       resultsEl.innerHTML = '<div style="padding:48px;text-align:center"><div style="font-size:30px;margin-bottom:10px;opacity:.4">&#128269;</div><div style="font-size:13.5px;font-weight:600;color:#3A3833">No candidates found</div><div style="font-size:12px;color:#A8A498;margin-top:4px">Try different keywords or clear filters</div></div>';
@@ -5354,26 +5381,33 @@ async function searchCDB() {
 
     var out = '<div style="font-size:12.5px;font-weight:500;color:var(--muted);margin-bottom:12px">Showing <strong style="color:var(--ink)">' + cands.length + '</strong> of <strong style="color:var(--ink)">' + _cdbTotal + '</strong> candidates' + (_cdbTotal > 30 ? ' \u00b7 page ' + _cdbPage + ' of ' + Math.ceil(_cdbTotal/30) : '') + '</div>';
     out += '<div style="background:#fff;border:1px solid var(--line);border-radius:13px;overflow:auto;box-shadow:var(--shadow-sm)">';
-    out += '<table style="width:100%;border-collapse:collapse;min-width:720px">';
+    out += '<table style="width:100%;border-collapse:collapse;min-width:820px">';
     out += '<thead><tr style="background:#FAFAF9;border-bottom:1px solid var(--line)">';
-    var headers = ['NAME', 'COMPANY', 'PHONE', 'EXP', 'CTC', 'EXP CTC', 'NOTICE', 'SOURCE'];
-    headers.forEach(function(h,hi) { out += '<th style="padding:11px 14px;font-size:10.5px;font-weight:600;letter-spacing:.4px;color:var(--muted);text-align:' + (hi>=3&&hi<=6?'center':'left') + ';white-space:nowrap">' + h + '</th>'; });
+    var headers = ['NAME', 'COMPANY', 'LOCATION', 'PHONE', 'EXP', 'CTC', 'EXP CTC', 'NOTICE', 'SOURCE', ''];
+    headers.forEach(function(h,hi) { out += '<th style="padding:11px 14px;font-size:10.5px;font-weight:600;letter-spacing:.4px;color:var(--muted);text-align:' + (hi>=4&&hi<=7?'center':'left') + ';white-space:nowrap">' + h + '</th>'; });
     out += '</tr></thead><tbody>';
 
     cands.forEach(function(c, idx) {
       var skills = (c.key_skills || []).slice(0, 3).join(' \u00b7 ');
-      out += '<tr style="border-bottom:1px solid #F1EFE9;cursor:pointer" onclick="openProfileById('+c.id+','+(c.mandate_id||'null')+')" onmouseover="this.style.background=\'#FAFAF9\'" onmouseout="this.style.background=\'#fff\'">';
+      out += '<tr style="border-bottom:1px solid #F1EFE9;cursor:pointer" title="Click to open this candidate&#39;s CV in a new window" onclick="openCvFromRow('+c.id+')" onmouseover="this.style.background=\'#FAFAF9\'" onmouseout="this.style.background=\'#fff\'">';
       out += '<td style="padding:11px 14px"><div style="display:flex;align-items:center;gap:10px;min-width:0">' + avatarHtml(c.name, 30) + '<div style="min-width:0">';
       out += '<div style="font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(c.name || '') + '</div>';
       if (c.designation) out += '<div style="font-size:11px;color:#A8A498;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(c.designation) + (skills?' \u00b7 '+esc(skills):'') + '</div>';
       out += '</div></div></td>';
       out += '<td style="padding:11px 14px;font-size:12.5px;color:#3A3833;white-space:nowrap">' + esc(c.company || '&mdash;') + '</td>';
+      out += '<td style="padding:11px 14px;font-size:12px;color:#6B675E;white-space:nowrap">' + esc(c.location || '&mdash;') + '</td>';
       out += '<td style="padding:11px 14px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#378ADD;white-space:nowrap">' + esc(c.phone || '&mdash;') + '</td>';
       out += '<td style="padding:11px 14px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#6B675E;text-align:center">' + (c.experience ? c.experience + 'y' : '&mdash;') + '</td>';
       out += '<td style="padding:11px 14px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#6B675E;text-align:center">' + (c.ctc_current ? c.ctc_current + 'L' : '&mdash;') + '</td>';
       out += '<td style="padding:11px 14px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;font-weight:600;color:#127A57;text-align:center">' + (c.ctc_expected ? c.ctc_expected + 'L' : '&mdash;') + '</td>';
       out += '<td style="padding:11px 14px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#6B675E;text-align:center">' + (c.notice_period ? c.notice_period + 'd' : '&mdash;') + '</td>';
       out += '<td style="padding:11px 14px;font-size:11px;color:#A8A498;white-space:nowrap">' + esc(c.mandate_client || 'Central DB') + '</td>';
+      out += '<td style="padding:11px 14px;white-space:nowrap;text-align:right">'
+        + (c.cv_path
+            ? '<span title="Click the row to open the CV" style="font-size:9px;font-weight:700;background:#E8F4EE;color:#127A57;padding:2px 6px;border-radius:6px;margin-right:6px">CV</span>'
+            : '<span style="font-size:9px;color:#C9C6BD;margin-right:6px">no CV</span>')
+        + '<button onclick="event.stopPropagation();openProfileById('+c.id+','+(c.mandate_id||'null')+')" style="font-size:10.5px;border:1px solid var(--line);background:#fff;color:#534AB7;border-radius:6px;padding:3px 9px;cursor:pointer">Profile</button>'
+        + '</td>';
       out += '</tr>';
     });
     out += '</tbody></table></div>';
