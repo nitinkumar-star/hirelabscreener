@@ -6459,6 +6459,193 @@ def client_mandates(crm_client_id):
     conn.close()
     return jsonify({'ok': True, 'mandates': out})
 
+# ══════════════════════════════════════════════════════════════════════════
+#  CRM — Email thread + AI-assisted drafting (Sprint 1)
+#  Emails live as crm_activities rows (activity_type='email'); the meta JSON
+#  carries direction / to / from / sent so the thread can render richly.
+#  All three endpoints are additive and only read/write the existing table.
+# ══════════════════════════════════════════════════════════════════════════
+def _crm_client_or_none(conn, company_id, client_id):
+    return conn.execute(
+        'SELECT id, name, industry, website FROM crm_clients '
+        'WHERE id=? AND company_id=? AND is_active=1',
+        (client_id, company_id)).fetchone()
+
+@app.route('/api/crm/clients/<int:cid>/emails', methods=['GET'])
+@login_required
+def crm_client_emails(cid):
+    """Return the email thread for a client (optionally scoped to one contact)."""
+    conn = get_db()
+    company_id = effective_company_id()
+    client = _crm_client_or_none(conn, company_id, cid)
+    if not client:
+        conn.close()
+        return jsonify({'error': 'Client not found'}), 404
+    contact_id = request.args.get('contact_id', type=int)
+    sql = ("SELECT * FROM crm_activities WHERE company_id=? AND client_id=? "
+           "AND activity_type='email' AND is_active=1")
+    params = [company_id, cid]
+    if contact_id:
+        sql += ' AND contact_id=?'
+        params.append(contact_id)
+    sql += ' ORDER BY created_at ASC, id ASC'
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            meta = json.loads(d.get('meta') or '{}')
+        except Exception:
+            meta = {}
+        out.append({
+            'id': d['id'], 'contact_id': d['contact_id'],
+            'subject': d.get('subject', ''), 'body': d.get('body', ''),
+            'created_at': d.get('created_at', ''),
+            'direction': meta.get('direction', 'outgoing'),
+            'to': meta.get('to', ''), 'from': meta.get('from', ''),
+            'sent': bool(meta.get('sent', False)),
+        })
+    return jsonify({'ok': True, 'emails': out})
+
+
+@app.route('/api/crm/clients/<int:cid>/email', methods=['POST'])
+@login_required
+def crm_client_email_send(cid):
+    """Log an outgoing email on the client/contact timeline, optionally sending
+    it via the tenant's configured SMTP. Stored as a crm_activities email row."""
+    conn = get_db()
+    company_id = effective_company_id()
+    client = _crm_client_or_none(conn, company_id, cid)
+    if not client:
+        conn.close()
+        return jsonify({'error': 'Client not found'}), 404
+    d = request.get_json(force=True) or {}
+    to_email = (d.get('to') or '').strip()
+    subject = (d.get('subject') or '').strip()
+    body = (d.get('body') or '').strip()
+    contact_id = int(d.get('contact_id') or 0)
+    do_send = bool(d.get('send'))
+    if not subject and not body:
+        conn.close()
+        return jsonify({'error': 'Subject or body is required'}), 400
+
+    sent_ok = False
+    if do_send:
+        if not to_email:
+            conn.close()
+            return jsonify({'error': 'A "To" email address is required to send.'}), 400
+        sent_ok, send_err = _smtp_send(to_email, subject, body)
+        if not sent_ok:
+            conn.close()
+            return jsonify({'error': send_err or 'Failed to send email'}), 400
+
+    now = ts()
+    uid = real_user_id()
+    meta = json.dumps({'direction': 'outgoing', 'to': to_email,
+                       'from': get_setting('smtp_email', ''), 'sent': sent_ok})
+    conn.execute(
+        "INSERT INTO crm_activities (company_id,client_id,contact_id,activity_type,"
+        "subject,body,outcome,due_at,completed_at,status,owner_user_id,meta,"
+        "is_active,created_by,updated_by,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (company_id, cid, contact_id, 'email', subject, body, '', '', now,
+         'done', uid, meta, 1, uid, uid, now, now))
+    new_id = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
+    conn.commit()
+    conn.close()
+    try:
+        log_activity('email_' + ('sent' if sent_ok else 'logged'),
+                     detail=subject, entity_type='crm_client', entity_id=cid)
+    except Exception:
+        pass
+    return jsonify({'ok': True, 'id': new_id, 'sent': sent_ok})
+
+
+@app.route('/api/crm/ai/draft-email', methods=['POST'])
+@login_required
+def crm_ai_draft_email():
+    """AI-assisted email drafting for the CRM (tenant's DeepSeek key).
+    Returns a suggested subject + body from the client/contact context and the
+    recruiter's intent. Nothing is sent or stored here — draft only."""
+    conn = get_db()
+    company_id = effective_company_id()
+    d = request.get_json(force=True) or {}
+    client_id = int(d.get('client_id') or 0)
+    contact_id = int(d.get('contact_id') or 0)
+    intent = (d.get('intent') or '').strip()
+    tone = (d.get('tone') or 'professional').strip()
+    if not intent:
+        conn.close()
+        return jsonify({'error': 'Please describe what the email should say.'}), 400
+
+    client = _crm_client_or_none(conn, company_id, client_id) if client_id else None
+    contact = None
+    if contact_id:
+        contact = conn.execute(
+            'SELECT name, designation, email FROM crm_contacts '
+            'WHERE id=? AND company_id=? AND is_active=1',
+            (contact_id, company_id)).fetchone()
+    thread_ctx = ''
+    if client_id:
+        prev = conn.execute(
+            "SELECT subject, body FROM crm_activities WHERE company_id=? AND client_id=? "
+            "AND activity_type='email' AND is_active=1 ORDER BY id DESC LIMIT 3",
+            (company_id, client_id)).fetchall()
+        if prev:
+            thread_ctx = '\n\n'.join(
+                '- ' + (p['subject'] or '') + ': ' + (p['body'] or '')[:300] for p in prev)
+    conn.close()
+
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not configured. Add it in Settings.'}), 400
+
+    sender_name = get_setting('smtp_display_name', '') or 'the recruitment team'
+    ctx_lines = []
+    if client:
+        ctx_lines.append('Client company: ' + (client['name'] or '') +
+                         ((' (' + client['industry'] + ')') if client['industry'] else ''))
+    if contact:
+        ctx_lines.append('Recipient: ' + (contact['name'] or '') +
+                         ((', ' + contact['designation']) if contact['designation'] else ''))
+    ctx = '\n'.join(ctx_lines) or 'A business client contact.'
+
+    system_msg = (
+        "You are an assistant that writes clear, concise, professional B2B "
+        "recruitment emails for an Indian staffing agency. Write in natural "
+        "business English. Keep it short and specific. Do NOT invent facts, "
+        "names, numbers, or commitments that were not provided. "
+        "Return ONLY a JSON object of the form {\"subject\": \"...\", \"body\": \"...\"}. "
+        "The body must be ready to send and signed off as " + sender_name + "."
+    )
+    user_msg = (
+        'Context:\n' + ctx + '\n\n'
+        'Desired tone: ' + tone + '\n'
+        'What the email should accomplish:\n' + intent
+        + (('\n\nRecent email history for reference:\n' + thread_ctx) if thread_ctx else '')
+    )
+    try:
+        resp = call_deepseek(ds_key,
+            {'model': 'deepseek-chat', 'temperature': 0.5, 'max_tokens': 700,
+             'messages': [{'role': 'system', 'content': system_msg},
+                          {'role': 'user', 'content': user_msg[:8000]}]},
+            timeout=60, endpoint='crm_email_draft')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    if resp.status_code != 200:
+        try: err = resp.json().get('error', {}).get('message', 'DeepSeek API error')
+        except Exception: err = resp.text[:200]
+        return jsonify({'error': err}), 500
+    content = resp.json()['choices'][0]['message']['content'].strip()
+    parsed = parse_json(content) or {}
+    subject = (parsed.get('subject') or '').strip()
+    body = (parsed.get('body') or '').strip()
+    if not body:
+        body = content
+    return jsonify({'ok': True, 'subject': subject, 'body': body})
+
+
 @app.route('/api/mandates/<int:mid>', methods=['GET'])
 @login_required
 def get_mandate(mid):
