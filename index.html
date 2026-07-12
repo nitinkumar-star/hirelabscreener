@@ -5335,17 +5335,30 @@ function openCvWindow(cvPath) {
   return true;
 }
 
-// Row click in Central Database search results: open the CV in a new window.
-// If the candidate has no CV on file, fall back to opening the full profile.
-function openCvFromRow(id) {
+// Row click in Central Database search results: open the FULL candidate
+// profile (professional details, AI insight, key skills, all actions) in a
+// NEW browser window, so the recruiter can review the candidate fully while
+// the search list stays open in the original window.
+// We reuse the app's own deep-link route (#mandate/<id>/profiles/<cid>) — the
+// same one that refresh-restore uses — so the new window is a full, working
+// app instance with every profile action available.
+function openCandidateWindow(id) {
   var c = (_cdbResults || []).find(function(x){ return x.id === id; });
   if (!c) return;
-  if (c.cv_path) {
-    openCvWindow(c.cv_path);
+  if (c.mandate_id) {
+    var url = location.pathname + '#mandate/' + c.mandate_id + '/profiles/' + c.id;
+    var w = window.open(url, '_blank');
+    if (!w) openProfileById(c.id, c.mandate_id);  // popup blocked -> open inline
   } else {
-    toast('INFO', 'No CV on file — opening profile');
-    openProfileById(c.id, c.mandate_id || null);
+    // No mandate context -> open inline in this window as a fallback
+    openProfileById(c.id, null);
   }
+}
+
+// Small quick-link: open just the raw CV in a new window (from the action cell).
+function openCvOnly(id) {
+  var c = (_cdbResults || []).find(function(x){ return x.id === id; });
+  if (c && c.cv_path) openCvWindow(c.cv_path);
 }
 
 async function searchCDB() {
@@ -5389,7 +5402,7 @@ async function searchCDB() {
 
     cands.forEach(function(c, idx) {
       var skills = (c.key_skills || []).slice(0, 3).join(' \u00b7 ');
-      out += '<tr style="border-bottom:1px solid #F1EFE9;cursor:pointer" title="Click to open this candidate&#39;s CV in a new window" onclick="openCvFromRow('+c.id+')" onmouseover="this.style.background=\'#FAFAF9\'" onmouseout="this.style.background=\'#fff\'">';
+      out += '<tr style="border-bottom:1px solid #F1EFE9;cursor:pointer" title="Open full profile in a new window" onclick="openCandidateWindow('+c.id+')" onmouseover="this.style.background=\'#FAFAF9\'" onmouseout="this.style.background=\'#fff\'">';
       out += '<td style="padding:11px 14px"><div style="display:flex;align-items:center;gap:10px;min-width:0">' + avatarHtml(c.name, 30) + '<div style="min-width:0">';
       out += '<div style="font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(c.name || '') + '</div>';
       if (c.designation) out += '<div style="font-size:11px;color:#A8A498;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(c.designation) + (skills?' \u00b7 '+esc(skills):'') + '</div>';
@@ -5404,9 +5417,8 @@ async function searchCDB() {
       out += '<td style="padding:11px 14px;font-size:11px;color:#A8A498;white-space:nowrap">' + esc(c.mandate_client || 'Central DB') + '</td>';
       out += '<td style="padding:11px 14px;white-space:nowrap;text-align:right">'
         + (c.cv_path
-            ? '<span title="Click the row to open the CV" style="font-size:9px;font-weight:700;background:#E8F4EE;color:#127A57;padding:2px 6px;border-radius:6px;margin-right:6px">CV</span>'
-            : '<span style="font-size:9px;color:#C9C6BD;margin-right:6px">no CV</span>')
-        + '<button onclick="event.stopPropagation();openProfileById('+c.id+','+(c.mandate_id||'null')+')" style="font-size:10.5px;border:1px solid var(--line);background:#fff;color:#534AB7;border-radius:6px;padding:3px 9px;cursor:pointer">Profile</button>'
+            ? '<button title="Open CV only" onclick="event.stopPropagation();openCvOnly('+c.id+')" style="font-size:10.5px;font-weight:600;border:1px solid #CDE7DA;background:#E8F4EE;color:#127A57;border-radius:6px;padding:3px 10px;cursor:pointer">CV &#8599;</button>'
+            : '<span style="font-size:10px;color:#C9C6BD">no CV</span>')
         + '</td>';
       out += '</tr>';
     });
