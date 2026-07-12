@@ -8769,8 +8769,10 @@ async function _cdRenderRight(clientId, contacts){
 
   // Jobs card
   html+='<div id="cd-jobs-card" style="margin-top:14px">'+_cdCard('Jobs / Requirements', '…', '')+'<div style="font-size:12px;color:#98A2B3">Loading...</div></div></div>';
+  html+='<div id="crm-att-card" style="margin-top:14px"></div>';
 
   el.innerHTML=html;
+  _crmRenderAttachments('client', clientId);
 
   // Load jobs into the jobs card
   var jr=await req('GET','/crm-link/client/'+clientId+'/mandates');
@@ -9290,7 +9292,7 @@ async function openContactWorkspace(clientId, contactId){
   document.getElementById('cd-columns').innerHTML=cols;
 
   _ctRenderCenter(clientId, ct);
-  _ctRenderRight(clientId, client, contacts);
+  _ctRenderRight(clientId, client, contacts, ct.id);
 }
 
 function _ctLeftColumn(ct){
@@ -9360,7 +9362,7 @@ function _ctSetFilter(clientId, contactId, f){
   if(ct) _ctRenderCenter(clientId, ct);
 }
 
-async function _ctRenderRight(clientId, client, contacts){
+async function _ctRenderRight(clientId, client, contacts, contactId){
   var el=document.getElementById('cd-right');
   if(!el) return;
   var sc=_crmStatusColor(client.status);
@@ -9373,7 +9375,9 @@ async function _ctRenderRight(clientId, client, contacts){
     +'<div style="font-size:11px;color:#667085;margin-top:4px">'+contacts.length+' contact'+(contacts.length!==1?'s':'')+' at this company</div>'
     +'</div>';
   html+='<div id="cd-jobs-card" style="margin-top:14px">'+_cdCard('Associated jobs','...','')+'<div style="font-size:12px;color:#98A2B3">Loading...</div></div></div>';
+  html+='<div id="crm-att-card" style="margin-top:14px"></div>';
   el.innerHTML=html;
+  if(contactId) _crmRenderAttachments('contact', contactId);
   var jr=await req('GET','/crm-link/client/'+clientId+'/mandates');
   var jobsCard=document.getElementById('cd-jobs-card');
   if(jobsCard && jr.ok){
@@ -9391,6 +9395,73 @@ async function _ctRenderRight(clientId, client, contacts){
     jh+='</div>';
     jobsCard.innerHTML=jh;
   }
+}
+
+
+// ── CRM Attachments (Sprint 2): files on a company or contact ───────────────
+function _fmtBytes(n){ n=n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+function _attIcon(name){
+  var e=(name||'').toLowerCase().split('.').pop();
+  if(e==='pdf') return '&#128196;';
+  if(e==='doc'||e==='docx') return '&#128221;';
+  if(e==='xls'||e==='xlsx'||e==='csv') return '&#128202;';
+  if(e==='ppt'||e==='pptx') return '&#128209;';
+  if(e==='png'||e==='jpg'||e==='jpeg') return '&#128444;&#65039;';
+  if(e==='zip') return '&#128476;&#65039;';
+  return '&#128206;';
+}
+
+async function _crmRenderAttachments(entityType, entityId){
+  var card=document.getElementById('crm-att-card');
+  if(!card) return;
+  card.innerHTML=_cdCard('Attachments','...','')+'<div style="font-size:12px;color:#98A2B3">Loading...</div></div>';
+  var r=await req('GET','/crm/'+entityType+'/'+entityId+'/attachments');
+  var atts=(r&&r.ok)?(r.attachments||[]):[];
+  var cats=['NDA','Agreement','PO','Requirement','Proposal','Presentation','Invoice','Resume','BusinessCard','Other'];
+  var uploader='<div style="display:flex;flex-direction:column;gap:6px;margin:6px 0 10px">'
+    +'<select id="att-cat" class="inp" style="font-size:11.5px;padding:5px 8px">'+cats.map(function(c){return '<option value="'+c+'">'+c+'</option>';}).join('')+'</select>'
+    +'<input type="file" id="att-file" style="font-size:11px">'
+    +'<button class="btn" id="att-btn" onclick="_crmUploadAttachment(\''+entityType+'\','+entityId+')" style="background:#0F6E56;color:#fff;border:none;font-size:11.5px;padding:5px 10px">&#8593; Upload file</button>'
+    +'</div>';
+  var list='';
+  if(!atts.length){ list='<div style="font-size:12px;color:#98A2B3;padding:4px 0">No files yet</div>'; }
+  else {
+    atts.forEach(function(a){
+      list+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid #F2F4F7">'
+        +'<div style="font-size:16px;flex-shrink:0">'+_attIcon(a.original_name)+'</div>'
+        +'<div style="flex:1;min-width:0">'
+        +'<a href="'+API+'/crm/attachments/'+a.id+'/download" target="_blank" style="font-size:12px;font-weight:600;color:#2D6FB3;text-decoration:none;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(a.original_name)+'</a>'
+        +'<div style="font-size:10px;color:#98A2B3"><span style="background:#F2F4F7;color:#667085;padding:0 5px;border-radius:4px">'+esc(a.category)+'</span> '+_fmtBytes(a.size_bytes)+'</div>'
+        +'</div>'
+        +'<button onclick="_crmDeleteAttachment('+a.id+',\''+entityType+'\','+entityId+')" title="Delete" style="background:none;border:none;color:#D92D20;cursor:pointer;font-size:13px;flex-shrink:0">&#10005;</button>'
+        +'</div>';
+    });
+  }
+  card.innerHTML=_cdCard('Attachments', atts.length, '')+uploader+list+'</div>';
+}
+
+async function _crmUploadAttachment(entityType, entityId){
+  var fi=document.getElementById('att-file');
+  var cat=(document.getElementById('att-cat')||{}).value||'Other';
+  if(!fi || !fi.files || !fi.files.length){ toast('ERR','Choose a file first.'); return; }
+  var fd=new FormData();
+  fd.append('file', fi.files[0]);
+  fd.append('category', cat);
+  var btn=document.getElementById('att-btn');
+  if(btn){ btn.disabled=true; btn.innerHTML='&#8987; Uploading...'; }
+  var r=await reqFile('/crm/'+entityType+'/'+entityId+'/attachments', fd);
+  if(btn){ btn.disabled=false; btn.innerHTML='&#8593; Upload file'; }
+  if(!r || !r.ok){ toast('ERR', (r&&r.error)||'Upload failed'); return; }
+  toast('OK','File uploaded');
+  _crmRenderAttachments(entityType, entityId);
+}
+
+async function _crmDeleteAttachment(aid, entityType, entityId){
+  if(!confirm('Delete this file?')) return;
+  var r=await req('DELETE','/crm/attachments/'+aid);
+  if(!r || !r.ok){ toast('ERR',(r&&r.error)||'Failed'); return; }
+  toast('OK','File deleted');
+  _crmRenderAttachments(entityType, entityId);
 }
 
 

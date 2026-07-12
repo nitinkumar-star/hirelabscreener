@@ -1310,11 +1310,12 @@ DATA_DIR = os.environ.get('DATA_DIR',
 DB_PATH  = os.path.join(DATA_DIR, 'hirelab.db')
 CV_DIR   = os.path.join(DATA_DIR, 'cvs')
 BAK_DIR  = os.path.join(DATA_DIR, 'backups')
+CRM_FILES_DIR = os.path.join(DATA_DIR, 'crm_files')
 
 CLAUDE_URL   = 'https://api.anthropic.com/v1/messages'
 CLAUDE_MODEL = 'claude-sonnet-4-20250514'
 
-for d in [DATA_DIR, CV_DIR, BAK_DIR]:
+for d in [DATA_DIR, CV_DIR, BAK_DIR, CRM_FILES_DIR]:
     os.makedirs(d, exist_ok=True)
 
 def get_db():
@@ -1709,11 +1710,29 @@ def init_db():
         actor_name TEXT DEFAULT '',
         created_at TEXT DEFAULT ''
     )''')
+    # CRM attachments (Sprint 2) — files attached to a company or a contact.
+    c.execute('''CREATE TABLE IF NOT EXISTS crm_attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,              -- tenant
+        client_id INTEGER DEFAULT 0,              -- always resolved (contact -> its client)
+        entity_type TEXT DEFAULT 'client',        -- client | contact
+        entity_id INTEGER DEFAULT 0,
+        category TEXT DEFAULT 'Other',            -- NDA | Agreement | PO | ...
+        original_name TEXT DEFAULT '',
+        stored_name TEXT DEFAULT '',              -- filename on disk (CRM_FILES_DIR)
+        size_bytes INTEGER DEFAULT 0,
+        mime TEXT DEFAULT '',
+        uploaded_by INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,              -- soft delete
+        created_at TEXT DEFAULT ''
+    )''')
     for idx_sql in [
         'CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity_log(entity_type, entity_id)',
         'CREATE INDEX IF NOT EXISTS idx_activity_company ON activity_log(company_id, created_at)',
         'CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id)',
         'CREATE INDEX IF NOT EXISTS idx_audit_company ON audit_log(company_id, created_at)',
+        'CREATE INDEX IF NOT EXISTS idx_crm_att_entity ON crm_attachments(company_id, entity_type, entity_id, is_active)',
+        'CREATE INDEX IF NOT EXISTS idx_crm_att_client ON crm_attachments(company_id, client_id, is_active)',
     ]:
         try:
             c.execute(idx_sql)
@@ -6644,6 +6663,142 @@ def crm_ai_draft_email():
     if not body:
         body = content
     return jsonify({'ok': True, 'subject': subject, 'body': body})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  CRM — Attachments (Sprint 2). Files attached to a company or a contact,
+#  stored on the persistent disk (CRM_FILES_DIR) and tracked in crm_attachments.
+#  Additive; reuses the same storage approach as candidate CVs.
+# ══════════════════════════════════════════════════════════════════════════
+CRM_ATT_CATEGORIES = {'NDA', 'Agreement', 'PO', 'Requirement', 'Proposal',
+                      'Presentation', 'Invoice', 'Resume', 'BusinessCard', 'Other'}
+ALLOWED_ATT_EXT = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+                   '.png', '.jpg', '.jpeg', '.txt', '.csv', '.zip'}
+
+def _crm_resolve_client_id(conn, company_id, entity_type, entity_id):
+    """Every attachment is anchored to a client_id (a contact resolves to its
+    parent client). Returns 0 if the entity does not belong to the tenant."""
+    if entity_type == 'contact':
+        row = conn.execute(
+            'SELECT client_id FROM crm_contacts WHERE id=? AND company_id=? AND is_active=1',
+            (entity_id, company_id)).fetchone()
+        return row['client_id'] if row else 0
+    row = conn.execute(
+        'SELECT id FROM crm_clients WHERE id=? AND company_id=? AND is_active=1',
+        (entity_id, company_id)).fetchone()
+    return row['id'] if row else 0
+
+def _att_public(r):
+    d = dict(r)
+    d.pop('stored_name', None)  # never expose the on-disk filename
+    return d
+
+@app.route('/api/crm/<entity_type>/<int:entity_id>/attachments', methods=['GET'])
+@login_required
+def crm_list_attachments(entity_type, entity_id):
+    if entity_type not in ('client', 'contact'):
+        return jsonify({'error': 'Invalid entity type'}), 400
+    conn = get_db()
+    company_id = effective_company_id()
+    rows = conn.execute(
+        'SELECT * FROM crm_attachments WHERE company_id=? AND entity_type=? AND entity_id=? '
+        'AND is_active=1 ORDER BY created_at DESC, id DESC',
+        (company_id, entity_type, entity_id)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'attachments': [_att_public(r) for r in rows]})
+
+@app.route('/api/crm/<entity_type>/<int:entity_id>/attachments', methods=['POST'])
+@login_required
+def crm_upload_attachment(entity_type, entity_id):
+    if entity_type not in ('client', 'contact'):
+        return jsonify({'error': 'Invalid entity type'}), 400
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+    f = request.files['file']
+    if not f or not f.filename:
+        return jsonify({'error': 'No file selected'}), 400
+    ext = Path(f.filename).suffix.lower()
+    if ext not in ALLOWED_ATT_EXT:
+        return jsonify({'error': 'Unsupported file type: ' + (ext or 'unknown')}), 400
+    category = (request.form.get('category') or 'Other').strip()
+    if category not in CRM_ATT_CATEGORIES:
+        category = 'Other'
+    conn = get_db()
+    company_id = effective_company_id()
+    client_id = _crm_resolve_client_id(conn, company_id, entity_type, entity_id)
+    if not client_id:
+        conn.close()
+        return jsonify({'error': 'Record not found'}), 404
+    now = ts()
+    uid = real_user_id()
+    stored = ('att_' + entity_type + str(entity_id) + '_'
+              + datetime.datetime.now().strftime('%Y%m%d%H%M%S%f') + ext)
+    try:
+        f.save(os.path.join(CRM_FILES_DIR, stored))
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': 'Failed to save file: ' + str(e)}), 500
+    try:
+        size = os.path.getsize(os.path.join(CRM_FILES_DIR, stored))
+    except Exception:
+        size = 0
+    conn.execute(
+        'INSERT INTO crm_attachments (company_id,client_id,entity_type,entity_id,category,'
+        'original_name,stored_name,size_bytes,mime,uploaded_by,is_active,created_at) '
+        'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+        (company_id, client_id, entity_type, entity_id, category, f.filename, stored,
+         size, f.mimetype or '', uid, 1, now))
+    aid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
+    conn.commit()
+    row = conn.execute('SELECT * FROM crm_attachments WHERE id=?', (aid,)).fetchone()
+    conn.close()
+    try:
+        log_activity('attachment_added', detail=category + ': ' + f.filename,
+                     entity_type='crm_' + entity_type, entity_id=entity_id)
+    except Exception:
+        pass
+    return jsonify({'ok': True, 'attachment': _att_public(row)})
+
+@app.route('/api/crm/attachments/<int:aid>/download', methods=['GET'])
+@login_required
+def crm_download_attachment(aid):
+    conn = get_db()
+    company_id = effective_company_id()
+    r = conn.execute('SELECT * FROM crm_attachments WHERE id=? AND company_id=? AND is_active=1',
+                     (aid, company_id)).fetchone()
+    conn.close()
+    if not r:
+        return jsonify({'error': 'Not found'}), 404
+    fp = os.path.join(CRM_FILES_DIR, r['stored_name'])
+    if not os.path.exists(fp):
+        return jsonify({'error': 'File missing on disk'}), 404
+    try:
+        return send_file(fp, as_attachment=True,
+                         download_name=(r['original_name'] or r['stored_name']))
+    except TypeError:
+        # Older Flask uses attachment_filename instead of download_name
+        return send_file(fp, as_attachment=True,
+                         attachment_filename=(r['original_name'] or r['stored_name']))
+
+@app.route('/api/crm/attachments/<int:aid>', methods=['DELETE'])
+@login_required
+def crm_delete_attachment(aid):
+    conn = get_db()
+    company_id = effective_company_id()
+    r = conn.execute('SELECT * FROM crm_attachments WHERE id=? AND company_id=? AND is_active=1',
+                     (aid, company_id)).fetchone()
+    if not r:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    conn.execute('UPDATE crm_attachments SET is_active=0 WHERE id=?', (aid,))
+    conn.commit()
+    conn.close()
+    try:
+        log_activity('attachment_removed', detail=r['original_name'],
+                     entity_type='crm_' + r['entity_type'], entity_id=r['entity_id'])
+    except Exception:
+        pass
+    return jsonify({'ok': True})
 
 
 @app.route('/api/mandates/<int:mid>', methods=['GET'])
