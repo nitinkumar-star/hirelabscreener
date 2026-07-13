@@ -100,7 +100,7 @@ select.input{height:34px}
 const SP='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 4.6L18.5 9l-3.5 3 1 5-4-2.6L8 17l1-5L5.5 9z"/></svg>';
 const PLUS='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:14px;height:14px"><path d="M12 5v14M5 12h14"/></svg>';
 const STAGES=['Screening','Follow Up 1','Follow Up 2','Not Contacted','Called','Interested','Updated CV awaited','Not Interested','Shared with Client','Interview Inprocess','Not Suitable','Client Rejected on Paper','Client Rejected After Interview','Placed'];
-let STATE={user:null,mandates:[],curMandate:null,candidates:[],curCand:null,tab:'overview',reminders:[],view:'mandate',addDest:'central',talent:{q:'',filters:{},results:[],page:1,total:0,searched:false,filtersOpen:false},clients:{list:[],q:'',status:'',page:1,pages:1,total:0,cur:null,contacts:[],meta:null,tab:'overview'}};
+let STATE={user:null,mandates:[],curMandate:null,candidates:[],curCand:null,tab:'overview',reminders:[],view:'mandate',addDest:'central',talent:{q:'',filters:{},results:[],page:1,total:0,searched:false,filtersOpen:false},clients:{list:[],q:'',status:'',page:1,pages:1,total:0,cur:null,contacts:[],meta:null,tab:'overview'},convo:{tab:'inbox',status:'active',list:[],curId:null,messages:[],escalations:[],learned:[],escBadge:0}};
 
 async function api(path,opts){
  const o=Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}},opts||{});
@@ -149,6 +149,7 @@ function renderShell(){
    <div class="brand"><div class="logo">${SP}</div><b style="font-size:15px">RecruitOS</b><span class="badge badge-live" style="margin-left:auto">LIVE</span></div>
    <div style="padding:8px 8px 2px"><div class="mrow navitem" id="nav-talent" onclick="showTalent()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>Talent</div><div class="ms">Search all candidates · Add new</div></div></div>
    <div style="padding:2px 8px 2px"><div class="mrow navitem" id="nav-clients" onclick="showClients()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M3 21h18M4 21V8l7-4 7 4v13M9 21v-5h6v5"/></svg>Clients</div><div class="ms">Companies · contacts · org chart</div></div></div>
+   <div style="padding:2px 8px 2px"><div class="mrow navitem" id="nav-convo" onclick="showConvo()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M21 11.5a8.5 8.5 0 01-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1121 11.5z"/></svg>Conversations<span class="badge badge-warning" id="convoNavBadge" style="height:16px;margin-left:auto;display:none"></span></div><div class="ms">WhatsApp AI · escalations</div></div></div>
    <div style="padding:10px 12px 4px" class="eyebrow">Mandates (${STATE.mandates.length})</div>
    <div class="mlist" id="mlist">${STATE.mandates.map(m=>`<div class="mrow ${m.id===STATE.curMandate?'on':''}" onclick="selMandate(${m.id})"><div class="mr">${esc(m.role||'Untitled')}</div><div class="ms">${esc(m.client||'')} ${m.location?'· '+esc(m.location):''}</div></div>`).join('')||'<div class="caption" style="padding:10px">No mandates found.</div>'}</div>
   </aside>
@@ -163,6 +164,7 @@ function renderShell(){
   </div>
  </div>`;
  selMandate(STATE.curMandate);
+ updateConvoBadge();
 }
 function themeIcon(){return document.documentElement.getAttribute('data-theme')==='dark'
  ?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"/></svg>'
@@ -629,6 +631,178 @@ async function delContact(contactId){
  try{await api('/api/crm/contacts/'+contactId,{method:'DELETE'});toast('Contact deleted','success');
   const r=await api('/api/crm/clients/'+clientId);STATE.clients.cur=r.client;STATE.clients.contacts=r.contacts||[];renderClient();}
  catch(e){toast('Could not delete contact','danger');}
+}
+
+/* ---------- Wave 6: Conversations (WhatsApp AI) ---------- */
+async function updateConvoBadge(){
+ try{const r=await api('/api/wa/escalations');STATE.convo.escBadge=(r.escalations||[]).length;updateConvoBadgeUI();}catch(e){}
+}
+function updateConvoBadgeUI(){const b=document.getElementById('convoNavBadge');if(!b)return;const n=STATE.convo.escBadge||0;b.textContent=n;b.style.display=n?'inline-flex':'none';}
+function showConvo(){
+ STATE.view='convo';STATE.curCand=null;
+ document.querySelectorAll('.mrow').forEach(x=>x.classList.remove('on'));
+ const n=document.getElementById('nav-convo');if(n)n.classList.add('on');
+ document.getElementById('topTitle').textContent='Conversations';
+ document.getElementById('topSub').textContent='';
+ renderConvo();
+}
+function renderConvo(){
+ const cv=STATE.convo;
+ const tabs=[['inbox','Inbox'],['escalations','Escalations'],['learned','AI Knowledge']];
+ document.getElementById('content').innerHTML=`
+  <div class="tabs">${tabs.map(t=>`<button class="tab ${cv.tab===t[0]?'on':''}" onclick="convoTab('${t[0]}')">${t[1]}${t[0]==='escalations'&&cv.escBadge?` <span class="badge badge-warning" style="height:16px;margin-left:4px">${cv.escBadge}</span>`:''}</button>`).join('')}</div>
+  <div id="convoBody"></div>`;
+ convoBodyRender();
+}
+function convoTab(t){STATE.convo.tab=t;renderConvo();}
+function convoBodyRender(){
+ const t=STATE.convo.tab;
+ if(t==='escalations')return loadEscalations();
+ if(t==='learned')return loadLearned();
+ return loadConversations();
+}
+function convoUnavailable(e){return '<div class="card pad caption">WhatsApp conversations aren’t available yet. '+((''+e.message).includes('404')?'The WhatsApp agent may not be set up on this workspace.':esc(e.message))+'</div>';}
+
+async function loadConversations(){
+ const cv=STATE.convo;
+ document.getElementById('convoBody').innerHTML='<div class="loadwrap"><span class="spin"></span> Loading conversations…</div>';
+ try{const r=await api('/api/wa/conversations?status='+encodeURIComponent(cv.status||'active'));cv.list=r.conversations||[];renderInbox();}
+ catch(e){document.getElementById('convoBody').innerHTML=convoUnavailable(e);}
+}
+function setConvoStatus(s){STATE.convo.status=s;STATE.convo.curId=null;loadConversations();}
+function renderInbox(){
+ const cv=STATE.convo;const list=cv.list;
+ const items=list.length?list.map(c=>{
+   const lm=c.last_message;const snip=lm?esc((lm.content||'').slice(0,48)):'No messages yet';
+   const active=c.id===cv.curId;
+   return `<div class="lrow" style="cursor:pointer;padding:10px;border-radius:8px;border-bottom:1px solid var(--border);${active?'background:var(--p50)':''}" onclick="openConversation(${c.id})">
+    <div class="g" style="min-width:0">
+     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><b style="font-size:12.5px">${esc(c.candidate_name||c.candidate_phone||'Unknown')}</b>${c.pending_escalations?'<span class="badge badge-warning" style="height:16px">Needs you</span>':''}${c.auto_mode?'<span class="badge badge-ai" style="height:16px">Auto</span>':'<span class="badge badge-neutral" style="height:16px">Manual</span>'}</div>
+     <div class="micro" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px">${snip}</div>
+     <div class="micro">${esc(c.role||'')}${c.client?' · '+esc(c.client):''}</div>
+    </div>
+    <div class="micro mono">${esc((c.last_message_at||'').slice(5,16))}</div>
+   </div>`;
+ }).join(''):'<div class="caption" style="padding:20px">No '+esc(cv.status)+' conversations.</div>';
+ document.getElementById('convoBody').innerHTML=`
+  <div style="display:grid;grid-template-columns:330px 1fr;gap:16px;align-items:start">
+   <div class="card" style="overflow:hidden">
+    <div style="display:flex;gap:6px;padding:10px;border-bottom:1px solid var(--border)">
+     <button class="btn btn-sm ${cv.status==='active'?'btn-primary':'btn-secondary'}" onclick="setConvoStatus('active')">Active</button>
+     <button class="btn btn-sm ${cv.status==='closed'?'btn-primary':'btn-secondary'}" onclick="setConvoStatus('closed')">Closed</button>
+    </div>
+    <div style="max-height:600px;overflow-y:auto">${items}</div>
+   </div>
+   <div class="card" id="convoThread" style="min-height:420px">${cv.curId?'<div class="loadwrap"><span class="spin"></span></div>':'<div class="loadwrap caption">Select a conversation to view the chat.</div>'}</div>
+  </div>`;
+ if(cv.curId)openConversation(cv.curId);
+}
+async function openConversation(id){
+ STATE.convo.curId=id;
+ const th=document.getElementById('convoThread');if(th)th.innerHTML='<div class="loadwrap"><span class="spin"></span></div>';
+ try{const r=await api('/api/wa/conversations/'+id+'/messages');STATE.convo.messages=r.messages||[];renderThread(id);}
+ catch(e){if(th)th.innerHTML='<div class="pad caption">Could not load messages. '+esc(e.message)+'</div>';}
+}
+function renderThread(id){
+ const cv=STATE.convo;const c=cv.list.find(x=>x.id===id)||{};
+ const bubbles=cv.messages.map(m=>{
+   const out=m.direction==='outbound';
+   const meta=[m.sender,(m.created_at||'').slice(5,16)].filter(Boolean).join(' · ');
+   const aiTag=(m.ai_intent||m.ai_action_taken)?`<div><span class="badge badge-ai" style="height:16px;margin-top:4px">${esc(m.ai_action_taken||m.ai_intent)}</span></div>`:'';
+   return `<div style="display:flex;justify-content:${out?'flex-end':'flex-start'};margin:6px 0">
+     <div style="max-width:76%;background:${out?'var(--p50)':'var(--surface-2)'};border:1px solid var(--border);border-radius:10px;padding:8px 11px">
+      <div style="font-size:13px;white-space:pre-wrap">${esc(m.content||'')}</div>
+      <div class="micro" style="margin-top:3px">${esc(meta)}</div>${aiTag}
+     </div></div>`;
+ }).join('')||'<div class="caption" style="padding:20px;text-align:center">No messages in this conversation yet.</div>';
+ const th=document.getElementById('convoThread');
+ th.innerHTML=`
+  <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border)">
+   ${av(c.candidate_name||c.candidate_phone||'?','sm')}
+   <div style="flex:1;min-width:0"><b style="font-size:13.5px">${esc(c.candidate_name||'Unknown')}</b><div class="micro">${esc(c.candidate_phone||'')}${c.role?' · '+esc(c.role):''}</div></div>
+   ${c.escalated?'<span class="badge badge-warning">Escalated</span>':''}
+  </div>
+  <div style="padding:12px 14px;max-height:460px;overflow-y:auto" id="bubbles">${bubbles}</div>
+  <div style="display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--border)">
+   <input class="input" id="convoMsg" placeholder="Type a message…" onkeydown="if(event.key==='Enter')sendConvoMessage(${id})">
+   <button class="btn btn-primary btn-sm" onclick="sendConvoMessage(${id})">Send</button>
+  </div>`;
+ const b=document.getElementById('bubbles');if(b)b.scrollTop=b.scrollHeight;
+}
+async function sendConvoMessage(id){
+ const el=document.getElementById('convoMsg');const text=(el&&el.value||'').trim();
+ if(!text)return;el.value='';
+ try{await api('/api/wa/conversations/'+id+'/send',{method:'POST',body:JSON.stringify({message:text})});toast('Sent','success');await openConversation(id);}
+ catch(e){toast((''+e.message).includes('400')?'Saved, but WhatsApp send failed (check WA setup)':'Could not send','danger');await openConversation(id);}
+}
+
+async function loadEscalations(){
+ document.getElementById('convoBody').innerHTML='<div class="loadwrap"><span class="spin"></span> Loading escalations…</div>';
+ try{const r=await api('/api/wa/escalations');STATE.convo.escalations=r.escalations||[];STATE.convo.escBadge=STATE.convo.escalations.length;updateConvoBadgeUI();renderEscalations();}
+ catch(e){document.getElementById('convoBody').innerHTML=convoUnavailable(e);}
+}
+function renderEscalations(){
+ const list=STATE.convo.escalations;
+ document.getElementById('convoBody').innerHTML=list.length?`<div style="display:flex;flex-direction:column;gap:14px">${list.map(e=>`
+   <div class="card pad">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap"><b>${esc(e.candidate_name||e.candidate_phone||'Candidate')}</b><span class="caption">${esc(e.role||'')}${e.client?' · '+esc(e.client):''}</span><span class="micro mono" style="margin-left:auto">${esc((e.created_at||'').slice(0,16))}</span></div>
+    <div class="ai-block" style="margin-bottom:10px"><div class="ai-tag">${SP}Candidate asked</div>${esc(e.candidate_question||'')}</div>
+    ${e.ai_suggested_response?`<div class="caption" style="margin-bottom:8px"><b>AI suggested:</b> ${esc(e.ai_suggested_response)}</div>`:''}
+    <textarea class="input" id="esc_${e.id}" style="height:78px;padding:8px 10px;resize:vertical" placeholder="Your reply to the candidate…">${esc(e.ai_suggested_response||'')}</textarea>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap">
+     <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="esclearn_${e.id}">Teach AI this answer</label>
+     <input class="input" id="escintent_${e.id}" style="width:auto;flex:1;min-width:150px" placeholder="Intent label (e.g. asks_about_salary)">
+     <button class="btn btn-primary btn-sm" onclick="resolveEscalation(${e.id})">Reply &amp; resolve</button>
+    </div>
+   </div>`).join('')}</div>`
+  :'<div class="card pad caption">No pending escalations. The AI is handling everything right now. 🎉</div>';
+}
+async function resolveEscalation(id){
+ const response=(document.getElementById('esc_'+id).value||'').trim();
+ if(!response)return toast('Type a reply first','warning');
+ const learn=document.getElementById('esclearn_'+id).checked;
+ const intent_label=(document.getElementById('escintent_'+id).value||'').trim();
+ if(learn&&!intent_label)return toast('Add an intent label to teach the AI','warning');
+ try{await api('/api/wa/escalations/'+id+'/resolve',{method:'POST',body:JSON.stringify({response,learn,intent_label})});
+  toast(learn?'Replied & AI taught':'Replied & resolved','success');loadEscalations();}
+ catch(e){toast('Could not resolve','danger');}
+}
+
+async function loadLearned(){
+ document.getElementById('convoBody').innerHTML='<div class="loadwrap"><span class="spin"></span> Loading AI knowledge…</div>';
+ try{const r=await api('/api/wa/learned');STATE.convo.learned=r.responses||[];renderLearned();}
+ catch(e){document.getElementById('convoBody').innerHTML=convoUnavailable(e);}
+}
+function renderLearned(){
+ const list=STATE.convo.learned;
+ document.getElementById('convoBody').innerHTML=`
+  <div class="card pad" style="margin-bottom:14px"><div class="subhead">Teach the AI a new response</div>
+   <div class="grid2"><div class="field2"><label>Intent / pattern *</label><input class="input" id="ln_intent" placeholder="e.g. asks_about_notice_period"></div><div class="field2"><label>Sample question</label><input class="input" id="ln_sample" placeholder="e.g. What is the notice period?"></div></div>
+   <div class="field2" style="margin-top:10px"><label>Response the AI should give *</label><textarea class="input" id="ln_response" style="height:62px;padding:8px 10px;resize:vertical"></textarea></div>
+   <button class="btn btn-ai btn-sm" style="margin-top:10px" onclick="addLearned()">${PLUS}Add to AI knowledge</button>
+  </div>
+  <div class="card" style="overflow:hidden"><table class="tbl"><thead><tr><th>Intent</th><th>Sample question</th><th>Response</th><th>Used</th><th></th></tr></thead>
+   <tbody>${list.length?list.map(l=>`<tr>
+     <td><b>${esc(l.intent_pattern||'')}</b></td>
+     <td class="caption">${esc((l.sample_question||'').slice(0,60))}</td>
+     <td class="caption">${esc((l.response_template||'').slice(0,70))}</td>
+     <td class="mono">${l.use_count||0}</td>
+     <td><button class="btn-icon" title="Remove" onclick="delLearned(${l.id})"><svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" style="width:14px;height:14px"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button></td>
+    </tr>`).join(''):'<tr><td colspan="5" style="padding:24px;text-align:center" class="caption">No learned responses yet. Teach the AI above, or use “Teach AI this answer” when resolving an escalation.</td></tr>'}</tbody></table></div>`;
+}
+async function addLearned(){
+ const intent_pattern=(document.getElementById('ln_intent').value||'').trim();
+ const sample_question=(document.getElementById('ln_sample').value||'').trim();
+ const response_template=(document.getElementById('ln_response').value||'').trim();
+ if(!intent_pattern||!response_template)return toast('Intent and response are required','warning');
+ try{await api('/api/wa/learned',{method:'POST',body:JSON.stringify({intent_pattern,sample_question,response_template,action:'auto_reply'})});
+  toast('Added to AI knowledge','success');loadLearned();}
+ catch(e){toast('Could not add','danger');}
+}
+async function delLearned(id){
+ if(!confirm('Remove this learned response?'))return;
+ try{await api('/api/wa/learned/'+id,{method:'DELETE'});toast('Removed','success');loadLearned();}
+ catch(e){toast('Could not remove','danger');}
 }
 
 /* ---------- candidate detail ---------- */
