@@ -100,7 +100,7 @@ select.input{height:34px}
 const SP='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 4.6L18.5 9l-3.5 3 1 5-4-2.6L8 17l1-5L5.5 9z"/></svg>';
 const PLUS='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:14px;height:14px"><path d="M12 5v14M5 12h14"/></svg>';
 const STAGES=['Screening','Follow Up 1','Follow Up 2','Not Contacted','Called','Interested','Updated CV awaited','Not Interested','Shared with Client','Interview Inprocess','Not Suitable','Client Rejected on Paper','Client Rejected After Interview','Placed'];
-let STATE={user:null,mandates:[],curMandate:null,candidates:[],curCand:null,tab:'overview',reminders:[],view:'mandate',addDest:'central',talent:{q:'',filters:{},results:[],page:1,total:0,searched:false,filtersOpen:false}};
+let STATE={user:null,mandates:[],curMandate:null,candidates:[],curCand:null,tab:'overview',reminders:[],view:'mandate',addDest:'central',talent:{q:'',filters:{},results:[],page:1,total:0,searched:false,filtersOpen:false},clients:{list:[],q:'',status:'',page:1,pages:1,total:0,cur:null,contacts:[],meta:null,tab:'overview'}};
 
 async function api(path,opts){
  const o=Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}},opts||{});
@@ -148,6 +148,7 @@ function renderShell(){
   <aside class="side">
    <div class="brand"><div class="logo">${SP}</div><b style="font-size:15px">RecruitOS</b><span class="badge badge-live" style="margin-left:auto">LIVE</span></div>
    <div style="padding:8px 8px 2px"><div class="mrow navitem" id="nav-talent" onclick="showTalent()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>Talent</div><div class="ms">Search all candidates · Add new</div></div></div>
+   <div style="padding:2px 8px 2px"><div class="mrow navitem" id="nav-clients" onclick="showClients()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M3 21h18M4 21V8l7-4 7 4v13M9 21v-5h6v5"/></svg>Clients</div><div class="ms">Companies · contacts · org chart</div></div></div>
    <div style="padding:10px 12px 4px" class="eyebrow">Mandates (${STATE.mandates.length})</div>
    <div class="mlist" id="mlist">${STATE.mandates.map(m=>`<div class="mrow ${m.id===STATE.curMandate?'on':''}" onclick="selMandate(${m.id})"><div class="mr">${esc(m.role||'Untitled')}</div><div class="ms">${esc(m.client||'')} ${m.location?'· '+esc(m.location):''}</div></div>`).join('')||'<div class="caption" style="padding:10px">No mandates found.</div>'}</div>
   </aside>
@@ -345,6 +346,289 @@ async function addCandidateSave(){
   if(STATE.view==='talent'&&STATE.talent.searched)runTalentSearch(STATE.talent.page);
   else if(STATE.view==='mandate'&&String(dest)===String(STATE.curMandate))selMandate(STATE.curMandate);
  }catch(e){toast('Could not add candidate','danger');}
+}
+
+/* ---------- Wave 5: Clients / CRM ---------- */
+function showClients(){
+ STATE.view='clients';STATE.curCand=null;STATE.clients.cur=null;
+ document.querySelectorAll('.mrow').forEach(x=>x.classList.remove('on'));
+ const nc=document.getElementById('nav-clients');if(nc)nc.classList.add('on');
+ document.getElementById('topTitle').textContent='Clients';
+ document.getElementById('topSub').textContent=STATE.clients.total?STATE.clients.total+' clients':'';
+ loadClients(STATE.clients.page||1);
+}
+async function loadClients(page){
+ const cl=STATE.clients;
+ document.getElementById('content').innerHTML='<div class="loadwrap"><span class="spin"></span> Loading clients…</div>';
+ if(!cl.meta){try{cl.meta=await api('/api/crm/meta');}catch(e){cl.meta={statuses:['active','prospect','inactive','lost']};}}
+ const params=new URLSearchParams();
+ if(cl.q)params.set('q',cl.q);
+ if(cl.status)params.set('status',cl.status);
+ params.set('page',page||1);params.set('per_page',25);
+ try{
+  const r=await api('/api/crm/clients?'+params.toString());
+  cl.list=r.clients||[];cl.total=r.total||0;cl.page=r.page||1;cl.pages=r.pages||1;
+  const sub=document.getElementById('topSub');if(sub)sub.textContent=cl.total+' clients';
+  renderClients();
+ }catch(e){document.getElementById('content').innerHTML='<div class="caption" style="padding:20px">Could not load clients. '+esc(e.message)+'</div>';}
+}
+function renderClients(){
+ const cl=STATE.clients;const statuses=(cl.meta&&cl.meta.statuses)||['active','prospect','inactive','lost'];
+ document.getElementById('content').innerHTML=`
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+   <div style="position:relative;flex:1;min-width:220px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;position:absolute;left:11px;top:9px;color:var(--text-3)"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+    <input class="input" id="clq" style="padding-left:34px" placeholder="Search clients by name, city, industry…" value="${esc(cl.q||'')}" onkeydown="if(event.key==='Enter')applyClientSearch()">
+   </div>
+   <select class="input" id="clstatus" style="width:auto" onchange="applyClientSearch()">
+    <option value="">All statuses</option>
+    ${statuses.map(s=>`<option value="${s}" ${cl.status===s?'selected':''}>${s[0].toUpperCase()+s.slice(1)}</option>`).join('')}
+   </select>
+   <button class="btn btn-primary" onclick="applyClientSearch()">Search</button>
+   <button class="btn btn-ai" onclick="openClientForm(0)">${PLUS}Add client</button>
+  </div>
+  <div class="card" style="overflow:hidden">
+   <table class="tbl"><thead><tr><th>Client</th><th>Industry</th><th>City</th><th>Status</th><th>Contacts</th><th>Open jobs</th><th>Last activity</th></tr></thead>
+   <tbody>${cl.list.length?cl.list.map(c=>`<tr onclick="openClient(${c.id})">
+     <td><b>${esc(c.name||'—')}</b>${c.website?`<div class="micro">${esc(c.website)}</div>`:''}</td>
+     <td class="caption">${esc(c.industry||'—')}</td>
+     <td class="caption">${esc(c.city||'—')}</td>
+     <td>${clientStatusBadge(c.status)}</td>
+     <td class="mono">${c.contact_count||0}</td>
+     <td class="mono">${c.job_count||0}</td>
+     <td class="caption mono">${esc((c.last_activity||'').slice(0,10)||'—')}</td>
+    </tr>`).join(''):'<tr><td colspan="7" style="padding:30px;text-align:center" class="caption">No clients yet. Click “Add client” to create your first.</td></tr>'}</tbody></table>
+  </div>
+  ${cl.pages>1?`<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
+   <span class="caption">${cl.total} clients · page ${cl.page} of ${cl.pages}</span>
+   <div style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" ${cl.page<=1?'disabled':''} onclick="loadClients(${cl.page-1})">Prev</button><button class="btn btn-secondary btn-sm" ${cl.page>=cl.pages?'disabled':''} onclick="loadClients(${cl.page+1})">Next</button></div>
+  </div>`:''}`;
+}
+function applyClientSearch(){const q=document.getElementById('clq');const s=document.getElementById('clstatus');STATE.clients.q=q?q.value.trim():'';STATE.clients.status=s?s.value:'';loadClients(1);}
+function clientStatusBadge(s){s=(s||'active').toLowerCase();const t={active:'success',prospect:'info',inactive:'neutral',lost:'warning'}[s]||'neutral';return `<span class="badge badge-${t}">${s[0].toUpperCase()+s.slice(1)}</span>`;}
+function roleLabel(v){const m=(STATE.clients.meta&&STATE.clients.meta.role_tags)||[];const f=m.find(x=>x.value===v);return f?f.label:v;}
+
+async function openClient(id){
+ document.getElementById('content').innerHTML='<div class="loadwrap"><span class="spin"></span> Loading client…</div>';
+ try{
+  const r=await api('/api/crm/clients/'+id);
+  STATE.clients.cur=r.client;STATE.clients.contacts=r.contacts||[];STATE.clients.tab='overview';
+  renderClient();
+ }catch(e){document.getElementById('content').innerHTML='<div class="caption" style="padding:20px">Could not load client. '+esc(e.message)+'</div>';}
+}
+function renderClient(){
+ const c=STATE.clients.cur;
+ const tabs=[['overview','Overview'],['org','Org chart'],['jobs','Jobs'],['email','Email']];
+ document.getElementById('content').innerHTML=`
+  <div style="margin-bottom:14px"><a onclick="showClients()">← Back to clients</a></div>
+  <div style="display:flex;align-items:center;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap">
+   <div class="avatar big" style="background:${avColor(c.name)};border-radius:12px">${initials(c.name)}</div>
+   <div style="flex:1;min-width:160px"><h1>${esc(c.name||'—')}</h1><div class="caption">${esc(c.industry||'')}${c.city?' · '+esc(c.city):''}${c.country?', '+esc(c.country):''}</div></div>
+   ${clientStatusBadge(c.status)}
+   <button class="btn btn-secondary btn-sm" onclick="openClientForm(${c.id})">Edit</button>
+   <button class="btn-icon" title="Delete" onclick="delClient(${c.id})"><svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" style="width:16px;height:16px"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M6 7l1 13h10l1-13"/></svg></button>
+  </div>
+  <div class="tabs">${tabs.map(t=>`<button class="tab ${STATE.clients.tab===t[0]?'on':''}" onclick="clientTab('${t[0]}')">${t[1]}</button>`).join('')}</div>
+  <div id="clientBody">${clientBody()}</div>`;
+}
+function clientTab(t){STATE.clients.tab=t;document.getElementById('clientBody').innerHTML=clientBody();}
+function clientBody(){
+ const t=STATE.clients.tab;
+ if(t==='org')return clientOrgTab();
+ if(t==='jobs')return clientJobsTab();
+ if(t==='email')return clientEmailTab();
+ return clientOverviewTab();
+}
+function clientOverviewTab(){
+ const c=STATE.clients.cur;const contacts=STATE.clients.contacts;
+ return `<div class="grid g2" style="align-items:start">
+  <div style="display:flex;flex-direction:column;gap:16px">
+   <div class="card pad">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div class="subhead" style="margin:0">Contacts (${contacts.length})</div><button class="btn btn-secondary btn-sm" onclick="openContactForm(${c.id},0)">${PLUS}Add contact</button></div>
+    ${contacts.length?contacts.map(ct=>`<div class="lrow"><div class="g">
+       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b style="font-size:13px">${esc(ct.name)}</b>${ct.is_primary?'<span class="badge badge-success">Primary</span>':''}${ct.is_decision_maker?'<span class="badge badge-ai">Decision maker</span>':''}</div>
+       <div class="caption">${esc(ct.designation||'')}${ct.department?' · '+esc(ct.department):''}</div>
+       <div class="micro">${ct.email?esc(ct.email):''}${ct.phone?' · '+esc(ct.phone):''}${ct.linkedin?(' · <a href="'+esc(ct.linkedin)+'" target="_blank">LinkedIn</a>'):''}</div>
+       ${(ct.role_tags&&ct.role_tags.length)?`<div style="margin-top:4px">${ct.role_tags.map(rt=>`<span class="chip" style="height:20px">${esc(roleLabel(rt))}</span>`).join('')}</div>`:''}
+      </div>
+      <div style="display:flex;gap:4px"><button class="btn-icon" title="Edit" onclick="openContactForm(${c.id},${ct.id})"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M4 20h4L18 10l-4-4L4 16z"/></svg></button>
+       <button class="btn-icon" title="Delete" onclick="delContact(${ct.id})"><svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" style="width:14px;height:14px"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button></div>
+     </div>`).join(''):'<div class="caption">No contacts yet. Add your first point of contact.</div>'}
+   </div>
+   ${c.notes?`<div class="card pad"><div class="subhead">Notes</div><div class="caption" style="color:var(--text);white-space:pre-wrap">${esc(c.notes)}</div></div>`:''}
+  </div>
+  <div class="card pad"><div class="subhead">Company details</div>
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px">
+    ${kv('Industry',c.industry)}${kv('Status',c.status)}
+    ${kv('City',c.city)}${kv('State',c.state)}
+    ${kv('Country',c.country)}${kv('GSTIN',c.gstin)}
+    ${kv('Website',c.website)}${kv('Created',(c.created_at||'').slice(0,10))}
+   </div>
+   ${c.address?`<div class="kv"><div class="k">Address</div><div class="v" style="font-weight:500">${esc(c.address)}</div></div>`:''}
+  </div>
+ </div>`;
+}
+function clientOrgTab(){
+ const c=STATE.clients.cur;
+ setTimeout(async()=>{
+  if(STATE.clients.tab!=='org')return;
+  let data=null;try{data=await api('/api/crm/clients/'+c.id+'/org-chart');}catch(e){}
+  const el=document.getElementById('clientBody');if(!el||STATE.clients.tab!=='org')return;
+  if(!data||!data.total_contacts){el.innerHTML='<div class="card pad caption">No contacts to chart yet. Add contacts and set “Reports to” to build the hierarchy.</div>';return;}
+  const tree=(data.tree||[]).map(n=>orgNode(n)).join('');
+  const depts=(data.departments||[]).map(d=>`<div style="margin-bottom:12px"><div class="eyebrow" style="margin-bottom:6px">${esc(d.department)} (${d.contacts.length})</div>${d.contacts.map(ct=>`<span class="chip">${esc(ct.name)}${ct.designation?' · '+esc(ct.designation):''}</span>`).join('')}</div>`).join('');
+  el.innerHTML=`<div class="grid g2" style="align-items:start">
+    <div class="card pad"><div class="subhead">Reporting hierarchy</div>${tree||'<div class="caption">No reporting structure set.</div>'}</div>
+    <div class="card pad"><div class="subhead">By department</div>${depts||'<div class="caption">No departments set.</div>'}</div>
+   </div>`;
+ },10);
+ return '<div class="loadwrap"><span class="spin"></span> Building org chart…</div>';
+}
+function orgNode(n){
+ const kids=(n.children||[]).map(k=>orgNode(k)).join('');
+ return `<div style="margin:2px 0">
+   <div style="display:flex;align-items:center;gap:8px;padding:5px 0">${av(n.name,'sm')}<div><div style="font-weight:600;font-size:12.5px">${esc(n.name)}${n.is_primary?' <span class="badge badge-success" style="height:16px">Primary</span>':''}</div><div class="micro">${esc(n.designation||'')}${n.department?' · '+esc(n.department):''}</div></div></div>
+   ${kids?`<div style="margin-left:16px;padding-left:12px;border-left:2px solid var(--border)">${kids}</div>`:''}
+  </div>`;
+}
+function clientJobsTab(){
+ const c=STATE.clients.cur;
+ setTimeout(async()=>{
+  if(STATE.clients.tab!=='jobs')return;
+  let list=[];try{const r=await api('/api/crm-link/client/'+c.id+'/mandates');list=(r&&r.mandates)||[];}catch(e){}
+  const el=document.getElementById('clientBody');if(!el||STATE.clients.tab!=='jobs')return;
+  el.innerHTML=`<div class="card pad"><div class="subhead">Linked mandates (${list.length})</div>
+   ${list.length?list.map(m=>`<div class="lrow" style="cursor:pointer" onclick="selMandate(${m.id})"><div class="g"><div style="font-weight:600;font-size:12.5px">${esc(m.role||'Untitled')}</div><div class="micro">${esc(m.location||'')}${m.status?' · '+esc(m.status):''}</div></div><span class="badge badge-neutral">${m.candidate_count||0} candidates</span></div>`).join(''):'<div class="caption">No mandates linked to this client yet. Mandates auto-map by company name, or link them from the old app.</div>'}
+  </div>`;
+ },10);
+ return '<div class="loadwrap"><span class="spin"></span> Loading linked jobs…</div>';
+}
+function clientEmailTab(){
+ const c=STATE.clients.cur;const contacts=STATE.clients.contacts;
+ setTimeout(async()=>{
+  if(STATE.clients.tab!=='email')return;
+  let emails=[];try{const r=await api('/api/crm/clients/'+c.id+'/emails');emails=(r&&r.emails)||[];}catch(e){}
+  const el=document.getElementById('clientBody');if(!el||STATE.clients.tab!=='email')return;
+  const thread=emails.length?emails.map(m=>`<div class="lrow"><div class="g"><div style="display:flex;justify-content:space-between;gap:8px"><b style="font-size:12.5px">${esc(m.subject||'(no subject)')}</b><span class="micro mono">${esc((m.created_at||'').slice(0,16))}</span></div><div class="caption" style="white-space:pre-wrap;margin-top:2px">${esc(m.body||'')}</div><div class="micro">${m.sent?'Sent':'Logged'}${m.to?' · to '+esc(m.to):''}</div></div></div>`).join(''):'<div class="caption">No emails logged for this client yet.</div>';
+  const copts=contacts.map(ct=>`<option value="${ct.id}" data-email="${esc(ct.email||'')}">${esc(ct.name)}${ct.designation?' — '+esc(ct.designation):''}</option>`).join('');
+  el.innerHTML=`<div class="grid g2" style="align-items:start">
+    <div class="card pad"><div class="subhead">Email thread</div><div style="max-height:440px;overflow-y:auto">${thread}</div></div>
+    <div class="card pad"><div class="subhead">Compose</div>
+     <div style="display:flex;flex-direction:column;gap:10px">
+      <select class="input" id="em_contact" onchange="emPickContact()"><option value="">— pick contact —</option>${copts}</select>
+      <input class="input" id="em_to" placeholder="To (email address)">
+      <div class="ai-block"><div class="ai-tag">${SP}AI draft</div><input class="input" id="em_intent" placeholder="What should this email say? e.g. share 2 shortlisted profiles for the DGM role"><button class="btn btn-ai btn-sm" style="margin-top:8px" onclick="aiDraftEmail(${c.id})">Draft with AI</button></div>
+      <input class="input" id="em_subject" placeholder="Subject">
+      <textarea class="input" id="em_body" style="height:140px;padding:8px 10px;resize:vertical" placeholder="Email body…"></textarea>
+      <div style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="sendClientEmail(${c.id},false)">Log only</button><button class="btn btn-primary btn-sm" onclick="sendClientEmail(${c.id},true)">Send &amp; log</button></div>
+      <div class="micro">Sending uses your SMTP from the old app’s Settings. “Log only” records it without sending.</div>
+     </div></div>
+   </div>`;
+ },10);
+ return '<div class="loadwrap"><span class="spin"></span> Loading emails…</div>';
+}
+function emPickContact(){const s=document.getElementById('em_contact');const opt=s.options[s.selectedIndex];const email=opt?opt.getAttribute('data-email'):'';if(email)document.getElementById('em_to').value=email;}
+async function aiDraftEmail(cid){
+ const intent=(document.getElementById('em_intent').value||'').trim();
+ if(!intent)return toast('Describe what the email should say','warning');
+ const contact_id=parseInt(document.getElementById('em_contact').value||'0')||0;
+ toast('Drafting…','ai');
+ try{const r=await api('/api/crm/ai/draft-email',{method:'POST',body:JSON.stringify({client_id:cid,contact_id,intent})});
+  if(r.subject)document.getElementById('em_subject').value=r.subject;
+  if(r.body)document.getElementById('em_body').value=r.body;
+  toast('Draft ready — review before sending','success');
+ }catch(e){toast((''+e.message).includes('400')?'Add your DeepSeek key in Settings first':'Could not draft','danger');}
+}
+async function sendClientEmail(cid,send){
+ const to=(document.getElementById('em_to').value||'').trim();
+ const subject=(document.getElementById('em_subject').value||'').trim();
+ const body=(document.getElementById('em_body').value||'').trim();
+ const contact_id=parseInt(document.getElementById('em_contact').value||'0')||0;
+ if(!subject&&!body)return toast('Add a subject or body','warning');
+ if(send&&!to)return toast('Add a “To” email to send','warning');
+ try{await api('/api/crm/clients/'+cid+'/email',{method:'POST',body:JSON.stringify({to,subject,body,contact_id,send})});
+  toast(send?'Email sent & logged':'Email logged','success');clientTab('email');
+ }catch(e){toast('Could not send/log email','danger');}
+}
+function openClientForm(id){
+ const meta=STATE.clients.meta||{statuses:['active','prospect','inactive','lost']};
+ let c={status:'active',country:'India'};
+ if(id&&STATE.clients.cur&&STATE.clients.cur.id===id)c=STATE.clients.cur;
+ const f=(k,l)=>`<div class="field2"><label>${l}</label><input class="input" id="cf_${k}" value="${esc(c[k]||'')}"></div>`;
+ document.getElementById('modalTitle').textContent=id?'Edit client':'Add client';
+ document.getElementById('modalSave').textContent=id?'Save':'Create client';
+ document.getElementById('modalBody').innerHTML=`<div class="grid2">
+   ${f('name','Company name *')}
+   <div class="field2"><label>Status</label><select class="input" id="cf_status">${(meta.statuses||['active','prospect','inactive','lost']).map(s=>`<option value="${s}" ${c.status===s?'selected':''}>${s[0].toUpperCase()+s.slice(1)}</option>`).join('')}</select></div>
+   ${f('industry','Industry')}${f('website','Website')}
+   ${f('city','City')}${f('state','State')}
+   ${f('country','Country')}${f('gstin','GSTIN')}
+  </div>
+  <div class="field2" style="margin-top:12px"><label>Address</label><input class="input" id="cf_address" value="${esc(c.address||'')}"></div>
+  <div class="field2" style="margin-top:12px"><label>Notes</label><textarea class="input" id="cf_notes" style="height:56px;padding:8px 10px;resize:vertical">${esc(c.notes||'')}</textarea></div>`;
+ document.getElementById('modalSave').setAttribute('onclick','saveClient('+(id||0)+')');
+ document.getElementById('modal').classList.add('open');
+}
+async function saveClient(id){
+ const g=(k)=>{const el=document.getElementById('cf_'+k);return el?el.value.trim():'';};
+ const name=g('name');if(!name)return toast('Company name is required','warning');
+ const payload={name,status:g('status'),industry:g('industry'),website:g('website'),city:g('city'),state:g('state'),country:g('country'),gstin:g('gstin'),address:g('address'),notes:g('notes')};
+ try{
+  if(id)await api('/api/crm/clients/'+id,{method:'PUT',body:JSON.stringify(payload)});
+  else await api('/api/crm/clients',{method:'POST',body:JSON.stringify(payload)});
+  closeModal();toast(id?'Client saved':'Client created','success');
+  if(id&&STATE.clients.cur&&STATE.clients.cur.id===id){const r=await api('/api/crm/clients/'+id);STATE.clients.cur=r.client;STATE.clients.contacts=r.contacts||[];renderClient();}
+  else{STATE.clients.meta=null;loadClients(1);}
+ }catch(e){toast('Could not save — name may already exist','danger');}
+}
+async function delClient(id){
+ if(!confirm('Delete this client? An admin can restore it later.'))return;
+ try{await api('/api/crm/clients/'+id,{method:'DELETE'});toast('Client deleted','success');showClients();}
+ catch(e){toast((''+e.message).includes('403')?'Only a company admin can delete clients':'Could not delete','danger');}
+}
+function openContactForm(clientId,contactId){
+ const meta=STATE.clients.meta||{};const roleTags=(meta.role_tags)||[];
+ const contacts=STATE.clients.contacts||[];
+ let ct={};if(contactId)ct=contacts.find(x=>x.id===contactId)||{};
+ const f=(k,l)=>`<div class="field2"><label>${l}</label><input class="input" id="ct_${k}" value="${esc(ct[k]||'')}"></div>`;
+ const reportOpts=contacts.filter(x=>x.id!==contactId).map(x=>`<option value="${x.id}" ${String(ct.reports_to)===String(x.id)?'selected':''}>${esc(x.name)}${x.designation?' — '+esc(x.designation):''}</option>`).join('');
+ const curTags=Array.isArray(ct.role_tags)?ct.role_tags:[];
+ document.getElementById('modalTitle').textContent=contactId?'Edit contact':'Add contact';
+ document.getElementById('modalSave').textContent=contactId?'Save':'Add contact';
+ document.getElementById('modalBody').innerHTML=`<div class="grid2">
+   ${f('name','Name *')}${f('designation','Designation')}
+   ${f('email','Email')}${f('phone','Phone')}
+   ${f('department','Department')}
+   <div class="field2"><label>Reports to</label><select class="input" id="ct_reports_to"><option value="0">— none —</option>${reportOpts}</select></div>
+   ${f('linkedin','LinkedIn URL')}
+  </div>
+  <div style="display:flex;gap:18px;margin-top:12px">
+   <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="ct_is_primary" ${ct.is_primary?'checked':''}>Primary contact</label>
+   <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="ct_is_decision_maker" ${ct.is_decision_maker?'checked':''}>Decision maker</label>
+  </div>
+  ${roleTags.length?`<div class="field2" style="margin-top:12px"><label>Role tags</label><div style="display:flex;flex-wrap:wrap;gap:10px">${roleTags.map(rt=>`<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" class="ct_role" value="${rt.value}" ${curTags.includes(rt.value)?'checked':''}>${esc(rt.label)}</label>`).join('')}</div></div>`:''}
+  <div class="field2" style="margin-top:12px"><label>Notes</label><textarea class="input" id="ct_notes" style="height:52px;padding:8px 10px;resize:vertical">${esc(ct.notes||'')}</textarea></div>`;
+ document.getElementById('modalSave').setAttribute('onclick','saveContact('+clientId+','+(contactId||0)+')');
+ document.getElementById('modal').classList.add('open');
+}
+async function saveContact(clientId,contactId){
+ const g=(k)=>{const el=document.getElementById('ct_'+k);return el?el.value.trim():'';};
+ const name=g('name');if(!name)return toast('Contact name is required','warning');
+ const role_tags=[...document.querySelectorAll('.ct_role:checked')].map(x=>x.value);
+ const payload={name,designation:g('designation'),email:g('email'),phone:g('phone'),department:g('department'),linkedin:g('linkedin'),notes:g('notes'),reports_to:parseInt(document.getElementById('ct_reports_to').value||'0')||0,is_primary:document.getElementById('ct_is_primary').checked,is_decision_maker:document.getElementById('ct_is_decision_maker').checked,role_tags};
+ try{
+  if(contactId)await api('/api/crm/contacts/'+contactId,{method:'PUT',body:JSON.stringify(payload)});
+  else await api('/api/crm/clients/'+clientId+'/contacts',{method:'POST',body:JSON.stringify(payload)});
+  closeModal();toast(contactId?'Contact saved':'Contact added','success');
+  const r=await api('/api/crm/clients/'+clientId);STATE.clients.cur=r.client;STATE.clients.contacts=r.contacts||[];renderClient();
+ }catch(e){toast((''+e.message).toLowerCase().includes('exist')?'A contact with this email already exists':'Could not save contact','danger');}
+}
+async function delContact(contactId){
+ if(!confirm('Delete this contact?'))return;
+ const clientId=STATE.clients.cur.id;
+ try{await api('/api/crm/contacts/'+contactId,{method:'DELETE'});toast('Contact deleted','success');
+  const r=await api('/api/crm/clients/'+clientId);STATE.clients.cur=r.client;STATE.clients.contacts=r.contacts||[];renderClient();}
+ catch(e){toast('Could not delete contact','danger');}
 }
 
 /* ---------- candidate detail ---------- */
