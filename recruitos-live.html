@@ -100,7 +100,7 @@ select.input{height:34px}
 const SP='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 4.6L18.5 9l-3.5 3 1 5-4-2.6L8 17l1-5L5.5 9z"/></svg>';
 const PLUS='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:14px;height:14px"><path d="M12 5v14M5 12h14"/></svg>';
 const STAGES=['Screening','Follow Up 1','Follow Up 2','Not Contacted','Called','Interested','Updated CV awaited','Not Interested','Shared with Client','Interview Inprocess','Not Suitable','Client Rejected on Paper','Client Rejected After Interview','Placed'];
-let STATE={user:null,mandates:[],curMandate:null,candidates:[],curCand:null,tab:'overview',reminders:[],view:'mandate',addDest:'central',talent:{q:'',filters:{},results:[],page:1,total:0,searched:false,filtersOpen:false},clients:{list:[],q:'',status:'',page:1,pages:1,total:0,cur:null,contacts:[],meta:null,tab:'overview'},convo:{tab:'inbox',status:'active',list:[],curId:null,messages:[],escalations:[],learned:[],escBadge:0}};
+let STATE={user:null,mandates:[],curMandate:null,candidates:[],curCand:null,tab:'overview',reminders:[],view:'mandate',addDest:'central',talent:{q:'',filters:{},results:[],page:1,total:0,searched:false,filtersOpen:false},clients:{list:[],q:'',status:'',page:1,pages:1,total:0,cur:null,contacts:[],meta:null,tab:'overview'},convo:{tab:'inbox',status:'active',list:[],curId:null,messages:[],escalations:[],learned:[],escBadge:0},tasks:{list:[],counts:{}},insights:{range:'30',data:null},settings:{tab:'general',data:null,usageDays:30}};
 
 async function api(path,opts){
  const o=Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}},opts||{});
@@ -150,6 +150,9 @@ function renderShell(){
    <div style="padding:8px 8px 2px"><div class="mrow navitem" id="nav-talent" onclick="showTalent()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>Talent</div><div class="ms">Search all candidates · Add new</div></div></div>
    <div style="padding:2px 8px 2px"><div class="mrow navitem" id="nav-clients" onclick="showClients()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M3 21h18M4 21V8l7-4 7 4v13M9 21v-5h6v5"/></svg>Clients</div><div class="ms">Companies · contacts · org chart</div></div></div>
    <div style="padding:2px 8px 2px"><div class="mrow navitem" id="nav-convo" onclick="showConvo()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M21 11.5a8.5 8.5 0 01-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1121 11.5z"/></svg>Conversations<span class="badge badge-warning" id="convoNavBadge" style="height:16px;margin-left:auto;display:none"></span></div><div class="ms">WhatsApp AI · escalations</div></div></div>
+   <div style="padding:2px 8px 2px"><div class="mrow navitem" id="nav-tasks" onclick="showTasks()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>Tasks</div><div class="ms">Reminders · interviews · follow-ups</div></div></div>
+   <div style="padding:2px 8px 2px"><div class="mrow navitem" id="nav-insights" onclick="showInsights()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Insights</div><div class="ms">Analytics · funnel · sources</div></div></div>
+   <div style="padding:2px 8px 8px"><div class="mrow navitem" id="nav-settings" onclick="showSettings()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.1-1l2-1.5-2-3.5-2.4 1a7 7 0 00-1.7-1l-.4-2.5h-4l-.4 2.5a7 7 0 00-1.7 1l-2.4-1-2 3.5 2 1.5a7 7 0 000 2l-2 1.5 2 3.5 2.4-1a7 7 0 001.7 1l.4 2.5h4l.4-2.5a7 7 0 001.7-1l2.4 1 2-3.5-2-1.5a7 7 0 00.1-1z"/></svg>Settings</div><div class="ms">Keys · email · team & admin</div></div></div>
    <div style="padding:10px 12px 4px" class="eyebrow">Mandates (${STATE.mandates.length})</div>
    <div class="mlist" id="mlist">${STATE.mandates.map(m=>`<div class="mrow ${m.id===STATE.curMandate?'on':''}" onclick="selMandate(${m.id})"><div class="mr">${esc(m.role||'Untitled')}</div><div class="ms">${esc(m.client||'')} ${m.location?'· '+esc(m.location):''}</div></div>`).join('')||'<div class="caption" style="padding:10px">No mandates found.</div>'}</div>
   </aside>
@@ -288,7 +291,7 @@ async function runTalentSearch(page){
   const el=document.getElementById('talentResults');if(el)el.innerHTML=talentResultsHtml();
  }catch(e){if(rc)rc.innerHTML='<div class="caption" style="padding:20px">Search failed. '+esc(e.message)+'</div>';}
 }
-function goBack(){if(STATE.view==='talent')showTalent();else renderList();}
+function goBack(){if(STATE.view==='talent')showTalent();else if(STATE.view==='tasks')showTasks();else renderList();}
 
 /* Add candidate (Naukri paste / manual) — existing parse + add endpoints */
 function openAddCandidate(dest){
@@ -803,6 +806,210 @@ async function delLearned(id){
  if(!confirm('Remove this learned response?'))return;
  try{await api('/api/wa/learned/'+id,{method:'DELETE'});toast('Removed','success');loadLearned();}
  catch(e){toast('Could not remove','danger');}
+}
+
+/* ---------- Wave 7: Tasks · Insights · Settings & Admin ---------- */
+/* Tasks (reminders + interviews + follow-ups) */
+function showTasks(){
+ STATE.view='tasks';STATE.curCand=null;
+ document.querySelectorAll('.mrow').forEach(x=>x.classList.remove('on'));
+ const n=document.getElementById('nav-tasks');if(n)n.classList.add('on');
+ document.getElementById('topTitle').textContent='Tasks';document.getElementById('topSub').textContent='';
+ loadTasks();
+}
+async function loadTasks(){
+ document.getElementById('content').innerHTML='<div class="loadwrap"><span class="spin"></span> Loading your tasks…</div>';
+ try{const r=await api('/api/tasks');STATE.tasks.list=r.tasks||[];STATE.tasks.counts=r.counts||{};renderTasks();}
+ catch(e){document.getElementById('content').innerHTML='<div class="caption" style="padding:20px">Could not load tasks. '+esc(e.message)+'</div>';}
+}
+function taskTypeBadge(t){const map={reminder:['info','Reminder'],interview:['ai','Interview'],stale:['warning','Stale'],promise:['warning','Promise'],submission:['success','New applicant'],updated:['info','Updated CV']};const m=map[t]||['neutral',t];return `<span class="badge badge-${m[0]}" style="height:18px">${m[1]}</span>`;}
+function renderTasks(){
+ const secs=[['overdue','Overdue'],['today','Today'],['tomorrow','Tomorrow'],['upcoming','Upcoming']];
+ const cnt=STATE.tasks.counts||{};
+ const bySec={};STATE.tasks.list.forEach(t=>{(bySec[t.section]=bySec[t.section]||[]).push(t);});
+ const body=secs.map(([k,label])=>{
+   const items=bySec[k]||[];if(!items.length)return '';
+   return `<div style="margin-bottom:18px"><div class="subhead" style="margin-bottom:8px">${label} <span class="badge badge-${k==='overdue'?'danger':k==='today'?'warning':'neutral'}" style="height:16px">${items.length}</span></div>
+    <div class="card" style="overflow:hidden">${items.map(t=>taskRow(t)).join('')}</div></div>`;
+ }).join('');
+ document.getElementById('content').innerHTML=`
+  <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+   ${['overdue','today','tomorrow','upcoming'].map(k=>`<div class="card pad" style="flex:1;min-width:110px;text-align:center"><div style="font-size:22px;font-weight:700">${cnt[k]||0}</div><div class="micro" style="text-transform:capitalize">${k}</div></div>`).join('')}
+  </div>
+  ${body||'<div class="card pad caption" style="text-align:center">Nothing pending. You’re all caught up! 🎉</div>'}`;
+}
+function taskRow(t){
+ const clickable=t.candidate_id?`onclick="openCand(${t.candidate_id})" style="cursor:pointer"`:'';
+ const wa=t.phone?`<a class="btn-icon" title="WhatsApp" href="https://wa.me/${esc((t.phone||'').replace(/[^0-9]/g,''))}" target="_blank" onclick="event.stopPropagation()"><svg viewBox="0 0 24 24" fill="var(--wa)" style="width:16px;height:16px"><path d="M12 2a10 10 0 00-8.5 15.3L2 22l4.8-1.5A10 10 0 1012 2z"/></svg></a>`:'';
+ return `<div class="lrow" style="padding:11px 14px;align-items:center">
+   <div class="g" ${clickable}>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${taskTypeBadge(t.type)}<b style="font-size:13px">${esc(t.title||'')}</b></div>
+    <div class="caption">${esc(t.subtitle||'')}</div>
+   </div>
+   <div style="display:flex;gap:4px;align-items:center">${wa}
+    <button class="btn-icon" title="Snooze 1 day" onclick="event.stopPropagation();snoozeTask('${t.type}',${t.ref_id},1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
+    <button class="btn-icon" title="Done" onclick="event.stopPropagation();doneTask('${t.type}',${t.ref_id})"><svg viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.2" style="width:16px;height:16px"><path d="M5 12l5 5L20 6"/></svg></button>
+   </div>
+  </div>`;
+}
+async function doneTask(type,ref_id){
+ try{await api('/api/tasks/done',{method:'POST',body:JSON.stringify({type,ref_id})});toast('Marked done','success');
+  STATE.tasks.list=STATE.tasks.list.filter(t=>!(t.type===type&&t.ref_id===ref_id));if(STATE.tasks.counts.total)STATE.tasks.counts.total--;renderTasks();}
+ catch(e){toast('Could not update','danger');}
+}
+async function snoozeTask(type,ref_id,days){
+ const d=new Date();d.setDate(d.getDate()+(days||1));const snoozed_until=d.toISOString().slice(0,19);
+ try{await api('/api/tasks/snooze',{method:'POST',body:JSON.stringify({type,ref_id,snoozed_until})});toast('Snoozed '+days+'d','success');
+  STATE.tasks.list=STATE.tasks.list.filter(t=>!(t.type===type&&t.ref_id===ref_id));renderTasks();}
+ catch(e){toast('Could not snooze','danger');}
+}
+
+/* Insights (analytics) */
+function showInsights(){
+ STATE.view='insights';STATE.curCand=null;
+ document.querySelectorAll('.mrow').forEach(x=>x.classList.remove('on'));
+ const n=document.getElementById('nav-insights');if(n)n.classList.add('on');
+ document.getElementById('topTitle').textContent='Insights';document.getElementById('topSub').textContent='';
+ loadInsights();
+}
+async function loadInsights(){
+ document.getElementById('content').innerHTML='<div class="loadwrap"><span class="spin"></span> Crunching your numbers…</div>';
+ try{const r=await api('/api/analytics?range='+encodeURIComponent(STATE.insights.range));STATE.insights.data=r;renderInsights();}
+ catch(e){document.getElementById('content').innerHTML='<div class="caption" style="padding:20px">Could not load analytics. '+esc(e.message)+'</div>';}
+}
+function setInsRange(r){STATE.insights.range=r;loadInsights();}
+function renderInsights(){
+ const d=STATE.insights.data||{};const k=d.kpi||{};
+ const stat=(label,val,sub)=>`<div class="card pad" style="flex:1;min-width:130px"><div class="micro" style="text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:26px;font-weight:700;margin-top:2px">${val}</div>${sub?`<div class="micro">${esc(sub)}</div>`:''}</div>`;
+ const maxF=Math.max(1,...(d.funnel||[]).map(f=>f.count));
+ const funnel=(d.funnel||[]).map(f=>`<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(f.label)}</span><b>${f.count}</b></div><div style="height:8px;background:var(--surface-2);border-radius:99px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round(f.count*100/maxF)}%;background:var(--p500)"></div></div></div>`).join('');
+ const sources=(d.sources||[]).length?d.sources.map(s=>`<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(s.source)}</span><b>${s.count} · ${s.pct}%</b></div><div style="height:8px;background:var(--surface-2);border-radius:99px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${s.pct}%;background:var(--ai500)"></div></div></div>`).join(''):'<div class="caption">No placements in this range.</div>';
+ const lb=(d.leaderboard||[]).length?`<div class="card pad"><div class="subhead">Recruiter leaderboard</div><table class="tbl"><thead><tr><th>Recruiter</th><th>Added</th><th>Interviews</th><th>Placed</th></tr></thead><tbody>${d.leaderboard.map(u=>`<tr><td><b>${esc(u.name)}</b></td><td class="mono">${u.added}</td><td class="mono">${u.interviews}</td><td class="mono">${u.placed}</td></tr>`).join('')}</tbody></table></div>`:'';
+ const stale=(d.stale_mandates||[]).length?`<div class="card pad"><div class="subhead">Stale mandates (no activity ${d.stale_days}+ days)</div>${d.stale_mandates.map(m=>`<div class="lrow" style="cursor:pointer" onclick="selMandate(${m.id})"><div class="g"><b style="font-size:12.5px">${esc(m.role||'Untitled')}</b><div class="micro">${esc(m.client||'')}</div></div><span class="badge badge-warning">${m.days}d</span></div>`).join('')}</div>`:'';
+ document.getElementById('content').innerHTML=`
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+   <span class="caption">${esc(d.range_label||'')}${d.is_admin_view?' · whole company':' · your mandates'}</span>
+   <div style="display:flex;gap:6px">${[['7','7d'],['30','30d'],['all','All']].map(r=>`<button class="btn btn-sm ${STATE.insights.range===r[0]?'btn-primary':'btn-secondary'}" onclick="setInsRange('${r[0]}')">${r[1]}</button>`).join('')}</div>
+  </div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+   ${stat('Open mandates',k.open_mandates||0,(k.active||0)+' active · '+(k.hold||0)+' hold')}
+   ${stat('Pipeline',k.pipeline_candidates||0,'candidates in play')}
+   ${stat('Placed',k.placed_this_month||0,d.range_label||'')}
+   ${stat('Avg time-to-fill',k.avg_time_to_fill!=null?k.avg_time_to_fill+'d':'—','created → placed')}
+  </div>
+  <div class="grid g2" style="align-items:start">
+   <div class="card pad"><div class="subhead">Pipeline funnel</div>${funnel||'<div class="caption">No candidates.</div>'}</div>
+   <div class="card pad"><div class="subhead">Placement sources</div>${sources}</div>
+  </div>
+  ${lb?'<div style="margin-top:16px">'+lb+'</div>':''}
+  ${stale?'<div style="margin-top:16px">'+stale+'</div>':''}`;
+}
+
+/* Settings + Team & Admin */
+function showSettings(){
+ STATE.view='settings';STATE.curCand=null;
+ document.querySelectorAll('.mrow').forEach(x=>x.classList.remove('on'));
+ const n=document.getElementById('nav-settings');if(n)n.classList.add('on');
+ document.getElementById('topTitle').textContent='Settings';document.getElementById('topSub').textContent='';
+ loadSettings();
+}
+async function loadSettings(){
+ document.getElementById('content').innerHTML='<div class="loadwrap"><span class="spin"></span> Loading settings…</div>';
+ try{const r=await api('/api/settings');STATE.settings.data=r||{};renderSettings();}
+ catch(e){document.getElementById('content').innerHTML='<div class="caption" style="padding:20px">Could not load settings. '+esc(e.message)+'</div>';}
+}
+function settingsTab(t){STATE.settings.tab=t;renderSettings();}
+function renderSettings(){
+ const tabs=[['general','General'],['ai','AI & Email'],['admin','Team & Admin']];
+ document.getElementById('content').innerHTML=`
+  <div class="tabs">${tabs.map(t=>`<button class="tab ${STATE.settings.tab===t[0]?'on':''}" onclick="settingsTab('${t[0]}')">${t[1]}</button>`).join('')}</div>
+  <div id="setBody"></div>`;
+ const t=STATE.settings.tab;
+ if(t==='ai')renderSettingsAI();
+ else if(t==='admin')renderSettingsAdmin();
+ else renderSettingsGeneral();
+}
+function renderSettingsGeneral(){
+ const s=STATE.settings.data||{};
+ document.getElementById('setBody').innerHTML=`<div class="card pad" style="max-width:640px">
+   <div class="grid2">
+    <div class="field2"><label>Company name</label><input class="input" id="st_company_name" value="${esc(s.company_name||'')}"></div>
+    <div class="field2"><label>Your name</label><input class="input" id="st_recruiter_name" value="${esc(s.recruiter_name||'')}"></div>
+    <div class="field2"><label>Stale after (days)</label><input class="input" id="st_analytics_stale_days" value="${esc(s.analytics_stale_days||s.stale_days||'7')}"></div>
+    <div class="field2"><label>Promise follow-up (hours)</label><input class="input" id="st_promise_hours" value="${esc(s.promise_hours||'24')}"></div>
+   </div>
+   <div class="field2" style="margin-top:12px"><label>Interview message template</label><textarea class="input" id="st_interview_template" style="height:80px;padding:8px 10px;resize:vertical">${esc(s.interview_template||'')}</textarea></div>
+   <button class="btn btn-primary btn-sm" style="margin-top:14px" onclick="saveSettingsGeneral()">Save general settings</button>
+  </div>`;
+}
+async function saveSettingsGeneral(){
+ const g=(k)=>{const el=document.getElementById('st_'+k);return el?el.value.trim():'';};
+ const payload={company_name:g('company_name'),recruiter_name:g('recruiter_name'),analytics_stale_days:g('analytics_stale_days'),stale_days:g('analytics_stale_days'),promise_hours:g('promise_hours'),interview_template:g('interview_template')};
+ try{await api('/api/settings',{method:'POST',body:JSON.stringify(payload)});toast('Settings saved','success');STATE.settings.data=Object.assign(STATE.settings.data||{},payload);}
+ catch(e){toast('Could not save','danger');}
+}
+function renderSettingsAI(){
+ const s=STATE.settings.data||{};
+ const keyRow=(k,label)=>{const set=!!(s[k]&&(''+s[k]).trim());return `<div class="field2"><label>${label} ${set?'<span class="badge badge-success" style="height:16px">Set</span>':'<span class="badge badge-neutral" style="height:16px">Not set</span>'}</label><input class="input" type="password" id="key_${k}" placeholder="${set?'•••••• (leave blank to keep)':'Paste key to set'}"></div>`;};
+ document.getElementById('setBody').innerHTML=`<div class="card pad" style="max-width:640px;margin-bottom:16px">
+   <div class="subhead">AI provider keys</div>
+   <div class="micro" style="margin-bottom:10px">Keys are write-only here — existing values are never shown. Leave a field blank to keep its current key.</div>
+   ${keyRow('deepseek_api_key','DeepSeek')}
+   ${keyRow('claude_api_key','Claude (Anthropic)')}
+   ${keyRow('groq_api_key','Groq')}
+   ${keyRow('gemini_api_key','Gemini')}
+   <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="saveSettingsKeys()">Save keys</button>
+  </div>
+  <div class="card pad" style="max-width:640px">
+   <div class="subhead">Email (SMTP)</div>
+   <div class="grid2">
+    <div class="field2"><label>SMTP email</label><input class="input" id="st_smtp_email" value="${esc(s.smtp_email||'')}"></div>
+    <div class="field2"><label>Display name</label><input class="input" id="st_smtp_display_name" value="${esc(s.smtp_display_name||'')}"></div>
+   </div>
+   <div class="field2" style="margin-top:12px"><label>App password ${s.smtp_app_password?'<span class="badge badge-success" style="height:16px">Set</span>':'<span class="badge badge-neutral" style="height:16px">Not set</span>'}</label><input class="input" type="password" id="key_smtp_app_password" placeholder="${s.smtp_app_password?'•••••• (leave blank to keep)':'Gmail app password'}"></div>
+   <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="saveSettingsEmail()">Save email settings</button>
+  </div>`;
+}
+async function saveSettingsKeys(){
+ const payload={};['deepseek_api_key','claude_api_key','groq_api_key','gemini_api_key'].forEach(k=>{const el=document.getElementById('key_'+k);if(el&&el.value.trim())payload[k]=el.value.trim();});
+ if(!Object.keys(payload).length)return toast('Nothing to update','warning');
+ try{await api('/api/settings',{method:'POST',body:JSON.stringify(payload)});toast('Keys saved','success');Object.assign(STATE.settings.data,payload);renderSettings();}
+ catch(e){toast('Could not save keys','danger');}
+}
+async function saveSettingsEmail(){
+ const g=(k)=>{const el=document.getElementById('st_'+k);return el?el.value.trim():'';};
+ const payload={smtp_email:g('smtp_email'),smtp_display_name:g('smtp_display_name')};
+ const pw=document.getElementById('key_smtp_app_password');if(pw&&pw.value.trim())payload.smtp_app_password=pw.value.trim();
+ try{await api('/api/settings',{method:'POST',body:JSON.stringify(payload)});toast('Email settings saved','success');Object.assign(STATE.settings.data,payload);}
+ catch(e){toast('Could not save','danger');}
+}
+async function renderSettingsAdmin(){
+ document.getElementById('setBody').innerHTML='<div class="loadwrap"><span class="spin"></span> Loading team & admin…</div>';
+ let users=[],pending=[],usage=null,adminOK=true;
+ try{const r=await api('/api/users');users=r.users||[];}catch(e){if((''+e.message).includes('403')||(''+e.message).includes('401'))adminOK=false;}
+ if(STATE.settings.tab!=='admin')return;
+ if(!adminOK){document.getElementById('setBody').innerHTML='<div class="card pad caption">Team &amp; Admin is available to company admins only.</div>';return;}
+ try{const p=await api('/api/admin/pending-users');pending=p.pending||[];}catch(e){}
+ try{usage=await api('/api/admin/api-usage?days='+(STATE.settings.usageDays||30));}catch(e){}
+ if(STATE.settings.tab!=='admin')return;
+ const pendingHtml=pending.length?`<div class="card pad" style="margin-bottom:16px"><div class="subhead">Pending approvals (${pending.length})</div>${pending.map(p=>`<div class="lrow"><div class="g"><b style="font-size:12.5px">${esc(p.display_name||p.username)}</b><div class="micro">${esc(p.username)}${p.company_name?' · '+esc(p.company_name):''}</div></div><div style="display:flex;gap:6px"><button class="btn btn-primary btn-sm" onclick="approveUser(${p.id})">Approve</button><button class="btn btn-secondary btn-sm" onclick="rejectUser(${p.id})">Reject</button></div></div>`).join('')}</div>`:'';
+ const usageHtml=(usage&&usage.usage&&usage.usage.length)?`<div class="card pad" style="margin-bottom:16px"><div class="subhead">API usage &amp; cost (last ${usage.days}d · total $${usage.grand_total_usd})</div>${usage.usage.map(a=>{const provs=Object.entries(a.providers||{}).map(([p,v])=>p+': $'+v.cost_usd+' ('+v.calls+')').join(' · ');return `<div class="lrow"><div class="g"><b style="font-size:12.5px">${esc(a.company||'')}</b><div class="micro">${esc(provs)}</div></div><span class="badge badge-neutral mono">$${a.total_cost}</span></div>`;}).join('')}</div>`:'';
+ const usersHtml=`<div class="card" style="overflow:hidden;margin-bottom:16px"><table class="tbl"><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Mandates</th><th>Candidates</th><th>Last login</th></tr></thead><tbody>${users.map(u=>`<tr><td><b>${esc(u.display_name||u.username)}</b><div class="micro">${esc(u.username)}</div></td><td class="caption">${esc(u.role||'')}</td><td>${u.status==='approved'?'<span class="badge badge-success">Approved</span>':'<span class="badge badge-neutral">'+esc(u.status||'')+'</span>'}</td><td class="mono">${u.mandate_count||0}</td><td class="mono">${u.candidate_count||0}</td><td class="caption mono">${esc((u.last_login||'').slice(0,10)||'—')}</td></tr>`).join('')}</tbody></table></div>`;
+ const addForm=`<div class="card pad" style="max-width:640px"><div class="subhead">Add a team member</div>
+   <div class="grid2"><div class="field2"><label>Username</label><input class="input" id="nu_username"></div><div class="field2"><label>Password (min 4)</label><input class="input" type="password" id="nu_password"></div></div>
+   <div class="field2" style="margin-top:12px;max-width:220px"><label>Role</label><select class="input" id="nu_role"><option value="user">Recruiter</option><option value="admin">Admin</option></select></div>
+   <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="addUser()">Create user</button></div>`;
+ document.getElementById('setBody').innerHTML=pendingHtml+`<div class="subhead">Team members (${users.length})</div>`+usersHtml+usageHtml+addForm;
+}
+async function approveUser(id){try{await api('/api/admin/pending-users/'+id+'/approve',{method:'POST',body:'{}'});toast('User approved','success');renderSettingsAdmin();}catch(e){toast('Could not approve','danger');}}
+async function rejectUser(id){if(!confirm('Reject this user?'))return;try{await api('/api/admin/pending-users/'+id+'/reject',{method:'POST',body:'{}'});toast('User rejected','success');renderSettingsAdmin();}catch(e){toast('Could not reject','danger');}}
+async function addUser(){
+ const u=(document.getElementById('nu_username').value||'').trim();
+ const p=(document.getElementById('nu_password').value||'');
+ const role=document.getElementById('nu_role').value;
+ if(!u||p.length<4)return toast('Username + password (min 4 chars) required','warning');
+ try{await api('/api/users',{method:'POST',body:JSON.stringify({username:u,password:p,role})});toast('User created','success');renderSettingsAdmin();}
+ catch(e){toast('Username may be taken, or you’re not an admin','danger');}
 }
 
 /* ---------- candidate detail ---------- */
