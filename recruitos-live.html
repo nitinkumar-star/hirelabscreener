@@ -192,7 +192,7 @@ async function openCand(cid){
 function renderCand(){
  const c=STATE.curCand;
  const skills=Array.isArray(c.key_skills)?c.key_skills:[];
- const tabs=[['overview','Overview'],['resume','Resume'],['history','History']];
+ const tabs=[['overview','Overview'],['resume','Resume'],['communications','Communications'],['interviews','Interviews'],['history','History']];
  document.getElementById('content').innerHTML=`
   <div style="margin-bottom:14px"><a onclick="renderList()">← Back to candidates</a></div>
   <div style="display:flex;align-items:center;gap:14px;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:16px">
@@ -208,6 +208,8 @@ function candTab(t){STATE.tab=t;document.getElementById('candBody').innerHTML=ca
 function candBody(){
  const c=STATE.curCand;
  if(STATE.tab==='resume')return resumeTab(c);
+ if(STATE.tab==='communications')return commsTab(c);
+ if(STATE.tab==='interviews')return interviewsTab(c);
  if(STATE.tab==='history')return historyTab(c);
  return overviewTab(c);
 }
@@ -255,6 +257,53 @@ function resumeTab(c){
    ${wh.length?wh.map(w=>`<div class="lrow"><div class="g"><div style="font-weight:600">${esc(w.title||w.designation||'')}</div><div class="caption">${esc(w.company||'')}</div></div><div class="caption mono">${esc(w.duration||w.period||'')}</div></div>`).join(''):'<div class="caption">No work history parsed.</div>'}
   </div>
  </div>`;
+}
+function commsTab(c){
+ setTimeout(async()=>{
+  if(STATE.tab!=='communications')return;
+  let emailHtml='<div class="caption">No emails logged.</div>';
+  try{const e=await api('/api/candidates/'+c.id+'/email-history');const list=(e&&e.emails)||[];
+   if(list.length)emailHtml=list.map(m=>`<div class="lrow"><div class="g"><div style="font-size:12.5px">${esc(m.text)}</div><div class="micro mono">${esc(m.ts||'')}</div></div></div>`).join('');
+  }catch(err){emailHtml='<div class="caption">Could not load email history.</div>';}
+  const wa=c.wa_response?`<div style="margin-bottom:8px"><span class="badge" style="background:rgba(31,168,85,.12);color:var(--wa)">WhatsApp response</span></div>
+    <div class="lrow"><div class="g"><div style="font-size:13px">${esc(c.wa_response)}</div>${c.wa_response_note?`<div class="caption">${esc(c.wa_response_note)}</div>`:''}<div class="micro mono">${esc(c.wa_response_at||'')}</div></div></div>`
+    :'<div class="caption">No WhatsApp response captured.</div>';
+  const el=document.getElementById('candBody');if(el&&STATE.tab==='communications')el.innerHTML=`<div class="grid g2" style="align-items:start">
+   <div class="card pad"><div class="subhead">Email history</div>${emailHtml}
+    <div class="micro" style="margin-top:10px">Sending email uses your SMTP/Gmail from the old app’s Settings.</div></div>
+   <div class="card pad"><div class="subhead">WhatsApp</div>${wa}</div></div>`;
+ },10);
+ return '<div class="loadwrap"><span class="spin"></span> Loading communications…</div>';
+}
+function interviewsTab(c){
+ setTimeout(async()=>{
+  if(STATE.tab!=='interviews')return;
+  let list=[];try{const r=await api('/api/candidates/'+c.id+'/interviews');list=(r&&r.interviews)||[];}catch(e){}
+  const rows=list.length?list.map(iv=>`<div class="lrow"><div class="g"><div style="font-weight:600;font-size:12.5px">${esc(iv.round_name||'Interview')}${iv.mode?' · '+esc(iv.mode):''}</div>
+    <div class="micro mono">${esc(iv.scheduled_at||'')}</div>${iv.interviewer?`<div class="caption">Interviewer: ${esc(iv.interviewer)}</div>`:''}</div>
+    <span class="badge badge-${/result|clear|select|pass/i.test(iv.status||iv.result||'')?'success':'neutral'}">${esc(iv.result||iv.status||'scheduled')}</span></div>`).join(''):'<div class="caption">No interviews yet.</div>';
+  const el=document.getElementById('candBody');if(el&&STATE.tab==='interviews')el.innerHTML=`<div class="grid g2" style="align-items:start">
+   <div class="card pad"><div class="subhead">Rounds</div>${rows}</div>
+   <div class="card pad"><div class="subhead">Schedule a round</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+     <input class="input" id="ivRound" placeholder="Round name (e.g. Client R1)">
+     <input class="input" id="ivMode" placeholder="Mode (e.g. Video / In-person)">
+     <input class="input" id="ivWhen" type="datetime-local">
+     <button class="btn btn-primary btn-sm" onclick="scheduleIv(${c.id})" style="align-self:flex-start">Schedule</button>
+    </div><div class="micro" style="margin-top:8px">Adds an interview + moves the candidate to “Interview Inprocess” (same as your old app).</div></div>
+  </div>`;
+ },10);
+ return '<div class="loadwrap"><span class="spin"></span> Loading interviews…</div>';
+}
+async function scheduleIv(cid){
+ const round_name=(document.getElementById('ivRound').value||'').trim();
+ const mode=(document.getElementById('ivMode').value||'').trim();
+ const scheduled_at=(document.getElementById('ivWhen').value||'').trim();
+ if(!scheduled_at)return toast('Pick a date & time','warning');
+ try{await api('/api/candidates/'+cid+'/interviews',{method:'POST',body:JSON.stringify({round_name,mode,scheduled_at})});
+  toast('Interview scheduled','success');
+  const c=await api('/api/candidates/'+cid);STATE.curCand=c;renderCand();}
+ catch(e){toast('Could not schedule','danger');}
 }
 async function historyTab(c){
  document.getElementById('candBody')&&(document.getElementById('candBody').dataset.loading='1');
