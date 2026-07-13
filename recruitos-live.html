@@ -98,8 +98,9 @@ select.input{height:34px}
 
 <script>
 const SP='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 4.6L18.5 9l-3.5 3 1 5-4-2.6L8 17l1-5L5.5 9z"/></svg>';
+const PLUS='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:14px;height:14px"><path d="M12 5v14M5 12h14"/></svg>';
 const STAGES=['Screening','Follow Up 1','Follow Up 2','Not Contacted','Called','Interested','Updated CV awaited','Not Interested','Shared with Client','Interview Inprocess','Not Suitable','Client Rejected on Paper','Client Rejected After Interview','Placed'];
-let STATE={user:null,mandates:[],curMandate:null,candidates:[],curCand:null,tab:'overview',reminders:[]};
+let STATE={user:null,mandates:[],curMandate:null,candidates:[],curCand:null,tab:'overview',reminders:[],view:'mandate',addDest:'central',talent:{q:'',filters:{},results:[],page:1,total:0,searched:false,filtersOpen:false}};
 
 async function api(path,opts){
  const o=Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}},opts||{});
@@ -146,6 +147,7 @@ function renderShell(){
  <div class="app">
   <aside class="side">
    <div class="brand"><div class="logo">${SP}</div><b style="font-size:15px">RecruitOS</b><span class="badge badge-live" style="margin-left:auto">LIVE</span></div>
+   <div style="padding:8px 8px 2px"><div class="mrow navitem" id="nav-talent" onclick="showTalent()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>Talent</div><div class="ms">Search all candidates · Add new</div></div></div>
    <div style="padding:10px 12px 4px" class="eyebrow">Mandates (${STATE.mandates.length})</div>
    <div class="mlist" id="mlist">${STATE.mandates.map(m=>`<div class="mrow ${m.id===STATE.curMandate?'on':''}" onclick="selMandate(${m.id})"><div class="mr">${esc(m.role||'Untitled')}</div><div class="ms">${esc(m.client||'')} ${m.location?'· '+esc(m.location):''}</div></div>`).join('')||'<div class="caption" style="padding:10px">No mandates found.</div>'}</div>
   </aside>
@@ -167,7 +169,7 @@ function themeIcon(){return document.documentElement.getAttribute('data-theme')=
 function toggleTheme(){const r=document.documentElement;r.setAttribute('data-theme',r.getAttribute('data-theme')==='dark'?'light':'dark');const b=event.currentTarget;if(b)b.innerHTML=themeIcon();}
 
 async function selMandate(mid){
- STATE.curMandate=mid;STATE.curCand=null;
+ STATE.view='mandate';STATE.curMandate=mid;STATE.curCand=null;
  document.querySelectorAll('.mrow').forEach(x=>x.classList.remove('on'));
  const el=[...document.querySelectorAll('.mrow')].find(x=>x.getAttribute('onclick')==='selMandate('+mid+')');if(el)el.classList.add('on');
  const m=STATE.mandates.find(x=>x.id===mid)||{};
@@ -182,6 +184,10 @@ async function selMandate(mid){
 function renderList(){
  const cs=STATE.candidates;
  document.getElementById('content').innerHTML=`
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+   <div class="caption">${cs.length} candidate${cs.length===1?'':'s'} in this mandate</div>
+   <button class="btn btn-ai btn-sm" onclick="openAddCandidate(${STATE.curMandate})">${PLUS}Add candidate</button>
+  </div>
   <div class="card" style="overflow:hidden">
    <table class="tbl"><thead><tr><th>Candidate</th><th>Company · Role</th><th>CTC</th><th>Notice</th><th>Stage</th><th>AI fit</th></tr></thead>
    <tbody>${cs.length?cs.map(c=>`<tr onclick="openCand(${c.id})">
@@ -193,6 +199,152 @@ function renderList(){
      <td>${c.ai_score?`<span class="badge badge-ai">${SP.replace('viewBox','style="width:11px;height:11px" viewBox')}${esc(c.ai_score)}%</span>`:'<span class="micro">—</span>'}</td>
     </tr>`).join(''):'<tr><td colspan="6" style="padding:30px;text-align:center" class="caption">No candidates in this mandate yet.</td></tr>'}</tbody></table>
   </div>`;
+}
+
+/* ---------- Wave 4: Talent (global search + add candidate) ---------- */
+function showTalent(){
+ STATE.view='talent';STATE.curCand=null;
+ document.querySelectorAll('.mrow').forEach(x=>x.classList.remove('on'));
+ const nt=document.getElementById('nav-talent');if(nt)nt.classList.add('on');
+ document.getElementById('topTitle').textContent='Talent';
+ document.getElementById('topSub').textContent=STATE.talent.searched?STATE.talent.total+' matches':'Search all candidates';
+ renderTalent();
+}
+function renderTalent(){
+ const t=STATE.talent;
+ document.getElementById('content').innerHTML=`
+  <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+   <div style="position:relative;flex:1;min-width:240px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;position:absolute;left:11px;top:9px;color:var(--text-3)"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+    <input class="input" id="tq" style="padding-left:34px" placeholder="Search name, skills, company, location, phone…" value="${esc(t.q||'')}" onkeydown="if(event.key==='Enter')runTalentSearch(1)">
+   </div>
+   <button class="btn btn-primary" onclick="runTalentSearch(1)">Search</button>
+   <button class="btn btn-secondary" onclick="toggleTalentFilters()">Filters${filterCount()?' ('+filterCount()+')':''}</button>
+   <button class="btn btn-ai" onclick="openAddCandidate('central')">${PLUS}Add candidate</button>
+  </div>
+  <div id="talentFilters" style="display:${t.filtersOpen?'block':'none'};margin-bottom:14px">
+   <div class="card pad"><div class="grid2" style="grid-template-columns:repeat(4,1fr)">
+    <div class="field2"><label>Location</label><input class="input" id="fLoc" value="${esc(t.filters.location||'')}"></div>
+    <div class="field2"><label>Phone</label><input class="input" id="fPhone" value="${esc(t.filters.phone||'')}"></div>
+    <div class="field2"><label>Min CTC (LPA)</label><input class="input" id="fCtcMin" value="${esc(t.filters.ctc_min||'')}"></div>
+    <div class="field2"><label>Max CTC (LPA)</label><input class="input" id="fCtcMax" value="${esc(t.filters.ctc_max||'')}"></div>
+    <div class="field2"><label>Min Exp (yrs)</label><input class="input" id="fExpMin" value="${esc(t.filters.exp_min||'')}"></div>
+    <div class="field2"><label>Max Exp (yrs)</label><input class="input" id="fExpMax" value="${esc(t.filters.exp_max||'')}"></div>
+    <div class="field2"><label>Max Notice (days)</label><input class="input" id="fNotice" value="${esc(t.filters.notice||'')}"></div>
+    <div class="field2" style="justify-content:flex-end"><button class="btn btn-secondary btn-sm" onclick="clearTalentFilters()">Clear</button></div>
+   </div></div>
+  </div>
+  <div id="talentResults">${talentResultsHtml()}</div>`;
+}
+function filterCount(){return Object.values(STATE.talent.filters||{}).filter(v=>v&&String(v).trim()).length;}
+function toggleTalentFilters(){readTalentInputs();STATE.talent.filtersOpen=!STATE.talent.filtersOpen;renderTalent();}
+function clearTalentFilters(){STATE.talent.filters={};renderTalent();}
+function readTalentInputs(){
+ const t=STATE.talent;const q=document.getElementById('tq');if(q)t.q=q.value.trim();
+ const gf=(id)=>{const el=document.getElementById(id);return el?el.value.trim():undefined;};
+ if(document.getElementById('fLoc'))t.filters={location:gf('fLoc'),phone:gf('fPhone'),ctc_min:gf('fCtcMin'),ctc_max:gf('fCtcMax'),exp_min:gf('fExpMin'),exp_max:gf('fExpMax'),notice:gf('fNotice')};
+}
+function talentResultsHtml(){
+ const t=STATE.talent;
+ if(!t.searched)return '<div class="caption" style="padding:34px;text-align:center">Type a query or set filters, then Search — this looks across all your mandates &amp; Central Database.</div>';
+ const cs=t.results;
+ if(!cs.length)return '<div class="caption" style="padding:34px;text-align:center">No candidates match. Try a broader query or clear filters.</div>';
+ const pages=Math.max(1,Math.ceil(t.total/30));
+ return `<div class="card" style="overflow:hidden">
+   <table class="tbl"><thead><tr><th>Candidate</th><th>Company · Role</th><th>Mandate</th><th>CTC</th><th>Exp</th><th>Location</th><th>Stage</th></tr></thead>
+   <tbody>${cs.map(c=>`<tr onclick="openCand(${c.id})">
+     <td><div style="display:flex;align-items:center;gap:9px">${av(c.name,'sm')}<b>${esc(c.name||'—')}</b></div></td>
+     <td class="caption">${esc(c.company||'—')}${c.designation?' · '+esc(c.designation):''}</td>
+     <td class="caption">${esc(c.mandate_role||'—')}${c.mandate_client?' · '+esc(c.mandate_client):''}</td>
+     <td class="mono">${c.ctc_current?esc(c.ctc_current):'—'}</td>
+     <td class="mono">${c.experience?esc(c.experience):'—'}</td>
+     <td class="caption">${esc(c.location||'—')}</td>
+     <td>${stageBadge(c.stage)}</td>
+    </tr>`).join('')}</tbody></table>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
+   <span class="caption">${t.total} match${t.total===1?'':'es'} · page ${t.page} of ${pages}</span>
+   <div style="display:flex;gap:8px">
+    <button class="btn btn-secondary btn-sm" ${t.page<=1?'disabled':''} onclick="runTalentSearch(${t.page-1})">Prev</button>
+    <button class="btn btn-secondary btn-sm" ${t.page>=pages?'disabled':''} onclick="runTalentSearch(${t.page+1})">Next</button>
+   </div>
+  </div>`;
+}
+async function runTalentSearch(page){
+ readTalentInputs();
+ const t=STATE.talent;
+ const params=new URLSearchParams();
+ if(t.q)params.set('q',t.q);
+ Object.entries(t.filters||{}).forEach(([k,v])=>{if(v&&String(v).trim())params.set(k,String(v).trim());});
+ params.set('page',page||1);
+ const rc=document.getElementById('talentResults');if(rc)rc.innerHTML='<div class="loadwrap"><span class="spin"></span> Searching…</div>';
+ try{
+  const r=await api('/api/central-db/search?'+params.toString());
+  t.results=r.candidates||[];t.total=r.total||0;t.page=r.page||page||1;t.searched=true;
+  const sub=document.getElementById('topSub');if(sub)sub.textContent=t.total+' matches';
+  const el=document.getElementById('talentResults');if(el)el.innerHTML=talentResultsHtml();
+ }catch(e){if(rc)rc.innerHTML='<div class="caption" style="padding:20px">Search failed. '+esc(e.message)+'</div>';}
+}
+function goBack(){if(STATE.view==='talent')showTalent();else renderList();}
+
+/* Add candidate (Naukri paste / manual) — existing parse + add endpoints */
+function openAddCandidate(dest){
+ STATE.addDest=dest||'central';
+ const mopts=STATE.mandates.map(m=>`<option value="${m.id}" ${String(STATE.addDest)===String(m.id)?'selected':''}>${esc(m.role||'Untitled')}${m.client?' — '+esc(m.client):''}</option>`).join('');
+ const f=(id,label)=>`<div class="field2"><label>${label}</label><input class="input" id="ac_${id}"></div>`;
+ document.getElementById('modalTitle').textContent='Add candidate';
+ document.getElementById('modalBody').innerHTML=`
+  <div class="field2" style="margin-bottom:12px"><label>Add to</label>
+   <select class="input" id="ac_dest">
+    <option value="central" ${STATE.addDest==='central'?'selected':''}>Central Database</option>
+    ${mopts}
+   </select></div>
+  <div class="ai-block" style="margin-bottom:14px">
+   <div class="ai-tag">${SP}Paste from Naukri / recruiter notes</div>
+   <textarea class="input" id="ac_raw" style="height:90px;padding:8px 10px;resize:vertical" placeholder="Paste the candidate's Naukri profile text or your notes here, then Parse…"></textarea>
+   <div style="margin-top:8px;display:flex;align-items:center;gap:8px"><button class="btn btn-ai btn-sm" onclick="parseIntoForm()">Parse &amp; fill</button><span class="micro">Uses your DeepSeek key · or fill fields manually below</span></div>
+  </div>
+  <div class="grid2">
+   ${f('name','Name *')}${f('company','Company *')}
+   ${f('designation','Designation')}${f('experience','Experience (yrs)')}
+   ${f('ctc_current','Current CTC (LPA)')}${f('ctc_expected','Expected CTC (LPA)')}
+   ${f('notice_period','Notice (days)')}${f('location','Location')}
+   ${f('preferred_location','Preferred location')}${f('qualification','Qualification')}
+   ${f('phone','Phone')}${f('email','Email')}
+  </div>
+  <div class="field2" style="margin-top:12px"><label>Key skills (comma-separated)</label><input class="input" id="ac_key_skills"></div>
+  <div class="field2" style="margin-top:12px"><label>Career summary</label><textarea class="input" id="ac_career_summary" style="height:58px;padding:8px 10px;resize:vertical"></textarea></div>`;
+ const sv=document.getElementById('modalSave');sv.textContent='Add candidate';sv.setAttribute('onclick','addCandidateSave()');
+ document.getElementById('modal').classList.add('open');
+}
+async function parseIntoForm(){
+ const raw=(document.getElementById('ac_raw').value||'').trim();
+ if(!raw)return toast('Paste some text first','warning');
+ toast('Parsing…','ai');
+ try{
+  const r=await api('/api/parse-naukri',{method:'POST',body:JSON.stringify({raw})});
+  const d=r.data||{};
+  const set=(id,v)=>{const el=document.getElementById('ac_'+id);if(el&&v!=null&&v!=='')el.value=v;};
+  ['name','phone','email','company','designation','location','preferred_location','qualification','career_summary'].forEach(k=>set(k,d[k]));
+  ['experience','ctc_current','ctc_expected','notice_period'].forEach(k=>{if(d[k])set(k,d[k]);});
+  const ks=document.getElementById('ac_key_skills');if(ks&&Array.isArray(d.key_skills))ks.value=d.key_skills.join(', ');
+  toast('Parsed — review the fields, then Add','success');
+ }catch(e){toast((''+e.message).includes('400')?'Add your DeepSeek key in the old app’s Settings, or fill manually':'Parse failed — fill manually','danger');}
+}
+async function addCandidateSave(){
+ const g=(id)=>{const el=document.getElementById('ac_'+id);return el?el.value.trim():'';};
+ const name=g('name'),company=g('company');
+ if(!name||!company)return toast('Name and Company are required','warning');
+ const skills=g('key_skills').split(',').map(s=>s.trim()).filter(Boolean);
+ const payload={name,company,designation:g('designation'),experience:g('experience'),ctc_current:g('ctc_current'),ctc_expected:g('ctc_expected'),notice_period:g('notice_period'),location:g('location'),preferred_location:g('preferred_location'),qualification:g('qualification'),phone:g('phone'),email:g('email'),career_summary:g('career_summary'),key_skills:skills};
+ const dest=document.getElementById('ac_dest').value;
+ try{
+  if(dest==='central')await api('/api/central-db/add',{method:'POST',body:JSON.stringify(payload)});
+  else await api('/api/mandates/'+dest+'/candidates/manual',{method:'POST',body:JSON.stringify(payload)});
+  closeModal();toast('Candidate added','success');
+  if(STATE.view==='talent'&&STATE.talent.searched)runTalentSearch(STATE.talent.page);
+  else if(STATE.view==='mandate'&&String(dest)===String(STATE.curMandate))selMandate(STATE.curMandate);
+ }catch(e){toast('Could not add candidate','danger');}
 }
 
 /* ---------- candidate detail ---------- */
@@ -209,7 +361,7 @@ function renderCand(){
  const skills=Array.isArray(c.key_skills)?c.key_skills:[];
  const tabs=[['overview','Overview'],['resume','Resume'],['communications','Communications'],['interviews','Interviews'],['history','History']];
  document.getElementById('content').innerHTML=`
-  <div style="margin-bottom:14px"><a onclick="renderList()">← Back to candidates</a></div>
+  <div style="margin-bottom:14px"><a onclick="goBack()">← Back</a></div>
   <div style="display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap">
    ${av(c.name,'big')}
    <div style="flex:1;min-width:160px"><h1>${esc(c.name||'—')}</h1><div class="caption">${esc(c.designation||'')}${c.company?' · '+esc(c.company):''}${c.is_mnc?' · MNC':''}</div></div>
@@ -386,6 +538,7 @@ function openEdit(cid){
  const c=STATE.curCand;
  const f=(id,label)=>`<div class="field2"><label>${label}</label><input class="input" id="ed_${id}" value="${esc(c[id]||'')}"></div>`;
  document.getElementById('modalTitle').textContent='Edit candidate';
+ document.getElementById('modalSave').textContent='Save';
  document.getElementById('modalBody').innerHTML=`<div class="grid2">
    ${f('name','Name')}${f('company','Company')}${f('designation','Designation')}${f('experience','Experience')}
    ${f('ctc_current','Current CTC')}${f('ctc_expected','Expected CTC')}${f('notice_period','Notice')}${f('location','Location')}
@@ -405,7 +558,10 @@ async function delCand(cid){
  if(!confirm('Delete this candidate permanently? This cannot be undone.'))return;
  if(!confirm('Please confirm again — this removes the candidate and all their data.'))return;
  try{await api('/api/candidates/'+cid,{method:'DELETE'});
-  toast('Candidate deleted','success');STATE.candidates=STATE.candidates.filter(x=>x.id!==cid);STATE.curCand=null;renderList();
+  toast('Candidate deleted','success');STATE.curCand=null;
+  STATE.candidates=STATE.candidates.filter(x=>x.id!==cid);
+  if(STATE.view==='talent'){STATE.talent.results=STATE.talent.results.filter(x=>x.id!==cid);STATE.talent.total=Math.max(0,STATE.talent.total-1);showTalent();}
+  else renderList();
  }catch(e){toast('Could not delete','danger');}
 }
 
