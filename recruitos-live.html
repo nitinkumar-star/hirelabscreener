@@ -146,8 +146,9 @@ function renderShell(){
  document.getElementById('root').innerHTML=`
  <div class="app">
   <aside class="side">
-   <div class="brand"><div class="logo">${SP}</div><b style="font-size:15px">RecruitOS</b><span class="badge badge-live" style="margin-left:auto">LIVE</span></div>
-   <div style="padding:8px 8px 2px"><div class="mrow navitem" id="nav-talent" onclick="showTalent()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>Talent</div><div class="ms">Search all candidates · Add new</div></div></div>
+   <div class="brand" onclick="showHome()" style="cursor:pointer"><div class="logo">${SP}</div><b style="font-size:15px">RecruitOS</b><span class="badge badge-live" style="margin-left:auto">LIVE</span></div>
+   <div style="padding:8px 8px 2px"><div class="mrow navitem" id="nav-home" onclick="showHome()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg>Home</div><div class="ms">Dashboard · today’s focus</div></div></div>
+   <div style="padding:2px 8px 2px"><div class="mrow navitem" id="nav-talent" onclick="showTalent()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>Talent</div><div class="ms">Search all candidates · Add new</div></div></div>
    <div style="padding:2px 8px 2px"><div class="mrow navitem" id="nav-clients" onclick="showClients()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M3 21h18M4 21V8l7-4 7 4v13M9 21v-5h6v5"/></svg>Clients</div><div class="ms">Companies · contacts · org chart</div></div></div>
    <div style="padding:2px 8px 2px"><div class="mrow navitem" id="nav-convo" onclick="showConvo()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M21 11.5a8.5 8.5 0 01-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1121 11.5z"/></svg>Conversations<span class="badge badge-warning" id="convoNavBadge" style="height:16px;margin-left:auto;display:none"></span></div><div class="ms">WhatsApp AI · escalations</div></div></div>
    <div style="padding:2px 8px 2px"><div class="mrow navitem" id="nav-tasks" onclick="showTasks()"><div class="mr" style="display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>Tasks</div><div class="ms">Reminders · interviews · follow-ups</div></div></div>
@@ -166,7 +167,7 @@ function renderShell(){
    <div class="content" id="content"></div>
   </div>
  </div>`;
- selMandate(STATE.curMandate);
+ showHome();
  updateConvoBadge();
 }
 function themeIcon(){return document.documentElement.getAttribute('data-theme')==='dark'
@@ -583,7 +584,7 @@ async function saveClient(id){
   else await api('/api/crm/clients',{method:'POST',body:JSON.stringify(payload)});
   closeModal();toast(id?'Client saved':'Client created','success');
   if(id&&STATE.clients.cur&&STATE.clients.cur.id===id){const r=await api('/api/crm/clients/'+id);STATE.clients.cur=r.client;STATE.clients.contacts=r.contacts||[];renderClient();}
-  else{STATE.clients.meta=null;loadClients(1);}
+  else{STATE.clients.meta=null;showClients();}
  }catch(e){toast('Could not save — name may already exist','danger');}
 }
 async function delClient(id){
@@ -806,6 +807,58 @@ async function delLearned(id){
  if(!confirm('Remove this learned response?'))return;
  try{await api('/api/wa/learned/'+id,{method:'DELETE'});toast('Removed','success');loadLearned();}
  catch(e){toast('Could not remove','danger');}
+}
+
+/* ---------- Wave 8: Home dashboard ---------- */
+function greeting(){const h=new Date().getHours();return h<12?'Good morning':h<17?'Good afternoon':'Good evening';}
+function showHome(){
+ STATE.view='home';STATE.curCand=null;
+ document.querySelectorAll('.mrow').forEach(x=>x.classList.remove('on'));
+ const n=document.getElementById('nav-home');if(n)n.classList.add('on');
+ document.getElementById('topTitle').textContent='Home';document.getElementById('topSub').textContent='';
+ loadHome();
+}
+async function loadHome(){
+ const name=(STATE.user&&(STATE.user.display_name||STATE.user.username))||'there';
+ document.getElementById('content').innerHTML=`
+  <div style="margin-bottom:18px"><h1>${greeting()}, ${esc(String(name).split(' ')[0])} 👋</h1><div class="caption">${esc(new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'}))}</div></div>
+  <div id="homeGrid"><div class="loadwrap"><span class="spin"></span> Loading your workspace…</div></div>`;
+ let kpi={},counts={},tasks=[],activity=[];
+ try{const a=await api('/api/analytics?range=30');kpi=a.kpi||{};}catch(e){}
+ try{const t=await api('/api/tasks');counts=t.counts||{};tasks=(t.tasks||[]).filter(x=>x.section==='overdue'||x.section==='today');}catch(e){}
+ try{const ac=await api('/api/activity?per_page=8');activity=ac.activity||[];}catch(e){}
+ if(STATE.view!=='home')return;
+ renderHome(kpi,counts,tasks,activity);
+}
+function renderHome(kpi,counts,tasks,activity){
+ const stat=(label,val,onclick)=>`<div class="card pad" style="flex:1;min-width:130px;cursor:pointer" onclick="${onclick}"><div class="micro" style="text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:26px;font-weight:700;margin-top:2px">${val}</div></div>`;
+ const todayCount=(counts.overdue||0)+(counts.today||0);
+ const taskList=tasks.length?tasks.slice(0,7).map(t=>`<div class="lrow" ${t.candidate_id?`onclick="openCand(${t.candidate_id})" style="cursor:pointer"`:''}><div class="g"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${taskTypeBadge(t.type)}<b style="font-size:12.5px">${esc(t.title||'')}</b></div><div class="micro">${esc(t.subtitle||'')}</div></div></div>`).join(''):'<div class="caption">Nothing due right now. 🎉</div>';
+ const actList=activity.length?activity.map(a=>`<div class="lrow"><div class="g"><div style="font-size:12.5px">${esc(String(a.action||'').replace(/[_.]/g,' '))}${a.detail?' — '+esc(a.detail):''}</div><div class="micro mono">${esc((a.username||'')+' · '+String(a.created_at||'').slice(0,16))}</div></div></div>`).join(''):'<div class="caption">No recent activity.</div>';
+ document.getElementById('homeGrid').innerHTML=`
+  <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px">
+   ${stat('Open mandates',kpi.open_mandates||0,'showInsights()')}
+   ${stat('Pipeline',kpi.pipeline_candidates||0,'showTalent()')}
+   ${stat('Placed (30d)',kpi.placed_this_month||0,'showInsights()')}
+   ${stat('Tasks due',todayCount,'showTasks()')}
+  </div>
+  <div class="grid g2" style="align-items:start">
+   <div class="card pad">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div class="subhead" style="margin:0">Today’s focus</div><a onclick="showTasks()">View all</a></div>
+    ${taskList}
+   </div>
+   <div style="display:flex;flex-direction:column;gap:16px">
+    <div class="card pad"><div class="subhead">Quick actions</div>
+     <div style="display:flex;flex-wrap:wrap;gap:8px">
+      <button class="btn btn-ai btn-sm" onclick="openAddCandidate('central')">${PLUS}Add candidate</button>
+      <button class="btn btn-secondary btn-sm" onclick="openClientForm(0)">${PLUS}Add client</button>
+      <button class="btn btn-secondary btn-sm" onclick="showTalent()">Search talent</button>
+      <button class="btn btn-secondary btn-sm" onclick="showInsights()">View insights</button>
+     </div>
+    </div>
+    <div class="card pad"><div class="subhead">Recent activity</div>${actList}</div>
+   </div>
+  </div>`;
 }
 
 /* ---------- Wave 7: Tasks · Insights · Settings & Admin ---------- */
