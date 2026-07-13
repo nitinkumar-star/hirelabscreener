@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RecruitOS · Live</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+ --n0:#fff;--n25:#FAFAF9;--n50:#F4F2EC;--n100:#EBE8E1;--n200:#DED9CF;--n300:#C9C3B6;--n400:#A8A498;--n500:#8C887E;--n600:#6B675E;--n700:#504D46;--n800:#33312B;--n900:#1B1B18;
+ --p50:#E8F4EE;--p100:#C9E7D8;--p500:#15966A;--p600:#127A57;--p700:#0E6045;
+ --ai50:#EEECFB;--ai100:#DAD6F6;--ai500:#534AB7;--ai700:#363080;--ai-glow:linear-gradient(135deg,#6E63D1,#534AB7);
+ --success:#15966A;--success-bg:#E8F4EE;--warning:#C4841E;--warning-bg:#FBF1DE;--danger:#E24B4A;--danger-bg:#FBEAEA;--info:#378ADD;--info-bg:#E7F0FB;--wa:#1FA855;
+ --bg:var(--n25);--surface:#fff;--surface-2:var(--n50);--border:var(--n100);--border-strong:var(--n200);
+ --text:var(--n900);--text-2:var(--n600);--text-3:var(--n500);
+ --r-md:8px;--r-lg:10px;--r-xl:12px;--e1:0 1px 2px rgba(40,38,30,.06);--e2:0 4px 12px rgba(40,38,30,.08);--e4:0 16px 40px rgba(40,38,30,.16);
+}
+[data-theme="dark"]{--bg:#161512;--surface:#1F1E1A;--surface-2:#27251F;--border:#302E28;--border-strong:#3A382F;--text:#F4F2EC;--text-2:#A8A498;--text-3:#8C887E;--p500:#2FA574;--p50:rgba(47,165,116,.14);--p700:#63BF97;--ai500:#6E63D1;--ai50:rgba(110,99,209,.16);--ai700:#948BE0;--success-bg:rgba(47,165,116,.16);--warning-bg:rgba(196,132,30,.16);--danger-bg:rgba(226,75,74,.16);--info-bg:rgba(55,138,221,.16);}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:13.5px;line-height:20px;font-feature-settings:"tnum" 1}
+.mono{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums}
+h1{font-size:20px;font-weight:700;margin:0;letter-spacing:-.01em}h3{font-size:15px;font-weight:600;margin:0}
+.caption{font-size:12px;color:var(--text-2)}.micro{font-size:10.5px;color:var(--text-3)}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3)}
+a{color:var(--p600);cursor:pointer;text-decoration:none}
+.btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:var(--r-md);font-size:13px;font-weight:600;border:1px solid transparent;cursor:pointer}
+.btn svg{width:15px;height:15px}.btn-sm{height:28px;padding:0 10px;font-size:12px}
+.btn-primary{background:var(--p500);color:#fff}.btn-primary:hover{background:var(--p600)}
+.btn-secondary{background:var(--surface);color:var(--text);border-color:var(--border-strong)}.btn-secondary:hover{background:var(--surface-2)}
+.btn-ghost{background:transparent;color:var(--text-2)}.btn-ghost:hover{background:var(--surface-2);color:var(--text)}
+.btn-ai{background:var(--ai500);color:#fff}
+.btn-icon{width:32px;height:32px;padding:0;justify-content:center;background:transparent;color:var(--text-2);border-radius:var(--r-md);border:none;cursor:pointer}
+.btn-icon:hover{background:var(--surface-2)}
+.badge{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border-radius:99px;font-size:11px;font-weight:600}
+.badge-neutral{background:var(--surface-2);color:var(--text-2)}.badge-success{background:var(--success-bg);color:var(--p700)}.badge-warning{background:var(--warning-bg);color:var(--warning)}.badge-info{background:var(--info-bg);color:var(--info)}.badge-ai{background:var(--ai50);color:var(--ai700)}.badge-live{background:var(--success-bg);color:var(--p700)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--e1)}
+.pad{padding:18px}
+.input{height:34px;padding:0 12px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-md);color:var(--text);font:inherit;font-size:13.5px;width:100%}
+.input:focus{outline:none;border-color:var(--p500);box-shadow:0 0 0 3px var(--p50)}
+select.input{height:34px}
+.avatar{width:34px;height:34px;border-radius:99px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:12px;flex:none}
+.avatar.sm{width:26px;height:26px;font-size:10px}.avatar.big{width:46px;height:46px;font-size:15px}
+.app{display:grid;grid-template-columns:270px 1fr;height:100vh}
+.side{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.brand{height:54px;display:flex;align-items:center;gap:9px;padding:0 16px;border-bottom:1px solid var(--border);flex:none}
+.logo{width:26px;height:26px;border-radius:7px;background:var(--ai-glow);display:flex;align-items:center;justify-content:center}
+.logo svg{width:15px;height:15px;color:#fff}
+.mlist{flex:1;overflow-y:auto;padding:8px}
+.mrow{padding:10px 12px;border-radius:var(--r-md);cursor:pointer;margin-bottom:2px}
+.mrow:hover{background:var(--surface-2)}.mrow.on{background:var(--p50)}
+.mrow .mr{font-size:13px;font-weight:600}.mrow .ms{font-size:11px;color:var(--text-2)}
+.main{display:flex;flex-direction:column;overflow:hidden}
+.top{height:54px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:10px;padding:0 18px;flex:none}
+.content{flex:1;overflow-y:auto;padding:20px}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--text-3);padding:8px 12px;border-bottom:1px solid var(--border)}
+.tbl td{padding:9px 12px;border-bottom:1px solid var(--border)}
+.tbl tr:hover td{background:var(--surface-2);cursor:pointer}
+.grid{display:grid;gap:16px}.g2{grid-template-columns:2fr 1fr}
+@media(max-width:900px){.g2{grid-template-columns:1fr}.app{grid-template-columns:1fr}.side{display:none}}
+.kv{padding:8px 0}.kv .k{font-size:10.5px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--text-3)}.kv .v{font-size:13.5px;font-weight:600}
+.subhead{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px}
+.ai-block{background:var(--ai50);border-left:2px solid var(--ai500);border-radius:var(--r-md);padding:12px 14px}
+.ai-tag{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ai700);margin-bottom:6px}
+.ai-tag svg{width:12px;height:12px}
+.chip{display:inline-flex;height:24px;align-items:center;padding:0 10px;border-radius:99px;background:var(--surface-2);font-size:12px;font-weight:600;color:var(--text-2);margin:0 6px 6px 0}
+.lrow{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}.lrow:last-child{border:none}.lrow .g{flex:1}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:16px}
+.tab{padding:9px 13px;font-size:13px;font-weight:600;color:var(--text-2);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.on{color:var(--p700);border-bottom-color:var(--p500)}
+.notice{max-width:520px;margin:60px auto;text-align:center}
+.notice .ic{width:52px;height:52px;border-radius:14px;background:var(--warning-bg);color:var(--warning);display:inline-flex;align-items:center;justify-content:center;margin-bottom:14px}
+.notice .ic svg{width:26px;height:26px}
+.toasts{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:50;display:flex;flex-direction:column;gap:8px;align-items:center}
+.toast{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border);box-shadow:var(--e4);border-radius:var(--r-md);padding:10px 14px;font-size:13px;font-weight:500;min-width:240px}
+.spin{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--p500);border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
+@keyframes sp{to{transform:rotate(360deg)}}
+.loadwrap{display:flex;align-items:center;justify-content:center;gap:10px;padding:60px;color:var(--text-2)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div class="toasts" id="toasts"></div>
+
+<script>
+const SP='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 4.6L18.5 9l-3.5 3 1 5-4-2.6L8 17l1-5L5.5 9z"/></svg>';
+let STATE={user:null,mandates:[],curMandate:null,candidates:[],curCand:null,tab:'overview',reminders:[]};
+
+async function api(path,opts){
+ const o=Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}},opts||{});
+ const r=await fetch(path,o);
+ if(r.status===401){const e=new Error('auth');e.auth=true;throw e;}
+ if(!r.ok)throw new Error('HTTP '+r.status);
+ const ct=r.headers.get('content-type')||'';return ct.includes('json')?r.json():r.text();
+}
+function toast(msg,type){
+ type=type||'info';const col={success:'var(--success)',warning:'var(--warning)',danger:'var(--danger)',info:'var(--info)',ai:'var(--ai500)'}[type];
+ const el=document.createElement('div');el.className='toast';el.innerHTML=`<span style="width:8px;height:8px;border-radius:50%;background:${col};display:inline-block"></span>${msg}`;
+ document.getElementById('toasts').appendChild(el);setTimeout(()=>{el.style.opacity=0;setTimeout(()=>el.remove(),200)},3000);
+}
+const AV=['#15966A','#534AB7','#378ADD','#C4841E','#0E6045'];
+function avColor(s){s=s||'?';let n=0;for(const c of s)n+=c.charCodeAt(0);return AV[n%AV.length]}
+function initials(n){n=(n||'?').trim();return n.split(/\s+/).map(x=>x[0]).slice(0,2).join('').toUpperCase()}
+function av(n,cls){return `<div class="avatar ${cls||''}" style="background:${avColor(n)}">${initials(n)}</div>`}
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function stageBadge(s){s=s||'—';const t=/plac/i.test(s)?'success':/reject|not/i.test(s)?'warning':/shar|interview/i.test(s)?'info':'neutral';return `<span class="badge badge-${t}">${esc(s)}</span>`}
+
+/* ---------- boot ---------- */
+async function boot(){
+ try{
+  const s=await api('/api/auth/status');
+  if(s.state==='setup'){return notice('First-run setup needed','Open the main app at / to create your admin account, then reopen /v2.');}
+  if(s.state!=='app'){return notice('Please sign in first','Log in on your main app at <b>/</b>, then reopen <b>/v2</b> in the same browser. This page shares your login.');}
+  STATE.user=s.user;
+  await loadMandates();
+  renderShell();
+ }catch(e){
+  if(e.auth)return notice('Please sign in first','Log in on your main app at <b>/</b>, then reopen <b>/v2</b>.');
+  notice('Can’t reach your backend','Open this page from your Render URL at <b>/v2</b> (e.g. <span class="mono">your-app.onrender.com/v2</span>) while logged in. Opening the file directly won’t connect to your data.');
+ }
+}
+function notice(title,body){
+ document.getElementById('root').innerHTML=`<div class="notice"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg></div>
+  <h1 style="margin-bottom:8px">${title}</h1><p class="caption">${body}</p><div style="margin-top:16px"><a href="/" class="btn btn-secondary" style="text-decoration:none">Go to main app</a></div></div>`;
+}
+async function loadMandates(){STATE.mandates=await api('/api/mandates')||[];if(STATE.mandates.length&&!STATE.curMandate)STATE.curMandate=STATE.mandates[0].id;}
+
+/* ---------- shell ---------- */
+function renderShell(){
+ document.getElementById('root').innerHTML=`
+ <div class="app">
+  <aside class="side">
+   <div class="brand"><div class="logo">${SP}</div><b style="font-size:15px">RecruitOS</b><span class="badge badge-live" style="margin-left:auto">LIVE</span></div>
+   <div style="padding:10px 12px 4px" class="eyebrow">Mandates (${STATE.mandates.length})</div>
+   <div class="mlist" id="mlist">${STATE.mandates.map(m=>`<div class="mrow ${m.id===STATE.curMandate?'on':''}" onclick="selMandate(${m.id})"><div class="mr">${esc(m.role||'Untitled')}</div><div class="ms">${esc(m.client||'')} ${m.location?'· '+esc(m.location):''}</div></div>`).join('')||'<div class="caption" style="padding:10px">No mandates found.</div>'}</div>
+  </aside>
+  <div class="main">
+   <div class="top"><b id="topTitle">Candidates</b><span class="caption" id="topSub"></span>
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+     <span class="badge badge-neutral">${esc(STATE.user.display_name||STATE.user.username)}</span>
+     <button class="btn-icon" onclick="toggleTheme()" title="Theme">${themeIcon()}</button>
+     <a href="/" class="btn btn-ghost btn-sm">Old app</a>
+    </div></div>
+   <div class="content" id="content"></div>
+  </div>
+ </div>`;
+ selMandate(STATE.curMandate);
+}
+function themeIcon(){return document.documentElement.getAttribute('data-theme')==='dark'
+ ?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"/></svg>'
+ :'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/></svg>';}
+function toggleTheme(){const r=document.documentElement;r.setAttribute('data-theme',r.getAttribute('data-theme')==='dark'?'light':'dark');const b=event.currentTarget;if(b)b.innerHTML=themeIcon();}
+
+async function selMandate(mid){
+ STATE.curMandate=mid;STATE.curCand=null;
+ document.querySelectorAll('.mrow').forEach(x=>x.classList.remove('on'));
+ const el=[...document.querySelectorAll('.mrow')].find(x=>x.getAttribute('onclick')==='selMandate('+mid+')');if(el)el.classList.add('on');
+ const m=STATE.mandates.find(x=>x.id===mid)||{};
+ document.getElementById('topTitle').textContent=m.role||'Candidates';
+ document.getElementById('content').innerHTML='<div class="loadwrap"><span class="spin"></span> Loading your candidates…</div>';
+ try{
+  STATE.candidates=await api('/api/mandates/'+mid+'/candidates')||[];
+  document.getElementById('topSub').textContent=STATE.candidates.length+' candidates';
+  renderList();
+ }catch(e){document.getElementById('content').innerHTML='<div class="caption" style="padding:20px">Could not load candidates. '+esc(e.message)+'</div>';}
+}
+function renderList(){
+ const cs=STATE.candidates;
+ document.getElementById('content').innerHTML=`
+  <div class="card" style="overflow:hidden">
+   <table class="tbl"><thead><tr><th>Candidate</th><th>Company · Role</th><th>CTC</th><th>Notice</th><th>Stage</th><th>AI fit</th></tr></thead>
+   <tbody>${cs.length?cs.map(c=>`<tr onclick="openCand(${c.id})">
+     <td><div style="display:flex;align-items:center;gap:9px">${av(c.name,'sm')}<b>${esc(c.name||'—')}</b></div></td>
+     <td class="caption">${esc(c.company||'—')}${c.designation?' · '+esc(c.designation):''}</td>
+     <td class="mono">${c.ctc_current?esc(c.ctc_current):'—'}</td>
+     <td class="caption">${esc(c.notice_period||'—')}</td>
+     <td>${stageBadge(c.stage)}</td>
+     <td>${c.ai_score?`<span class="badge badge-ai">${SP.replace('viewBox','style="width:11px;height:11px" viewBox')}${esc(c.ai_score)}%</span>`:'<span class="micro">—</span>'}</td>
+    </tr>`).join(''):'<tr><td colspan="6" style="padding:30px;text-align:center" class="caption">No candidates in this mandate yet.</td></tr>'}</tbody></table>
+  </div>`;
+}
+
+/* ---------- candidate detail ---------- */
+async function openCand(cid){
+ document.getElementById('content').innerHTML='<div class="loadwrap"><span class="spin"></span> Loading profile…</div>';
+ try{
+  const c=await api('/api/candidates/'+cid);STATE.curCand=c;STATE.tab='overview';
+  try{const rr=await api('/api/reminders');STATE.reminders=(rr&&rr.reminders||[]).filter(r=>r.candidate_id===cid);}catch(e){STATE.reminders=[];}
+  renderCand();
+ }catch(e){document.getElementById('content').innerHTML='<div class="caption" style="padding:20px">Could not load candidate. '+esc(e.message)+'</div>';}
+}
+function renderCand(){
+ const c=STATE.curCand;
+ const skills=Array.isArray(c.key_skills)?c.key_skills:[];
+ const tabs=[['overview','Overview'],['resume','Resume'],['history','History']];
+ document.getElementById('content').innerHTML=`
+  <div style="margin-bottom:14px"><a onclick="renderList()">← Back to candidates</a></div>
+  <div style="display:flex;align-items:center;gap:14px;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:16px">
+   ${av(c.name,'big')}
+   <div style="flex:1"><h1>${esc(c.name||'—')}</h1><div class="caption">${esc(c.designation||'')}${c.company?' · '+esc(c.company):''}${c.is_mnc?' · MNC':''}</div></div>
+   ${stageBadge(c.stage)} ${c.ai_score?`<span class="badge badge-ai">${esc(c.ai_score)}% fit</span>`:''}
+   <button class="btn btn-secondary btn-sm" onclick="reqUpdate(${c.id})">Request update</button>
+  </div>
+  <div class="tabs">${tabs.map(t=>`<button class="tab ${STATE.tab===t[0]?'on':''}" onclick="candTab('${t[0]}')">${t[1]}</button>`).join('')}</div>
+  <div id="candBody">${candBody()}</div>`;
+}
+function candTab(t){STATE.tab=t;document.getElementById('candBody').innerHTML=candBody();}
+function candBody(){
+ const c=STATE.curCand;
+ if(STATE.tab==='resume')return resumeTab(c);
+ if(STATE.tab==='history')return historyTab(c);
+ return overviewTab(c);
+}
+function overviewTab(c){
+ const skills=Array.isArray(c.key_skills)?c.key_skills:[];
+ return `<div class="grid g2" style="align-items:start">
+  <div style="display:flex;flex-direction:column;gap:16px">
+   ${c.career_summary?`<div class="ai-block"><div class="ai-tag">${SP}Summary</div>${esc(c.career_summary)}</div>`:''}
+   ${c.ai_reasoning?`<div class="card pad"><div class="subhead">AI reasoning${c.ai_score?' · '+esc(c.ai_score)+'%':''}</div><div class="caption" style="color:var(--text)">${esc(c.ai_reasoning)}</div></div>`:''}
+   ${skills.length?`<div class="card pad"><div class="subhead">Key skills</div><div>${skills.map(s=>`<span class="chip">${esc(s)}</span>`).join('')}</div></div>`:''}
+   <div class="card pad"><div class="subhead">Notes</div>
+    <div style="display:flex;gap:8px;margin-bottom:12px"><input class="input" id="noteInput" placeholder="Add a note…" onkeydown="if(event.key==='Enter')saveNote()"><button class="btn btn-secondary btn-sm" onclick="saveNote()">Add</button></div>
+    ${c.general_comments?`<div class="lrow"><div class="g">${esc(c.general_comments)}</div></div>`:'<div class="caption">Notes save to the candidate journey (History tab).</div>'}
+   </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:16px">
+   <div class="card pad"><div class="subhead">Key facts</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px">
+     ${kv('Current CTC',c.ctc_current)}${kv('Expected',c.ctc_expected)}
+     ${kv('Notice',c.notice_period)}${kv('Experience',c.experience)}
+     ${kv('Location',c.location)}${kv('Prefers',c.preferred_location)}
+     ${kv('Qualification',c.qualification)}${kv('Industry',c.industry_background)}
+     ${kv('Phone',c.phone)}${kv('Email',c.email)}
+    </div>
+    ${c.wa_response?`<div style="margin-top:10px"><span class="badge" style="background:rgba(31,168,85,.12);color:var(--wa)">WhatsApp: ${esc(c.wa_response)}</span></div>`:''}
+   </div>
+   <div class="card pad"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div class="subhead" style="margin:0">Reminders</div></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:10px">
+     <input class="input" id="remNote" placeholder="Reminder note…"><input class="input" id="remDue" type="date" style="width:150px">
+    </div><button class="btn btn-secondary btn-sm" onclick="saveReminder()">Add reminder</button>
+    <div style="margin-top:12px">${STATE.reminders.length?STATE.reminders.map(r=>`<div class="lrow"><div class="g"><div style="font-size:12.5px;font-weight:600">${esc(r.note||'Reminder')}</div><div class="micro mono">${esc(r.due_at||'')}</div></div>
+      <button class="btn-icon" title="Done" onclick="remDone(${r.id})"><svg viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.2" style="width:15px;height:15px"><path d="M5 12l5 5L20 6"/></svg></button></div>`).join(''):'<div class="caption">No reminders for this candidate.</div>'}</div>
+   </div>
+  </div>
+ </div>`;
+}
+function kv(k,v){return `<div class="kv"><div class="k">${k}</div><div class="v">${v?esc(v):'—'}</div></div>`}
+function resumeTab(c){
+ const wh=c.work_history||[];
+ return `<div class="grid g2" style="align-items:start">
+  <div class="card pad"><div class="subhead">CV</div>
+   ${c.cv_original_name?`<div class="lrow"><div class="g"><b>${esc(c.cv_original_name)}</b></div><a href="/api/cv-view/${encodeURIComponent(c.cv_path||'')}" target="_blank" class="btn btn-secondary btn-sm">Open CV</a></div>`:'<div class="caption">No CV uploaded.</div>'}
+  </div>
+  <div class="card pad"><div class="subhead">Work history</div>
+   ${wh.length?wh.map(w=>`<div class="lrow"><div class="g"><div style="font-weight:600">${esc(w.title||w.designation||'')}</div><div class="caption">${esc(w.company||'')}</div></div><div class="caption mono">${esc(w.duration||w.period||'')}</div></div>`).join(''):'<div class="caption">No work history parsed.</div>'}
+  </div>
+ </div>`;
+}
+async function historyTab(c){
+ document.getElementById('candBody')&&(document.getElementById('candBody').dataset.loading='1');
+ let html='<div class="card pad"><div class="subhead">Journey</div><div class="loadwrap"><span class="spin"></span></div></div>';
+ setTimeout(async()=>{
+  try{const j=await api('/api/candidates/'+c.id+'/journey');const ev=(j&&(j.events||j.journey||j))||[];
+   const arr=Array.isArray(ev)?ev:[];
+   const body=arr.length?arr.map(e=>`<div class="lrow"><div class="g"><div style="font-size:12.5px;font-weight:600">${esc(e.detail||e.type||e.event||'')}</div><div class="micro mono">${esc(e.created_at||e.at||'')}</div></div></div>`).join(''):'<div class="caption">No journey events yet.</div>';
+   const el=document.getElementById('candBody');if(el&&STATE.tab==='history')el.innerHTML='<div class="card pad"><div class="subhead">Journey</div>'+body+'</div>';
+  }catch(e){const el=document.getElementById('candBody');if(el&&STATE.tab==='history')el.innerHTML='<div class="card pad caption">Could not load journey.</div>';}
+ },10);
+ return html;
+}
+
+/* ---------- WRITES (safe, additive, existing endpoints) ---------- */
+async function saveNote(){
+ const el=document.getElementById('noteInput');const text=(el&&el.value||'').trim();
+ if(!text)return toast('Type a note first','warning');
+ try{await api('/api/candidates/'+STATE.curCand.id+'/note',{method:'POST',body:JSON.stringify({text})});
+  toast('Note saved','success');el.value='';}
+ catch(e){toast('Could not save note','danger');}
+}
+async function saveReminder(){
+ const note=(document.getElementById('remNote').value||'').trim();
+ const due=(document.getElementById('remDue').value||'').trim();
+ if(!due)return toast('Pick a due date','warning');
+ try{await api('/api/reminders',{method:'POST',body:JSON.stringify({candidate_id:STATE.curCand.id,note,due_at:due})});
+  toast('Reminder set','success');
+  const rr=await api('/api/reminders');STATE.reminders=(rr&&rr.reminders||[]).filter(r=>r.candidate_id===STATE.curCand.id);
+  document.getElementById('candBody').innerHTML=candBody();}
+ catch(e){toast('Could not set reminder','danger');}
+}
+async function remDone(rid){
+ try{await api('/api/reminders/'+rid+'/done',{method:'POST',body:'{}'});toast('Reminder completed','success');
+  STATE.reminders=STATE.reminders.filter(r=>r.id!==rid);document.getElementById('candBody').innerHTML=candBody();}
+ catch(e){toast('Could not complete','danger');}
+}
+async function reqUpdate(cid){
+ try{await api('/api/candidates/'+cid+'/request-update',{method:'POST',body:'{}'});toast('Profile-update link generated','success');}
+ catch(e){toast('Could not generate link','danger');}
+}
+
+boot();
+</script>
+</body>
+</html>
