@@ -76,14 +76,29 @@ select.input{height:34px}
 .spin{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--p500);border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
 @keyframes sp{to{transform:rotate(360deg)}}
 .loadwrap{display:flex;align-items:center;justify-content:center;gap:10px;padding:60px;color:var(--text-2)}
+.modalwrap{position:fixed;inset:0;background:rgba(27,27,24,.4);z-index:60;display:none;align-items:center;justify-content:center;padding:20px}
+.modalwrap.open{display:flex}
+.modalbox{width:600px;max-width:100%;background:var(--surface);border-radius:var(--r-xl);box-shadow:var(--e4);overflow:hidden}
+.modalhead{display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid var(--border)}
+.modalbody{padding:18px;max-height:60vh;overflow-y:auto}
+.modalfoot{padding:14px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.field2{display:flex;flex-direction:column;gap:5px}.field2 label{font-size:11px;font-weight:600;color:var(--text-2)}
 </style>
 </head>
 <body>
 <div id="root"></div>
+<div class="modalwrap" id="modal" onclick="if(event.target===this)closeModal()">
+ <div class="modalbox"><div class="modalhead"><h3 id="modalTitle">Edit</h3>
+  <button class="btn-icon" onclick="closeModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="modalbody" id="modalBody"></div>
+  <div class="modalfoot"><button class="btn btn-secondary btn-sm" onclick="closeModal()">Cancel</button><button class="btn btn-primary btn-sm" id="modalSave">Save</button></div></div>
+</div>
 <div class="toasts" id="toasts"></div>
 
 <script>
 const SP='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 4.6L18.5 9l-3.5 3 1 5-4-2.6L8 17l1-5L5.5 9z"/></svg>';
+const STAGES=['Screening','Follow Up 1','Follow Up 2','Not Contacted','Called','Interested','Updated CV awaited','Not Interested','Shared with Client','Interview Inprocess','Not Suitable','Client Rejected on Paper','Client Rejected After Interview','Placed'];
 let STATE={user:null,mandates:[],curMandate:null,candidates:[],curCand:null,tab:'overview',reminders:[]};
 
 async function api(path,opts){
@@ -195,11 +210,17 @@ function renderCand(){
  const tabs=[['overview','Overview'],['resume','Resume'],['communications','Communications'],['interviews','Interviews'],['history','History']];
  document.getElementById('content').innerHTML=`
   <div style="margin-bottom:14px"><a onclick="renderList()">← Back to candidates</a></div>
-  <div style="display:flex;align-items:center;gap:14px;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:16px">
+  <div style="display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap">
    ${av(c.name,'big')}
-   <div style="flex:1"><h1>${esc(c.name||'—')}</h1><div class="caption">${esc(c.designation||'')}${c.company?' · '+esc(c.company):''}${c.is_mnc?' · MNC':''}</div></div>
-   ${stageBadge(c.stage)} ${c.ai_score?`<span class="badge badge-ai">${esc(c.ai_score)}% fit</span>`:''}
+   <div style="flex:1;min-width:160px"><h1>${esc(c.name||'—')}</h1><div class="caption">${esc(c.designation||'')}${c.company?' · '+esc(c.company):''}${c.is_mnc?' · MNC':''}</div></div>
+   ${c.ai_score?`<span class="badge badge-ai">${esc(c.ai_score)}% fit</span>`:''}
+   <select class="input" style="width:auto" onchange="changeStage(${c.id},this.value)" title="Stage">
+     ${STAGES.map(s=>`<option ${s===c.stage?'selected':''}>${s}</option>`).join('')}${STAGES.includes(c.stage)?'':`<option selected>${esc(c.stage||'')}</option>`}
+   </select>
+   <button class="btn btn-ai btn-sm" onclick="aiRescore(${c.id})">${SP.replace('<svg','<svg style=\"width:14px;height:14px\"')}Re-score</button>
+   <button class="btn btn-secondary btn-sm" onclick="openEdit(${c.id})">Edit</button>
    <button class="btn btn-secondary btn-sm" onclick="reqUpdate(${c.id})">Request update</button>
+   <button class="btn-icon" title="Delete" onclick="delCand(${c.id})"><svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" style="width:16px;height:16px"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M6 7l1 13h10l1-13"/></svg></button>
   </div>
   <div class="tabs">${tabs.map(t=>`<button class="tab ${STATE.tab===t[0]?'on':''}" onclick="candTab('${t[0]}')">${t[1]}</button>`).join('')}</div>
   <div id="candBody">${candBody()}</div>`;
@@ -344,6 +365,48 @@ async function remDone(rid){
 async function reqUpdate(cid){
  try{await api('/api/candidates/'+cid+'/request-update',{method:'POST',body:'{}'});toast('Profile-update link generated','success');}
  catch(e){toast('Could not generate link','danger');}
+}
+
+/* Wave 3: stage change · edit · re-score · delete (existing endpoints) */
+function closeModal(){document.getElementById('modal').classList.remove('open')}
+async function changeStage(cid,stage){
+ try{await api('/api/candidates/'+cid+'/stage',{method:'POST',body:JSON.stringify({stage})});
+  toast('Stage → '+stage,'success');
+  if(STATE.curCand&&STATE.curCand.id===cid)STATE.curCand.stage=stage;
+  const lc=STATE.candidates.find(x=>x.id===cid);if(lc)lc.stage=stage;
+ }catch(e){toast('Could not change stage','danger');}
+}
+async function aiRescore(cid){
+ toast('AI re-scoring…','ai');
+ try{await api('/api/candidates/'+cid+'/rate',{method:'POST',body:'{}'});
+  const c=await api('/api/candidates/'+cid);STATE.curCand=c;renderCand();toast('Re-scored','success');
+ }catch(e){toast((''+e.message).includes('400')?'Add your DeepSeek key in the old app’s Settings first':'Could not re-score','danger');}
+}
+function openEdit(cid){
+ const c=STATE.curCand;
+ const f=(id,label)=>`<div class="field2"><label>${label}</label><input class="input" id="ed_${id}" value="${esc(c[id]||'')}"></div>`;
+ document.getElementById('modalTitle').textContent='Edit candidate';
+ document.getElementById('modalBody').innerHTML=`<div class="grid2">
+   ${f('name','Name')}${f('company','Company')}${f('designation','Designation')}${f('experience','Experience')}
+   ${f('ctc_current','Current CTC')}${f('ctc_expected','Expected CTC')}${f('notice_period','Notice')}${f('location','Location')}
+   ${f('preferred_location','Preferred location')}${f('qualification','Qualification')}${f('phone','Phone')}${f('email','Email')}
+  </div>`;
+ document.getElementById('modalSave').setAttribute('onclick','saveEdit('+cid+')');
+ document.getElementById('modal').classList.add('open');
+}
+async function saveEdit(cid){
+ const ids=['name','company','designation','experience','ctc_current','ctc_expected','notice_period','location','preferred_location','qualification','phone','email'];
+ const body={};ids.forEach(k=>{const el=document.getElementById('ed_'+k);if(el)body[k]=el.value;});
+ try{await api('/api/candidates/'+cid,{method:'PUT',body:JSON.stringify(body)});
+  closeModal();const c=await api('/api/candidates/'+cid);STATE.curCand=c;renderCand();toast('Saved','success');
+ }catch(e){toast('Could not save','danger');}
+}
+async function delCand(cid){
+ if(!confirm('Delete this candidate permanently? This cannot be undone.'))return;
+ if(!confirm('Please confirm again — this removes the candidate and all their data.'))return;
+ try{await api('/api/candidates/'+cid,{method:'DELETE'});
+  toast('Candidate deleted','success');STATE.candidates=STATE.candidates.filter(x=>x.id!==cid);STATE.curCand=null;renderList();
+ }catch(e){toast('Could not delete','danger');}
 }
 
 boot();
