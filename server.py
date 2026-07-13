@@ -2487,12 +2487,10 @@ def get_setting(key, default=''):
 
 @app.route('/')
 def index():
-    @app.route('/v2')
+    return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html'))
+@app.route('/v2')
 def recruitos_v2():
     return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'recruitos-live.html'))
-    return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html'))
-
-
 # ── PWA: installable mobile app (manifest + service worker + icons) ────────
 @app.route('/manifest.webmanifest')
 def pwa_manifest():
