@@ -391,6 +391,13 @@ button,input,textarea,select{font-family:inherit}
 /* BD Command Center → sub-tab of Clients (CRM); Freelancers → sub-tab of Admin Panel. Home → logo click. My Mandates → Jobs tab. Force-hidden from the main sidebar. Uses #sidebar #id to beat #sidebar .sb-gear{display:flex!important}. */
 #sidebar #sb-bd,#sidebar #sb-freelancers,#sidebar #sb-home{display:none !important}
 #sidebar .sb-mand-head,#sidebar #sb-mandates{display:none !important}
+/* Two-line sidebar nav items (title + subtitle), matching the requested design */
+#sidebar .sb-gear{align-items:flex-start !important}
+.sb-nav-ic{width:18px !important;height:18px !important;flex-shrink:0;margin-top:1px;color:#3a3a3a}
+.sb-nav-txt{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+.sb-nav-title{font-size:13.5px;font-weight:600;color:#242424}
+.sb-nav-sub{font-size:10.5px;font-weight:500;color:#B0894E;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sidebar .sb-gear.active .sb-nav-title,#sidebar .sb-gear.active .sb-nav-ic{color:#0F6E56}
 
 .prof-quickbar{padding:12px 16px;border-bottom:0.5px solid var(--line);background:#fff}
 .pq-role{font-size:13px;font-weight:600;color:var(--navy);margin-bottom:8px}
@@ -526,7 +533,7 @@ body{font-size:14px !important; line-height:1.5}
 /* Mockup-style sidebar nav — restyle .sb-gear (JS toggles this class, keep it working) */
 .sb-logo-box{width:34px;height:34px;border-radius:9px;background:#15966A;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .sb-logo-box span{width:13px;height:13px;border-radius:4px;border:2.5px solid #fff;display:block}
-#sidebar .sb-gear{display:flex !important;align-items:center !important;gap:10px !important;padding:9px 11px !important;margin:1px 8px !important;border-radius:9px !important;cursor:pointer;color:#6B675E !important;font-size:13px !important;font-weight:600;transition:background .15s;white-space:nowrap;background:transparent !important}
+#sidebar .sb-gear{display:flex !important;align-items:flex-start !important;gap:10px !important;padding:9px 11px !important;margin:1px 8px !important;border-radius:9px !important;cursor:pointer;color:#6B675E !important;font-size:13px !important;font-weight:600;transition:background .15s;background:transparent !important}
 #sidebar .sb-gear:hover{background:#F4F2EC !important}
 #sidebar .sb-gear.active{background:#E8F4EE !important;color:#127A57 !important}
 .sb-nav-ic{width:18px;display:flex;justify-content:center;flex-shrink:0;font-size:14px}
@@ -637,19 +644,19 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J10</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J11</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
-    <a href="#" class="sb-gear" id="sb-home" onclick="return navClick(event,goHome)"><span class="sb-nav-ic">&#9711;</span><span>Home</span></a>
-    <a href="#jobs" class="sb-gear" id="sb-jobs" onclick="return navClick(event,openJobs)"><span class="sb-nav-ic">&#128188;</span><span>Jobs</span></a>
-    <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><span class="sb-nav-ic">&#10003;</span><span>Tasks</span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
-    <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><span class="sb-nav-ic">&#128202;</span><span>Analytics</span></a>
-    <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><span class="sb-nav-ic">&#129302;</span><span>Communications</span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
-    <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><span class="sb-nav-ic">&#127970;</span><span>Clients (CRM)</span></a>
-    <a href="#freelancers" class="sb-gear" id="sb-freelancers" style="display:none" onclick="return navClick(event,openFreelancerAdmin)"><span class="sb-nav-ic">&#129309;</span><span>Freelancers</span></a>
-    <a href="#bd" class="sb-gear" id="sb-bd" style="display:none" onclick="return navClick(event,openBd)"><span class="sb-nav-ic">&#128188;</span><span>BD Command Center</span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
-    <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><span class="sb-nav-ic">&#9683;</span><span>Talent</span></a>
+    <a href="#" class="sb-gear" id="sb-home" onclick="return navClick(event,goHome)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Home</span><span class="sb-nav-sub">Dashboard &middot; today&#39;s focus</span></span></a>
+    <a href="#jobs" class="sb-gear" id="sb-jobs" onclick="return navClick(event,openJobs)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Jobs</span><span class="sb-nav-sub">All mandates &middot; pipeline</span></span></a>
+    <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12l3 3 5-6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Tasks</span><span class="sb-nav-sub">Reminders &middot; interviews &middot; follow-ups</span></span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
+    <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Analytics</span><span class="sb-nav-sub">Insights &middot; funnel &middot; sources</span></span></a>
+    <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.5 8.5 0 01-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1121 11.5z"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Communications</span><span class="sb-nav-sub">WhatsApp AI &middot; escalations</span></span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
+    <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M4 21V8l8-5 8 5v13M9 21v-6h6v6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Clients (CRM)</span><span class="sb-nav-sub">Companies &middot; contacts &middot; org chart</span></span></a>
+    <a href="#freelancers" class="sb-gear" id="sb-freelancers" style="display:none" onclick="return navClick(event,openFreelancerAdmin)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21a9 9 0 100-18 9 9 0 000 18z"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Freelancers</span><span class="sb-nav-sub">Sourcers &middot; assignments</span></span></a>
+    <a href="#bd" class="sb-gear" id="sb-bd" style="display:none" onclick="return navClick(event,openBd)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">BD Command Center</span><span class="sb-nav-sub">Follow-ups &middot; meetings</span></span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
+    <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Talent</span><span class="sb-nav-sub">Search all candidates &middot; add new</span></span></a>
   </div>
 
   <div class="sb-mand-head"><span class="t">MY MANDATES</span><button class="a" onclick="openModal('modal-mandate')" title="New mandate">+</button></div>
