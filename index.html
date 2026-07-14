@@ -644,7 +644,7 @@ body{font-size:14px !important; line-height:1.5}
     <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><span class="sb-nav-ic">&#129302;</span><span>WhatsApp AI</span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
     <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><span class="sb-nav-ic">&#127970;</span><span>Clients (CRM)</span></a>
     <a href="#freelancers" class="sb-gear" id="sb-freelancers" onclick="return navClick(event,openFreelancerAdmin)"><span class="sb-nav-ic">&#129309;</span><span>Freelancers</span></a>
-    <a href="#bd" class="sb-gear" id="sb-bd" onclick="return navClick(event,openBd)"><span class="sb-nav-ic">&#128188;</span><span>BD Command Center</span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
+    <a href="#bd" class="sb-gear" id="sb-bd" style="display:none" onclick="return navClick(event,openBd)"><span class="sb-nav-ic">&#128188;</span><span>BD Command Center</span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
     <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></a>
   </div>
 
@@ -883,6 +883,10 @@ body{font-size:14px !important; line-height:1.5}
         <button class="btn btn-o" onclick="closeCrm()">&#10005; Close</button>
       </div>
     </div>
+    <div class="cdb-subtab-bar">
+      <button class="cdb-subtab active" onclick="openCrm()">&#127970; Clients</button>
+      <button class="cdb-subtab" onclick="openBd()">&#128188; BD Command Center</button>
+    </div>
     <div id="crm-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
   </div>
 
@@ -923,6 +927,10 @@ body{font-size:14px !important; line-height:1.5}
         <button class="btn btn-o" style="font-size:11px" onclick="renderBd()">&#8635; Refresh</button>
         <button class="btn btn-o" onclick="closeBd()">&#10005; Close</button>
       </div>
+    </div>
+    <div class="cdb-subtab-bar">
+      <button class="cdb-subtab" onclick="openCrm()">&#127970; Clients</button>
+      <button class="cdb-subtab active" onclick="openBd()">&#128188; BD Command Center</button>
     </div>
     <div id="bd-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
   </div>
@@ -8059,7 +8067,8 @@ function openBd(){
   closeSidebarOnMobile();
   _hideAllViews();
   document.getElementById('bd-view').style.display='flex';
-  document.getElementById('sb-bd').className='sb-gear active';
+  // BD Command Center is now a sub-tab of Clients (CRM), so keep the CRM sidebar item highlighted.
+  var _sbc=document.getElementById('sb-crm'); if(_sbc) _sbc.className='sb-gear active';
   S.settingsOpen=false;
   renderBd();
   writeHash();
@@ -8068,6 +8077,7 @@ function closeBd(){
   document.getElementById('bd-view').style.display='none';
   document.getElementById('mandate-view').style.display='flex';
   document.getElementById('sb-bd').className='sb-gear';
+  var _sbc=document.getElementById('sb-crm'); if(_sbc) _sbc.className='sb-gear';
 }
 function setBdScope(s){
   _bdScope=s;
