@@ -639,6 +639,7 @@ body{font-size:14px !important; line-height:1.5}
 
   <div style="padding:6px 0 2px">
     <a href="#" class="sb-gear" id="sb-home" onclick="return navClick(event,goHome)"><span class="sb-nav-ic">&#9711;</span><span>Home</span></a>
+    <a href="#jobs" class="sb-gear" id="sb-jobs" onclick="return navClick(event,openJobs)"><span class="sb-nav-ic">&#128188;</span><span>Jobs</span></a>
     <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><span class="sb-nav-ic">&#10003;</span><span>Tasks</span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
     <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><span class="sb-nav-ic">&#128202;</span><span>Analytics</span></a>
     <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><span class="sb-nav-ic">&#129302;</span><span>WhatsApp AI</span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
@@ -943,6 +944,22 @@ body{font-size:14px !important; line-height:1.5}
     <div id="bd-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
   </div>
 
+
+  <!-- ═══ Jobs view (all mandates) ═══ -->
+  <div id="jobs-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+    <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:28px;height:28px;border-radius:6px;background:#E3EEFB;display:flex;align-items:center;justify-content:center;font-size:14px">&#128188;</div>
+        <div><div style="font-size:14px;font-weight:600">Jobs</div><div style="font-size:11px;color:#888;margin-top:1px">All mandates across clients</div></div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <button class="btn" onclick="openModal('modal-mandate')" style="background:#2D6FB3;color:#fff;border:none;font-size:12px">&#43; New Job</button>
+        <button class="btn btn-o" onclick="renderJobs()" style="font-size:11px">&#8635;</button>
+        <button class="btn btn-o" onclick="closeJobs()">&#10005; Close</button>
+      </div>
+    </div>
+    <div id="jobs-body" style="flex:1;overflow:auto;background:#FAFAF9"></div>
+  </div>
 
   <div id="mandate-view" style="display:flex;flex:1;flex-direction:column;overflow:hidden">
     <div id="topbar">
@@ -1388,10 +1405,10 @@ function initSidebarResize() {
 async function goHome() {
   closeSidebarOnMobile();
   // Close all overlay views
-  ['ai-view','admin-view','tasks-view','responses-view','central-view','cdb-view','settings-view'].forEach(function(id){
+  ['ai-view','admin-view','tasks-view','responses-view','central-view','cdb-view','settings-view','jobs-view'].forEach(function(id){
     var v = document.getElementById(id); if (v) v.style.display = 'none';
   });
-  ['sb-ai','sb-admin','sb-tasks','sb-responses','sb-central'].forEach(function(id){
+  ['sb-ai','sb-admin','sb-tasks','sb-responses','sb-central','sb-jobs'].forEach(function(id){
     var b = document.getElementById(id); if (b) b.className = 'sb-gear';
   });
   var g = document.getElementById('sb-gear'); if (g) g.className = 'sb-gear';
@@ -1465,7 +1482,7 @@ async function readHash() {
     var overlayMap = { central: openCentralDB, ai: openAI, admin: openAdmin,
                        tasks: openTasks, responses: openResponses, analytics: openAnalytics,
                        waai: openWaAi, bd: openBd, crm: openCrm,
-                       freelancers: openFreelancerAdmin };
+                       freelancers: openFreelancerAdmin, jobs: openJobs };
     if (overlayMap[head]) {
       // admin overlay only for admins
       if (head === 'admin' && !(S.currentUser && S.currentUser.role === 'admin')) {
@@ -7202,9 +7219,9 @@ var aiActiveTab = 'search';
 // Every open* function calls this first so views can never overlap.
 var _ALL_VIEWS = ['mandate-view','settings-view','central-view','cdb-view',
   'responses-view','tasks-view','admin-view','ai-view','analytics-view',
-  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view'];
+  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view','jobs-view'];
 var _ALL_SB = ['sb-tasks','sb-responses','sb-central','sb-admin','sb-ai',
-  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers'];
+  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers','sb-jobs'];
 function _hideAllViews(){
   _ALL_VIEWS.forEach(function(id){
     var v=document.getElementById(id); if(v) v.style.display='none';
@@ -8372,6 +8389,56 @@ setInterval(updateBdBadge, 5*60*1000);
 // ═══════════════════════════════════════════════════════════════════════
 var _crmState = { q:'', status:'', industry:'', city:'', sort:'created_at', dir:'desc', page:1 };
 var _crmMeta = { industries:[], cities:[], statuses:[] };
+
+// ═══════════════════════════════════════════════════════════════════════
+//  JOBS — all mandates in one tab
+// ═══════════════════════════════════════════════════════════════════════
+var _jobsFilter='all';
+function openJobs(){
+  closeSidebarOnMobile();
+  _hideAllViews();
+  document.getElementById('jobs-view').style.display='flex';
+  var _sbj=document.getElementById('sb-jobs'); if(_sbj) _sbj.className='sb-gear active';
+  S.settingsOpen=false;
+  renderJobs();
+  writeHash();
+}
+function closeJobs(){
+  document.getElementById('jobs-view').style.display='none';
+  document.getElementById('mandate-view').style.display='flex';
+  var _sbj=document.getElementById('sb-jobs'); if(_sbj) _sbj.className='sb-gear';
+}
+function setJobsFilter(f){ _jobsFilter=f; renderJobs(); }
+function openJobCard(id){ closeJobs(); selectMandate(id); }
+function renderJobs(){
+  var body=document.getElementById('jobs-body'); if(!body) return;
+  var list=(S.mandates||[]);
+  if(!list.length){ body.innerHTML='<div style="padding:50px 20px;text-align:center;color:#888;font-size:13px">No jobs yet. Click <b>+ New Job</b> to create your first mandate.</div>'; return; }
+  var f=_jobsFilter||'all';
+  var counts={all:list.length,active:0,hold:0,closed:0};
+  list.forEach(function(m){ var s=m.status||'active'; if(s==='active')counts.active++; else if(s==='hold')counts.hold++; else if(s==='closed')counts.closed++; });
+  var filtered = f==='all' ? list : list.filter(function(m){ return (m.status||'active')===f; });
+  var chips=[['all','All'],['active','Active'],['hold','On Hold'],['closed','Closed']].map(function(c){
+    var on=f===c[0];
+    return '<button onclick="setJobsFilter(\''+c[0]+'\')" style="border:0.5px solid '+(on?'#1D9E75':'#ddd')+';background:'+(on?'#E7F6EF':'#fff')+';color:'+(on?'#0F6E56':'#555')+';border-radius:8px;font-size:12px;padding:6px 13px;cursor:pointer;font-weight:'+(on?'600':'500')+'">'+c[1]+' ('+counts[c[0]]+')</button>';
+  }).join(' ');
+  var cards=filtered.map(function(m){
+    var st=m.status||'active';
+    var dotC=st==='active'?'#1D9E75':st==='hold'?'#EF9F27':'#888';
+    var statusLabel=st==='active'?'Active':st==='hold'?'On Hold':'Closed';
+    return '<div class="db-mandate-card" onclick="openJobCard('+m.id+')" style="cursor:pointer">'
+      +'<div style="padding:14px 16px;display:flex;align-items:flex-start;justify-content:space-between;gap:8px">'
+      +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#0a2540;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(m.role||'Untitled')+'</div>'
+      +'<div style="font-size:12px;color:#555;margin-top:3px">'+esc(m.client||'')+'</div>'
+      +'<div style="font-size:11px;color:#888;margin-top:2px">'+esc(m.location||'')+(m.division?' &middot; '+esc(m.division):'')+'</div></div>'
+      +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'
+      +'<span class="pill" style="background:'+dotC+'22;color:'+dotC+'">'+statusLabel+'</span>'
+      +((m.ctc_min||m.ctc_max)?'<span style="font-size:10px;color:#aaa">&#8377;'+(m.ctc_min||0)+'&ndash;'+(m.ctc_max||0)+'L</span>':'')
+      +'</div></div></div>';
+  }).join('');
+  body.innerHTML='<div style="padding:14px 20px;display:flex;gap:8px;flex-wrap:wrap;border-bottom:0.5px solid #e8e8e8;background:#fff;position:sticky;top:0;z-index:1">'+chips+'</div>'
+    +'<div style="padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">'+(cards||'<div style="color:#888;font-size:13px;padding:20px">No jobs in this status.</div>')+'</div>';
+}
 
 function openCrm(){
   closeSidebarOnMobile();
