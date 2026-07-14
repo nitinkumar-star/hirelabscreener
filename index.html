@@ -388,8 +388,9 @@ button,input,textarea,select{font-family:inherit}
 .cdb-subtab{padding:9px 16px;font-size:12px;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;color:#888;font-weight:500}
 .cdb-subtab:hover{color:#534AB7}
 .cdb-subtab.active{border-bottom-color:#534AB7;color:#534AB7;font-weight:600}
-/* BD Command Center → sub-tab of Clients (CRM); Freelancers → sub-tab of Admin Panel. Force-hidden from the main sidebar. Uses #sidebar #id to beat #sidebar .sb-gear{display:flex!important}. */
-#sidebar #sb-bd,#sidebar #sb-freelancers{display:none !important}
+/* BD Command Center → sub-tab of Clients (CRM); Freelancers → sub-tab of Admin Panel. Home → logo click. My Mandates → Jobs tab. Force-hidden from the main sidebar. Uses #sidebar #id to beat #sidebar .sb-gear{display:flex!important}. */
+#sidebar #sb-bd,#sidebar #sb-freelancers,#sidebar #sb-home{display:none !important}
+#sidebar .sb-mand-head,#sidebar #sb-mandates{display:none !important}
 
 .prof-quickbar{padding:12px 16px;border-bottom:0.5px solid var(--line);background:#fff}
 .pq-role{font-size:13px;font-weight:600;color:var(--navy);margin-bottom:8px}
@@ -636,7 +637,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J9</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J10</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -644,11 +645,11 @@ body{font-size:14px !important; line-height:1.5}
     <a href="#jobs" class="sb-gear" id="sb-jobs" onclick="return navClick(event,openJobs)"><span class="sb-nav-ic">&#128188;</span><span>Jobs</span></a>
     <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><span class="sb-nav-ic">&#10003;</span><span>Tasks</span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
     <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><span class="sb-nav-ic">&#128202;</span><span>Analytics</span></a>
-    <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><span class="sb-nav-ic">&#129302;</span><span>WhatsApp AI</span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
+    <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><span class="sb-nav-ic">&#129302;</span><span>Communications</span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
     <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><span class="sb-nav-ic">&#127970;</span><span>Clients (CRM)</span></a>
     <a href="#freelancers" class="sb-gear" id="sb-freelancers" style="display:none" onclick="return navClick(event,openFreelancerAdmin)"><span class="sb-nav-ic">&#129309;</span><span>Freelancers</span></a>
     <a href="#bd" class="sb-gear" id="sb-bd" style="display:none" onclick="return navClick(event,openBd)"><span class="sb-nav-ic">&#128188;</span><span>BD Command Center</span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
-    <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></a>
+    <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><span class="sb-nav-ic">&#9683;</span><span>Talent</span></a>
   </div>
 
   <div class="sb-mand-head"><span class="t">MY MANDATES</span><button class="a" onclick="openModal('modal-mandate')" title="New mandate">+</button></div>
@@ -685,7 +686,7 @@ body{font-size:14px !important; line-height:1.5}
   <div id="cdb-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff">
       <div>
-        <div style="font-size:14px;font-weight:600">&#128193; Central Database</div>
+        <div style="font-size:14px;font-weight:600">&#128193; Talent</div>
         <div style="font-size:11px;color:#888;margin-top:2px" id="cdb-subtitle">All candidates across all mandates</div>
       </div>
       <button class="btn btn-o" onclick="closeCentralDB()">&#10005; Close</button>
@@ -861,7 +862,7 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:28px;height:28px;border-radius:6px;background:#DCF8C6;display:flex;align-items:center;justify-content:center;font-size:14px">&#129302;</div>
-        <div><div style="font-size:14px;font-weight:600">WhatsApp AI Agent</div><div style="font-size:11px;color:#888;margin-top:1px">Autonomous conversations, escalations &amp; learned responses</div></div>
+        <div><div style="font-size:14px;font-weight:600">Communications</div><div style="font-size:11px;color:#888;margin-top:1px">Autonomous conversations, escalations &amp; learned responses</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <div style="display:flex;border:0.5px solid var(--line);border-radius:8px;overflow:hidden">
@@ -2622,107 +2623,87 @@ async function renderContent(){
 async function renderDashboard(el){
   el.style.padding='0'; el.style.overflow='auto'; el.style.background='#FAFAF9';
   if(!S.mandates.length){
-    el.innerHTML='<div class="empty-state" style="padding:60px 20px"><div class="empty-icon" style="font-size:48px">&#128640;</div><div class="empty-title" style="font-size:18px;margin-bottom:8px">Welcome to HireLab Screener</div><div class="empty-sub" style="margin-bottom:20px">Create your first mandate to begin AI-powered screening.</div><button class="btn btn-g" style="font-size:13px;padding:10px 22px" onclick="openModal(\'modal-mandate\')">+ Create First Mandate</button></div>';
+    el.innerHTML='<div class="empty-state" style="padding:60px 20px"><div class="empty-icon" style="font-size:48px">&#128640;</div><div class="empty-title" style="font-size:18px;margin-bottom:8px">Welcome to HireLab Screener</div><div class="empty-sub" style="margin-bottom:20px">Create your first job to begin AI-powered screening.</div><button class="btn btn-g" style="font-size:13px;padding:10px 22px" onclick="openModal(\'modal-mandate\')">+ Create First Job</button></div>';
     return;
   }
-  el.innerHTML='<div class="loading"><div class="spinner"></div>Loading mandate stats...</div>';
-  const [statsArr, tasksData] = await Promise.all([
-    Promise.all(S.mandates.map(m=>
-
-    req('GET','/mandates/'+m.id+'/candidates').then(cands=>({
-      mid:m.id,
-      total:(cands||[]).length,
-      worth:(cands||[]).filter(c=>c.screening_decision==='worth_opening').length,
-      called:(cands||[]).filter(c=>['Called','Interested','Shared with Client','Placed'].includes(c.stage)).length,
-      placed:(cands||[]).filter(c=>c.stage==='Placed').length,
-      pipeline:(cands||[]).filter(c=>!['Screened-Out',''].includes(c.stage)).length
-    }))
-  )),
-    req('GET', '/tasks').catch(function(){ return {ok:false,tasks:[],counts:{}}; })
+  el.innerHTML='<div class="loading"><div class="spinner"></div>Loading your dashboard...</div>';
+  const [analytics, tasksData, activityData] = await Promise.all([
+    req('GET','/analytics?range=30').catch(function(){return {};}),
+    req('GET','/tasks').catch(function(){return {tasks:[],counts:{}};}),
+    req('GET','/activity?per_page=8').catch(function(){return {activity:[]};})
   ]);
-  const sm={};statsArr.forEach(s=>sm[s.mid]=s);
-  const totActive=S.mandates.filter(m=>m.status==='active').length;
-  const totScreened=statsArr.reduce((a,s)=>a+s.total,0);
-  const totPipeline=statsArr.reduce((a,s)=>a+s.pipeline,0);
-  const totPlaced=statsArr.reduce((a,s)=>a+s.placed,0);
+  const kpi     = (analytics && analytics.kpi) || {};
+  const funnel  = (analytics && analytics.funnel) || [];
+  const allTasks= (tasksData && tasksData.tasks) || [];
+  const focus   = allTasks.filter(function(t){return t.section==='overdue'||t.section==='today';});
+  const activity= (activityData && activityData.activity) || [];
 
-  let html='<div style="padding:20px 16px 4px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">'
-    +[['Active mandates',totActive],['Screened',totScreened],['In pipeline',totPipeline],['Placed',totPlaced]].map(([l,n])=>
-      '<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm)">'
-      +'<div style="font-size:12px;color:var(--muted);font-weight:500">'+l+'</div>'
-      +'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:28px;font-weight:600;letter-spacing:-1px;margin-top:8px;color:var(--ink)">'+n+'</div></div>'
-    ).join('')
+  function statCard(label,val,sub){
+    return '<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 17px;box-shadow:var(--shadow-sm)">'
+      +'<div style="font-size:11.5px;color:var(--muted);font-weight:500">'+label+'</div>'
+      +'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:26px;font-weight:600;letter-spacing:-1px;margin-top:6px;color:var(--ink)">'+val+'</div>'
+      +(sub?'<div style="font-size:10.5px;color:#aaa;margin-top:3px">'+sub+'</div>':'')+'</div>';
+  }
+  var openM = (kpi.open_mandates!=null)?kpi.open_mandates:S.mandates.filter(function(m){return m.status==='active';}).length;
+  var cards='<div style="padding:18px 16px 4px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">'
+    +statCard('Open mandates', openM, ((kpi.active!=null?kpi.active:openM)+' active'+(kpi.hold?', '+kpi.hold+' hold':''))+' &middot; now')
+    +statCard('Placements', (kpi.placed_this_month!=null?kpi.placed_this_month:0), (analytics.range_label||'This period'))
+    +statCard('Avg time-to-fill', (kpi.avg_time_to_fill!=null?kpi.avg_time_to_fill+'d':'&mdash;'), 'created &rarr; placed')
+    +statCard('Candidates in pipeline', (kpi.pipeline_candidates!=null?kpi.pipeline_candidates:'&mdash;'), 'Current snapshot')
     +'</div>';
 
-  html+='<div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">';
-  S.mandates.filter(m=>m.status!=='hold' && m.status!=='closed').forEach(m=>{
-    const s=sm[m.id]||{total:0,worth:0,called:0,placed:0,pipeline:0};
-    const dotC=m.status==='active'?'#1D9E75':m.status==='hold'?'#EF9F27':'#888';
-    const statusLabel=m.status==='active'?'Active':m.status==='hold'?'On Hold':'Closed';
-    const conv=s.total>0?Math.round(s.worth/s.total*100):0;
-    html+='<div class="db-mandate-card" onclick="selectMandate('+m.id+')">'
-      +'<div style="padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;justify-content:space-between;gap:8px">'
-      +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#0a2540;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(m.role)+'</div>'
-      +'<div style="font-size:12px;color:#555;margin-top:3px">'+esc(m.client)+'</div>'
-      +'<div style="font-size:11px;color:#888;margin-top:2px">'+esc(m.location||'')+(m.division?' &middot; '+esc(m.division):'')+'</div></div>'
-      +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'
-      +'<span class="pill" style="background:'+dotC+'22;color:'+dotC+'">'+statusLabel+'</span>'
-      +(m.sop_text?'<span class="pill pill-g" style="font-size:9px">SOP v'+m.sop_version+'</span>':'<span class="pill pill-a" style="font-size:9px">No SOP</span>')
-      +'</div></div>'
-      +'<div style="padding:10px 14px;background:#f9f9f9;border-bottom:0.5px solid #e8e8e8;display:grid;grid-template-columns:repeat(4,1fr);gap:8px">'
-      +[['Screened',s.total,'#555'],['Worth',s.worth,'#1D9E75'],['Called',s.called,'#378ADD'],['Placed',s.placed,'#0F6E56']].map(([l,n,c])=>
-        '<div style="text-align:center"><div style="font-size:18px;font-weight:600;color:'+c+'">'+n+'</div><div style="font-size:9px;color:#888">'+l+'</div></div>'
-      ).join('')+'</div>'
-      +'<div style="padding:9px 14px;display:flex;align-items:center;gap:10px">'
-      +'<div style="flex:1;height:5px;background:#eee;border-radius:3px;overflow:hidden"><div style="height:100%;background:linear-gradient(90deg,#1D9E75,#9FE1CB);width:'+Math.min(conv,100)+'%;border-radius:3px"></div></div>'
-      +'<span style="font-size:10px;color:#888">'+conv+'% conv</span>'
-      +'<span style="font-size:10px;color:#aaa">&#8377;'+m.ctc_min+'&ndash;'+m.ctc_max+'L</span>'
-      +'</div></div>';
-  });
-  html+='</div>';
+  var maxF=1; funnel.forEach(function(f){ if(f.count>maxF)maxF=f.count; });
+  var funnelRows=funnel.map(function(f){
+    var pct=Math.round(f.count*100/maxF);
+    var isPlaced=/plac/i.test(f.label);
+    return '<div style="display:flex;align-items:center;gap:12px;margin-bottom:9px">'
+      +'<div style="width:140px;font-size:12px;color:#444;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(f.label)+'</div>'
+      +'<div style="flex:1;height:22px;background:#efeef5;border-radius:6px;overflow:hidden"><div style="height:100%;width:'+Math.max(pct,2)+'%;background:'+(isPlaced?'#0F6E56':'#7B74E0')+';border-radius:6px"></div></div>'
+      +'<div style="width:44px;text-align:right;font-family:\'IBM Plex Mono\',monospace;font-size:13px;font-weight:600;color:var(--ink)">'+f.count+'</div>'
+      +'</div>';
+  }).join('');
+  var funnelCard = funnel.length ? ('<div style="padding:8px 16px 4px"><div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm)">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:13px;font-weight:700;color:var(--navy)">Pipeline funnel</div><span onclick="openAnalytics()" style="font-size:11px;color:var(--teal-deep);cursor:pointer;font-weight:600">Open Insights &#8594;</span></div>'
+    +funnelRows+'</div></div>') : '';
 
-  // ── Tasks Panel (preview — full view lives in the dedicated Tasks tab) ──
-  var allTasks = (tasksData && tasksData.tasks) || [];
-  var counts   = (tasksData && tasksData.counts) || {};
-  var preview  = allTasks.filter(function(t){ return t.section==='overdue' || t.section==='today'; }).slice(0, 6);
-  var hasAny   = allTasks.length > 0;
-
-  var tasks = '<div style="background:#fff;border-top:1px solid var(--line);padding:18px 20px">';
-  tasks += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">';
-  tasks += '<div style="font-size:13px;font-weight:700;color:var(--navy);display:flex;align-items:center;gap:8px">';
-  tasks += '&#9989; Today&#39;s Follow-ups';
-  if (hasAny) tasks += '<span style="background:#E24B4A;color:#fff;font-size:10px;padding:1px 8px;border-radius:8px;font-weight:600">' + ((counts.overdue||0)+(counts.today||0)) + '</span>';
-  tasks += '</div>';
-  tasks += '<span onclick="openTasks()" style="font-size:11.5px;color:var(--teal-deep);cursor:pointer;font-weight:600">View all &#8594;</span>';
-  tasks += '</div>';
-
-  if (!hasAny) {
-    tasks += '<div style="color:var(--muted);font-size:12px;padding:12px 0">&#127881; All clear — no pending tasks today!</div>';
-  } else if (!preview.length) {
-    tasks += '<div style="color:var(--muted);font-size:12px;padding:12px 0">Nothing due today. <span onclick="openTasks()" style="color:var(--teal-deep);cursor:pointer">See upcoming &#8594;</span></div>';
-  } else {
-    preview.forEach(function(t){
-      var icon = ({reminder:'\u23f0', stale:'\ud83d\udca4', promise:'\ud83d\udcac', submission:'\ud83d\udce5'})[t.type] || '\u2022';
-      var overdue = t.section === 'overdue';
-      tasks += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:7px;margin-bottom:6px;background:'
-        + (overdue ? '#FFF3EE' : 'var(--teal-soft)') + ';border:0.5px solid '
-        + (overdue ? '#FBCBB5' : '#C2EBD8') + ';cursor:pointer" onclick="'+(t.candidate_id?('openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')'):'openResponses()')+'">'
-        + '<div style="flex:1;min-width:0">'
-        + '<div style="font-size:12px;font-weight:600;color:var(--navy)">' + icon + ' ' + esc(t.title||'') + '</div>'
-        + '<div style="font-size:11px;color:var(--muted)">' + esc(t.subtitle||'') + '</div>'
-        + '</div>'
-        + (overdue ? '<span style="font-size:10px;font-weight:700;color:#C0522B">OVERDUE</span>' : '')
-        + '</div>';
-    });
-    if (allTasks.length > preview.length) {
-      tasks += '<div onclick="openTasks()" style="font-size:11px;color:var(--muted);padding:4px 12px;cursor:pointer">...and ' + (allTasks.length - preview.length) + ' more — view all &#8594;</div>';
-    }
+  function taskBadge(t){
+    var m={reminder:['#E7F0FB','#2D6FB3','Reminder'],interview:['#EDE9FB','#6A5AD8','Interview'],stale:['#FDF0E1','#C0842B','Stale'],promise:['#FDF0E1','#C0842B','Promise'],submission:['#E7F6EF','#0F6E56','New'],updated:['#E7F0FB','#2D6FB3','Updated']};
+    var c=m[t.type]||['#eee','#666',(t.type||'Task')];
+    return '<span style="background:'+c[0]+';color:'+c[1]+';font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px">'+c[2]+'</span>';
   }
+  var focusRows = focus.length ? focus.slice(0,8).map(function(t){
+    return '<div style="padding:10px 2px;border-bottom:0.5px solid #f0efe9;cursor:pointer" onclick="'+(t.candidate_id?('openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')'):'openTasks()')+'">'
+      +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+taskBadge(t)+'<span style="font-size:13px;font-weight:600;color:var(--ink)">'+esc(t.title||'')+'</span></div>'
+      +'<div style="font-size:11px;color:var(--muted);margin-top:2px">'+esc(t.subtitle||'')+'</div></div>';
+  }).join('') : '<div style="color:var(--muted);font-size:12px;padding:16px 2px">&#127881; Nothing pending — all caught up!</div>';
+  var focusCard='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm)">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div style="font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em">TODAY&#39;S FOCUS</div><span onclick="openTasks()" style="font-size:11.5px;color:var(--teal-deep);cursor:pointer;font-weight:600">View all</span></div>'
+    +focusRows+'</div>';
 
-  tasks += '</div>';
-  html += tasks;
+  var quick='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm);margin-bottom:14px">'
+    +'<div style="font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em;margin-bottom:12px">QUICK ACTIONS</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:8px">'
+    +'<button class="btn" onclick="openModal(\'modal-mandate\')" style="background:#534AB7;color:#fff;border:none;font-size:12px">+ New Job</button>'
+    +'<button class="btn btn-o" onclick="openCentralDB()" style="font-size:12px">Search Talent</button>'
+    +'<button class="btn btn-o" onclick="openCrm()" style="font-size:12px">Clients</button>'
+    +'<button class="btn btn-o" onclick="openAnalytics()" style="font-size:12px">View insights</button>'
+    +'</div></div>';
 
-  el.innerHTML=html;
+  var actRows = activity.length ? activity.slice(0,8).map(function(a){
+    var act=String(a.action||'').replace(/[_.]/g,' ');
+    return '<div style="padding:8px 2px;border-bottom:0.5px solid #f0efe9">'
+      +'<div style="font-size:12.5px;color:var(--ink)">'+esc(act)+(a.detail?' &mdash; '+esc(a.detail):'')+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);font-family:\'IBM Plex Mono\',monospace">'+esc((a.username||'')+' · '+String(a.created_at||'').slice(0,16))+'</div></div>';
+  }).join('') : '<div style="color:var(--muted);font-size:12px;padding:12px 2px">No recent activity.</div>';
+  var activityCard='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm)">'
+    +'<div style="font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em;margin-bottom:10px">RECENT ACTIVITY</div>'+actRows+'</div>';
+
+  var twoCol='<div style="padding:14px 16px 26px;display:grid;grid-template-columns:1.4fr 1fr;gap:14px;align-items:start">'
+    +'<div>'+focusCard+'</div>'
+    +'<div>'+quick+activityCard+'</div>'
+    +'</div>';
+
+  el.innerHTML = cards + funnelCard + twoCol;
   updateTasksBadge();
 }
 
