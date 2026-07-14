@@ -645,7 +645,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J12</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J13</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -5376,6 +5376,16 @@ function openCvWindow(cvPath) {
 // We reuse the app's own deep-link route (#mandate/<id>/profiles/<cid>) — the
 // same one that refresh-restore uses — so the new window is a full, working
 // app instance with every profile action available.
+// Open a candidate profile in a NEW browser tab (used by the stage-candidates list).
+function openCandidateInNewTab(cid, mid){
+  if (mid) {
+    var url = location.pathname + '#mandate/' + mid + '/profiles/' + cid;
+    var w = window.open(url, '_blank');
+    if (!w) openProfileById(cid, mid);  // popup blocked -> open inline
+  } else {
+    openProfileById(cid, null);
+  }
+}
 function openCandidateWindow(id) {
   var c = (_cdbResults || []).find(function(x){ return x.id === id; });
   if (!c) return;
@@ -8389,6 +8399,8 @@ var _crmMeta = { industries:[], cities:[], statuses:[] };
 //  JOBS — all mandates in one tab
 // ═══════════════════════════════════════════════════════════════════════
 var _jobsFilter='all';
+var _jobsSearch='';
+function setJobsSearch(v){ _jobsSearch=v; renderJobs(); }
 function openJobs(){
   closeSidebarOnMobile();
   _hideAllViews();
@@ -8413,6 +8425,8 @@ function renderJobs(){
   var counts={all:list.length,active:0,hold:0,closed:0};
   list.forEach(function(m){ var s=m.status||'active'; if(s==='active')counts.active++; else if(s==='hold')counts.hold++; else if(s==='closed')counts.closed++; });
   var filtered = f==='all' ? list : list.filter(function(m){ return (m.status||'active')===f; });
+  var q=(_jobsSearch||'').toLowerCase().trim();
+  if(q){ filtered = filtered.filter(function(m){ return ((m.role||'')+' '+(m.client||'')+' '+(m.location||'')+' '+(m.division||'')).toLowerCase().indexOf(q)>=0; }); }
   var chips=[['all','All'],['active','Active'],['hold','On Hold'],['closed','Closed']].map(function(c){
     var on=f===c[0];
     return '<button onclick="setJobsFilter(\''+c[0]+'\')" style="border:0.5px solid '+(on?'#1D9E75':'#ddd')+';background:'+(on?'#E7F6EF':'#fff')+';color:'+(on?'#0F6E56':'#555')+';border-radius:8px;font-size:12px;padding:6px 13px;cursor:pointer;font-weight:'+(on?'600':'500')+'">'+c[1]+' ('+counts[c[0]]+')</button>';
@@ -8431,8 +8445,11 @@ function renderJobs(){
       +((m.ctc_min||m.ctc_max)?'<span style="font-size:10px;color:#aaa">&#8377;'+(m.ctc_min||0)+'&ndash;'+(m.ctc_max||0)+'L</span>':'')
       +'</div></div></div>';
   }).join('');
-  body.innerHTML='<div style="padding:14px 20px;display:flex;gap:8px;flex-wrap:wrap;border-bottom:0.5px solid #e8e8e8;background:#fff;position:sticky;top:0;z-index:1">'+chips+'</div>'
-    +'<div style="padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">'+(cards||'<div style="color:#888;font-size:13px;padding:20px">No jobs in this status.</div>')+'</div>';
+  body.innerHTML='<div style="padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-bottom:0.5px solid #e8e8e8;background:#fff;position:sticky;top:0;z-index:1">'
+    +'<input id="jobs-search" value="'+esc(_jobsSearch||'')+'" oninput="setJobsSearch(this.value)" placeholder="&#128269; Search jobs by role, client, location..." style="flex:1;min-width:220px;font-size:12.5px;padding:8px 14px;border:0.5px solid #ddd;border-radius:20px;background:#FAFAF9;outline:none">'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap">'+chips+'</div></div>'
+    +'<div style="padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">'+(cards||'<div style="color:#888;font-size:13px;padding:20px">'+(q?'No jobs match &ldquo;'+esc(_jobsSearch)+'&rdquo;.':'No jobs in this status.')+'</div>')+'</div>';
+  var _si=document.getElementById('jobs-search'); if(_si && _jobsSearch){ _si.focus(); try{_si.setSelectionRange(_si.value.length,_si.value.length);}catch(e){} }
 }
 
 function openCrm(){
@@ -9573,7 +9590,7 @@ async function renderStageCandidatesPage(stagesStr){
     html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;overflow:hidden">';
     cands.forEach(function(c){
       var staleBadge = c.is_stale ? '<span style="font-size:9px;font-weight:700;background:#FBE4D4;color:#C0522B;padding:2px 7px;border-radius:6px;white-space:nowrap">&#9888; '+r.stale_days+'+ din inactive</span>' : '';
-      html += '<div onclick="openProfileById('+c.id+','+(c.mandate_id||'null')+')" style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:0.5px solid var(--line);cursor:pointer'
+      html += '<div onclick="openCandidateInNewTab('+c.id+','+(c.mandate_id||'null')+')" title="Opens in a new tab" style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:0.5px solid var(--line);cursor:pointer'
         + (c.is_stale?';background:#FFFCF7':'') + '" onmouseover="this.style.background=\'#F7F6F3\'" onmouseout="this.style.background=\''+(c.is_stale?'#FFFCF7':'#fff')+'\'">'
         + avatarHtml(c.name, 34)
         + '<div style="flex:1;min-width:0">'
