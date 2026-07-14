@@ -779,6 +779,10 @@ body{font-size:14px !important; line-height:1.5}
       </div>
       <div style="margin-left:auto"><button class="btn btn-o" onclick="closeAdmin()">&#10005; Close</button></div>
     </div>
+    <div class="cdb-subtab-bar">
+      <button class="cdb-subtab active" onclick="openAdmin()">&#9672; Admin Panel</button>
+      <button class="cdb-subtab" onclick="openFreelancerAdmin()">&#129309; Freelancers</button>
+    </div>
     <div id="admin-body" style="flex:1;overflow:auto;background:#f5f5f5;padding:16px"></div>
   </div>
 
@@ -908,6 +912,10 @@ body{font-size:14px !important; line-height:1.5}
         <button class="btn btn-o" onclick="renderFreelancerAdmin()" style="font-size:11px">&#8635;</button>
         <button class="btn btn-o" onclick="closeFreelancerAdmin()">&#10005; Close</button>
       </div>
+    </div>
+    <div class="cdb-subtab-bar">
+      <button class="cdb-subtab" onclick="openAdmin()">&#9672; Admin Panel</button>
+      <button class="cdb-subtab active" onclick="openFreelancerAdmin()">&#129309; Freelancers</button>
     </div>
     <div id="freelancers-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
   </div>
@@ -1596,7 +1604,8 @@ function openFreelancerAdmin(){
   closeSidebarOnMobile();
   _hideAllViews();
   document.getElementById('freelancers-view').style.display='flex';
-  document.getElementById('sb-freelancers').className='sb-gear active';
+  // Freelancers is now a sub-tab of the Admin Panel, so keep the Admin sidebar item highlighted.
+  var _sba=document.getElementById('sb-admin'); if(_sba) _sba.className='sb-gear active';
   S.settingsOpen=false;
   renderFreelancerAdmin();
   writeHash();
@@ -1604,7 +1613,7 @@ function openFreelancerAdmin(){
 function closeFreelancerAdmin(){
   document.getElementById('freelancers-view').style.display='none';
   document.getElementById('mandate-view').style.display='flex';
-  document.getElementById('sb-freelancers').className='sb-gear';
+  var _sba=document.getElementById('sb-admin'); if(_sba) _sba.className='sb-gear';
 }
 
 async function renderFreelancerAdmin(){
@@ -2139,7 +2148,7 @@ function renderUserBar() {
   var adminBtn = document.getElementById('sb-admin');
   // Freelancers management is admin-only too
   var flBtn = document.getElementById('sb-freelancers');
-  if (flBtn) flBtn.style.display = (S.currentUser && (S.currentUser.role==='admin' || S.currentUser.is_company_admin) && !S.viewingAs) ? 'flex' : 'none';
+  if (flBtn) flBtn.style.display = 'none';  // Freelancers is now a sub-tab of Admin Panel
   if (adminBtn) {
     adminBtn.style.display = (S.currentUser && S.currentUser.role==='admin' && !S.viewingAs) ? 'flex' : 'none';
     var existingBadge = adminBtn.querySelector('.pending-badge');
