@@ -388,6 +388,8 @@ button,input,textarea,select{font-family:inherit}
 .cdb-subtab{padding:9px 16px;font-size:12px;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;color:#888;font-weight:500}
 .cdb-subtab:hover{color:#534AB7}
 .cdb-subtab.active{border-bottom-color:#534AB7;color:#534AB7;font-weight:600}
+/* BD Command Center → sub-tab of Clients (CRM); Freelancers → sub-tab of Admin Panel. Force-hidden from the main sidebar. */
+#sb-bd,#sb-freelancers{display:none !important}
 
 .prof-quickbar{padding:12px 16px;border-bottom:0.5px solid var(--line);background:#fff}
 .pq-role{font-size:13px;font-weight:600;color:var(--navy);margin-bottom:8px}
@@ -644,7 +646,7 @@ body{font-size:14px !important; line-height:1.5}
     <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><span class="sb-nav-ic">&#128202;</span><span>Analytics</span></a>
     <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><span class="sb-nav-ic">&#129302;</span><span>WhatsApp AI</span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
     <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><span class="sb-nav-ic">&#127970;</span><span>Clients (CRM)</span></a>
-    <a href="#freelancers" class="sb-gear" id="sb-freelancers" onclick="return navClick(event,openFreelancerAdmin)"><span class="sb-nav-ic">&#129309;</span><span>Freelancers</span></a>
+    <a href="#freelancers" class="sb-gear" id="sb-freelancers" style="display:none" onclick="return navClick(event,openFreelancerAdmin)"><span class="sb-nav-ic">&#129309;</span><span>Freelancers</span></a>
     <a href="#bd" class="sb-gear" id="sb-bd" style="display:none" onclick="return navClick(event,openBd)"><span class="sb-nav-ic">&#128188;</span><span>BD Command Center</span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
     <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><span class="sb-nav-ic">&#9683;</span><span>Central Database</span></a>
   </div>
