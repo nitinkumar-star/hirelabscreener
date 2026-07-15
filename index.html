@@ -365,6 +365,57 @@ button,input,textarea,select{font-family:inherit}
   #sidebar-backdrop{display:none!important}
 }
 
+/* ═══ COMPREHENSIVE MOBILE PASS — all screens phone-friendly ═══ */
+@media (max-width:768px){
+  html,body{-webkit-text-size-adjust:100%}
+  #main,#content{max-width:100vw;overflow-x:hidden}
+  /* 16px inputs prevent iOS zoom-on-focus */
+  input,select,textarea,.inp{font-size:16px !important}
+
+  /* Topbar compact */
+  #topbar{padding:8px 12px !important;gap:8px !important;flex-wrap:wrap}
+  #topbar-title{max-width:60vw;font-size:15px !important}
+  #topbar .inp,#topbar input{min-width:0 !important}
+
+  /* Collapse common multi-column grids to single column */
+  [style*="grid-template-columns:repeat(4"],
+  [style*="grid-template-columns:repeat(3"],
+  [style*="grid-template-columns:repeat(auto-fill"],
+  [style*="grid-template-columns:1.4fr"],
+  [style*="grid-template-columns:1.5fr"],
+  [style*="grid-template-columns:1.55fr"]{grid-template-columns:1fr !important}
+  .cp-two,.prof-grid{grid-template-columns:1fr !important}
+
+  /* Candidate Profiles: stack list over detail */
+  .prof-wrap{flex-direction:column;height:auto;overflow:visible}
+  .prof-list{width:100% !important;max-height:34vh;border-right:none;border-bottom:1px solid var(--line)}
+  .prof-detail{width:100%;flex:1 1 auto}
+
+  /* Candidate profile page tighter + scrollable tabs */
+  .cp-head{padding:12px 14px 0 !important}
+  .cp-pane{padding:14px 12px 26px !important}
+  .cp-tabbar{padding:0 12px !important;gap:16px !important;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .cp-tab{white-space:nowrap}
+  .cp-card2{padding:13px 14px !important}
+
+  /* Cards / dashboard sections: less padding */
+  .card,.cp-card{padding:12px 14px}
+
+  /* Pipeline / Kanban / wide tables scroll horizontally */
+  .pl-wrap,.kanban,.tbl-scroll,.table-wrap,.cdb-table-wrap{overflow-x:auto !important;-webkit-overflow-scrolling:touch}
+
+  /* Modals nearly full-screen */
+  .modal{width:96vw !important;max-width:96vw !important;max-height:92vh;overflow-y:auto}
+
+  /* Bigger tap targets for menu + primary buttons */
+  #sidebar .sb-gear{padding:12px 12px !important}
+  .btn,.cp-hbtn{min-height:38px}
+
+  /* Jobs / generic content padding */
+  #jobs-body,#content{padding-left:0;padding-right:0}
+}
+
+
 .copy-btn{border:none;background:rgba(0,0,0,.04);color:var(--muted);width:18px;height:18px;border-radius:4px;
   font-size:9px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
   padding:0;line-height:1;transition:background .12s,color .12s}
@@ -672,7 +723,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J23</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J24</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
