@@ -672,7 +672,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J20</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J21</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -3568,7 +3568,7 @@ function renderProfileDetail(c){
   // Reminder popup hidden holder is not needed; reminders are inline.
   // Tab bar
   var tabs=[['overview','Overview'],['resume','Resume'],['comms','Communications'],['interviews','Interviews'],['history','History']];
-  html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
+  html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
   html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+'</div><div>'+keyFacts+reminders+'</div></div></div>';
@@ -3583,6 +3583,9 @@ function renderProfileDetail(c){
 
   el.innerHTML=html;
   window._cpCid=c.id;
+  // Bulletproof tab switching via delegation (in addition to inline onclick)
+  var _tbar=el.querySelector('.cp-tabbar');
+  if(_tbar){ _tbar.addEventListener('click', function(ev){ var b=ev.target.closest('[data-cptab]'); if(b){ ev.preventDefault(); cpTab(b.getAttribute('data-cptab')); } }); }
   attachStageDropdown();
   loadCandidateReminders(c.id);
   attachWAHandlers(c);
@@ -3609,8 +3612,10 @@ function cpTab(name){
 
 async function cpLoadHistory(cid){
   var box=document.getElementById('cp-hist-'+cid); if(!box) return;
-  var r=await req('GET','/candidates/'+cid+'/journey');
-  if(!r||!r.ok||!r.events||!r.events.length){ box.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px">No journey events yet. Add a note in Overview to start.</div>'; return; }
+  var r;
+  try{ r=await req('GET','/candidates/'+cid+'/journey'); }catch(e){ box.innerHTML='<div style="color:#B42318;font-size:12px;padding:12px">Could not load journey: '+esc(String(e))+'</div>'; return; }
+  if(r && r.error){ box.innerHTML='<div style="color:#B42318;font-size:12px;padding:12px">Journey error: '+esc(String(r.error))+'</div>'; return; }
+  if(!r||!r.events||!r.events.length){ box.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px">No journey events yet. Add a note in Overview to start.</div>'; return; }
   var html=''; var lastDate='';
   r.events.forEach(function(e){
     var dl=_journeyDateLabel(e.ts);
@@ -3624,7 +3629,8 @@ async function cpLoadHistory(cid){
 
 async function cpLoadInterviews(cid){
   var box=document.getElementById('cp-interviews-'+cid); if(!box) return;
-  var r=await req('GET','/candidates/'+cid+'/interviews');
+  var r;
+  try{ r=await req('GET','/candidates/'+cid+'/interviews'); }catch(e){ box.innerHTML='<div style="color:#B42318;font-size:12px;padding:12px">Could not load interviews: '+esc(String(e))+'</div>'; return; }
   var ivs=(r&&r.interviews)||[];
   if(!ivs.length){ box.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px">No interviews scheduled yet. Click <b>Schedule interview</b> above — you can send the invite by WhatsApp or email.</div>'; return; }
   box.innerHTML=ivs.map(function(iv){
