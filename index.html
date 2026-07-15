@@ -655,7 +655,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J15</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J16</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -3458,6 +3458,9 @@ function renderProfileDetail(c){
   html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="msg1">&#128075; Intro</button>';
   html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="fu1">&#128260; Follow Up 1</button>';
   html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="fu2">&#128260; Follow Up 2</button>';
+  html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="fu3">&#128260; Follow Up 3</button>';
+  html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="interview">&#128197; Interview invite</button>';
+  html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="docs">&#128196; Docs request</button>';
   html += '<div style="border-top:0.5px solid var(--line);margin:4px 0"></div>';
   html += '<button class="wa-pop-item" onclick="startAiWhatsApp(' + c.id + ',' + (c.mandate_id||'null') + ')" style="color:#0F6E56;font-weight:600">&#129302; Start AI Conversation</button>';
   html += '</div>';
@@ -3831,6 +3834,10 @@ async function deleteCV(cid){
 function buildWAMsg(c,type){
   var tpl = type==='msg1' ? S.settings.template_msg1
            : type==='fu1' ? S.settings.template_fu1
+           : type==='fu2' ? S.settings.template_fu2
+           : type==='fu3' ? (S.settings.template_fu3 || 'Hi {Name}, just following up once more on the {Position} role at {Company}. If it interests you, I would love to take this forward — do let me know.')
+           : type==='interview' ? (S.settings.template_interview || 'Hi {Name}, good news — we would like to schedule an interview for the {Position} role at {Company}. Could you please share your availability?')
+           : type==='docs' ? (S.settings.template_docs || 'Hi {Name}, for the {Position} role at {Company}, could you please share your updated CV along with your current and expected CTC? Thank you.')
            : S.settings.template_fu2;
 
   var firstName = (c.name||'').split(' ')[0] || c.name || '';
@@ -6120,7 +6127,7 @@ function attachWAHandlers(cand) {
       window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg), '_blank');
 
       // Auto log in history
-      var typeLabel = type==='msg1' ? 'Intro message' : type==='fu1' ? 'Follow Up 1' : 'Follow Up 2';
+      var typeLabel = type==='msg1' ? 'Intro message' : type==='fu1' ? 'Follow Up 1' : type==='fu2' ? 'Follow Up 2' : type==='fu3' ? 'Follow Up 3' : type==='interview' ? 'Interview invite' : type==='docs' ? 'Docs request' : 'Message';
       await req('POST', '/candidates/'+cid+'/stage', {stage:null, note:'WhatsApp '+typeLabel+' sent', keep_stage:true});
       var fresh = await req('GET', '/candidates/'+cid);
       refreshHistory(fresh.history||[]);
