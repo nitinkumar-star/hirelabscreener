@@ -6282,7 +6282,28 @@ def get_settings():
         trows = conn.execute('SELECT key,value FROM tenant_settings WHERE company_id=?', (cid,)).fetchall()
         for r in trows:
             out[r['key']] = r['value']
+        # company_name must be THIS tenant's, never the platform/global one.
+        try:
+            crow = conn.execute('SELECT name FROM companies WHERE id=?', (cid,)).fetchone()
+            if crow and crow['name']:
+                out['company_name'] = crow['name']
+        except Exception:
+            pass
     conn.close()
+    # SECURITY: never expose platform secrets (AI keys, passwords, tokens) to any tenant UI.
+    def _is_secret(k):
+        kl = (k or '').lower()
+        if kl.endswith('_api_key') or kl.endswith('_apikey') or kl.endswith('api_key'):
+            return True
+        if 'secret' in kl or 'password' in kl or kl.endswith('_pass') or kl.endswith('_token'):
+            return True
+        return kl in ('claude_api_key','deepseek_api_key','groq_api_key','openai_api_key',
+                      'anthropic_api_key','smtp_pass','smtp_password','wa_token',
+                      'wa_access_token','verify_token','flask_secret_key','secret_key')
+    for k in list(out.keys()):
+        if _is_secret(k):
+            # Tell the UI whether a key is configured, without leaking its value.
+            out[k] = '__set__' if (out.get(k) or '').strip() else ''
     # Ensure workflow_mode is always present so the UI can branch on it.
     if 'workflow_mode' not in out or not out.get('workflow_mode'):
         out['workflow_mode'] = 'agency'
