@@ -672,7 +672,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J21</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J22</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -3517,7 +3517,7 @@ function renderProfileDetail(c){
   workCard+='</div><div id="we-edit" style="display:none"><div id="wh-list">';
   if(!wh.length){ workCard+='<div style="text-align:center;color:var(--muted);font-size:12px;padding:14px;background:#F7F6F2;border-radius:8px">Click + Add Role below.</div>'; }
   else { wh.forEach(function(w,i){workCard+=workCardHTML(w,i);}); }
-  workCard+='</div><div style="margin-top:10px;display:flex;gap:8px;align-items:center"><button class="btn btn-o" style="font-size:11px" onclick="addWorkRow('+c.id+')">+ Add Role</button><button class="btn btn-g" style="font-size:11px" onclick="saveWorkHistory('+c.id+')">&#128190; Save</button><button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;we&#39;,true)">Cancel</button><span id="wh-status" style="font-size:11px;color:var(--muted)"></span></div></div>';
+  workCard+='</div><div style="margin-top:10px;display:flex;gap:8px;align-items:center"><button class="btn btn-o" style="font-size:11px" onclick="addWorkRow('+c.id+')">+ Add Role</button><button class="btn btn-g" style="font-size:11px" onclick="saveWorkHistory('+c.id+')">&#128190; Save</button><button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;we&#39;,true)">Cancel</button><span id="wh-status" style="font-size:11px;color:var(--muted)"></span></div></div></div>';
 
   // Quick Parse
   var quickParse='<div class="cp-card2" style="background:#F9F9F7"><div class="cp-lbl2">Quick Parse — Naukri snippet</div><div style="display:flex;gap:7px"><textarea class="ta" id="raw-snippet" rows="2" placeholder="Paste raw text to auto-fill fields..." style="flex:1;background:#fff"></textarea><button class="btn btn-g" style="align-self:flex-start;white-space:nowrap" onclick="parseSnippet('+c.id+')">&#10024; Parse</button></div></div>';
