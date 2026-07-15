@@ -403,6 +403,12 @@ button,input,textarea,select{font-family:inherit}
 .prof-cols{column-count:2;column-gap:16px;margin-top:4px}
 .prof-cols>.prof-section{-webkit-column-break-inside:avoid;break-inside:avoid;display:inline-block;width:100%;vertical-align:top;margin:0 0 16px}
 @media(max-width:980px){.prof-cols{column-count:1}}
+/* Step 2: cleaner candidate header — uniform neutral action buttons, one WhatsApp accent, softer bar */
+.prof-sticky{box-shadow:0 1px 0 rgba(0,0,0,.02)}
+.prof-sticky .icon-btn{background:#fff !important;border:0.5px solid var(--line) !important;color:#555 !important;box-shadow:none !important;border-radius:9px !important}
+.prof-sticky .icon-btn:hover{background:#F7F6F2 !important;transform:translateY(-1px);box-shadow:0 1px 4px rgba(0,0,0,.06) !important}
+.prof-sticky .icon-btn[title="WhatsApp"]{background:#25D366 !important;color:#fff !important;border-color:transparent !important}
+.prof-sticky .icon-btn[title="WhatsApp"]:hover{background:#1DA851 !important}
 
 .prof-quickbar{padding:12px 16px;border-bottom:0.5px solid var(--line);background:#fff}
 .pq-role{font-size:13px;font-weight:600;color:var(--navy);margin-bottom:8px}
@@ -649,7 +655,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J14</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J15</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
