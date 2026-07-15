@@ -911,14 +911,24 @@ def list_users():
 @app.route('/api/users', methods=['POST'])
 @admin_required
 def create_user():
-    """Super-admin creates a user. By default the new user joins the
-    super-admin's OWN company; pass company_id to place them in another tenant."""
+    """Add a RECRUITER to a company. This never creates a super-admin and, by
+    default, adds the user to the caller's OWN company (agency). To onboard a
+    NEW agency (separate tenant) use signup+approve or the owner create-agency
+    flow — NOT this endpoint."""
     d = request.json or {}
     username = (d.get('username') or '').strip()
     password = d.get('password') or ''
     display = (d.get('display_name') or username).strip()
-    role = d.get('role') if d.get('role') in ('admin', 'user') else 'user'
-    company_id = d.get('company_id') or current_company_id()
+    # SECURITY: this endpoint can never mint a super-admin. Agency members are
+    # recruiters (role='user'); optionally flag as their company's admin.
+    role = 'user'
+    is_company_admin = 1 if d.get('is_company_admin') else 0
+    # Only the platform owner may place a user in a DIFFERENT company; everyone
+    # else (incl. agency admins) can only add to their own company.
+    if is_admin() and d.get('company_id'):
+        company_id = d.get('company_id')
+    else:
+        company_id = current_company_id()
     if not username or len(password) < 4:
         return jsonify({'error': 'Username required and password min 4 chars'}), 400
     conn = get_db()
@@ -926,10 +936,10 @@ def create_user():
     if exists:
         conn.close()
         return jsonify({'error': 'Username already taken'}), 400
-    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_id) VALUES (?,?,?,?,?,?,?)',
-                 (username, hash_password(password), display, role, ts(), 'approved', company_id))
+    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_id,is_company_admin) VALUES (?,?,?,?,?,?,?,?)',
+                 (username, hash_password(password), display, role, ts(), 'approved', company_id, is_company_admin))
     conn.commit(); conn.close()
-    log_activity('create_user', username + ' (' + role + ')')
+    log_activity('create_user', username + ' (recruiter)')
     return jsonify({'ok': True})
 
 @app.route('/api/users/<int:uid>/password', methods=['POST'])
