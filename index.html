@@ -405,6 +405,21 @@ button,input,textarea,select{font-family:inherit}
 .prof-grid .pcol{display:flex;flex-direction:column;gap:16px;min-width:0}
 .prof-grid .pcol .prof-section{margin:0}
 @media(max-width:980px){.prof-grid{grid-template-columns:1fr}}
+/* Clean tabbed candidate page (v2 design) */
+.cp-head{padding:16px 24px 0;background:#fff}
+.cp-back{font-size:12.5px;color:var(--teal-deep);cursor:pointer;display:inline-flex;align-items:center;gap:5px;margin-bottom:12px;font-weight:500}
+.cp-tabbar{display:flex;gap:22px;padding:0 24px;border-bottom:0.5px solid var(--line);background:#fff}
+.cp-tab{padding:12px 2px;font-size:14px;color:var(--muted);cursor:pointer;border-bottom:2.5px solid transparent;font-weight:500;background:none;border-top:none;border-left:none;border-right:none;font-family:inherit}
+.cp-tab:hover{color:var(--ink)}
+.cp-tab.active{color:var(--navy);border-bottom-color:var(--teal);font-weight:600}
+.cp-pane{padding:18px 24px 30px}
+.cp-two{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;align-items:start}
+@media(max-width:980px){.cp-two{grid-template-columns:1fr}}
+.cp-card2{background:#fff;border:0.5px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm);margin-bottom:16px}
+.cp-lbl2{font-size:11px;letter-spacing:.05em;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:10px}
+.cp-hbtn{border:0.5px solid var(--line);background:#fff;border-radius:9px;padding:7px 13px;font-size:12.5px;color:var(--ink);cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px;font-weight:500}
+.cp-hbtn:hover{background:#F7F6F2}
+.cp-fitpill{font-size:11.5px;font-weight:600;background:#EEF3FB;color:#2D6FB3;padding:4px 11px;border-radius:20px}
 /* Step 2: cleaner candidate header — uniform neutral action buttons, one WhatsApp accent, softer bar */
 .prof-sticky{box-shadow:0 1px 0 rgba(0,0,0,.02)}
 .prof-sticky .icon-btn{background:#fff !important;border:0.5px solid var(--line) !important;color:#555 !important;box-shadow:none !important;border-radius:9px !important}
@@ -657,7 +672,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J17</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J18</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -3393,369 +3408,203 @@ function pqPill(icon, text) {
 
 function renderProfileDetail(c){
   const el=document.getElementById('prof-detail');if(!el)return;
-  // Update the browser tab title so opened-in-new-tab windows are identifiable
   if(c && c.name){
     var mroleT = (S.activeMandate && S.activeMandate.role) ? ' — '+S.activeMandate.role : '';
     document.title = c.name + mroleT + ' · HireLab';
   }
-  const skills=c.key_skills||[];const hist=c.history||[];const hasCv=!!(c.cv_path&&c.cv_path!=='');
-  let html='';
-  // Sticky header
-  // Build stage options string separately - avoid nested quotes
-  var stageOptions = PIPELINE_STAGES.map(function(s) {
-    var sel = (s.id === c.stage) ? ' selected' : '';
-    return '<option value="' + esc(s.id) + '"' + sel + '>' + esc(s.id) + '</option>';
-  }).join('');
+  const skills=c.key_skills||[];
+  const hasCv=!!(c.cv_path&&c.cv_path!=='');
+  var fit=c.ai_score||0;
+  var stageOptions = PIPELINE_STAGES.map(function(s){var sel=(s.id===c.stage)?' selected':'';return '<option value="'+esc(s.id)+'"'+sel+'>'+esc(s.id)+'</option>';}).join('');
+  var _stags=[]; try{_stags=JSON.parse(c.status_tags||'[]');}catch(e){_stags=[];}
+  S.statusTags=S.statusTags||{}; S.statusTags[c.id]=_stags;
 
-  html += '<div class="prof-sticky">';
-  // Left: avatar + name + small save + stage/response dropdowns
-  html += '<div style="display:flex;align-items:flex-start;gap:10px;flex:1;min-width:0">';
-  html += avatarHtml(c.name, 52);
-  html += '<div style="min-width:0;flex:1">';
-  // Name row + small Save icon
-  html += '<div style="display:flex;align-items:center;gap:8px">';
-  html += '<div style="font-size:21px;font-weight:700;letter-spacing:-.4px">' + esc(c.name||'') + '</div>';
-  html += '<button class="btn-save-mini" onclick="saveProfile(' + c.id + ')" title="Save All">&#128190;</button>';
-  html += '</div>';
-  // Status tags (quick call-outcome labels) — right under the name
-  var _stags = [];
-  try { _stags = JSON.parse(c.status_tags || '[]'); } catch(e) { _stags = []; }
-  S.statusTags = S.statusTags || {};
-  S.statusTags[c.id] = _stags;
-  html += '<div id="status-tags-' + c.id + '" style="margin-top:6px">' + statusTagsInner(c.id) + '</div>';
-  // Stage + Response dropdowns row
-  html += '<div style="margin-top:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
-  // Stage
-  html += '<div style="display:flex;align-items:center;gap:5px">';
-  html += '<span style="font-size:10px;color:#888">Stage:</span>';
-  html += '<select id="prof-stage-sel" data-cid="' + c.id + '" style="font-size:11.5px;font-weight:700;color:' + stageDot(c.stage||'') + ';border:1.5px solid ' + stageDot(c.stage||'') + ';border-radius:6px;padding:3px 7px;background:#fff;cursor:pointer">';
-  html += stageOptions;
-  html += '</select>';
-  html += '</div>';
-  html += '</div>';  // end dropdowns row
-  html += '</div></div>';  // end name-block + left
-
-  // Right: action buttons (Reminder, WhatsApp dropdown, Email)
-  html += '<div style="display:flex;align-items:center;gap:5px;flex-shrink:0;position:relative">';
-  // AI fit ring
-  var _fitSc = c.ai_score||0;
-  var _fitCol = _fitSc>=85?'#15966A':_fitSc>=70?'#2D6FB3':_fitSc>=55?'#9A6512':'#9C988D';
-  if(_fitSc>0) html += '<div style="text-align:center;margin-right:4px"><div style="width:50px;height:50px;border-radius:50%;border:3px solid '+_fitCol+';display:flex;align-items:center;justify-content:center;font-family:\'IBM Plex Mono\',monospace;font-size:17px;font-weight:600;color:'+_fitCol+'">'+_fitSc+'</div><div style="font-size:9px;color:#A8A498;font-weight:600;margin-top:3px;letter-spacing:.3px">AI FIT</div></div>';
-
-  // Icon-only action buttons (tooltip on hover)
-  var _iconBtn = function(icon, color, bg, border, onclick, title){
-    return '<button class="btn icon-btn" onclick="'+onclick+'" title="'+title+'" style="width:34px;height:34px;padding:0;font-size:15px;background:'+bg+';color:'+color+';border:'+(border||'none')+';display:inline-flex;align-items:center;justify-content:center;border-radius:8px">'+icon+'</button>';
-  };
-
-  // Journey
-  html += _iconBtn('&#128205;', '#5F5E5A', '#fff', '0.5px solid var(--line)',
-    'openJourney('+c.id+')', 'Candidate Journey');
-  // Reminder (with badge)
-  html += '<button class="btn icon-btn" onclick="toggleReminderPop('+c.id+')" title="Reminders" style="width:34px;height:34px;padding:0;font-size:15px;background:#fff;color:#5F5E5A;border:0.5px solid var(--line);position:relative;display:inline-flex;align-items:center;justify-content:center;border-radius:8px">&#9200;<span id="rem-count-'+c.id+'" class="rem-badge" style="display:none"></span></button>';
-  // WhatsApp dropdown
-  html += '<div style="position:relative">';
-  html += '<button class="btn icon-btn" onclick="toggleWAPop('+c.id+')" title="WhatsApp" style="width:34px;height:34px;padding:0;font-size:15px;background:#25D366;color:#fff;border:none;display:inline-flex;align-items:center;justify-content:center;border-radius:8px">&#128172;</button>';
-  html += '<div id="wa-pop-' + c.id + '" class="wa-pop" style="display:none">';
-  html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="normal">&#128172; Normal WhatsApp</button>';
-  html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="msg1">&#128075; Intro</button>';
-  html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="fu1">&#128260; Follow Up 1</button>';
-  html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="fu2">&#128260; Follow Up 2</button>';
-  html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="fu3">&#128260; Follow Up 3</button>';
-  html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="interview">&#128197; Interview invite</button>';
-  html += '<button class="wa-type-btn wa-pop-item" data-cid="' + c.id + '" data-type="docs">&#128196; Docs request</button>';
-  html += '<div style="border-top:0.5px solid var(--line);margin:4px 0"></div>';
-  html += '<button class="wa-pop-item" onclick="startAiWhatsApp(' + c.id + ',' + (c.mandate_id||'null') + ')" style="color:#0F6E56;font-weight:600">&#129302; Start AI Conversation</button>';
-  html += '</div>';
-  html += '</div>';
-  // Call via Phone (moved from bottom section)
-  if(c.phone){
-    html += _iconBtn('&#128241;', '#fff', '#0A2540', 'none',
-      "pushCall('"+esc(c.phone).replace(/'/g,'')+"','"+esc(c.name||'').replace(/'/g,'')+"')",
-      'Call via Phone (push to your mobile)');
-  }
-  // Schedule Interview
-  html += _iconBtn('&#128197;', '#C7841E', '#fff', '0.5px solid #E8CE9E',
-    'openInterviewModal('+c.id+')', 'Schedule Interview');
-  // Request Updated Resume
-  html += _iconBtn('&#128260;', '#BA7517', '#fff', '0.5px solid #E8D3A8',
-    'requestUpdate('+c.id+')', 'Request Updated Resume');
-  // Move
-  html += _iconBtn('&#8644;', '#534AB7', '#fff', '0.5px solid #C9C2E0',
-    'openMoveCandidate('+c.id+')', 'Move Candidate to Another Mandate');
-  // Email
-  html += _iconBtn('&#9993;', '#fff', '#0a2540', 'none',
-    "openEmailPanel("+c.id+",'"+esc(c.email||'').replace(/'/g,"\\'")+"',"+(c.mandate_id||'null')+")",
-    'Send Email');
-  html += '</div>';
-
-  html += '</div>';  // end prof-sticky
-    // Reminder popup (compact, anchored under the header)
-  html += '<div id="rem-pop-' + c.id + '" class="rem-pop" style="display:none">';
-  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div style="font-size:12px;font-weight:600;color:var(--navy)">&#9200; Reminders</div><button onclick="toggleReminderPop(' + c.id + ')" style="background:none;border:none;font-size:16px;color:#999;cursor:pointer;line-height:1;padding:0">&times;</button></div>';
-  html += '<div id="reminder-list-' + c.id + '" style="margin-bottom:10px"></div>';
-  html += '<div style="display:flex;gap:6px;align-items:flex-end">';
-  html += '<div style="flex:1"><label style="font-size:10px;color:#888;display:block;margin-bottom:3px">Date &amp; Time</label>';
-  html += '<input type="datetime-local" class="inp" id="rem-dt-' + c.id + '" style="width:100%;font-size:12px"></div>';
-  html += '<button class="btn btn-g" style="font-size:11px;padding:7px 12px" onclick="addReminder(' + c.id + ')">+ Add</button>';
-  html += '</div>';
-  html += '<input class="inp" id="rem-note-' + c.id + '" placeholder="Short note (optional)" style="width:100%;font-size:12px;margin-top:6px">';
-  html += '</div>';
-
-  html += '<div class="prof-cols">';
-  // Professional details — clean read-only view + pencil to edit
-  html+='<div class="prof-section">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
-    +'<div class="sec-label" style="margin:0">Professional Details</div>'
-    +'<button class="edit-pencil" onclick="toggleEdit(&#39;pd&#39;)" title="Edit">&#9998;</button>'
-    +'</div>';
-  // READ VIEW
-  html+='<div id="pd-view" class="info-grid">'
-    + infoRow('Company', c.company)
-    + infoRow('Designation', c.designation)
-    + infoRow('Experience', c.experience ? (c.experience + ' yrs') : '')
-    + infoRow('Current CTC', c.ctc_current ? ('\u20B9' + c.ctc_current + ' LPA') : '')
-    + infoRow('Expected CTC', c.ctc_expected ? ('\u20B9' + c.ctc_expected + ' LPA') : '')
-    + infoRow('Notice', c.notice_period ? (c.notice_period + ' days') : '')
-    + infoRow('Location', c.location)
-    + infoRow('Preferred Location', c.preferred_location)
-    + infoRow('Education', c.qualification)
-    + infoRow('Phone', c.phone)
-    + infoRow('Email', c.email)
-    + (c.linkedin_url
-        ? '<div class="info-row"><span class="info-label">LinkedIn</span><span class="info-value"><a href="'+esc(c.linkedin_url)+'" target="_blank" style="color:#0A66C2;text-decoration:none;word-break:break-all">&#128279; '+esc(c.linkedin_url)+'</a></span></div>'
-        : infoRow('LinkedIn', ''))
-    +'</div>';
-  // AI Insight From CV — full-width read view (only if present)
-  if(c.ai_insight_cv){
-    html+='<div class="info-row" style="grid-column:1/-1;flex-direction:column;align-items:flex-start"><span class="info-label" style="margin-bottom:4px">AI Insight From CV</span>'
-      +'<div class="info-value" style="white-space:pre-wrap;line-height:1.55">'+esc(c.ai_insight_cv)+'</div></div>';
-  }
-  // EDIT VIEW (hidden by default)
-  html+='<div id="pd-edit" style="display:none">'
-    +'<div class="g2">'
-    +sInp('pf-company','Current Company',c.company||'')+sInp('pf-designation','Designation',c.designation||'')
-    +'</div><div class="g3" style="margin-top:8px">'
-    +sNum('pf-exp','Experience (yrs)',c.experience||'')+sNum('pf-ctc','Current CTC (LPA)',c.ctc_current||'')
-    +sNum('pf-ectc','Expected CTC (LPA)',c.ctc_expected||'')+sNum('pf-notice','Notice (days)',c.notice_period||'')
-    +sInp('pf-location','Location',c.location||'')+sInp('pf-preferred_location','Preferred Location',c.preferred_location||'')
-    +sInp('pf-qualification','Education / Qualification',c.qualification||'')+sInp('pf-phone','Phone',c.phone||'','Add when called')
-    +sInp('pf-email','Email',c.email||'','candidate@email.com')
+  // ── Reusable section snippets ──────────────────────────────────────────
+  // Key Facts (pd-view / pd-edit) with call·WA·email next to phone/email
+  var phoneClean=(c.phone||'').replace(/[^0-9]/g,''); var waNum=phoneClean?(phoneClean.length===10?'91'+phoneClean:phoneClean):'';
+  var phoneRow = c.phone
+    ? '<div class="info-row"><span class="info-label">Phone</span><span class="info-value" style="display:flex;align-items:center;gap:7px;justify-content:flex-end">'+esc(c.phone)
+      +' <span onclick="pushCall(\''+esc(c.phone).replace(/'/g,'')+'\',\''+esc(c.name||'').replace(/'/g,'')+'\')" title="Call" style="cursor:pointer;color:#0A2540">&#128222;</span>'
+      +(waNum?' <a href="https://wa.me/'+waNum+'" target="_blank" title="WhatsApp" style="text-decoration:none;color:#1DA851">&#128172;</a>':'')
+      +'</span></div>'
+    : infoRow('Phone','');
+  var emailRow = c.email
+    ? '<div class="info-row"><span class="info-label">Email</span><span class="info-value" style="display:flex;align-items:center;gap:7px;justify-content:flex-end;word-break:break-all">'+esc(c.email)
+      +' <span onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')" title="Email" style="cursor:pointer;color:#0A2540">&#9993;</span>'
+      +'</span></div>'
+    : infoRow('Email','');
+  var keyFacts='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">Key Facts</div><button class="edit-pencil" onclick="toggleEdit(&#39;pd&#39;)" title="Edit">&#9998;</button></div>'
+    +'<div id="pd-view" class="info-grid">'
+    + infoRow('Company', c.company) + infoRow('Designation', c.designation)
+    + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
+    + infoRow('Expected CTC', c.ctc_expected?('\u20B9'+c.ctc_expected+' LPA'):'') + infoRow('Notice', c.notice_period?(c.notice_period+' days'):'')
+    + infoRow('Location', c.location) + infoRow('Preferred', c.preferred_location)
+    + infoRow('Qualification', c.qualification) + infoRow('Industry', c.industry_background||c.industry)
+    + phoneRow + emailRow
+    + (c.linkedin_url?'<div class="info-row"><span class="info-label">LinkedIn</span><span class="info-value"><a href="'+esc(c.linkedin_url)+'" target="_blank" style="color:#0A66C2;text-decoration:none;word-break:break-all">&#128279; Profile</a></span></div>':'')
     +'</div>'
-    +'<div style="margin-top:8px">'
-    +sInp('pf-linkedin_url','LinkedIn URL',c.linkedin_url||'','https://www.linkedin.com/in/...')
-    +'</div>'
-    +'<div style="margin-top:8px">'
-    +'<label style="display:block;font-size:11px;color:#666;margin-bottom:3px;font-weight:600">AI Insight From CV</label>'
-    +'<textarea id="pf-ai_insight_cv" class="inp" rows="4" placeholder="Short AI-generated summary from the CV" style="width:100%;font-family:inherit;font-size:12px;line-height:1.5;resize:vertical">'+esc(c.ai_insight_cv||'')+'</textarea>'
-    +'</div>'
-    +'<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-g" style="font-size:11px" onclick="saveProfileSection(&#39;pd&#39;,'+c.id+')">&#128190; Save</button>'
-    +'<button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;pd&#39;,true)">Cancel</button></div>'
+    +'<div id="pd-edit" style="display:none">'
+    +'<div class="g2">'+sInp('pf-company','Current Company',c.company||'')+sInp('pf-designation','Designation',c.designation||'')+'</div>'
+    +'<div class="g3" style="margin-top:8px">'+sNum('pf-exp','Experience (yrs)',c.experience||'')+sNum('pf-ctc','Current CTC (LPA)',c.ctc_current||'')+sNum('pf-ectc','Expected CTC (LPA)',c.ctc_expected||'')+sNum('pf-notice','Notice (days)',c.notice_period||'')+sInp('pf-location','Location',c.location||'')+sInp('pf-preferred_location','Preferred Location',c.preferred_location||'')+sInp('pf-qualification','Qualification',c.qualification||'')+sInp('pf-phone','Phone',c.phone||'','Add when called')+sInp('pf-email','Email',c.email||'','candidate@email.com')+'</div>'
+    +'<div style="margin-top:8px">'+sInp('pf-linkedin_url','LinkedIn URL',c.linkedin_url||'','https://www.linkedin.com/in/...')+'</div>'
+    +'<textarea id="pf-ai_insight_cv" class="inp" rows="3" style="width:100%;margin-top:8px;font-size:12px;display:none">'+esc(c.ai_insight_cv||'')+'</textarea>'
+    +'<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-g" style="font-size:11px" onclick="saveProfileSection(&#39;pd&#39;,'+c.id+')">&#128190; Save</button><button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;pd&#39;,true)">Cancel</button></div>'
+    +'</div></div>';
+
+  // Reminders inline (reuses reminder ids so loadCandidateReminders/addReminder work)
+  var reminders='<div class="cp-card2"><div class="cp-lbl2">Reminders</div>'
+    +'<div id="reminder-list-'+c.id+'" style="margin-bottom:10px"></div>'
+    +'<input class="inp" id="rem-note-'+c.id+'" placeholder="Reminder note / comment…" style="width:100%;font-size:12.5px;margin-bottom:7px">'
+    +'<div style="display:flex;gap:7px;align-items:center"><input type="datetime-local" class="inp" id="rem-dt-'+c.id+'" style="flex:1;font-size:12.5px"><button class="btn btn-g" style="font-size:11.5px;padding:8px 13px" onclick="addReminder('+c.id+')">+ Add</button></div>'
     +'</div>';
-  html+='</div>';
-  
+
+  // Summary (violet) — cs-view/cs-edit
+  var summary='<div class="cp-card2" style="background:var(--teal-soft);border-color:transparent">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div class="cp-lbl2" style="margin:0;color:#0F6E56">&#10024; Summary</div><button class="edit-pencil" onclick="toggleEdit(&#39;cs&#39;)" title="Edit" style="background:transparent">&#9998;</button></div>'
+    +'<div id="cs-view">'+(c.career_summary?'<div style="font-size:13px;color:var(--ink);line-height:1.6;white-space:pre-wrap">'+esc(c.career_summary)+'</div>':'<div style="font-size:12.5px;color:var(--muted);font-style:italic">No summary yet — click ✎ to add</div>')+'</div>'
+    +'<div id="cs-edit" style="display:none"><textarea class="ta" id="pf-summary" rows="4">'+esc(c.career_summary||'')+'</textarea><div style="margin-top:8px;display:flex;gap:8px"><button class="btn btn-g" style="font-size:11px" onclick="saveProfileSection(&#39;cs&#39;,'+c.id+')">&#128190; Save</button><button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;cs&#39;,true)">Cancel</button></div></div>'
+    +'</div>';
+
+  // AI Reasoning
+  var score=c.ai_score||0, prob=Math.round(score*0.72);
+  var reasoning=(c.ai_reasoning||'').replace(/^\[Rated vs [^\]]+\]\s*/,'');
+  var hasRating=score>0||reasoning;
+  var scoreColor=score>=80?'#1D9E75':score>=60?'#BA7517':'#E24B4A';
+  var aiReason='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">AI Reasoning'+(score?' · '+score+'%':'')+'</div><button class="btn btn-g" id="rate-btn-'+c.id+'" style="font-size:10px;padding:4px 12px" onclick="rateCandidate('+c.id+')">'+(hasRating?'&#8635; Re-score':'&#10024; Score')+'</button></div>'
+    +'<div id="rating-box-'+c.id+'">'
+    +(hasRating?('<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:'+(reasoning?'10px':'0')+'">'+scoreBar('AI Suitability',score,scoreColor)+scoreBar('Selection Probability',prob,'#BA7517')+'</div>'+(reasoning?'<div style="font-size:12px;color:#555;line-height:1.6">'+esc(reasoning)+'</div>':''))
+      :'<div style="font-size:12px;color:#999">Not scored yet. Click <b>Score</b> to rate against the role.</div>')
+    +'</div></div>';
 
   // Key Skills
-  html+='<div class="prof-section"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="sec-label" style="margin:0">Key Skills</div><button class="btn btn-g" style="font-size:10px;padding:4px 10px" onclick="saveField('+c.id+',\'key_skills\')">Save Skills</button></div>'
-    +'<input class="inp" id="pf-skills" value="'+esc(skills.join(', '))+'" placeholder="LV Switchgear, Channel Sales...">'
-    +'<div id="pf-skills-status" style="font-size:10px;color:#1D9E75;margin-top:4px;min-height:14px"></div></div>';
+  var skillsCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">Key Skills</div><button class="btn btn-g" style="font-size:10px;padding:4px 10px" onclick="saveField('+c.id+',\'key_skills\')">Save</button></div>'
+    +(skills.length?'<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">'+skills.map(function(s){return '<span class="tag-chip">'+esc(s)+'</span>';}).join('')+'</div>':'')
+    +'<input class="inp" id="pf-skills" value="'+esc(skills.join(', '))+'" placeholder="LV Switchgear, Channel Sales..."><div id="pf-skills-status" style="font-size:10px;color:#1D9E75;margin-top:4px;min-height:12px"></div></div>';
 
-  // Product Handles + Function Tags
-  var productTags = []; try { productTags = JSON.parse(c.product_handles || '[]'); } catch(e) {}
-  var funcTags = []; try { funcTags = JSON.parse(c.function_tags || '[]'); } catch(e) {}
+  // Notes
+  var notesCard='<div class="cp-card2"><div class="cp-lbl2">Notes</div>'
+    +'<div style="display:flex;gap:8px"><input class="inp" id="cp-note-'+c.id+'" placeholder="Add a note…" style="flex:1" onkeydown="if(event.key===\'Enter\')cpAddNote('+c.id+')"><button class="btn btn-o" onclick="cpAddNote('+c.id+')">Add</button></div>'
+    +'<div style="font-size:11px;color:var(--muted);margin-top:8px">Notes save to the candidate journey (History tab).</div></div>';
 
-  html += '<div class="prof-section">'
-    + '<div style="display:flex;gap:14px;flex-wrap:wrap">'
+  // Tags (product / function)
+  var productTags=[]; try{productTags=JSON.parse(c.product_handles||'[]');}catch(e){}
+  var funcTags=[]; try{funcTags=JSON.parse(c.function_tags||'[]');}catch(e){}
+  var tagsCard='<div class="cp-card2"><div style="display:flex;gap:14px;flex-wrap:wrap">'
+    +'<div style="flex:1;min-width:200px;position:relative"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div class="cp-lbl2" style="margin:0">Product Handles</div><button class="btn btn-g tag-save-btn" data-cid="'+c.id+'" data-tagtype="product" style="font-size:10px;padding:4px 10px">Save</button></div>'
+    +'<div class="tag-input-box" id="product-tagbox" data-cid="'+c.id+'" data-tagtype="product">'+productTags.map(function(t){return '<span class="tag-chip" data-tag="'+esc(t)+'">'+esc(t)+'<span class="tag-x" data-remove="'+esc(t)+'">&times;</span></span>';}).join('')+'<input class="tag-text-inp" id="product-tag-inp" placeholder="e.g. LV Switchgear..."></div>'
+    +'<div id="product-suggest" class="tag-suggest" style="display:none"></div><div id="product-tag-status" style="font-size:10px;color:#1D9E75;margin-top:4px;min-height:12px"></div></div>'
+    +'<div style="flex:1;min-width:200px;position:relative"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div class="cp-lbl2" style="margin:0">Function</div><button class="btn btn-g tag-save-btn" data-cid="'+c.id+'" data-tagtype="function" style="font-size:10px;padding:4px 10px">Save</button></div>'
+    +'<div class="tag-input-box" id="function-tagbox" data-cid="'+c.id+'" data-tagtype="function">'+funcTags.map(function(t){return '<span class="tag-chip" data-tag="'+esc(t)+'">'+esc(t)+'<span class="tag-x" data-remove="'+esc(t)+'">&times;</span></span>';}).join('')+'<input class="tag-text-inp" id="function-tag-inp" placeholder="e.g. Sales, Marketing..."></div>'
+    +'<div id="function-suggest" class="tag-suggest" style="display:none"></div><div id="function-tag-status" style="font-size:10px;color:#1D9E75;margin-top:4px;min-height:12px"></div></div>'
+    +'</div></div>';
 
-    // Product Handles
-    + '<div style="flex:1;min-width:200px;position:relative">'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
-    + '<div class="sec-label" style="margin:0">Product Handles</div>'
-    + '<button class="btn btn-g tag-save-btn" data-cid="' + c.id + '" data-tagtype="product" style="font-size:10px;padding:4px 10px">Save</button>'
-    + '</div>'
-    + '<div class="tag-input-box" id="product-tagbox" data-cid="' + c.id + '" data-tagtype="product">'
-    + productTags.map(function(t){ return '<span class="tag-chip" data-tag="'+esc(t)+'">'+esc(t)+'<span class="tag-x" data-remove="'+esc(t)+'">&times;</span></span>'; }).join('')
-    + '<input class="tag-text-inp" id="product-tag-inp" placeholder="e.g. LV Switchgear, Wires &amp; Cables...">'
-    + '</div>'
-    + '<div id="product-suggest" class="tag-suggest" style="display:none"></div>'
-    + '<div id="product-tag-status" style="font-size:10px;color:#1D9E75;margin-top:4px;min-height:14px"></div>'
-    + '</div>'
-
-    // Function
-    + '<div style="flex:1;min-width:200px;position:relative">'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
-    + '<div class="sec-label" style="margin:0">Function</div>'
-    + '<button class="btn btn-g tag-save-btn" data-cid="' + c.id + '" data-tagtype="function" style="font-size:10px;padding:4px 10px">Save</button>'
-    + '</div>'
-    + '<div class="tag-input-box" id="function-tagbox" data-cid="' + c.id + '" data-tagtype="function">'
-    + funcTags.map(function(t){ return '<span class="tag-chip" data-tag="'+esc(t)+'">'+esc(t)+'<span class="tag-x" data-remove="'+esc(t)+'">&times;</span></span>'; }).join('')
-    + '<input class="tag-text-inp" id="function-tag-inp" placeholder="e.g. Sales, Marketing...">'
-    + '</div>'
-    + '<div id="function-suggest" class="tag-suggest" style="display:none"></div>'
-    + '<div id="function-tag-status" style="font-size:10px;color:#1D9E75;margin-top:4px;min-height:14px"></div>'
-    + '</div>'
-
-    + '</div></div>';
-  // Career Summary — read view + pencil
-  html+='<div class="prof-section">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="sec-label" style="margin:0">Career Summary</div>'
-    +'<button class="edit-pencil" onclick="toggleEdit(&#39;cs&#39;)" title="Edit">&#9998;</button></div>';
-  html+='<div id="cs-view">'
-    + (c.career_summary ? '<div style="font-size:12.5px;color:var(--ink);line-height:1.6;white-space:pre-wrap">'+esc(c.career_summary)+'</div>' : '<div style="font-size:12px;color:var(--muted);font-style:italic">No summary yet \u2014 click \u270E to add</div>')
-    +'</div>';
-  html+='<div id="cs-edit" style="display:none">'
-    +'<textarea class="ta" id="pf-summary" rows="4" placeholder="Profile summary...">'+esc(c.career_summary||'')+'</textarea>'
-    +'<div style="margin-top:8px;display:flex;gap:8px"><button class="btn btn-g" style="font-size:11px" onclick="saveProfileSection(&#39;cs&#39;,'+c.id+')">&#128190; Save</button>'
-    +'<button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;cs&#39;,true)">Cancel</button></div>'
-    +'<div id="pf-summary-status" style="font-size:10px;color:#1D9E75;margin-top:4px;min-height:14px"></div></div>';
-  html+='</div>';
-  // Work Experience (multi-company) — clean timeline view + pencil to edit
-  var wh = c.work_history || [];
-  html += '<div class="prof-section">';
-  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
-  html += '<div class="sec-label" style="margin:0">Work Experience</div>';
-  html += '<button class="edit-pencil" onclick="toggleEdit(&#39;we&#39;)" title="Edit">&#9998;</button>';
-  html += '</div>';
-  // READ VIEW — timeline
-  html += '<div id="we-view">';
-  if (!wh.length) {
-    html += '<div style="font-size:12px;color:var(--muted);font-style:italic">No work history yet \u2014 click \u270E to add (Naukri-pushed candidates fill this automatically)</div>';
-  } else {
-    html += '<div class="we-timeline">';
-    wh.forEach(function(w) {
-      var period = (w.start_date||'') + (w.is_current ? ' \u2013 Present' : (w.end_date ? ' \u2013 ' + w.end_date : ''));
-      html += '<div class="we-item">'
-        + '<div class="we-dot' + (w.is_current?' we-dot-current':'') + '"></div>'
-        + '<div class="we-content">'
-        + '<div class="we-role">' + esc(w.designation||'') + (w.company ? ' <span style="color:var(--muted);font-weight:400">at</span> ' + esc(w.company) : '') + '</div>'
-        + (period.trim() ? '<div class="we-period">' + esc(period) + '</div>' : '')
-        + (w.description ? '<div class="we-desc">' + esc(w.description) + '</div>' : '')
-        + '</div></div>';
-    });
-    html += '</div>';
-  }
-  html += '</div>';
-  // EDIT VIEW
-  html += '<div id="we-edit" style="display:none">';
-  html += '<div id="wh-list">';
-  if (!wh.length) {
-    html += '<div style="text-align:center;color:var(--muted);font-size:12px;padding:14px;background:#F7F6F2;border-radius:8px">Click + Add Role below to add work history.</div>';
-  } else {
-    wh.forEach(function(w, i) { html += workCardHTML(w, i); });
-  }
-  html += '</div>';
-  html += '<div style="margin-top:10px;display:flex;gap:8px;align-items:center">';
-  html += '<button class="btn btn-o" style="font-size:11px" onclick="addWorkRow(' + c.id + ')">+ Add Role</button>';
-  html += '<button class="btn btn-g" style="font-size:11px" onclick="saveWorkHistory(' + c.id + ')">&#128190; Save</button>';
-  html += '<button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;we&#39;,true)">Cancel</button>';
-  html += '<span id="wh-status" style="font-size:11px;color:var(--muted)"></span>';
-  html += '</div>';
-  html += '</div>';
-  html += '</div>';
+  // Work Experience
+  var wh=c.work_history||[];
+  var workCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">Work Experience</div><button class="edit-pencil" onclick="toggleEdit(&#39;we&#39;)" title="Edit">&#9998;</button></div>'
+    +'<div id="we-view">';
+  if(!wh.length){ workCard+='<div style="font-size:12px;color:var(--muted);font-style:italic">No work history yet — click ✎ to add</div>'; }
+  else { workCard+='<div class="we-timeline">'; wh.forEach(function(w){var period=(w.start_date||'')+(w.is_current?' \u2013 Present':(w.end_date?' \u2013 '+w.end_date:''));workCard+='<div class="we-item"><div class="we-dot'+(w.is_current?' we-dot-current':'')+'"></div><div class="we-content"><div class="we-role">'+esc(w.designation||'')+(w.company?' <span style="color:var(--muted);font-weight:400">at</span> '+esc(w.company):'')+'</div>'+(period.trim()?'<div class="we-period">'+esc(period)+'</div>':'')+(w.description?'<div class="we-desc">'+esc(w.description)+'</div>':'')+'</div></div>';}); workCard+='</div>'; }
+  workCard+='</div><div id="we-edit" style="display:none"><div id="wh-list">';
+  if(!wh.length){ workCard+='<div style="text-align:center;color:var(--muted);font-size:12px;padding:14px;background:#F7F6F2;border-radius:8px">Click + Add Role below.</div>'; }
+  else { wh.forEach(function(w,i){workCard+=workCardHTML(w,i);}); }
+  workCard+='</div><div style="margin-top:10px;display:flex;gap:8px;align-items:center"><button class="btn btn-o" style="font-size:11px" onclick="addWorkRow('+c.id+')">+ Add Role</button><button class="btn btn-g" style="font-size:11px" onclick="saveWorkHistory('+c.id+')">&#128190; Save</button><button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;we&#39;,true)">Cancel</button><span id="wh-status" style="font-size:11px;color:var(--muted)"></span></div></div>';
 
   // Quick Parse
-  html+='<div class="prof-section" style="background:#f9f9f9"><div class="sec-label">Quick Parse &mdash; Naukri snippet</div>'
-    +'<div style="display:flex;gap:7px"><textarea class="ta" id="raw-snippet" rows="2" placeholder="Paste raw text to auto-fill fields..." style="flex:1;background:#fff"></textarea>'
-    +'<button class="btn btn-g" style="align-self:flex-start;white-space:nowrap" onclick="parseSnippet('+c.id+')">&#10024; Parse</button></div></div>';
-  // AI Rating
-  const score=c.ai_score||0,prob=Math.round(score*0.72);
-  const reasoning=c.ai_reasoning||'';
-  let cleanReasoning=reasoning.replace(/^\[Rated vs [^\]]+\]\s*/,'');
-  const hasRating = score>0 || cleanReasoning;
-  const scoreColor=score>=80?'#1D9E75':score>=60?'#BA7517':'#E24B4A';
-  html+='<div class="prof-section">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
-    +'<div class="sec-label" style="margin:0">&#10024; AI Suitability Rating</div>'
-    +'<button class="btn btn-g" id="rate-btn-'+c.id+'" style="font-size:10px;padding:4px 12px" onclick="rateCandidate('+c.id+')">'+(hasRating?'&#8635; Re-rate':'&#10024; Rate Now')+'</button></div>'
-    +'<div id="rating-box-'+c.id+'">'
-    + (hasRating
-        ? ('<div style="background:#f9f9f9;border:0.5px solid #e8e8e8;border-radius:8px;overflow:hidden">'
-            +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px">'
-            + scoreBar('AI Suitability',score,scoreColor) + scoreBar('Selection Probability',prob,'#BA7517') + '</div>'
-            + (cleanReasoning?'<div style="padding:8px 14px;border-top:0.5px solid #e8e8e8;font-size:11px;color:#555;line-height:1.6">'+esc(cleanReasoning)+'</div>':'') + '</div>')
-        : '<div style="background:#f9f9f9;border:0.5px dashed #ddd;border-radius:8px;padding:18px;text-align:center;color:#999;font-size:12px">Not rated yet. Click <strong>Rate Now</strong> to score this candidate against the role.</div>')
-    +'</div>'
-    +'</div>';
-  // ── Call Analysis ─────────────────────────────────────────────────────────
-  html+='<div class="prof-section" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">'
-    +'<div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div>'
-    +'<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Tap Call &rarr; record on your phone &rarr; upload here. Groq transcribes, Claude analyses &amp; auto-updates CTC/company.</div></div>'
-    +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
-    +(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call '+esc(c.phone)+'</a>'):'')
-    +'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">'
-    +'&#127911; Upload Recording <input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label>'
-    +'</div>'
-    +'</div>'
-    +'<div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div>'
-    +'<div id="call-analysis-'+c.id+'"></div>'
-    +'</div>';
+  var quickParse='<div class="cp-card2" style="background:#F9F9F7"><div class="cp-lbl2">Quick Parse — Naukri snippet</div><div style="display:flex;gap:7px"><textarea class="ta" id="raw-snippet" rows="2" placeholder="Paste raw text to auto-fill fields..." style="flex:1;background:#fff"></textarea><button class="btn btn-g" style="align-self:flex-start;white-space:nowrap" onclick="parseSnippet('+c.id+')">&#10024; Parse</button></div></div>';
 
-  html += '</div>';
   // CV
-  html+='<div class="prof-section"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
-    +'<div class="sec-label" style="margin:0">CV / Resume</div>'
-    +'<div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap">';
-  if(hasCv){
-    html+='<span style="font-size:11px;color:#555;background:#f0f0f0;padding:3px 8px;border-radius:4px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.cv_original_name||c.cv_path||'')+'</span>'
-      +'<a href="'+API+'/cv/'+c.cv_path+'" target="_blank" class="btn btn-o" style="font-size:10px;text-decoration:none">&#8595; Download</a>'
-      +'<button class="btn btn-r" style="font-size:10px" onclick="deleteCV('+c.id+')">&#10005; Remove</button>';
-  }
-  html+='<label class="btn btn-g" style="cursor:pointer;font-size:10px">&#128206; '+(hasCv?'Replace':'Upload CV')+' <input type="file" accept=".pdf,.doc,.docx" style="display:none" onchange="uploadCV('+c.id+',this)"></label>'
+  var cvCard='<div class="cp-card2"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">CV / Resume</div><div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap">';
+  if(hasCv){ cvCard+='<a href="'+API+'/cv/'+c.cv_path+'" target="_blank" class="btn btn-o" style="font-size:10px;text-decoration:none">&#8595; Download</a><button class="btn btn-r" style="font-size:10px" onclick="deleteCV('+c.id+')">&#10005; Remove</button>'; }
+  cvCard+='<label class="btn btn-g" style="cursor:pointer;font-size:10px">&#128206; '+(hasCv?'Replace':'Upload')+'<input type="file" accept=".pdf,.doc,.docx" style="display:none" onchange="uploadCV('+c.id+',this)"></label></div></div>';
+  if(hasCv){ var cvLower=(c.cv_path||'').toLowerCase(); var isPdf=cvLower.endsWith('.pdf'); var isDocx=cvLower.endsWith('.docx');
+    if(isPdf||isDocx){ var viewSrc=isPdf?(API+'/cv/'+c.cv_path):(API+'/cv-view/'+c.cv_path); cvCard+='<div style="border:0.5px solid #e8e8e8;border-radius:8px;overflow:hidden"><iframe src="'+viewSrc+'" width="100%" height="720" style="display:block;border:none;background:#fff"></iframe></div>'; }
+    else{ cvCard+='<div style="background:#f9f9f9;border-radius:6px;padding:20px;text-align:center"><a href="'+API+'/cv/'+c.cv_path+'" class="btn btn-g" style="text-decoration:none">&#8595; Download to View</a></div>'; }
+  } else { cvCard+='<div style="border:1.5px dashed #ddd;border-radius:8px;padding:30px;text-align:center;background:#fafafa"><div style="font-size:28px;margin-bottom:8px">&#128196;</div><div style="font-size:13px;color:#555">No CV uploaded</div></div>'; }
+  cvCard+='</div>';
+
+  // Communications: WhatsApp + Email + Call analysis
+  var waCard='<div class="cp-card2"><div class="cp-lbl2" style="color:#0F6E56">&#128172; WhatsApp</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:7px">'
+    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="msg1">Intro</button>'
+    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="fu1">Follow Up 1</button>'
+    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="fu2">Follow Up 2</button>'
+    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="fu3">Follow Up 3</button>'
+    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="interview">Interview invite</button>'
+    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="docs">Docs request</button>'
+    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="normal">Open chat</button>'
+    +'<button class="cp-hbtn" style="color:#0F6E56" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')">&#129302; Start AI Conversation</button>'
     +'</div></div>';
-  if(hasCv){
-    var cvLower=(c.cv_path||'').toLowerCase();
-    var isPdf=cvLower.endsWith('.pdf');
-    var isDocx=cvLower.endsWith('.docx');
-    if(isPdf || isDocx){
-      var viewSrc = isPdf ? (API+'/cv/'+c.cv_path) : (API+'/cv-view/'+c.cv_path);
-      html+='<div style="border:0.5px solid #e8e8e8;border-radius:6px;overflow:hidden">'
-        +'<div style="padding:6px 12px;background:#555;display:flex;align-items:center;justify-content:space-between">'
-        +'<span style="font-size:11px;color:#ddd">'+esc(c.cv_original_name||c.cv_path||'')+(isDocx?' (Word preview)':'')+'</span>'
-        +'<a href="'+API+'/cv/'+c.cv_path+'" target="_blank" style="font-size:10px;color:#9FE1CB">Open in new tab &#8599;</a></div>'
-        +'<iframe src="'+viewSrc+'" width="100%" height="700" style="display:block;border:none;background:#fff"></iframe></div>';
-    }else{
-      html+='<div style="background:#f9f9f9;border:0.5px solid #e8e8e8;border-radius:6px;padding:20px;text-align:center">'
-        +'<div style="font-size:24px;margin-bottom:8px">&#128196;</div>'
-        +'<div style="font-size:12px;font-weight:500;margin-bottom:8px">'+esc(c.cv_original_name||'Word Document')+'</div>'
-        +'<a href="'+API+'/cv/'+c.cv_path+'" class="btn btn-g" style="text-decoration:none">&#8595; Download to View</a></div>';
-    }
-  }else{
-    html+='<div style="border:1.5px dashed #ddd;border-radius:8px;padding:30px;text-align:center;background:#fafafa">'
-      +'<div style="font-size:28px;margin-bottom:8px">&#128196;</div>'
-      +'<div style="font-size:13px;font-weight:500;color:#555;margin-bottom:6px">No CV uploaded</div>'
-      +'<label class="btn btn-g" style="cursor:pointer;display:inline-flex">&#128206; Upload CV (PDF or Word)<input type="file" accept=".pdf,.doc,.docx" style="display:none" onchange="uploadCV('+c.id+',this)"></label></div>';
-  }
-    html+='</div>';
+  var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between"><div class="cp-lbl2" style="margin:0">&#9993; Email</div><button class="cp-hbtn" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">Open email &amp; AI compose &#8594;</button></div><div style="font-size:11.5px;color:var(--muted);margin-top:8px">Full 2-way thread, AI-composed emails, templates and rich text.</div></div>';
+  var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload a call recording — Groq transcribes, Claude analyses &amp; auto-updates CTC/company.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
+
+  // ── Compose page ───────────────────────────────────────────────────────
+  let html='';
+  html+='<div class="cp-head">';
+  html+='<div class="cp-back" onclick="history.back()">&#8592; Back</div>';
+  html+='<div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;padding-bottom:14px">';
+  html+=avatarHtml(c.name,46);
+  html+='<div style="flex:1;min-width:160px"><div style="font-size:20px;font-weight:700;letter-spacing:-.4px;color:var(--navy)">'+esc(c.name||'')+'</div><div style="font-size:13px;color:var(--muted);margin-top:2px">'+esc(c.designation||'')+(c.company?' &middot; '+esc(c.company):'')+'</div><div id="status-tags-'+c.id+'" style="margin-top:6px">'+statusTagsInner(c.id)+'</div></div>';
+  html+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
+  if(fit>0) html+='<span class="cp-fitpill">'+fit+'% fit</span>';
+  html+='<select id="prof-stage-sel" data-cid="'+c.id+'" style="font-size:12.5px;font-weight:600;color:'+stageDot(c.stage||'')+';border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:#fff;cursor:pointer">'+stageOptions+'</select>';
+  html+='<button class="cp-hbtn" style="background:#534AB7;color:#fff;border-color:transparent" onclick="rateCandidate('+c.id+')">&#10024; Re-score</button>';
+  html+='<button class="cp-hbtn" onclick="cpTab(&#39;overview&#39;);toggleEdit(&#39;pd&#39;)">&#9998; Edit</button>';
+  html+='<button class="cp-hbtn" onclick="openMoveCandidate('+c.id+')">&#8644; Move</button>';
+  html+='<button class="cp-hbtn" onclick="requestUpdate('+c.id+')">Request update</button>';
+  html+='<button class="cp-hbtn" style="color:#E24B4A;border-color:#F0C4C4;padding:8px 10px" title="Delete" onclick="deleteCandidate('+c.id+')">&#128465;</button>';
+  html+='<button class="btn-save-mini" onclick="saveProfile('+c.id+')" title="Save all">&#128190;</button>';
+  html+='</div></div></div>';
+
+  // Reminder popup hidden holder is not needed; reminders are inline.
+  // Tab bar
+  var tabs=[['overview','Overview'],['resume','Resume'],['comms','Communications'],['interviews','Interviews'],['history','History']];
+  html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
+
+  // Overview
+  html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+'</div><div>'+keyFacts+reminders+'</div></div></div>';
+  // Resume
+  html+='<div class="cp-pane" id="cp-pane-resume" style="display:none">'+cvCard+workCard+tagsCard+quickParse+'</div>';
+  // Communications
+  html+='<div class="cp-pane" id="cp-pane-comms" style="display:none">'+waCard+emailCard+callCard+'</div>';
+  // Interviews
+  html+='<div class="cp-pane" id="cp-pane-interviews" style="display:none"><div class="cp-card2"><div class="cp-lbl2">Interviews</div><button class="btn btn-g" onclick="openInterviewModal('+c.id+')">&#128197; Schedule / manage interviews</button><div style="font-size:11.5px;color:var(--muted);margin-top:8px">Rounds, scorecards and candidate messages are managed here.</div></div></div>';
+  // History
+  html+='<div class="cp-pane" id="cp-pane-history" style="display:none"><div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between"><div class="cp-lbl2" style="margin:0">Candidate Journey</div><button class="cp-hbtn" onclick="openJourney('+c.id+')">Open full journey &#8594;</button></div><div class="tl" id="cp-hist-'+c.id+'" style="margin-top:12px"></div></div></div>';
+
   el.innerHTML=html;
+  window._cpHistData=c.history||[];
+  window._cpHistCid=c.id;
+  cpRenderHistory(c.id, c.history||[]);
   attachStageDropdown();
   loadCandidateReminders(c.id);
   attachWAHandlers(c);
   attachWAResponseHandlers(c);
   attachEmailHandler(c);
   initTagInputs(c);
-  reflowProfileColumns(el);
 }
 
-// Arrange the profile sections into two controlled columns:
-// RIGHT (narrow) = Professional details (key facts) + tags; LEFT (wide) = everything else.
-// Moves existing DOM nodes (keeps all event listeners intact); CV stays full-width below.
-function reflowProfileColumns(el){
-  try{
-    var cols = el.querySelector('.prof-cols');
-    if(!cols || cols.dataset.reflowed) return;
-    var sections = Array.prototype.slice.call(cols.children);
-    var left = document.createElement('div'); left.className='pcol';
-    var right = document.createElement('div'); right.className='pcol';
-    sections.forEach(function(sec){
-      var toRight = sec.querySelector && (sec.querySelector('#pd-view') || sec.querySelector('#pd-edit') || sec.querySelector('#product-tagbox') || sec.querySelector('#function-tagbox'));
-      (toRight ? right : left).appendChild(sec);
-    });
-    cols.classList.remove('prof-cols');
-    cols.classList.add('prof-grid');
-    cols.dataset.reflowed = '1';
-    cols.appendChild(left);
-    cols.appendChild(right);
-  }catch(e){}
+function cpTab(name){
+  ['overview','resume','comms','interviews','history'].forEach(function(t){
+    var p=document.getElementById('cp-pane-'+t); if(p) p.style.display=(t===name)?'block':'none';
+    var b=document.getElementById('cp-tab-'+t); if(b) b.classList.toggle('active', t===name);
+  });
+}
+
+function cpRenderHistory(cid, hist){
+  var box=document.getElementById('cp-hist-'+cid); if(!box) return;
+  if(!hist || !hist.length){ box.innerHTML='<div style="font-size:12px;color:var(--muted)">No events yet.</div>'; return; }
+  box.innerHTML=hist.slice().reverse().map(function(h){
+    var col=stageDot(h.to_stage||h.from_stage||'');
+    return '<div class="tl-item"><div class="tl-dot" style="background:'+col+'33;border-color:'+col+'"></div><div class="tl-date">'+fmtDate(h.created_at)+'</div><div class="tl-act">'+(h.from_stage&&h.to_stage&&h.from_stage!==h.to_stage?'<span style="color:#888">'+esc(h.from_stage)+'</span> &rarr; <strong>'+esc(h.to_stage)+'</strong>':esc(h.note||h.to_stage||''))+'</div>'+(h.note&&h.from_stage!==h.to_stage?'<div class="tl-note">'+esc(h.note)+'</div>':'')+'</div>';
+  }).join('');
+}
+
+async function cpAddNote(cid){
+  var inp=document.getElementById('cp-note-'+cid); if(!inp) return;
+  var t=(inp.value||'').trim(); if(!t){ toast('WA','Write a note first'); return; }
+  var r=await req('POST','/candidates/'+cid+'/note',{text:t});
+  if(r && (r.ok || r.history)){ inp.value=''; toast('OK','Note added'); var f=await req('GET','/candidates/'+cid); cpRenderHistory(cid, f.history||[]); }
+  else toast('ERR',(r&&r.error)||'Failed');
 }
 
 // Save individual field
