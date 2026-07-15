@@ -672,7 +672,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J22</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J23</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -3544,7 +3544,7 @@ function renderProfileDetail(c){
     +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="normal">Open chat</button>'
     +'<button class="cp-hbtn" style="color:#0F6E56" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')">&#129302; Start AI Conversation</button>'
     +'</div></div>';
-  var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">&#9993; Email thread</div><div style="display:flex;gap:7px"><button class="cp-hbtn" onclick="loadEmailThread('+c.id+')">&#8635; Refresh</button><button class="cp-hbtn" style="background:#185FA5;color:#fff;border-color:transparent" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">&#9998; Compose / AI</button></div></div><div id="email-thread" style="max-height:440px;overflow-y:auto"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading emails…</div></div></div>';
+  var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">&#9993; Email thread</div><div style="display:flex;gap:7px"><button class="cp-hbtn" onclick="cpLoadEmailThread('+c.id+')">&#8635; Refresh</button><button class="cp-hbtn" style="background:#185FA5;color:#fff;border-color:transparent" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">&#9998; Compose / AI</button></div></div><div id="cp-email-'+c.id+'" style="max-height:460px;overflow-y:auto"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading emails…</div></div></div>';
   var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload a call recording — Groq transcribes, Claude analyses &amp; auto-updates CTC/company.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
 
   // ── Compose page ───────────────────────────────────────────────────────
@@ -3571,9 +3571,9 @@ function renderProfileDetail(c){
   html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
-  html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+'</div><div>'+keyFacts+reminders+'</div></div></div>';
+  html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+'</div><div>'+keyFacts+reminders+workCard+'</div></div></div>';
   // Resume
-  html+='<div class="cp-pane" id="cp-pane-resume" style="display:none">'+cvCard+workCard+tagsCard+quickParse+'</div>';
+  html+='<div class="cp-pane" id="cp-pane-resume" style="display:none">'+cvCard+'</div>';
   // Communications
   html+='<div class="cp-pane" id="cp-pane-comms" style="display:none">'+waCard+emailCard+callCard+'</div>';
   // Interviews
@@ -3583,6 +3583,7 @@ function renderProfileDetail(c){
 
   el.innerHTML=html;
   window._cpCid=c.id;
+  window._cpEmail=c.email||'';
   // Bulletproof tab switching via delegation (in addition to inline onclick)
   var _tbar=el.querySelector('.cp-tabbar');
   if(_tbar){ _tbar.addEventListener('click', function(ev){ var b=ev.target.closest('[data-cptab]'); if(b){ ev.preventDefault(); cpTab(b.getAttribute('data-cptab')); } }); }
@@ -3593,7 +3594,7 @@ function renderProfileDetail(c){
   attachEmailHandler(c);
   initTagInputs(c);
   // Pre-load tab content so Communications / Interviews / History are ready
-  try{ loadEmailThread(c.id); }catch(e){}
+  try{ cpLoadEmailThread(c.id); }catch(e){}
   try{ cpLoadInterviews(c.id); }catch(e){}
   try{ cpLoadHistory(c.id); }catch(e){}
 }
@@ -3605,7 +3606,7 @@ function cpTab(name){
   });
   var cid=window._cpCid;
   if(!cid) return;
-  if(name==='comms'){ try{ loadEmailThread(cid); }catch(e){} }
+  if(name==='comms'){ try{ cpLoadEmailThread(cid); }catch(e){} }
   else if(name==='interviews'){ cpLoadInterviews(cid); }
   else if(name==='history'){ cpLoadHistory(cid); }
 }
@@ -3625,6 +3626,25 @@ async function cpLoadHistory(cid){
   });
   if(lastDate!=='') html+='</div>';
   box.innerHTML=html;
+}
+
+async function cpLoadEmailThread(cid){
+  var el=document.getElementById('cp-email-'+cid); if(!el) return;
+  var r;
+  try{ r=await req('GET','/candidates/'+cid+'/email-thread'); }catch(e){ el.innerHTML='<div style="color:#B42318;font-size:12px;padding:8px">Could not load emails: '+esc(String(e))+'</div>'; return; }
+  if(r && r.error){ el.innerHTML='<div style="color:#B42318;font-size:12px;padding:8px">Email error: '+esc(String(r.error))+'</div>'; return; }
+  var msgs=(r&&r.messages)||[];
+  if(!msgs.length){ el.innerHTML='<div style="color:var(--muted);font-size:12px;padding:10px">No emails yet. Use <b>Compose / AI</b> to send one, then Refresh.</div>'; return; }
+  el.innerHTML='<div style="font-size:11px;letter-spacing:.05em;color:var(--muted);font-weight:600;margin-bottom:6px">EMAIL THREAD</div>'+msgs.map(function(m){
+    var sent=(m.direction==='sent');
+    var when=m.sent_at?(_journeyDateLabel(m.sent_at)+' '+_journeyTime(m.sent_at)):'';
+    var contact = sent ? ('Sent &middot; to '+esc(m.to_addr||window._cpEmail||'')) : ('Received &middot; from '+esc(m.from_addr||''));
+    return '<div style="padding:12px 0;border-bottom:0.5px solid var(--line)">'
+      +'<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="font-size:13px;font-weight:700;color:var(--ink)">'+esc(m.subject||'(no subject)')+'</div><div style="font-size:10.5px;color:var(--muted);white-space:nowrap">'+esc(when)+'</div></div>'
+      +'<div style="font-size:12px;color:#475467;white-space:pre-wrap;line-height:1.55;margin-top:6px">'+esc((m.body||'').slice(0,2000))+((m.body||'').length>2000?'…':'')+'</div>'
+      +'<div style="font-size:10.5px;color:var(--teal-deep);margin-top:7px">'+contact+'</div>'
+      +'</div>';
+  }).join('');
 }
 
 async function cpLoadInterviews(cid){
