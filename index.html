@@ -672,7 +672,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J19</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J20</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -3422,10 +3422,20 @@ function renderProfileDetail(c){
   // ── Reusable section snippets ──────────────────────────────────────────
   // Key Facts (pd-view / pd-edit) with call·WA·email next to phone/email
   var phoneClean=(c.phone||'').replace(/[^0-9]/g,''); var waNum=phoneClean?(phoneClean.length===10?'91'+phoneClean:phoneClean):'';
+  var waButtonsHtml = ''
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="msg1">&#128075; Intro</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu1">&#128260; Follow Up 1</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu2">&#128260; Follow Up 2</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu3">&#128260; Follow Up 3</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="interview">&#128197; Interview invite</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="docs">&#128196; Docs request</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="normal">&#128172; Normal chat</button>'
+    +'<div style="border-top:0.5px solid var(--line);margin:4px 0"></div>'
+    +'<button class="wa-pop-item" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')" style="color:#0F6E56;font-weight:600">&#129302; Start AI Conversation</button>';
   var phoneRow = c.phone
-    ? '<div class="info-row"><span class="info-label">Phone</span><span class="info-value" style="display:flex;align-items:center;gap:7px;justify-content:flex-end">'+esc(c.phone)
-      +' <span onclick="pushCall(\''+esc(c.phone).replace(/'/g,'')+'\',\''+esc(c.name||'').replace(/'/g,'')+'\')" title="Call" style="cursor:pointer;color:#0A2540">&#128222;</span>'
-      +(waNum?' <a href="https://wa.me/'+waNum+'" target="_blank" title="WhatsApp" style="text-decoration:none;color:#1DA851">&#128172;</a>':'')
+    ? '<div class="info-row"><span class="info-label">Phone</span><span class="info-value" style="display:flex;align-items:center;gap:8px;justify-content:flex-end">'+esc(c.phone)
+      +' <span onclick="pushCall(\''+esc(c.phone).replace(/'/g,'')+'\',\''+esc(c.name||'').replace(/'/g,'')+'\')" title="Call" style="cursor:pointer;color:#0A2540;font-size:14px">&#128222;</span>'
+      +' <span style="position:relative;display:inline-flex"><button onclick="toggleWAPop('+c.id+')" title="WhatsApp — Intro / Follow-ups / AI" style="border:none;background:#25D366;color:#fff;border-radius:6px;padding:3px 7px;cursor:pointer;font-size:12px;line-height:1">&#128172; &#9662;</button><div id="wa-pop-'+c.id+'" class="wa-pop" style="display:none">'+waButtonsHtml+'</div></span>'
       +'</span></div>'
     : infoRow('Phone','');
   var emailRow = c.email
@@ -3547,17 +3557,6 @@ function renderProfileDetail(c){
   html+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
   if(fit>0) html+='<span class="cp-fitpill">'+fit+'% fit</span>';
   html+='<select id="prof-stage-sel" data-cid="'+c.id+'" style="font-size:12.5px;font-weight:600;color:'+stageDot(c.stage||'')+';border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:#fff;cursor:pointer">'+stageOptions+'</select>';
-  html+='<div style="position:relative"><button class="cp-hbtn" onclick="toggleWAPop('+c.id+')" style="background:#25D366;color:#fff;border-color:transparent">&#128172; WhatsApp &#9662;</button><div id="wa-pop-'+c.id+'" class="wa-pop" style="display:none">'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="msg1">&#128075; Intro</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu1">&#128260; Follow Up 1</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu2">&#128260; Follow Up 2</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu3">&#128260; Follow Up 3</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="interview">&#128197; Interview invite</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="docs">&#128196; Docs request</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="normal">&#128172; Normal</button>'
-    +'<div style="border-top:0.5px solid var(--line);margin:4px 0"></div>'
-    +'<button class="wa-pop-item" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')" style="color:#0F6E56;font-weight:600">&#129302; Start AI Conversation</button>'
-    +'</div></div>';
   html+='<button class="cp-hbtn" style="background:#534AB7;color:#fff;border-color:transparent" onclick="rateCandidate('+c.id+')">&#10024; Re-score</button>';
   html+='<button class="cp-hbtn" onclick="cpTab(&#39;overview&#39;);toggleEdit(&#39;pd&#39;)">&#9998; Edit</button>';
   html+='<button class="cp-hbtn" onclick="openMoveCandidate('+c.id+')">&#8644; Move</button>';
@@ -3590,6 +3589,10 @@ function renderProfileDetail(c){
   attachWAResponseHandlers(c);
   attachEmailHandler(c);
   initTagInputs(c);
+  // Pre-load tab content so Communications / Interviews / History are ready
+  try{ loadEmailThread(c.id); }catch(e){}
+  try{ cpLoadInterviews(c.id); }catch(e){}
+  try{ cpLoadHistory(c.id); }catch(e){}
 }
 
 function cpTab(name){
