@@ -672,7 +672,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J18</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J19</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -3534,7 +3534,7 @@ function renderProfileDetail(c){
     +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="normal">Open chat</button>'
     +'<button class="cp-hbtn" style="color:#0F6E56" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')">&#129302; Start AI Conversation</button>'
     +'</div></div>';
-  var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between"><div class="cp-lbl2" style="margin:0">&#9993; Email</div><button class="cp-hbtn" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">Open email &amp; AI compose &#8594;</button></div><div style="font-size:11.5px;color:var(--muted);margin-top:8px">Full 2-way thread, AI-composed emails, templates and rich text.</div></div>';
+  var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">&#9993; Email thread</div><div style="display:flex;gap:7px"><button class="cp-hbtn" onclick="loadEmailThread('+c.id+')">&#8635; Refresh</button><button class="cp-hbtn" style="background:#185FA5;color:#fff;border-color:transparent" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">&#9998; Compose / AI</button></div></div><div id="email-thread" style="max-height:440px;overflow-y:auto"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading emails…</div></div></div>';
   var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload a call recording — Groq transcribes, Claude analyses &amp; auto-updates CTC/company.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
 
   // ── Compose page ───────────────────────────────────────────────────────
@@ -3547,6 +3547,17 @@ function renderProfileDetail(c){
   html+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
   if(fit>0) html+='<span class="cp-fitpill">'+fit+'% fit</span>';
   html+='<select id="prof-stage-sel" data-cid="'+c.id+'" style="font-size:12.5px;font-weight:600;color:'+stageDot(c.stage||'')+';border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:#fff;cursor:pointer">'+stageOptions+'</select>';
+  html+='<div style="position:relative"><button class="cp-hbtn" onclick="toggleWAPop('+c.id+')" style="background:#25D366;color:#fff;border-color:transparent">&#128172; WhatsApp &#9662;</button><div id="wa-pop-'+c.id+'" class="wa-pop" style="display:none">'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="msg1">&#128075; Intro</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu1">&#128260; Follow Up 1</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu2">&#128260; Follow Up 2</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu3">&#128260; Follow Up 3</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="interview">&#128197; Interview invite</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="docs">&#128196; Docs request</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="normal">&#128172; Normal</button>'
+    +'<div style="border-top:0.5px solid var(--line);margin:4px 0"></div>'
+    +'<button class="wa-pop-item" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')" style="color:#0F6E56;font-weight:600">&#129302; Start AI Conversation</button>'
+    +'</div></div>';
   html+='<button class="cp-hbtn" style="background:#534AB7;color:#fff;border-color:transparent" onclick="rateCandidate('+c.id+')">&#10024; Re-score</button>';
   html+='<button class="cp-hbtn" onclick="cpTab(&#39;overview&#39;);toggleEdit(&#39;pd&#39;)">&#9998; Edit</button>';
   html+='<button class="cp-hbtn" onclick="openMoveCandidate('+c.id+')">&#8644; Move</button>';
@@ -3567,14 +3578,12 @@ function renderProfileDetail(c){
   // Communications
   html+='<div class="cp-pane" id="cp-pane-comms" style="display:none">'+waCard+emailCard+callCard+'</div>';
   // Interviews
-  html+='<div class="cp-pane" id="cp-pane-interviews" style="display:none"><div class="cp-card2"><div class="cp-lbl2">Interviews</div><button class="btn btn-g" onclick="openInterviewModal('+c.id+')">&#128197; Schedule / manage interviews</button><div style="font-size:11.5px;color:var(--muted);margin-top:8px">Rounds, scorecards and candidate messages are managed here.</div></div></div>';
+  html+='<div class="cp-pane" id="cp-pane-interviews" style="display:none"><div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">Interviews</div><button class="btn btn-g" onclick="openInterviewModal('+c.id+')">&#128197; Schedule interview</button></div><div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Schedule rounds and send the invite via WhatsApp or email.</div><div id="cp-interviews-'+c.id+'"><div class="loading" style="padding:12px"><div class="spinner"></div>Loading…</div></div></div></div>';
   // History
-  html+='<div class="cp-pane" id="cp-pane-history" style="display:none"><div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between"><div class="cp-lbl2" style="margin:0">Candidate Journey</div><button class="cp-hbtn" onclick="openJourney('+c.id+')">Open full journey &#8594;</button></div><div class="tl" id="cp-hist-'+c.id+'" style="margin-top:12px"></div></div></div>';
+  html+='<div class="cp-pane" id="cp-pane-history" style="display:none"><div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">Candidate Journey</div><button class="cp-hbtn" onclick="cpLoadHistory('+c.id+')">&#8635; Refresh</button></div><div id="cp-hist-'+c.id+'"><div class="loading" style="padding:12px"><div class="spinner"></div>Loading…</div></div></div></div>';
 
   el.innerHTML=html;
-  window._cpHistData=c.history||[];
-  window._cpHistCid=c.id;
-  cpRenderHistory(c.id, c.history||[]);
+  window._cpCid=c.id;
   attachStageDropdown();
   loadCandidateReminders(c.id);
   attachWAHandlers(c);
@@ -3588,14 +3597,38 @@ function cpTab(name){
     var p=document.getElementById('cp-pane-'+t); if(p) p.style.display=(t===name)?'block':'none';
     var b=document.getElementById('cp-tab-'+t); if(b) b.classList.toggle('active', t===name);
   });
+  var cid=window._cpCid;
+  if(!cid) return;
+  if(name==='comms'){ try{ loadEmailThread(cid); }catch(e){} }
+  else if(name==='interviews'){ cpLoadInterviews(cid); }
+  else if(name==='history'){ cpLoadHistory(cid); }
 }
 
-function cpRenderHistory(cid, hist){
+async function cpLoadHistory(cid){
   var box=document.getElementById('cp-hist-'+cid); if(!box) return;
-  if(!hist || !hist.length){ box.innerHTML='<div style="font-size:12px;color:var(--muted)">No events yet.</div>'; return; }
-  box.innerHTML=hist.slice().reverse().map(function(h){
-    var col=stageDot(h.to_stage||h.from_stage||'');
-    return '<div class="tl-item"><div class="tl-dot" style="background:'+col+'33;border-color:'+col+'"></div><div class="tl-date">'+fmtDate(h.created_at)+'</div><div class="tl-act">'+(h.from_stage&&h.to_stage&&h.from_stage!==h.to_stage?'<span style="color:#888">'+esc(h.from_stage)+'</span> &rarr; <strong>'+esc(h.to_stage)+'</strong>':esc(h.note||h.to_stage||''))+'</div>'+(h.note&&h.from_stage!==h.to_stage?'<div class="tl-note">'+esc(h.note)+'</div>':'')+'</div>';
+  var r=await req('GET','/candidates/'+cid+'/journey');
+  if(!r||!r.ok||!r.events||!r.events.length){ box.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px">No journey events yet. Add a note in Overview to start.</div>'; return; }
+  var html=''; var lastDate='';
+  r.events.forEach(function(e){
+    var dl=_journeyDateLabel(e.ts);
+    if(dl!==lastDate){ if(lastDate!=='') html+='</div>'; html+='<div style="font-size:11px;font-weight:600;color:var(--muted);margin:14px 0 8px 2px">'+esc(dl)+'</div><div style="border-left:1.5px solid #ECEAE3;padding-left:14px;margin-left:4px">'; lastDate=dl; }
+    var col=_journeyColor(e.color);
+    html+='<div style="position:relative;margin-bottom:13px"><span style="position:absolute;left:-21px;top:1px;width:13px;height:13px;border-radius:50%;background:'+col+'22;border:2px solid '+col+'"></span><div style="font-size:12.5px;color:var(--ink);line-height:1.35">'+_journeyIcon(e.icon)+' '+esc(e.text)+'</div><div style="font-size:11px;color:var(--muted);margin-top:1px">'+_journeyTime(e.ts)+'</div></div>';
+  });
+  if(lastDate!=='') html+='</div>';
+  box.innerHTML=html;
+}
+
+async function cpLoadInterviews(cid){
+  var box=document.getElementById('cp-interviews-'+cid); if(!box) return;
+  var r=await req('GET','/candidates/'+cid+'/interviews');
+  var ivs=(r&&r.interviews)||[];
+  if(!ivs.length){ box.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px">No interviews scheduled yet. Click <b>Schedule interview</b> above — you can send the invite by WhatsApp or email.</div>'; return; }
+  box.innerHTML=ivs.map(function(iv){
+    var dt=''; try{dt=new Date(iv.scheduled_at).toLocaleString('en-IN',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});}catch(e){}
+    var done=iv.status==='completed';
+    var badge=done?'<span style="font-size:10px;background:#E8F4EE;color:#127A57;padding:2px 8px;border-radius:6px">Done</span>':'<span style="font-size:10px;background:#FFF3E0;color:#C7841E;padding:2px 8px;border-radius:6px">Scheduled</span>';
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:11px 0;border-bottom:0.5px solid var(--line)"><div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--ink)">'+esc(iv.round_name||'Interview')+'</div><div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+esc(dt)+(iv.mode?' &middot; '+esc(iv.mode):'')+(iv.location?' &middot; '+esc(iv.location):'')+'</div>'+(iv.result?'<div style="font-size:11px;color:#555;margin-top:2px">Result: '+esc(iv.result)+'</div>':'')+'</div>'+badge+'</div>';
   }).join('');
 }
 
@@ -3603,7 +3636,7 @@ async function cpAddNote(cid){
   var inp=document.getElementById('cp-note-'+cid); if(!inp) return;
   var t=(inp.value||'').trim(); if(!t){ toast('WA','Write a note first'); return; }
   var r=await req('POST','/candidates/'+cid+'/note',{text:t});
-  if(r && (r.ok || r.history)){ inp.value=''; toast('OK','Note added'); var f=await req('GET','/candidates/'+cid); cpRenderHistory(cid, f.history||[]); }
+  if(r && (r.ok || r.history)){ inp.value=''; toast('OK','Note added'); cpLoadHistory(cid); }
   else toast('ERR',(r&&r.error)||'Failed');
 }
 
