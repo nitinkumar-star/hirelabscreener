@@ -400,10 +400,13 @@ def auth_signup():
     password = d.get('password') or ''
     display = (d.get('display_name') or username).strip()
     company = (d.get('company_name') or '').strip()
+    email = (d.get('email') or '').strip().lower()
     if not username or len(password) < 4:
         return jsonify({'error': 'Username required and password min 4 chars'}), 400
     if not re.match(r'^[a-z0-9._-]{3,40}$', username):
         return jsonify({'error': 'Username can only contain letters, numbers, dots, dashes and underscores'}), 400
+    if not email or '@' not in email:
+        return jsonify({'error': 'A valid email is required (used for password reset)'}), 400
     conn = get_db()
     exists = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
     if exists:
@@ -418,9 +421,9 @@ def auth_signup():
     conn.execute("INSERT INTO companies (name,status,plan,created_at) VALUES (?,?,?,?)",
                  (company_label, 'pending', 'standard', ts()))
     new_company_id = conn.execute('SELECT id FROM companies ORDER BY id DESC LIMIT 1').fetchone()['id']
-    conn.execute('''INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,requested_at,company_id,is_company_admin)
-                     VALUES (?,?,?,?,?,?,?,?,?,1)''',
-                 (username, hash_password(password), display, 'user', ts(), 'pending', company, ts(), new_company_id))
+    conn.execute('''INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,requested_at,company_id,is_company_admin,email)
+                     VALUES (?,?,?,?,?,?,?,?,?,1,?)''',
+                 (username, hash_password(password), display, 'user', ts(), 'pending', company, ts(), new_company_id, email))
     conn.commit(); conn.close()
     log_activity('signup_requested', username + (' (' + company + ')' if company else ''))
     return jsonify({'ok': True, 'pending': True})
@@ -521,6 +524,74 @@ def auth_login():
 def auth_logout():
     log_activity('logout')
     session.clear()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/auth/forgot', methods=['POST'])
+def auth_forgot():
+    """Email a password-reset link. Always returns a generic success so we never
+    reveal whether an account exists. Reset link points at /?reset=<token>."""
+    d = request.json or {}
+    ident = (d.get('identifier') or d.get('username') or d.get('email') or '').strip()
+    generic = {'ok': True, 'message': 'If an account matches, a reset link has been sent to its email.'}
+    if not ident:
+        return jsonify(generic)
+    conn = get_db()
+    u = conn.execute('SELECT id, username, COALESCE(email, "") AS email FROM users WHERE lower(username)=lower(?) OR lower(COALESCE(email,""))=lower(?)',
+                     (ident, ident)).fetchone()
+    if not u:
+        conn.close(); return jsonify(generic)
+    target_email = (u['email'] or '').strip()
+    if not target_email and '@' in u['username']:
+        target_email = u['username'].strip()
+    if not target_email:
+        conn.close(); return jsonify(generic)  # no email on file — can't send
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.datetime.now() + datetime.timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute('INSERT INTO password_resets (token,user_id,expires_at,used,created_at) VALUES (?,?,?,0,?)',
+                 (token, u['id'], expires, ts()))
+    conn.commit(); conn.close()
+    base = request.host_url.rstrip('/')
+    link = f'{base}/?reset={token}'
+    subject = 'Reset your HireLab Screener password'
+    plain = (f'Hi {u["username"]},\n\nWe received a request to reset your password. '
+             f'Click the link below (valid for 1 hour):\n\n{link}\n\n'
+             f'If you did not request this, you can safely ignore this email.')
+    html = (f'<div style="font-family:sans-serif;font-size:14px;color:#333">'
+            f'<p>Hi {u["username"]},</p>'
+            f'<p>We received a request to reset your password. This link is valid for <b>1 hour</b>:</p>'
+            f'<p><a href="{link}" style="display:inline-block;background:#13A37E;color:#fff;'
+            f'padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Reset password</a></p>'
+            f'<p style="font-size:12px;color:#888">Or paste this URL:<br>{link}</p>'
+            f'<p style="font-size:12px;color:#888">If you did not request this, you can ignore this email.</p></div>')
+    try:
+        _smtp_send(target_email, subject, plain, html)
+    except Exception as e:
+        print('[forgot] email send failed:', e)
+    return jsonify(generic)
+
+
+@app.route('/api/auth/reset', methods=['POST'])
+def auth_reset():
+    """Complete a password reset using a valid token."""
+    d = request.json or {}
+    token = (d.get('token') or '').strip()
+    password = d.get('password') or ''
+    if not token or len(password) < 4:
+        return jsonify({'error': 'Invalid link or password too short (min 4 chars)'}), 400
+    conn = get_db()
+    row = conn.execute('SELECT token,user_id,expires_at,used FROM password_resets WHERE token=?', (token,)).fetchone()
+    if not row or row['used']:
+        conn.close(); return jsonify({'error': 'This reset link is invalid or already used.'}), 400
+    try:
+        exp = datetime.datetime.strptime(row['expires_at'], '%Y-%m-%d %H:%M:%S')
+    except Exception:
+        exp = datetime.datetime.now() - datetime.timedelta(seconds=1)
+    if datetime.datetime.now() > exp:
+        conn.close(); return jsonify({'error': 'This reset link has expired. Please request a new one.'}), 400
+    conn.execute('UPDATE users SET password_hash=? WHERE id=?', (hash_password(password), row['user_id']))
+    conn.execute('UPDATE password_resets SET used=1 WHERE token=?', (token,))
+    conn.commit(); conn.close()
     return jsonify({'ok': True})
 
 
@@ -1752,6 +1823,17 @@ def init_db():
         c.execute('ALTER TABLE users ADD COLUMN is_company_admin INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
         pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    c.execute('''CREATE TABLE IF NOT EXISTS password_resets (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER,
+        expires_at TEXT,
+        used INTEGER DEFAULT 0,
+        created_at TEXT
+    )''')
     # Billing columns on companies (for existing DBs)
     for col, defn in [
         ('billing_status', "TEXT DEFAULT 'trial'"),

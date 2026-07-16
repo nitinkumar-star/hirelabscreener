@@ -723,7 +723,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J24</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J25</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -1661,6 +1661,13 @@ async function init(){
   const cont = document.getElementById('content');
   cont.innerHTML = '<div style="padding:40px;text-align:center"><div class="spinner" style="margin:0 auto 16px"></div><div style="font-size:13px;color:#888">Connecting to server...</div></div>';
 
+  // ── Password-reset link: /?reset=<token> ──
+  try {
+    var _rp = new URLSearchParams(location.search);
+    var _rt = _rp.get('reset');
+    if (_rt) { window._resetToken = _rt; showAuthScreen('reset'); return; }
+  } catch(e){}
+
   // ── AUTH GATE: check whether to show setup / login / app ──
   let status = await req('GET','/auth/status');
   if (status.error) {
@@ -2180,40 +2187,109 @@ function showAuthScreen(mode) {
   var existing = document.getElementById('auth-overlay');
   if (existing) existing.remove();
 
-  var isSetup = (mode === 'setup');
+  var isSetup  = (mode === 'setup');
   var isSignup = (mode === 'signup');
-  var title = isSetup ? 'Create your admin account' : (isSignup ? 'Request an account' : 'Sign in to continue');
+  var isForgot = (mode === 'forgot');
+  var isReset  = (mode === 'reset');
+  var title = isSetup ? 'Create your admin account'
+            : isSignup ? 'Request an account'
+            : isForgot ? 'Reset your password'
+            : isReset  ? 'Set a new password'
+            : 'Sign in to continue';
   var ov = document.createElement('div');
   ov.id = 'auth-overlay';
   ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:linear-gradient(135deg,#0E2A47,#16395E);display:flex;align-items:center;justify-content:center;padding:20px';
-  ov.innerHTML =
-    '<div style="background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);width:100%;max-width:380px;padding:32px">'
+
+  var h = '<div style="background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);width:100%;max-width:380px;padding:32px">'
     + '<div style="text-align:center;margin-bottom:24px">'
     + '<div style="font-size:22px;font-weight:800;color:#0E2A47;letter-spacing:-0.5px">HireLab Screener</div>'
     + '<div style="font-size:12px;color:#8A92A0;margin-top:4px">' + title + '</div>'
-    + '</div>'
-    + (isSetup ? '<input class="inp" id="auth-display" placeholder="Your name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
-    + (isSignup ? '<input class="inp" id="auth-display" placeholder="Your name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
-    + (isSignup ? '<input class="inp" id="auth-company" placeholder="Agency / company name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
-    + '<input class="inp" id="auth-user" placeholder="Username" autocomplete="username" style="margin-bottom:10px;width:100%;box-sizing:border-box">'
-    + '<input class="inp" id="auth-pass" type="password" placeholder="Password" autocomplete="' + (isSetup||isSignup?'new-password':'current-password') + '" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;'+mode+'&#39;)">'
-    + ((isSetup||isSignup) ? '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">Password must be at least 4 characters</div>' : '<div style="height:14px"></div>')
-    + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="submitAuth(&#39;'+mode+'&#39;)">' + (isSetup ? 'Create Admin & Continue' : (isSignup ? 'Request Account' : 'Sign In')) + '</button>'
-    + '<div id="auth-err" style="color:#C0522B;font-size:12px;margin-top:12px;text-align:center;min-height:16px"></div>'
-    + (isSetup ? '<div style="font-size:10.5px;color:#A0A0A0;margin-top:16px;text-align:center;line-height:1.5">This is the first account. It will be the <b>admin</b> and own all existing data. You can add team members later.</div>' : '')
-    + (!isSetup ? ('<div style="text-align:center;margin-top:14px;font-size:12px;color:#8A92A0">'
-        + (isSignup
-            ? 'Already have an account? <a href="#" onclick="showAuthScreen(&#39;login&#39;);return false" style="color:#13A37E;font-weight:600;text-decoration:none">Sign in</a>'
-            : 'New here? <a href="#" onclick="showAuthScreen(&#39;signup&#39;);return false" style="color:#13A37E;font-weight:600;text-decoration:none">Request an account</a>')
-        + '</div>') : '')
-    + (isSignup ? '<div style="font-size:10.5px;color:#A0A0A0;margin-top:12px;text-align:center;line-height:1.5">Your request will be reviewed by an admin. You will be able to sign in once approved.</div>' : '')
     + '</div>';
+
+  if (isReset) {
+    h += '<input class="inp" id="auth-pass" type="password" placeholder="New password" autocomplete="new-password" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;reset&#39;)">'
+      + '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">At least 4 characters</div>'
+      + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="submitAuth(&#39;reset&#39;)">Set new password</button>';
+  } else if (isForgot) {
+    h += '<input class="inp" id="auth-user" placeholder="Your username or email" autocomplete="username" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;forgot&#39;)">'
+      + '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">We&#39;ll email you a reset link (valid 1 hour).</div>'
+      + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="submitAuth(&#39;forgot&#39;)">Send reset link</button>';
+  } else {
+    h += (isSetup ? '<input class="inp" id="auth-display" placeholder="Your name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
+      + (isSignup ? '<input class="inp" id="auth-display" placeholder="Your name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
+      + (isSignup ? '<input class="inp" id="auth-company" placeholder="Agency / company name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
+      + (isSignup ? '<input class="inp" id="auth-email" type="email" placeholder="Email (for password reset)" autocomplete="email" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
+      + '<input class="inp" id="auth-user" placeholder="Username" autocomplete="username" style="margin-bottom:10px;width:100%;box-sizing:border-box">'
+      + '<input class="inp" id="auth-pass" type="password" placeholder="Password" autocomplete="' + (isSetup||isSignup?'new-password':'current-password') + '" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;'+mode+'&#39;)">'
+      + ((isSetup||isSignup) ? '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">Password must be at least 4 characters</div>' : '<div style="height:14px"></div>')
+      + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="submitAuth(&#39;'+mode+'&#39;)">' + (isSetup ? 'Create Admin & Continue' : (isSignup ? 'Request Account' : 'Sign In')) + '</button>';
+  }
+
+  h += '<div id="auth-err" style="color:#C0522B;font-size:12px;margin-top:12px;text-align:center;min-height:16px"></div>';
+
+  if (isForgot || isReset) {
+    h += '<div style="text-align:center;margin-top:14px;font-size:12px;color:#8A92A0"><a href="#" onclick="showAuthScreen(&#39;login&#39;);return false" style="color:#13A37E;font-weight:600;text-decoration:none">Back to sign in</a></div>';
+  } else if (isSetup) {
+    h += '<div style="font-size:10.5px;color:#A0A0A0;margin-top:16px;text-align:center;line-height:1.5">This is the first account. It will be the <b>admin</b> and own all existing data. You can add team members later.</div>';
+  } else {
+    h += '<div style="text-align:center;margin-top:14px;font-size:12px;color:#8A92A0">'
+      + (isSignup
+          ? 'Already have an account? <a href="#" onclick="showAuthScreen(&#39;login&#39;);return false" style="color:#13A37E;font-weight:600;text-decoration:none">Sign in</a>'
+          : 'New here? <a href="#" onclick="showAuthScreen(&#39;signup&#39;);return false" style="color:#13A37E;font-weight:600;text-decoration:none">Request an account</a>')
+      + '</div>';
+    if (!isSignup) {
+      h += '<div style="text-align:center;margin-top:8px;font-size:12px"><a href="#" onclick="showAuthScreen(&#39;forgot&#39;);return false" style="color:#8A92A0;text-decoration:none">Forgot password?</a></div>';
+    }
+    if (isSignup) {
+      h += '<div style="font-size:10.5px;color:#A0A0A0;margin-top:12px;text-align:center;line-height:1.5">Your request will be reviewed by an admin. You will be able to sign in once approved.</div>';
+    }
+  }
+  h += '</div>';
+  ov.innerHTML = h;
   document.body.appendChild(ov);
-  setTimeout(function(){ var f=document.getElementById(isSetup||isSignup?'auth-display':'auth-user'); if(f) f.focus(); }, 100);
+  setTimeout(function(){ var fid = isReset ? 'auth-pass' : ((isSetup||isSignup)?'auth-display':'auth-user'); var f=document.getElementById(fid); if(f) f.focus(); }, 100);
 }
+
 
 async function submitAuth(mode) {
   var err = document.getElementById('auth-err');
+
+  if (mode === 'forgot') {
+    var idv = (document.getElementById('auth-user').value || '').trim();
+    if (!idv) { err.textContent = 'Enter your username or email'; return; }
+    err.textContent = 'Sending...';
+    await req('POST', '/auth/forgot', { identifier: idv });
+    var of = document.getElementById('auth-overlay');
+    if (of) { of.querySelector('div').innerHTML =
+      '<div style="text-align:center;padding:8px 0">'
+      + '<div style="font-size:36px;margin-bottom:10px">&#128231;</div>'
+      + '<div style="font-size:16px;font-weight:700;color:#0E2A47;margin-bottom:8px">Check your email</div>'
+      + '<div style="font-size:12.5px;color:#8A92A0;line-height:1.5;margin-bottom:20px">If an account matches, a password reset link has been sent. It is valid for 1 hour.</div>'
+      + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="showAuthScreen(&#39;login&#39;)">Back to Sign In</button>'
+      + '</div>'; }
+    return;
+  }
+
+  if (mode === 'reset') {
+    var np = document.getElementById('auth-pass').value || '';
+    if (np.length < 4) { err.textContent = 'Password must be at least 4 characters'; return; }
+    err.textContent = 'Please wait...';
+    var rr = await req('POST', '/auth/reset', { token: window._resetToken || '', password: np });
+    if (rr.ok) {
+      try { history.replaceState(null, '', location.pathname); } catch(e){}
+      window._resetToken = null;
+      var orr = document.getElementById('auth-overlay');
+      if (orr) { orr.querySelector('div').innerHTML =
+        '<div style="text-align:center;padding:8px 0">'
+        + '<div style="font-size:36px;margin-bottom:10px">&#9989;</div>'
+        + '<div style="font-size:16px;font-weight:700;color:#0E2A47;margin-bottom:8px">Password updated</div>'
+        + '<div style="font-size:12.5px;color:#8A92A0;line-height:1.5;margin-bottom:20px">Your password has been changed. You can sign in now.</div>'
+        + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="showAuthScreen(&#39;login&#39;)">Go to Sign In</button>'
+        + '</div>'; }
+    } else { err.textContent = rr.error || 'Failed'; }
+    return;
+  }
+
   var user = (document.getElementById('auth-user').value || '').trim();
   var pass = document.getElementById('auth-pass').value || '';
   if (!user || !pass) { err.textContent = 'Enter username and password'; return; }
@@ -2227,6 +2303,8 @@ async function submitAuth(mode) {
     payload.display_name = (document.getElementById('auth-display').value || '').trim();
     var compEl = document.getElementById('auth-company');
     payload.company_name = compEl ? (compEl.value || '').trim() : '';
+    var emEl = document.getElementById('auth-email');
+    payload.email = emEl ? (emEl.value || '').trim() : '';
     endpoint = '/auth/signup';
   }
   err.textContent = 'Please wait...';
@@ -6887,6 +6965,7 @@ async function rateCandidate(cid) {
 //  ADMIN — Team Overview (summary + view-as)
 // ═══════════════════════════════════════════════════════════
 function openAdmin() {
+  if (!(S.currentUser && S.currentUser.role === 'admin')) { try{ toast('WA','Admin access only'); }catch(e){} return; }
   closeSidebarOnMobile();
   _hideAllViews();
   ['mandate-view','settings-view','central-view','cdb-view','responses-view','tasks-view','ai-view'].forEach(function(id){
