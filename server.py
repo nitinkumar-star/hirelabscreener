@@ -171,6 +171,19 @@ def real_user_id():
     returns). Used for per-recruiter mandate assignment."""
     return session.get('user_id')
 
+
+def _tenant_owns_candidate(conn, cid):
+    """True if candidate `cid` belongs to the current tenant (company).
+    owner_id stores the company id, so this enforces cross-agency isolation."""
+    r = conn.execute('SELECT owner_id FROM candidates WHERE id=?', (cid,)).fetchone()
+    return bool(r) and r['owner_id'] == effective_company_id()
+
+
+def _tenant_owns_mandate(conn, mid):
+    """True if mandate `mid` belongs to the current tenant (company)."""
+    r = conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
+    return bool(r) and r['owner_id'] == effective_company_id()
+
 def log_activity(action, detail='', entity_type='', entity_id=0, meta=None,
                  actor_type='user', actor_name=''):
     """Universal activity timeline. Backward-compatible: existing callers that
@@ -3985,6 +3998,7 @@ def cosine(a, b):
 
 
 @app.route('/api/candidates/<int:cid>/rate', methods=['POST'])
+@login_required
 def rate_candidate(cid):
     """Rate a candidate against their mandate's JD using DeepSeek.
     Returns AI suitability % + selection probability % + reasoning."""
@@ -3993,7 +4007,8 @@ def rate_candidate(cid):
         return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
 
     conn = get_db()
-    c = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    c = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
+                     (cid, effective_company_id())).fetchone()
     if not c:
         conn.close()
         return jsonify({'error': 'Candidate not found'}), 404
@@ -6503,6 +6518,7 @@ def get_tag_suggestions(tag_type):
 
 
 @app.route('/api/candidates/<int:cid>/tags', methods=['POST'])
+@login_required
 def save_candidate_tags(cid):
     """Save Product Handles or Function tags for a candidate."""
     d = request.json or {}
@@ -6516,6 +6532,8 @@ def save_candidate_tags(cid):
         return jsonify({'ok': False, 'error': 'tags must be a list'}), 400
     tags = [str(t).strip() for t in tags if str(t).strip()]
     conn = get_db()
+    if not _tenant_owns_candidate(conn, cid):
+        conn.close(); return jsonify({'ok': False, 'error': 'Not found'}), 404
     conn.execute(f'UPDATE candidates SET {col}=?, updated_at=? WHERE id=?', (json.dumps(tags), ts(), cid))
     conn.commit(); conn.close()
     if tag_type == 'status' and tags:
@@ -7198,9 +7216,12 @@ def update_mandate(mid):
     return jsonify({'ok': True})
 
 @app.route('/api/mandates/<int:mid>/candidates')
+@login_required
 def list_candidates(mid):
     check_timers()
     conn = get_db()
+    if not _tenant_owns_mandate(conn, mid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     rows = conn.execute('SELECT * FROM candidates WHERE mandate_id=? ORDER BY created_at DESC', (mid,)).fetchall()
     conn.close()
     out = []
@@ -8301,11 +8322,13 @@ def add_candidate_note(cid):
 
 
 @app.route('/api/candidates/<int:cid>/journey')
+@login_required
 def candidate_journey(cid):
     """Aggregate a candidate's full journey from every real event source,
     newest first. Each event: {ts, type, text, icon, color}."""
     conn = get_db()
-    c = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    c = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
+                     (cid, effective_company_id())).fetchone()
     if not c:
         conn.close(); return jsonify({'error': 'Not found'}), 404
     ev = []
@@ -8346,9 +8369,11 @@ def candidate_journey(cid):
 
 
 @app.route('/api/candidates/<int:cid>')
+@login_required
 def get_candidate(cid):
     conn = get_db()
-    r = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    r = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
+                     (cid, effective_company_id())).fetchone()
     if not r: conn.close(); return jsonify({'error': 'Not found'}), 404
     d = _cand_public(r)   # drop embedding / embedding_text / embedding_vec
     try: d['key_skills'] = json.loads(d['key_skills'] or '[]')
@@ -8389,10 +8414,12 @@ def move_candidate(cid):
 
 
 @app.route('/api/candidates/<int:cid>', methods=['PUT'])
+@login_required
 def update_candidate(cid):
     d = request.json or {}
     conn = get_db()
-    c = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    c = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
+                     (cid, effective_company_id())).fetchone()
     if not c: conn.close(); return jsonify({'error': 'Not found'}), 404
 
     fields = ['name','company','designation','experience','ctc_current','ctc_expected',
@@ -8484,11 +8511,14 @@ def move_stage(cid):
     return jsonify({'ok': True})
 
 @app.route('/api/mandates/<int:mid>/candidates/manual', methods=['POST'])
+@login_required
 def add_manual(mid):
     d = request.json or {}
     if not d.get('name') or not d.get('company'):
         return jsonify({'error': 'Name and Company are required'}), 400
     conn = get_db(); c = conn.cursor()
+    if not _tenant_owns_mandate(conn, mid):
+        conn.close(); return jsonify({'error': 'Mandate not found'}), 404
     c.execute(
         'INSERT INTO candidates (mandate_id,name,company,designation,experience,ctc_current,'
         'ctc_expected,notice_period,location,phone,email,career_summary,key_skills,'
@@ -8620,9 +8650,13 @@ def _xp_recompute_safe(cid):
 
 
 @app.route('/api/candidates/<int:cid>', methods=['DELETE'])
+@login_required
 def delete_candidate(cid):
     conn = get_db()
-    r = conn.execute('SELECT cv_path FROM candidates WHERE id=?', (cid,)).fetchone()
+    r = conn.execute('SELECT cv_path FROM candidates WHERE id=? AND owner_id=?',
+                     (cid, effective_company_id())).fetchone()
+    if not r:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     if r:
         if r['cv_path']:
             fp = os.path.join(CV_DIR, r['cv_path'])
@@ -8779,13 +8813,15 @@ def parse_naukri_bulk():
 
 # ── Bulk Add Candidates ────────────────────────────────────────────────────────
 @app.route('/api/mandates/<int:mid>/candidates/bulk', methods=['POST'])
+@login_required
 def bulk_add_candidates(mid):
     d = request.json or {}
     candidates = d.get('candidates', [])
     if not candidates: return jsonify({'error': 'No candidates provided'}), 400
 
     conn = get_db(); c = conn.cursor()
-    m = conn.execute('SELECT * FROM mandates WHERE id=?', (mid,)).fetchone()
+    m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, effective_company_id())).fetchone()
     if not m: conn.close(); return jsonify({'error': 'Mandate not found'}), 404
 
     added = 0
@@ -9199,12 +9235,14 @@ def central_db_bulk():
 
 # ── WhatsApp Response Tracking ────────────────────────────────────────────────
 @app.route('/api/candidates/<int:cid>/wa-response', methods=['POST'])
+@login_required
 def mark_wa_response(cid):
     d = request.json or {}
     response   = d.get('response', '')   # interested / callback / not_interested / no_reply
     note       = d.get('note', '')
     conn = get_db()
-    cand = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    cand = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
+                        (cid, effective_company_id())).fetchone()
     if not cand: conn.close(); return jsonify({'error': 'Not found'}), 404
 
     conn.execute('UPDATE candidates SET wa_response=?, wa_response_note=?, wa_response_at=?, updated_at=? WHERE id=?',
@@ -9233,11 +9271,14 @@ def mark_wa_response(cid):
 
 # ── WhatsApp Follow-up Queue ───────────────────────────────────────────────────
 @app.route('/api/mandates/<int:mid>/wa-queue')
+@login_required
 def wa_queue(mid):
     """Returns candidates needing WA action — sent but no response logged."""
     import datetime as dt
     now = dt.datetime.now()
     conn = get_db()
+    if not _tenant_owns_mandate(conn, mid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     cands = conn.execute(
         'SELECT * FROM candidates WHERE mandate_id=? AND stage NOT IN (?,?,?,?)',
         (mid, 'Screened-Out', 'Not Interested', 'Placed', 'Central DB')
