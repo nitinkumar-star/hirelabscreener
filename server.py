@@ -545,7 +545,9 @@ def auth_forgot():
     if not target_email and '@' in u['username']:
         target_email = u['username'].strip()
     if not target_email:
-        conn.close(); return jsonify(generic)  # no email on file — can't send
+        conn.close()
+        print('[forgot] user "%s" has NO email on file — cannot send reset. (Old accounts created before the email field have no email.)' % ident)
+        return jsonify(generic)
     token = secrets.token_urlsafe(32)
     expires = (datetime.datetime.now() + datetime.timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
     conn.execute('INSERT INTO password_resets (token,user_id,expires_at,used,created_at) VALUES (?,?,?,0,?)',
@@ -564,10 +566,11 @@ def auth_forgot():
             f'padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Reset password</a></p>'
             f'<p style="font-size:12px;color:#888">Or paste this URL:<br>{link}</p>'
             f'<p style="font-size:12px;color:#888">If you did not request this, you can ignore this email.</p></div>')
-    try:
-        _smtp_send(target_email, subject, plain, html)
-    except Exception as e:
-        print('[forgot] email send failed:', e)
+    ok_send, err_send = _platform_smtp_send(target_email, subject, plain, html)
+    if ok_send:
+        print('[forgot] reset email SENT to %s' % target_email)
+    else:
+        print('[forgot] FAILED to send reset to %s: %s' % (target_email, err_send))
     return jsonify(generic)
 
 
@@ -7759,6 +7762,58 @@ def _smtp_send(to_email, subject, plain_body, html_body=None):
         return True, None
     except smtplib.SMTPAuthenticationError:
         return False, 'Email authentication failed. Check your email address and app password in Settings.'
+    except Exception as e:
+        return False, f'Failed to send email: {str(e)}'
+
+
+def _platform_smtp_send(to_email, subject, plain_body, html_body=None):
+    """Send a SYSTEM email (password reset etc.). No tenant is logged in, so we
+    resolve SMTP from env/global settings and fall back to the platform owner's
+    own company SMTP (so it works with existing single-company Gmail setups)."""
+    smtp_email = get_setting('smtp_email', '')
+    smtp_pass = get_setting('smtp_app_password', '')
+    smtp_name = get_setting('smtp_display_name', '') or smtp_email
+    if not smtp_email or not smtp_pass:
+        try:
+            conn = get_db()
+            row = conn.execute("SELECT company_id FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
+            if row and row['company_id']:
+                def _tg(k):
+                    r = conn.execute('SELECT value FROM tenant_settings WHERE company_id=? AND key=?', (row['company_id'], k)).fetchone()
+                    return r['value'] if r else ''
+                smtp_email = smtp_email or _tg('smtp_email')
+                smtp_pass = smtp_pass or _tg('smtp_app_password')
+                smtp_name = smtp_name or _tg('smtp_display_name') or smtp_email
+            conn.close()
+        except Exception as e:
+            print('[platform_smtp] owner-config lookup failed:', e)
+    if not smtp_email or not smtp_pass:
+        return False, 'No platform SMTP configured. The platform owner must set Email (Gmail + App Password) in Settings.'
+    msg = MIMEMultipart('alternative')
+    msg['From'] = f'{smtp_name} <{smtp_email}>' if smtp_name else smtp_email
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(plain_body, 'plain', 'utf-8'))
+    if html_body:
+        msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+    el = smtp_email.lower()
+    if '@gmail' in el or '@googlemail' in el:
+        host, port = 'smtp.gmail.com', 587
+    elif '@outlook' in el or '@hotmail' in el or '@live' in el:
+        host, port = 'smtp-mail.outlook.com', 587
+    elif '@yahoo' in el:
+        host, port = 'smtp.mail.yahoo.com', 587
+    else:
+        host, port = 'smtp.gmail.com', 587
+    try:
+        server = smtplib.SMTP(host, port, timeout=15)
+        server.starttls()
+        server.login(smtp_email, smtp_pass)
+        server.sendmail(smtp_email, [to_email], msg.as_string())
+        server.quit()
+        return True, None
+    except smtplib.SMTPAuthenticationError:
+        return False, 'Email authentication failed (owner Gmail + App Password).'
     except Exception as e:
         return False, f'Failed to send email: {str(e)}'
 
