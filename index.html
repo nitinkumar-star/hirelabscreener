@@ -723,7 +723,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J26</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J28</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -3955,6 +3955,7 @@ function renderSettings(){
   const body=document.getElementById('settings-body');if(!body)return;
   const s=S.settings;
   body.innerHTML='<div style="max-width:680px">'
+    +'<div id="my-billing-card"></div>'
     // ── My Profile (every user) ──
     +'<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head"><span style="font-weight:500">&#128100; My Profile &amp; Email Signature</span></div><div class="card-body">'
     +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">These details are used automatically in your email signature and AI-composed emails.</div>'
@@ -4022,6 +4023,42 @@ async function loadMyProfile(){
   e('mp-phone', p.profile_phone);
   e('mp-designation', p.profile_designation);
   e('mp-email', p.profile_email);
+  loadMyBillingCard();
+}
+
+async function loadMyBillingCard(){
+  var box = document.getElementById('my-billing-card');
+  if (!box) return;
+  var r = await req('GET', '/billing/me');
+  if (!r || !r.ok || !r.bill) { box.innerHTML=''; return; }
+  var b = r.bill;
+  if (b.is_owner) {
+    box.innerHTML = '<div class="card" style="margin-bottom:14px;border-top:2px solid #6B4FA0"><div class="card-head"><span style="font-weight:500">&#128176; Billing &amp; Usage</span></div><div class="card-body"><div style="font-size:12px;color:var(--muted)">This is the platform owner workspace — not billed. Manage all agencies in <b>Admin Panel &rarr; Billing</b>.</div></div></div>';
+    return;
+  }
+  function inr(n){ return '\u20b9' + (Math.round(n||0)).toLocaleString('en-IN'); }
+  var used = b.tokens_used_month || 0, cap = b.token_cap || 0;
+  var pct = cap ? Math.min(100, Math.round(used*100/cap)) : 0;
+  var barColor = pct >= 100 ? '#C0392B' : pct >= 80 ? '#C7841E' : '#1D9E75';
+  var capBlock = cap
+    ? ('<div style="margin-top:4px"><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:4px"><span>AI tokens this month</span><span><b style="color:'+barColor+'">'+used.toLocaleString('en-IN')+'</b> / '+cap.toLocaleString('en-IN')+' ('+pct+'%)</span></div>'
+       + '<div style="height:8px;background:#EFEEF2;border-radius:6px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+barColor+';border-radius:6px"></div></div>'
+       + (pct>=100 ? '<div style="font-size:11px;color:#C0392B;margin-top:6px;font-weight:600">&#9888; Limit reached — AI features are paused. Contact us to increase your cap.</div>' : (pct>=80 ? '<div style="font-size:11px;color:#C7841E;margin-top:6px">&#9888; You are close to your monthly AI limit.</div>' : ''))
+       + '</div>')
+    : '<div style="margin-top:4px;font-size:11.5px;color:var(--muted)">AI tokens this month: <b>'+used.toLocaleString('en-IN')+'</b> (no cap set)</div>';
+  var statusMap = {trial:['#FFF3E6','#9A6A1F','Trial'], active:['#E6F6F1','#0F8A6B','Active'], past_due:['#FCEBEB','#A32D2D','Past due'], suspended:['#FCEBEB','#A32D2D','Suspended']};
+  var sm = statusMap[b.billing_status] || ['#F0F0F0','#666', (b.billing_status||'').toUpperCase()];
+  var trial = (b.billing_status==='trial' && b.trial_days_left!=null) ? ' &middot; '+b.trial_days_left+' trial days left' : '';
+  box.innerHTML = '<div class="card" style="margin-bottom:14px;border-top:2px solid #0F8A6B"><div class="card-head"><span style="font-weight:500">&#128176; Billing &amp; Usage</span>'
+    + '<span style="font-size:9px;background:'+sm[0]+';color:'+sm[1]+';padding:2px 8px;border-radius:7px;font-weight:700;margin-left:8px">'+sm[2]+'</span></div><div class="card-body">'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">'
+    + '<div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Recruiters</div><div style="font-size:16px;font-weight:700;color:var(--navy)">'+b.recruiters+(b.user_limit?(' / '+b.user_limit):'')+'</div></div>'
+    + '<div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">This month</div><div style="font-size:16px;font-weight:700;color:var(--navy)">'+inr(b.total_inr)+'</div></div>'
+    + '<div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Plan</div><div style="font-size:13px;font-weight:600;color:var(--navy);padding-top:3px">'+sm[2]+trial+'</div></div>'
+    + '</div>'
+    + capBlock
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:12px;border-top:0.5px solid var(--line);padding-top:8px">Bill: '+b.recruiters+' recruiter(s) &times; '+inr(b.price_per_recruiter)+' = '+inr(b.base_inr)+' + AI usage '+inr(b.token_inr)+' + GST '+b.gst_rate+'% = <b>'+inr(b.total_inr)+'/month</b>. Pay via UPI to your account manager.</div>'
+    + '</div></div>';
 }
 
 async function saveMyProfile(){
@@ -7110,7 +7147,7 @@ async function loadBilling() {
   var h = '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow-sm)">'
     + '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:0.5px solid var(--line)">'
     + '<div style="font-size:13px;font-weight:700;color:var(--navy)">Billing &amp; Subscriptions</div>'
-    + '<span style="font-size:12px;font-weight:700;color:#0F8A6B">Monthly revenue: ' + inr(r.monthly_revenue_inr) + '</span>'
+    + '<div style="display:flex;align-items:center;gap:10px"><button class="btn btn-g" style="font-size:11px;padding:4px 11px" onclick="showCreateAgency()">&#43; Create Agency</button><span style="font-size:12px;font-weight:700;color:#0F8A6B">Monthly revenue: ' + inr(r.monthly_revenue_inr) + '</span></div>'
     + '</div>';
 
   r.bills.forEach(function(b){
@@ -7169,6 +7206,45 @@ async function saveLimits(cid) {
   var r = await req('POST', '/admin/companies/' + cid + '/limits', {token_cap: cap, user_limit: ul});
   if (r.ok) { toast('OK', 'Limits updated'); loadBilling(); }
   else toast('ERR', r.error || 'Failed');
+}
+
+function showCreateAgency() {
+  var ex = document.getElementById('ca-overlay'); if (ex) ex.remove();
+  var ov = document.createElement('div');
+  ov.id = 'ca-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(10,20,40,.55);display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.innerHTML = '<div style="background:#fff;border-radius:14px;width:100%;max-width:420px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
+    + '<div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:4px">Create new agency</div>'
+    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:16px">Creates an isolated company + its admin login, active immediately. Set a token cap and user limit up front.</div>'
+    + '<input class="inp" id="ca-company" placeholder="Agency / company name" style="width:100%;margin-bottom:9px;box-sizing:border-box">'
+    + '<input class="inp" id="ca-user" placeholder="Admin username (login)" style="width:100%;margin-bottom:9px;box-sizing:border-box">'
+    + '<input class="inp" id="ca-email" type="email" placeholder="Admin email (for password reset)" style="width:100%;margin-bottom:9px;box-sizing:border-box">'
+    + '<input class="inp" id="ca-pass" type="password" placeholder="Temporary password (min 4 chars)" style="width:100%;margin-bottom:9px;box-sizing:border-box">'
+    + '<div style="display:flex;gap:9px;margin-bottom:14px"><input class="inp" id="ca-cap" type="number" placeholder="Token cap (0 = &#8734;)" style="flex:1;box-sizing:border-box"><input class="inp" id="ca-ulim" type="number" placeholder="User limit (0 = &#8734;)" style="flex:1;box-sizing:border-box"></div>'
+    + '<div id="ca-err" style="color:#C0522B;font-size:12px;min-height:16px;margin-bottom:8px"></div>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-o" onclick="var o=document.getElementById(&#39;ca-overlay&#39;);if(o)o.remove()">Cancel</button><button class="btn btn-g" onclick="submitCreateAgency()">Create agency</button></div>'
+    + '</div>';
+  document.body.appendChild(ov);
+  setTimeout(function(){ var f=document.getElementById('ca-company'); if(f) f.focus(); }, 80);
+}
+
+async function submitCreateAgency() {
+  var err = document.getElementById('ca-err');
+  var payload = {
+    company_name: (document.getElementById('ca-company').value || '').trim(),
+    username: (document.getElementById('ca-user').value || '').trim(),
+    email: (document.getElementById('ca-email').value || '').trim(),
+    password: document.getElementById('ca-pass').value || '',
+    token_cap: parseInt(document.getElementById('ca-cap').value) || 0,
+    user_limit: parseInt(document.getElementById('ca-ulim').value) || 0
+  };
+  if (!payload.company_name || !payload.username || payload.password.length < 4) {
+    err.textContent = 'Company name, admin username and a password (min 4) are required'; return;
+  }
+  err.textContent = 'Creating...';
+  var r = await req('POST', '/admin/agencies', payload);
+  if (r.ok) { var o = document.getElementById('ca-overlay'); if (o) o.remove(); toast('OK', 'Agency created'); loadBilling(); }
+  else err.textContent = r.error || 'Failed';
 }
 
 async function setBillStatus(cid, status) {
