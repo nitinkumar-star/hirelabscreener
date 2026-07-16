@@ -723,7 +723,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J25</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J26</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -7131,6 +7131,13 @@ async function loadBilling() {
     }
     actions += '<button class="btn btn-o" style="font-size:10px;padding:3px 8px" onclick="showInvoice('+b.company_id+')">Invoice</button>'
       + '</div>';
+    var lim = '<div style="display:flex;gap:6px;align-items:center;margin-top:7px;flex-wrap:wrap;padding-top:7px;border-top:0.5px dashed #eee">'
+      + '<span style="font-size:10px;color:var(--muted)">AI tokens this month: <b>' + (b.tokens_used_month||0).toLocaleString('en-IN') + '</b>' + (b.token_cap ? ' / ' + (b.token_cap).toLocaleString('en-IN') : '') + '</span>'
+      + '<span style="font-size:10px;color:var(--muted);margin-left:6px">Token cap</span><input id="cap-'+b.company_id+'" type="number" value="'+(b.token_cap||0)+'" style="width:96px;font-size:11px;padding:3px 6px;border:0.5px solid #ddd;border-radius:6px">'
+      + '<span style="font-size:10px;color:var(--muted)">Users ('+b.recruiters+')/limit</span><input id="ulim-'+b.company_id+'" type="number" value="'+(b.user_limit||0)+'" style="width:56px;font-size:11px;padding:3px 6px;border:0.5px solid #ddd;border-radius:6px">'
+      + '<button class="btn btn-o" style="font-size:10px;padding:3px 8px" onclick="saveLimits('+b.company_id+')">Save limits</button>'
+      + '<span style="font-size:9px;color:#aaa">0 = unlimited</span>'
+      + '</div>';
     h += '<div style="padding:11px 16px;border-bottom:0.5px solid #f5f5f5">'
       + '<div style="display:flex;align-items:center;gap:14px">'
       + avatarHtml(b.company, 32)
@@ -7139,7 +7146,7 @@ async function loadBilling() {
       + '<div style="font-size:10.5px;color:var(--muted)">' + b.recruiters + ' recruiters \u00d7 ' + inr(b.price_per_recruiter) + ' = ' + inr(b.base_inr) + ' + tokens ' + inr(b.token_inr) + ' + GST ' + b.gst_rate + '%' + trialNote + '</div>'
       + '</div>'
       + '<div style="text-align:right"><div style="font-size:15px;font-weight:800;color:var(--navy)">' + inr(b.total_inr) + '</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase">per month</div></div>'
-      + '</div>' + actions + '</div>';
+      + '</div>' + actions + lim + '</div>';
   });
   h += '<div style="padding:9px 16px;font-size:10px;color:var(--muted);background:#FAFAFA">Auto-charge via Cashfree activates once your payment gateway is connected. Trials auto-expire after 14 days.</div>';
   h += '</div>';
@@ -7153,6 +7160,14 @@ async function markPaid(cid, amount) {
   var method = prompt('Payment method? (UPI / Bank Transfer / Cash)', 'UPI') || 'manual';
   var r = await req('POST', '/admin/billing/' + cid + '/pay', {amount: amt, method: method});
   if (r.ok) { toast('OK', 'Payment recorded — ' + r.invoice_no); loadBilling(); }
+  else toast('ERR', r.error || 'Failed');
+}
+
+async function saveLimits(cid) {
+  var cap = parseInt((document.getElementById('cap-'+cid)||{}).value) || 0;
+  var ul = parseInt((document.getElementById('ulim-'+cid)||{}).value) || 0;
+  var r = await req('POST', '/admin/companies/' + cid + '/limits', {token_cap: cap, user_limit: ul});
+  if (r.ok) { toast('OK', 'Limits updated'); loadBilling(); }
   else toast('ERR', r.error || 'Failed');
 }
 

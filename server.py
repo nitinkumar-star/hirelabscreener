@@ -439,6 +439,27 @@ def list_pending_users():
     return jsonify({'ok': True, 'pending': [dict(r) for r in rows]})
 
 
+def company_user_limit(cid):
+    if not cid:
+        return 0
+    conn = get_db()
+    r = conn.execute("SELECT user_limit FROM companies WHERE id=?", (cid,)).fetchone()
+    conn.close()
+    try:
+        return int((r['user_limit'] if r else 0) or 0)
+    except Exception:
+        return 0
+
+
+def company_approved_users(cid):
+    if not cid:
+        return 0
+    conn = get_db()
+    r = conn.execute("SELECT COUNT(*) n FROM users WHERE company_id=? AND status='approved'", (cid,)).fetchone()
+    conn.close()
+    return int((r['n'] if r else 0) or 0)
+
+
 @app.route('/api/admin/pending-users/<int:uid>/approve', methods=['POST'])
 @admin_required
 def approve_pending_user(uid):
@@ -447,6 +468,10 @@ def approve_pending_user(uid):
     if not u:
         conn.close()
         return jsonify({'error': 'User not found'}), 404
+    _lim = company_user_limit(u['company_id'])
+    if _lim and company_approved_users(u['company_id']) >= _lim:
+        conn.close()
+        return jsonify({'error': f'This agency has reached its user limit ({_lim}). Increase the limit before approving more users.'}), 403
     conn.execute("UPDATE users SET status='approved' WHERE id=?", (uid,))
     if u['company_id']:
         # Activate the company and start its free trial.
@@ -1005,6 +1030,10 @@ def create_user():
         company_id = current_company_id()
     if not username or len(password) < 4:
         return jsonify({'error': 'Username required and password min 4 chars'}), 400
+    # Enforce the agency's seat (user) limit set by the platform owner.
+    _lim = company_user_limit(company_id)
+    if _lim and company_approved_users(company_id) >= _lim:
+        return jsonify({'error': f'User limit reached ({_lim} recruiters). Ask the platform owner to increase your limit.'}), 403
     conn = get_db()
     exists = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
     if exists:
@@ -1190,7 +1219,40 @@ def compute_company_bill(company_id, days=30):
         'subtotal_inr': subtotal, 'gst_rate': gst_rate, 'gst_inr': gst, 'total_inr': total,
         'trial_ends_at': comp['trial_ends_at'], 'trial_days_left': trial_left,
         'is_owner': (comp['plan'] == 'owner' or comp['billing_status'] == 'owner'),
+        'token_cap': company_token_cap(company_id),
+        'tokens_used_month': tokens_used_this_month(company_id),
+        'user_limit': company_user_limit(company_id),
     }
+
+
+@app.route('/api/admin/companies/<int:cid>/limits', methods=['POST'])
+@admin_required
+def set_company_limits(cid):
+    """Platform owner sets a company's monthly AI token cap and user (seat) limit.
+    Both 0 = unlimited."""
+    d = request.json or {}
+    conn = get_db()
+    comp = conn.execute('SELECT id FROM companies WHERE id=?', (cid,)).fetchone()
+    if not comp:
+        conn.close(); return jsonify({'error': 'Company not found'}), 404
+    fields, vals = [], []
+    if 'token_cap' in d:
+        try:
+            fields.append('token_cap=?'); vals.append(max(0, int(d.get('token_cap') or 0)))
+        except Exception:
+            pass
+    if 'user_limit' in d:
+        try:
+            fields.append('user_limit=?'); vals.append(max(0, int(d.get('user_limit') or 0)))
+        except Exception:
+            pass
+    if not fields:
+        conn.close(); return jsonify({'error': 'Nothing to update'}), 400
+    vals.append(cid)
+    conn.execute('UPDATE companies SET ' + ','.join(fields) + ' WHERE id=?', vals)
+    conn.commit(); conn.close()
+    log_activity('set_limits', f'company {cid}: ' + ', '.join(f'{f.split("=")[0]}={v}' for f, v in zip(fields, vals[:-1])))
+    return jsonify({'ok': True})
 
 
 @app.route('/api/admin/billing', methods=['GET'])
@@ -1844,6 +1906,8 @@ def init_db():
         ('price_per_recruiter', 'INTEGER DEFAULT 700'),
         ('cf_subscription_id', "TEXT DEFAULT ''"),
         ('gstin', "TEXT DEFAULT ''"),
+        ('token_cap', 'INTEGER DEFAULT 0'),   # monthly AI token limit; 0 = unlimited
+        ('user_limit', 'INTEGER DEFAULT 0'),  # max approved users (recruiters); 0 = unlimited
     ]:
         try:
             c.execute(f'ALTER TABLE companies ADD COLUMN {col} {defn}')
@@ -2503,7 +2567,56 @@ def log_api_usage(provider, model='', input_tokens=0, output_tokens=0, audio_sec
         print(f'log_api_usage warning (non-fatal): {e}')
 
 
+class TokenCapError(Exception):
+    """Raised when a company has hit its monthly AI token cap."""
+    pass
+
+
+@app.errorhandler(TokenCapError)
+def _handle_token_cap(e):
+    return jsonify({'error': 'Monthly AI usage limit reached for your agency. Please contact your admin to increase the cap.', 'code': 'token_cap'}), 429
+
+
+def tokens_used_this_month(company_id):
+    if not company_id:
+        return 0
+    month_start = datetime.datetime.now().strftime('%Y-%m-01 00:00:00')
+    conn = get_db()
+    r = conn.execute("SELECT COALESCE(SUM(input_tokens+output_tokens),0) t FROM api_usage WHERE company_id=? AND created_at >= ?",
+                     (company_id, month_start)).fetchone()
+    conn.close()
+    return int((r['t'] if r else 0) or 0)
+
+
+def company_token_cap(company_id):
+    if not company_id:
+        return 0
+    conn = get_db()
+    r = conn.execute("SELECT token_cap FROM companies WHERE id=?", (company_id,)).fetchone()
+    conn.close()
+    try:
+        return int((r['token_cap'] if r else 0) or 0)
+    except Exception:
+        return 0
+
+
+def over_token_cap(company_id=None):
+    """True if the company is at/over its monthly AI token cap (0 = unlimited).
+    Safe outside a request context (returns False)."""
+    try:
+        if company_id is None:
+            company_id = effective_company_id()
+    except Exception:
+        return False
+    cap = company_token_cap(company_id)
+    if not cap:
+        return False
+    return tokens_used_this_month(company_id) >= cap
+
+
 def call_claude(api_key, system_msg, messages, max_tokens=8000, endpoint='claude'):
+    if over_token_cap():
+        raise TokenCapError()
     resp = requests.post(CLAUDE_URL,
         headers={'x-api-key': api_key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'},
         json={'model': CLAUDE_MODEL, 'max_tokens': max_tokens, 'system': system_msg, 'messages': messages},
@@ -2523,6 +2636,8 @@ def call_claude(api_key, system_msg, messages, max_tokens=8000, endpoint='claude
 def call_deepseek(api_key, payload, timeout=60, endpoint='deepseek'):
     """POST to DeepSeek (OpenAI-compatible) and log token usage per tenant.
     Returns the raw requests response, so existing callers work unchanged."""
+    if over_token_cap():
+        raise TokenCapError()
     resp = requests.post('https://api.deepseek.com/chat/completions',
         headers={'Authorization': 'Bearer ' + api_key, 'Content-Type': 'application/json'},
         json=payload, timeout=timeout)
