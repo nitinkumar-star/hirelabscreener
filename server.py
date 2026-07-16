@@ -1255,6 +1255,51 @@ def set_company_limits(cid):
     return jsonify({'ok': True})
 
 
+@app.route('/api/admin/agencies', methods=['POST'])
+@admin_required
+def create_agency():
+    """Platform owner creates a new agency (tenant): an isolated company plus its
+    admin login, active immediately, with optional token cap and user limit."""
+    d = request.json or {}
+    company_name = (d.get('company_name') or '').strip()
+    username = (d.get('username') or '').strip().lower()
+    password = d.get('password') or ''
+    email = (d.get('email') or '').strip().lower()
+    display = (d.get('display_name') or company_name or username).strip()
+    try:
+        token_cap = max(0, int(d.get('token_cap') or 0))
+    except Exception:
+        token_cap = 0
+    try:
+        user_limit = max(0, int(d.get('user_limit') or 0))
+    except Exception:
+        user_limit = 0
+    if not company_name:
+        return jsonify({'error': 'Agency / company name is required'}), 400
+    if not username or len(password) < 4:
+        return jsonify({'error': 'Admin username and password (min 4 chars) are required'}), 400
+    if not re.match(r'^[a-z0-9._-]{3,40}$', username):
+        return jsonify({'error': 'Username can only contain letters, numbers, dots, dashes and underscores'}), 400
+    if email and '@' not in email:
+        return jsonify({'error': 'Enter a valid admin email (for password reset)'}), 400
+    conn = get_db()
+    if conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone():
+        conn.close(); return jsonify({'error': 'Username already taken'}), 400
+    try:
+        trial_days = int(get_setting('billing_trial_days', '14') or 14)
+    except Exception:
+        trial_days = 14
+    trial_end = (datetime.datetime.now() + datetime.timedelta(days=trial_days)).isoformat()
+    conn.execute("INSERT INTO companies (name,status,plan,billing_status,trial_ends_at,created_at,token_cap,user_limit) VALUES (?,?,?,?,?,?,?,?)",
+                 (company_name, 'active', 'standard', 'trial', trial_end, ts(), token_cap, user_limit))
+    new_cid = conn.execute('SELECT id FROM companies ORDER BY id DESC LIMIT 1').fetchone()['id']
+    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,company_id,is_company_admin,email) VALUES (?,?,?,?,?,?,?,?,1,?)',
+                 (username, hash_password(password), display, 'user', ts(), 'approved', company_name, new_cid, email))
+    conn.commit(); conn.close()
+    log_activity('create_agency', f'{company_name} (admin: {username})')
+    return jsonify({'ok': True, 'company_id': new_cid})
+
+
 @app.route('/api/admin/billing', methods=['GET'])
 @admin_required
 def admin_billing():
@@ -3669,6 +3714,7 @@ TENANT_SETTINGS = {
     'template_msg1', 'template_fu1', 'template_fu2',
     'fu1_hours', 'fu2_hours',
     'workflow_mode',   # 'agency' (default) or 'corporate'
+    'pipeline_stages',  # JSON array of custom stages before the fixed Placed/Joined
     'smtp_email', 'smtp_app_password', 'smtp_display_name',
     'imap_enabled', 'imap_last_uid',
     'email_templates',  # JSON array of {name, subject, body}

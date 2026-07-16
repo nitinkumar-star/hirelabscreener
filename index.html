@@ -723,7 +723,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J28</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J29</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -1406,14 +1406,39 @@ var _cdbResumeFiles = [];
 var _cdbResumeKey = '';
 
 const API = '/api';  // Works on localhost + Railway
-const PIPELINE_STAGES = [
+// Placed and Joined are FIXED terminal stages (invoice is raised after these) —
+// agencies cannot rename or remove them. Everything before is customizable.
+const FIXED_STAGES = [
+  {id:'Placed', color:'#0F6E56', fixed:true},
+  {id:'Joined', color:'#0A7B5C', fixed:true}
+];
+const DEFAULT_PIPELINE_STAGES = [
   {id:'Screening',color:'#1D9E75'},{id:'Follow Up 1',color:'#5DCAA5'},{id:'Follow Up 2',color:'#9FE1CB'},
   {id:'Not Contacted',color:'#BA7517'},{id:'Called',color:'#378ADD'},{id:'Interested',color:'#639922'},
   {id:'Updated CV awaited',color:'#8B6914'},{id:'Not Interested',color:'#888'},{id:'Shared with Client',color:'#534AB7'},
   {id:'Interview Inprocess',color:'#C7841E'},
   {id:'Not Suitable',color:'#D85A30'},{id:'Client Rejected on Paper',color:'#993C1D'},
-  {id:'Client Rejected After Interview',color:'#E24B4A'},{id:'Placed',color:'#0F6E56'}
+  {id:'Client Rejected After Interview',color:'#E24B4A'}
 ];
+let PIPELINE_STAGES = DEFAULT_PIPELINE_STAGES.concat(FIXED_STAGES);
+
+// Rebuild PIPELINE_STAGES from this company's saved custom stages (+ fixed Placed/Joined).
+function applyPipelineStages(){
+  var custom = null;
+  try {
+    var raw = S.settings && S.settings.pipeline_stages;
+    if (raw) custom = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+  } catch(e) { custom = null; }
+  var base;
+  if (custom && custom.length) {
+    base = custom
+      .map(function(x){ return (typeof x === 'string') ? {id:x, color:'#6B675E'} : {id:x.id, color:x.color||'#6B675E'}; })
+      .filter(function(x){ return x.id && x.id !== 'Placed' && x.id !== 'Joined'; });
+  } else {
+    base = DEFAULT_PIPELINE_STAGES.slice();
+  }
+  PIPELINE_STAGES = base.concat(FIXED_STAGES.map(function(f){ return {id:f.id, color:f.color, fixed:true}; }));
+}
 const TABS = ['Mandate Setup','Pipeline','Candidate Profiles'];
 let S = {
   currentUser:null, viewingAs:null,
@@ -1693,6 +1718,7 @@ async function init(){
 
   let settings = await req('GET','/settings');
   S.settings = settings || {};
+  applyPipelineStages();
   if (S.settings.error) { showConnError(S.settings.error); return; }
 
   document.getElementById('app').style.display = 'flex';
@@ -3953,9 +3979,11 @@ function buildWAMsg(c,type){
 }
 function renderSettings(){
   const body=document.getElementById('settings-body');if(!body)return;
+  _pipeEdit=null;
   const s=S.settings;
   body.innerHTML='<div style="max-width:680px">'
     +'<div id="my-billing-card"></div>'
+    +'<div id="pipeline-editor"></div>'
     // ── My Profile (every user) ──
     +'<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head"><span style="font-weight:500">&#128100; My Profile &amp; Email Signature</span></div><div class="card-body">'
     +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">These details are used automatically in your email signature and AI-composed emails.</div>'
@@ -4024,6 +4052,63 @@ async function loadMyProfile(){
   e('mp-designation', p.profile_designation);
   e('mp-email', p.profile_email);
   loadMyBillingCard();
+  renderPipelineEditor();
+}
+
+var _pipeEdit = null;
+function renderPipelineEditor(){
+  var box = document.getElementById('pipeline-editor'); if (!box) return;
+  var isAdmin = S.currentUser && (S.currentUser.role === 'admin' || S.currentUser.is_company_admin);
+  if (!isAdmin) { box.innerHTML=''; return; }
+  if (!_pipeEdit) {
+    _pipeEdit = PIPELINE_STAGES.filter(function(s){ return !s.fixed && s.id!=='Placed' && s.id!=='Joined'; })
+      .map(function(s){ return {id:s.id, color:s.color||'#6B675E'}; });
+  }
+  var rows = _pipeEdit.map(function(s,i){
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+      + '<input type="color" value="'+(s.color||'#6B675E')+'" onchange="_pipeEdit['+i+'].color=this.value" style="width:30px;height:30px;border:none;background:none;padding:0;cursor:pointer;flex-shrink:0">'
+      + '<input class="inp" value="'+esc(s.id)+'" onchange="_pipeEdit['+i+'].id=this.value" style="flex:1" placeholder="Stage name">'
+      + '<div style="display:flex;flex-direction:column;flex-shrink:0"><button onclick="_pipeMove('+i+',-1)" style="border:none;background:none;cursor:pointer;font-size:9px;color:#aaa;line-height:1;padding:2px">&#9650;</button><button onclick="_pipeMove('+i+',1)" style="border:none;background:none;cursor:pointer;font-size:9px;color:#aaa;line-height:1;padding:2px">&#9660;</button></div>'
+      + '<button class="btn btn-o" style="padding:5px 9px;font-size:11px;flex-shrink:0" onclick="_pipeEdit.splice('+i+',1);renderPipelineEditor()" title="Remove">&#10005;</button>'
+      + '</div>';
+  }).join('');
+  var fixed = FIXED_STAGES.map(function(f){
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;opacity:.8">'
+      + '<span style="color:#bbb;font-size:14px;flex-shrink:0">&#128274;</span>'
+      + '<span style="width:16px;height:16px;border-radius:4px;background:'+f.color+';flex-shrink:0"></span>'
+      + '<span style="flex:1;font-size:13px;font-weight:600;color:var(--navy)">'+f.id+'</span>'
+      + '<span style="font-size:10px;color:var(--muted)">fixed &middot; invoice stage</span>'
+      + '</div>';
+  }).join('');
+  box.innerHTML = '<div class="card" style="margin-bottom:14px"><div class="card-head"><span style="font-weight:500">&#128203; Pipeline Stages</span></div><div class="card-body">'
+    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Customize your recruitment stages (name, colour, order). <b>Placed</b> and <b>Joined</b> are fixed final stages &mdash; invoices are raised after these &mdash; and cannot be renamed or removed.</div>'
+    + rows
+    + '<button class="btn btn-o" style="font-size:11px;margin:4px 0 12px" onclick="_pipeEdit.push({id:\'New Stage\',color:\'#6B675E\'});renderPipelineEditor()">&#43; Add stage</button>'
+    + '<div style="border-top:0.5px dashed var(--line);padding-top:10px">' + fixed + '</div>'
+    + '<button class="btn btn-g" style="margin-top:10px" onclick="savePipelineStages()">Save pipeline</button>'
+    + '<span id="pipe-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
+    + '</div></div>';
+}
+function _pipeMove(i, dir){
+  var j = i + dir; if (j < 0 || j >= _pipeEdit.length) return;
+  var t = _pipeEdit[i]; _pipeEdit[i] = _pipeEdit[j]; _pipeEdit[j] = t; renderPipelineEditor();
+}
+async function savePipelineStages(){
+  var seen = {}, clean = [];
+  _pipeEdit.forEach(function(s){
+    var id = (s.id || '').trim();
+    if (!id || id === 'Placed' || id === 'Joined' || seen[id]) return;
+    seen[id] = 1; clean.push({id:id, color:s.color || '#6B675E'});
+  });
+  if (!clean.length) { toast('WA','Add at least one stage before Placed/Joined'); return; }
+  var r = await req('POST', '/settings', {pipeline_stages: JSON.stringify(clean)});
+  var ss = document.getElementById('pipe-save-status');
+  if (r.ok) {
+    S.settings.pipeline_stages = JSON.stringify(clean);
+    applyPipelineStages();
+    if (ss) { ss.textContent = 'Saved \u2713'; setTimeout(function(){ ss.textContent=''; }, 2000); }
+    toast('OK', 'Pipeline updated');
+  } else { toast('ERR', r.error || 'Failed'); }
 }
 
 async function loadMyBillingCard(){
@@ -4272,7 +4357,7 @@ async function saveSettings(){
   const wf=(document.querySelector('input[name="wfmode"]:checked')||{}).value||'agency';
   const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template')};
   const r=await req('POST','/settings',data);
-  if(r.ok){S.settings=data;toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
+  if(r.ok){S.settings=data;applyPipelineStages();toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }
 function toggleSettings(){
   closeSidebarOnMobile();
@@ -4351,6 +4436,7 @@ async function exportAll(){
   setSt('Exporting...');
   try{
     const [mandates,settings]=await Promise.all([req('GET','/mandates'),req('GET','/settings')]);
+    if(settings){S.settings=settings;applyPipelineStages();}
     let candidates=[],history=[];
     for(const m of mandates){
       const cands=await req('GET','/mandates/'+m.id+'/candidates');
