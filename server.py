@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, send_file, Response
 from flask_cors import CORS
-import sqlite3, json, os, datetime, requests, shutil, io, re, smtplib
+import sqlite3, json, os, datetime, requests, shutil, io, re, smtplib, time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
@@ -16,7 +16,10 @@ except ImportError:
     HAS_DOCX = False
 
 app = Flask(__name__, static_folder='.', static_url_path='')
-CORS(app)
+# NOTE: flask-cors' CORS(app) allows ALL origins, which is unsafe with
+# credentialed requests. CORS is handled by add_cors_headers() below with a
+# strict allow-list (app origin + Naukri extension). Do NOT re-enable CORS(app).
+# CORS(app)
 
 # ── Safety net: never let a raw BLOB (e.g. embedding_vec bytes) crash jsonify.
 # Any bytes that reach serialization become null instead of a 500. Defense in
@@ -47,19 +50,37 @@ def _cand_public(row):
     return d
 app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024  # 64MB max upload
 
+def _cors_origin_allowed(origin):
+    """Only trusted origins may make credentialed cross-site calls.
+    Defaults cover the app itself + the Naukri Chrome extension. Extra origins
+    can be added via the CORS_ALLOWED_ORIGINS env var (comma-separated)."""
+    if not origin:
+        return False
+    # Chrome extension always trusted (that's the whole point of CORS here).
+    if origin.startswith('chrome-extension://'):
+        return True
+    if origin in ('https://www.naukri.com', 'https://naukri.com'):
+        return True
+    try:
+        if origin == request.host_url.rstrip('/'):
+            return True
+    except Exception:
+        pass
+    extra = os.environ.get('CORS_ALLOWED_ORIGINS', '') or ''
+    allow = [o.strip() for o in extra.split(',') if o.strip()]
+    return origin in allow
+
+
 @app.after_request
 def add_cors_headers(resp):
-    # Allow the Chrome extension (running on naukri.com) to call these APIs.
-    # Because the extension sends the session cookie (credentials), we must
-    # echo the specific Origin and allow credentials — '*' is not permitted
-    # with credentialed requests.
+    # Echo the Origin ONLY for trusted callers (see _cors_origin_allowed).
+    # Arbitrary websites get no ACAO header, so a logged-in user's browser
+    # will not expose credentialed API responses to them.
     origin = request.headers.get('Origin')
-    if origin:
+    if origin and _cors_origin_allowed(origin):
         resp.headers['Access-Control-Allow-Origin'] = origin
         resp.headers['Access-Control-Allow-Credentials'] = 'true'
         resp.headers['Vary'] = 'Origin'
-    else:
-        resp.headers['Access-Control-Allow-Origin'] = '*'
     resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return resp
@@ -96,21 +117,70 @@ def _get_secret_key():
 
 app.secret_key = _get_secret_key()
 
+# ── Session cookie hardening ────────────────────────────────────────────────
+# SameSite must stay 'None' because the Naukri Chrome extension makes
+# cross-site credentialed calls (its session cookie must be sent). 'None'
+# REQUIRES Secure=True. On Render everything is HTTPS; set COOKIE_SECURE=0 only
+# for local HTTP testing.
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=(os.environ.get('COOKIE_SECURE', '1') != '0'),
+    SESSION_COOKIE_SAMESITE='None',
+)
+
+# ── Login brute-force throttle (in-memory, per-IP) ──────────────────────────
+_LOGIN_FAILS = {}          # ip -> [failure_timestamps]
+_LOGIN_MAX_FAILS = 8       # allowed failures within the window
+_LOGIN_WINDOW = 900        # 15 minutes
+
+def _login_ip():
+    fwd = request.headers.get('X-Forwarded-For', '')
+    if fwd:
+        return fwd.split(',')[0].strip()
+    return request.remote_addr or 'unknown'
+
+def _login_is_blocked(ip):
+    now = time.time()
+    arr = [t for t in _LOGIN_FAILS.get(ip, []) if now - t < _LOGIN_WINDOW]
+    _LOGIN_FAILS[ip] = arr
+    return len(arr) >= _LOGIN_MAX_FAILS
+
+def _login_note_fail(ip):
+    _LOGIN_FAILS.setdefault(ip, []).append(time.time())
+
+def _login_clear(ip):
+    _LOGIN_FAILS.pop(ip, None)
+
 # ─────────────────────────────────────────────────────────────────────────
 #  AUTH HELPERS (multi-user)
 # ─────────────────────────────────────────────────────────────────────────
 def hash_password(pw, salt=None):
+    # PBKDF2-HMAC-SHA256 — strong, slow, and stdlib (no external dependency).
+    # Format:  pbkdf2$<iterations>$<salt_hex>$<hash_hex>
+    iterations = 210000
     if salt is None:
         salt = secrets.token_hex(16)
-    h = hashlib.sha256((salt + pw).encode()).hexdigest()
-    return salt + '$' + h
+    dk = hashlib.pbkdf2_hmac('sha256', pw.encode(), salt.encode(), iterations)
+    return 'pbkdf2$' + str(iterations) + '$' + salt + '$' + dk.hex()
+
 
 def verify_password(pw, stored):
     try:
+        if (stored or '').startswith('pbkdf2$'):
+            _, iters, salt, h = stored.split('$', 3)
+            dk = hashlib.pbkdf2_hmac('sha256', pw.encode(), salt.encode(), int(iters))
+            return secrets.compare_digest(dk.hex(), h)
+        # Legacy format: <salt>$<sha256hex>. Still verifies so existing users can
+        # log in; login transparently re-hashes them to PBKDF2 (see auth_login).
         salt, h = stored.split('$', 1)
-        return hashlib.sha256((salt + pw).encode()).hexdigest() == h
+        return secrets.compare_digest(hashlib.sha256((salt + pw).encode()).hexdigest(), h)
     except Exception:
         return False
+
+
+def password_needs_rehash(stored):
+    """True if the stored hash is the old (weaker) SHA-256 format."""
+    return not (stored or '').startswith('pbkdf2$')
 
 def any_users_exist():
     conn = get_db()
@@ -286,6 +356,7 @@ def admin_required(f):
 
 
 @app.route('/api/diag')
+@admin_required
 def diag():
     """Diagnostic: shows whether the persistent disk and data are intact.
     Helps debug 'data disappeared / logged out / asked to create new account'."""
@@ -377,8 +448,8 @@ def auth_setup():
     username = (d.get('username') or '').strip()
     password = d.get('password') or ''
     display = (d.get('display_name') or username).strip()
-    if not username or len(password) < 4:
-        return jsonify({'error': 'Username required and password min 4 chars'}), 400
+    if not username or len(password) < 8:
+        return jsonify({'error': 'Username required and password min 8 chars'}), 400
     conn = get_db()
     display_company = (d.get('company_name') or 'HireLab').strip() or 'HireLab'
     conn.execute("INSERT INTO companies (name,status,plan,billing_status,created_at) VALUES (?,?,?,?,?)",
@@ -414,8 +485,8 @@ def auth_signup():
     display = (d.get('display_name') or username).strip()
     company = (d.get('company_name') or '').strip()
     email = (d.get('email') or '').strip().lower()
-    if not username or len(password) < 4:
-        return jsonify({'error': 'Username required and password min 4 chars'}), 400
+    if not username or len(password) < 8:
+        return jsonify({'error': 'Username required and password min 8 chars'}), 400
     if not re.match(r'^[a-z0-9._-]{3,40}$', username):
         return jsonify({'error': 'Username can only contain letters, numbers, dots, dashes and underscores'}), 400
     if not email or '@' not in email:
@@ -521,11 +592,23 @@ def auth_login():
     d = request.json or {}
     username = (d.get('username') or '').strip()
     password = d.get('password') or ''
+    ip = _login_ip()
+    if _login_is_blocked(ip):
+        return jsonify({'error': 'Too many failed attempts. Please wait about 15 minutes and try again.'}), 429
     conn = get_db()
     u = conn.execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
     if not u or not verify_password(password, u['password_hash']):
         conn.close()
+        _login_note_fail(ip)
         return jsonify({'error': 'Invalid username or password'}), 401
+    # Transparent upgrade: if this account still has the old SHA-256 hash,
+    # re-hash to PBKDF2 now that we have the plaintext password.
+    if password_needs_rehash(u['password_hash']):
+        try:
+            conn.execute('UPDATE users SET password_hash=? WHERE id=?', (hash_password(password), u['id']))
+            conn.commit()
+        except Exception:
+            pass
     if u['status'] == 'pending':
         conn.close()
         return jsonify({'error': 'Your account is awaiting admin approval. You will be able to sign in once approved.'}), 403
@@ -554,6 +637,8 @@ def auth_login():
     conn.commit(); conn.close()
     session['user_id'] = u['id']
     session.pop('view_as_company', None)
+    session.permanent = True
+    _login_clear(ip)
     log_activity('login', username)
     return jsonify({'ok': True})
 
@@ -618,8 +703,8 @@ def auth_reset():
     d = request.json or {}
     token = (d.get('token') or '').strip()
     password = d.get('password') or ''
-    if not token or len(password) < 4:
-        return jsonify({'error': 'Invalid link or password too short (min 4 chars)'}), 400
+    if not token or len(password) < 8:
+        return jsonify({'error': 'Invalid link or password too short (min 8 chars)'}), 400
     conn = get_db()
     row = conn.execute('SELECT token,user_id,expires_at,used FROM password_resets WHERE token=?', (token,)).fetchone()
     if not row or row['used']:
@@ -1041,8 +1126,8 @@ def create_user():
         company_id = d.get('company_id')
     else:
         company_id = current_company_id()
-    if not username or len(password) < 4:
-        return jsonify({'error': 'Username required and password min 4 chars'}), 400
+    if not username or len(password) < 8:
+        return jsonify({'error': 'Username required and password min 8 chars'}), 400
     # Enforce the agency's seat (user) limit set by the platform owner.
     _lim = company_user_limit(company_id)
     if _lim and company_approved_users(company_id) >= _lim:
@@ -1063,8 +1148,8 @@ def create_user():
 def reset_user_password(uid):
     d = request.json or {}
     password = d.get('password') or ''
-    if len(password) < 4:
-        return jsonify({'error': 'Password min 4 chars'}), 400
+    if len(password) < 8:
+        return jsonify({'error': 'Password min 8 chars'}), 400
     conn = get_db()
     u = conn.execute('SELECT username FROM users WHERE id=?', (uid,)).fetchone()
     if not u:
@@ -1289,7 +1374,7 @@ def create_agency():
         user_limit = 0
     if not company_name:
         return jsonify({'error': 'Agency / company name is required'}), 400
-    if not username or len(password) < 4:
+    if not username or len(password) < 8:
         return jsonify({'error': 'Admin username and password (min 4 chars) are required'}), 400
     if not re.match(r'^[a-z0-9._-]{3,40}$', username):
         return jsonify({'error': 'Username can only contain letters, numbers, dots, dashes and underscores'}), 400
@@ -2808,6 +2893,7 @@ def pwa_icon_512():
 
 
 @app.route('/api/db-status')
+@admin_required
 def db_status():
     """Check DB health — useful for debugging Railway/Render issues."""
     try:
@@ -6484,6 +6570,7 @@ def ai_stats():
 
 
 @app.route('/api/tags/<tag_type>')
+@login_required
 def get_tag_suggestions(tag_type):
     """Return distinct tags used across all candidates for autocomplete.
     tag_type: 'product' (Product Handles) or 'function' (Function)
@@ -6514,7 +6601,7 @@ def get_tag_suggestions(tag_type):
     }
 
     conn = get_db()
-    rows = conn.execute(f'SELECT {col} FROM candidates WHERE {col} IS NOT NULL AND {col} != "" AND {col} != "[]"').fetchall()
+    rows = conn.execute(f'SELECT {col} FROM candidates WHERE owner_id=? AND {col} IS NOT NULL AND {col} != "" AND {col} != "[]"', (effective_company_id(),)).fetchall()
     conn.close()
 
     used = set()
