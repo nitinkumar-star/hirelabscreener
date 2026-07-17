@@ -2833,6 +2833,7 @@ def db_status():
 
 
 @app.route('/api/shorten-jd', methods=['POST'])
+@login_required
 def shorten_jd():
     """Use DeepSeek to shorten a long JD/role-description text so it fits
     within Gmail's compose-URL length limit, while keeping it useful for
@@ -4937,7 +4938,7 @@ def _search_metric_record(duration_ms, scanned):
         _SEARCH_METRICS.append((duration_ms, scanned))
 
 
-def _search_rank(conn, qvec, min_score, max_cands, pool):
+def _search_rank(conn, qvec, min_score, max_cands, pool, owner_id):
     """Stream candidate vectors in chunks, score against qvec, keep a top-`pool`
     heap. Returns (ranked, scanned) where ranked is a descending list of
     (similarity, candidate_id). Memory stays bounded regardless of table size
@@ -4960,7 +4961,8 @@ def _search_rank(conn, qvec, min_score, max_cands, pool):
 
     cur = conn.execute(
         "SELECT id, embedding_vec, embedding FROM candidates "
-        "WHERE embedding IS NOT NULL AND embedding NOT IN ('', '[]')")
+        "WHERE embedding IS NOT NULL AND embedding NOT IN ('', '[]') "
+        "AND owner_id=?", (owner_id,))
     while True:
         batch = cur.fetchmany(chunk)
         if not batch:
@@ -5012,7 +5014,7 @@ def _search_rank(conn, qvec, min_score, max_cands, pool):
     return ranked, scanned
 
 
-def _search_hydrate(conn, page_slice):
+def _search_hydrate(conn, page_slice, owner_id=None):
     """Load full display fields (with mandate join) ONLY for the ranked page.
     Preserves ranked order and attaches the score. Same result shape as before."""
     if not page_slice:
@@ -5020,13 +5022,18 @@ def _search_hydrate(conn, page_slice):
     score_map = {cid: sim for sim, cid in page_slice}
     ids = [cid for _, cid in page_slice]
     ph = ','.join('?' * len(ids))
+    where = f"c.id IN ({ph})"
+    params = list(ids)
+    if owner_id is not None:                 # defense-in-depth tenant scope
+        where += " AND c.owner_id=?"
+        params.append(owner_id)
     rows = conn.execute(
         "SELECT c.id, c.name, c.designation, c.company, c.experience, c.location, "
         "c.ctc_current, c.ctc_expected, c.notice_period, c.phone, c.email, c.key_skills, "
         "c.mandate_id, c.stage, m.role AS mandate_role, m.client AS mandate_client, "
         "m.status AS mandate_status "
         "FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
-        f"WHERE c.id IN ({ph})", ids).fetchall()
+        f"WHERE {where}", params).fetchall()
     rowmap = {r['id']: r for r in rows}
     results = []
     for cid in ids:  # preserve ranked order
@@ -5549,7 +5556,10 @@ def ai_search():
         return jsonify({'error': 'Gemini API key not set. Add it in Settings.'}), 400
 
     timing = {}
-    ckey = f'{query.lower()}|{min_score}|{max_cands}|{pool}'
+    _oid = effective_company_id()
+    # Cache key MUST include the tenant id, else two agencies searching the same
+    # phrase could share cached rankings (cross-tenant leak).
+    ckey = f'{_oid}|{query.lower()}|{min_score}|{max_cands}|{pool}'
 
     # ── 1) Query embedding (cache) ─────────────────────────────────────
     t0 = _time.perf_counter()
@@ -5571,7 +5581,7 @@ def ai_search():
     # ── 2) Stream + score + rank (only when not cached) ────────────────
     if not from_cache:
         t0 = _time.perf_counter()
-        ranked, scanned = _search_rank(conn, qvec, min_score, max_cands, pool)
+        ranked, scanned = _search_rank(conn, qvec, min_score, max_cands, pool, _oid)
         timing['scan_ms'] = int((_time.perf_counter() - t0) * 1000)
         if not no_cache:
             _search_cache_put(ckey, {'qvec': qvec, 'ranked': ranked, 'scanned': scanned})
@@ -5606,7 +5616,7 @@ def ai_search():
         # ── 3) Two-phase: full fields for THIS page only (semantic-only) ──
         t0 = _time.perf_counter()
         page_slice = ranked[offset:offset + page_size]
-        results = _search_hydrate(conn, page_slice)
+        results = _search_hydrate(conn, page_slice, _oid)
         timing['hydrate_ms'] = int((_time.perf_counter() - t0) * 1000)
 
     # ── 3b) LLM re-rank (Sprint 10) — opt-in, page 1 only ──────────────
@@ -5763,6 +5773,8 @@ def mandate_match_candidates(mid):
     """Rank candidates for this mandate using its STORED JD vector — no
     re-embedding. Reuses the Sprint-4 retrieval + Sprint-6 hydrate."""
     conn = get_db()
+    if not _tenant_owns_mandate(conn, mid):
+        conn.close(); return jsonify({'ok': False, 'error': 'Not found'}), 404
     jdvec = _mandate_jd_vector(conn, mid)
     if jdvec is None:
         conn.close()
@@ -5771,8 +5783,8 @@ def mandate_match_candidates(mid):
     top_k = min(int(request.args.get('top_k') or 20), 100)
     min_score = float(request.args.get('min_score') or -1.0)
     pool = max(_search_cfg('search_max_results'), top_k)
-    ranked, scanned = _search_rank(conn, jdvec, min_score, int(_search_cfg('search_max_candidates')), pool)
-    results = _search_hydrate(conn, ranked[:top_k])
+    ranked, scanned = _search_rank(conn, jdvec, min_score, int(_search_cfg('search_max_candidates')), pool, effective_company_id())
+    results = _search_hydrate(conn, ranked[:top_k], effective_company_id())
     conn.close()
     return jsonify({'ok': True, 'mandate_id': mid, 'searched': scanned,
                     'total': len(ranked), 'results': results})
@@ -5784,7 +5796,8 @@ def candidate_match_mandates(cid):
     """Reverse match: given a candidate's vector, rank the open mandates whose
     stored JD vector best fits. Mandates are few, so this is a trivial scan."""
     conn = get_db()
-    cr = conn.execute("SELECT embedding_vec FROM candidates WHERE id=?", (cid,)).fetchone()
+    cr = conn.execute("SELECT embedding_vec FROM candidates WHERE id=? AND owner_id=?",
+                      (cid, effective_company_id())).fetchone()
     if not cr or not cr['embedding_vec']:
         conn.close(); return jsonify({'ok': False, 'error': 'Candidate not embedded yet', 'results': []})
     try:
@@ -6584,6 +6597,7 @@ def get_settings():
     return jsonify(out)
 
 @app.route('/api/settings', methods=['POST'])
+@login_required
 def save_settings():
     admin = is_admin()
     for k, v in (request.json or {}).items():
@@ -8559,18 +8573,41 @@ def upload_cv(cid):
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'filename': fname, 'original': f.filename})
 
+def _resolve_tenant_cv(conn, filename):
+    """Return a safe absolute path to a CV file IF (a) it resolves INSIDE
+    CV_DIR (blocks ../ path-traversal) and (b) it belongs to a candidate
+    owned by the current tenant. Otherwise None. owner_id stores the company id."""
+    safe = os.path.basename(filename or '')          # strip any directory parts
+    if not safe:
+        return None
+    fp = os.path.abspath(os.path.join(CV_DIR, safe))
+    if not fp.startswith(os.path.abspath(CV_DIR) + os.sep):
+        return None                                   # escaped CV_DIR
+    owns = conn.execute('SELECT 1 FROM candidates WHERE cv_path=? AND owner_id=? LIMIT 1',
+                        (safe, effective_company_id())).fetchone()
+    return fp if owns else None
+
+
 @app.route('/api/cv/<path:filename>')
+@login_required
 def serve_cv(filename):
-    fp = os.path.join(CV_DIR, filename)
-    return send_file(fp) if os.path.exists(fp) else (jsonify({'error': 'Not found'}), 404)
+    conn = get_db()
+    fp = _resolve_tenant_cv(conn, filename)
+    conn.close()
+    if not fp or not os.path.exists(fp):
+        return jsonify({'error': 'Not found'}), 404
+    return send_file(fp)
 
 
 @app.route('/api/cv-view/<path:filename>')
+@login_required
 def view_cv_html(filename):
     """Render a .docx CV as HTML so it can be shown inline in the browser
     (browsers can show PDF in an iframe natively, but not Word files)."""
-    fp = os.path.join(CV_DIR, filename)
-    if not os.path.exists(fp):
+    conn = get_db()
+    fp = _resolve_tenant_cv(conn, filename)
+    conn.close()
+    if not fp or not os.path.exists(fp):
         return ('<p style="font-family:sans-serif;padding:20px;color:#888">CV file not found.</p>', 404)
     ext = os.path.splitext(filename)[1].lower()
     if ext != '.docx':
@@ -8597,9 +8634,13 @@ def view_cv_html(filename):
                 + str(e) + '. Please download to view.</p>', 200)
 
 @app.route('/api/candidates/<int:cid>/cv', methods=['DELETE'])
+@login_required
 def delete_cv(cid):
     conn = get_db()
-    r = conn.execute('SELECT cv_path FROM candidates WHERE id=?', (cid,)).fetchone()
+    r = conn.execute('SELECT cv_path FROM candidates WHERE id=? AND owner_id=?',
+                     (cid, effective_company_id())).fetchone()
+    if not r:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     if r and r['cv_path']:
         fp = os.path.join(CV_DIR, r['cv_path'])
         if os.path.exists(fp): os.remove(fp)
@@ -8671,6 +8712,7 @@ def delete_candidate(cid):
 
 # DeepSeek parse
 @app.route('/api/parse-naukri', methods=['POST'])
+@login_required
 def parse_naukri():
     d = request.json or {}
     key = get_setting('deepseek_api_key') or d.get('deepseek_api_key', '')
@@ -8727,6 +8769,7 @@ def extract_text_from_file(file_bytes, filename):
 
 # ── Parse Resume (PDF/Word → DeepSeek → candidate fields) ────────────────────
 @app.route('/api/parse-resume', methods=['POST'])
+@login_required
 def parse_resume():
     if 'resume' not in request.files:
         return jsonify({'error': 'No file uploaded'}), 400
@@ -8773,6 +8816,7 @@ def parse_resume():
 
 # ── Bulk Parse Multiple Naukri Snippets ───────────────────────────────────────
 @app.route('/api/parse-naukri-bulk', methods=['POST'])
+@login_required
 def parse_naukri_bulk():
     d = request.json or {}
     ds_key = get_setting('deepseek_api_key') or d.get('deepseek_api_key', '')
@@ -9614,15 +9658,27 @@ def client_submission(mid):
 
 
 @app.route('/api/export')
+@admin_required
 def export_data():
     conn = get_db()
     candidates = [dict(r) for r in conn.execute('SELECT * FROM candidates').fetchall()]
+    # Strip platform secrets (API keys / passwords / tokens) from the backup so a
+    # shared/leaked export file never exposes credentials.
+    def _is_secret(k):
+        kl = (k or '').lower()
+        if kl.endswith('api_key') or kl.endswith('_apikey'): return True
+        if 'secret' in kl or 'password' in kl or kl.endswith('_pass') or kl.endswith('_token'): return True
+        return kl in ('claude_api_key','deepseek_api_key','groq_api_key','openai_api_key',
+                      'gemini_api_key','anthropic_api_key','smtp_pass','smtp_password',
+                      'wa_token','wa_access_token','verify_token','flask_secret_key','secret_key')
+    settings_out = {r['key']: r['value'] for r in conn.execute('SELECT * FROM settings').fetchall()
+                    if not _is_secret(r['key'])}
     data = {
         'exported_at': ts(), 'app': 'HireLab Screener', 'version': '2.1',
         'mandates':   [dict(r) for r in conn.execute('SELECT * FROM mandates').fetchall()],
         'candidates': candidates,
         'history':    [dict(r) for r in conn.execute('SELECT * FROM stage_history').fetchall()],
-        'settings':   {r['key']: r['value'] for r in conn.execute('SELECT * FROM settings').fetchall()},
+        'settings':   settings_out,
     }
     conn.close()
     # Include actual CV files (PDF/Word) as base64 so they transfer with the backup.
