@@ -3694,17 +3694,15 @@ function renderProfileDetail(c){
   cvCard+='</div>';
 
   // Communications: WhatsApp + Email + Call analysis
-  var waCard='<div class="cp-card2"><div class="cp-lbl2" style="color:#0F6E56">&#128172; WhatsApp</div>'
-    +'<div style="display:flex;flex-wrap:wrap;gap:7px">'
-    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="msg1">Intro</button>'
-    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="fu1">Follow Up 1</button>'
-    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="fu2">Follow Up 2</button>'
-    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="fu3">Follow Up 3</button>'
-    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="interview">Interview invite</button>'
-    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="docs">Docs request</button>'
-    +'<button class="wa-type-btn cp-hbtn" data-cid="'+c.id+'" data-type="normal">Open chat</button>'
-    +'<button class="cp-hbtn" style="color:#0F6E56" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')">&#129302; Start AI Conversation</button>'
-    +'</div></div>';
+  var waCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+    +'<div class="cp-lbl2" style="margin:0;color:#0F6E56">&#128172; WhatsApp</div>'
+    +'<div style="display:flex;gap:7px">'
+    +'<button class="cp-hbtn" onclick="cpLoadWaThread('+c.id+')">&#8635; Refresh</button>'
+    +'<button class="cp-hbtn" style="background:#25D366;color:#fff;border-color:transparent" onclick="openWhatsAppPanel('+c.id+')">&#9998; Templates / Send</button>'
+    +'</div></div>'
+    +'<div id="cp-wa-thread-'+c.id+'" style="max-height:460px;overflow-y:auto;background:#ECE5DD;border-radius:8px;padding:8px"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading…</div></div>'
+    +'<div style="margin-top:8px"><button class="cp-hbtn" style="color:#0F6E56" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')">&#129302; Start AI Conversation</button></div>'
+    +'</div>';
   var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">&#9993; Email thread</div><div style="display:flex;gap:7px"><button class="cp-hbtn" onclick="cpLoadEmailThread('+c.id+')">&#8635; Refresh</button><button class="cp-hbtn" style="background:#185FA5;color:#fff;border-color:transparent" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">&#9998; Compose / AI</button></div></div><div id="cp-email-'+c.id+'" style="max-height:460px;overflow-y:auto"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading emails…</div></div></div>';
   var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload a call recording — Groq transcribes, Claude analyses &amp; auto-updates CTC/company.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
 
@@ -3756,6 +3754,7 @@ function renderProfileDetail(c){
   initTagInputs(c);
   // Pre-load tab content so Communications / Interviews / History are ready
   try{ cpLoadEmailThread(c.id); }catch(e){}
+  try{ cpLoadWaThread(c.id); }catch(e){}
   try{ cpLoadInterviews(c.id); }catch(e){}
   try{ cpLoadHistory(c.id); }catch(e){}
 }
@@ -3767,7 +3766,7 @@ function cpTab(name){
   });
   var cid=window._cpCid;
   if(!cid) return;
-  if(name==='comms'){ try{ cpLoadEmailThread(cid); }catch(e){} }
+  if(name==='comms'){ try{ cpLoadEmailThread(cid); }catch(e){} try{ cpLoadWaThread(cid); }catch(e){} }
   else if(name==='interviews'){ cpLoadInterviews(cid); }
   else if(name==='history'){ cpLoadHistory(cid); }
 }
@@ -4038,6 +4037,7 @@ function renderSettings(){
       +'<div style="padding:10px 14px"><textarea class="ta" id="s-'+t.key+'" rows="4">'+esc(s[t.key]||'')+'</textarea></div></div>'
     ).join('')
     + emailConfigHTML(s)
+    + waConfigHTML(s)
     + followUpConfigHTML(s)
     +'<button class="btn btn-g" onclick="saveSettings()">Save All Settings</button>'
     +'<span id="s-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
@@ -4046,6 +4046,7 @@ function renderSettings(){
     +'</div>';
   if (S.currentUser && S.currentUser.role==='admin') loadUsersList();
   loadMyProfile();
+  renderWaSettings();
 }
 
 async function loadMyProfile(){
@@ -4202,6 +4203,50 @@ function followUpConfigHTML(s){
     + '</div>';
 }
 
+function waConfigHTML(s){
+  return '<div style="margin:18px 0;border-top:2px solid #25D366;padding-top:16px">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:15px">&#128172;</span>'
+    +'<div style="font-size:15px;font-weight:700;color:var(--navy)">WhatsApp</div></div>'
+    +'<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5">Message templates edit karo, aur reply-capture listener setup karo. Listener tumhare WhatsApp ka linked device banta hai (QR scan) aur sent + received messages ATS me laata hai.</div>'
+    +'<div id="wa-settings-box"><div class="loading" style="padding:12px"><div class="spinner"></div>Loading…</div></div>'
+    +'</div>';
+}
+async function renderWaSettings(){
+  var box=document.getElementById('wa-settings-box'); if(!box) return;
+  var cfg={}, cats=[];
+  try{ cfg=await req('GET','/wa-inbound-config'); }catch(e){}
+  try{ cats=await waLoadTemplates(true); }catch(e){}
+  var setup='<div class="card" style="margin-bottom:14px"><div class="card-body">'
+    +'<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:8px">&#128225; Reply-capture listener</div>'
+    +'<div class="fg-row"><label>Post URL</label><input class="inp" readonly value="'+esc(cfg.url||'')+'" onclick="this.select()"></div>'
+    +'<div class="fg-row"><label>Listener token</label><input class="inp" readonly value="'+esc(cfg.token||'')+'" onclick="this.select()"></div>'
+    +'<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-top:6px">Ye URL + token apne listener config me daalo. Token secret hai — kisi se share mat karo.</div>'
+    +'</div></div>';
+  var tpl='<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin:14px 0 8px">&#9998; Message templates</div>';
+  cats.forEach(function(cat,ci){
+    tpl+='<div style="font-size:11.5px;font-weight:700;color:#0F6E56;margin:12px 0 6px">'+esc(cat.cat)+'</div>';
+    (cat.items||[]).forEach(function(t,ti){
+      tpl+='<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--muted);margin-bottom:3px">'+esc(t.title)+'</div>'
+        +'<textarea class="inp wa-tpl-edit" data-ci="'+ci+'" data-ti="'+ti+'" rows="3" style="font-size:12px;width:100%;box-sizing:border-box;resize:vertical">'+esc(t.body||'')+'</textarea></div>';
+    });
+  });
+  tpl+='<div style="font-size:10.5px;color:var(--muted);margin:6px 0 10px">Placeholders: {{Name}} {{You}} {{Role}} {{Location}} {{Date}} {{Time}} {{Mode}} {{DOJ}}</div>';
+  tpl+='<button class="btn btn-g" onclick="saveWaTemplates()">&#128190; Save WhatsApp Templates</button> <span id="wa-tpl-status" style="font-size:11px;color:#888;margin-left:8px"></span>';
+  box.innerHTML=setup+tpl;
+  box._cats=cats;
+}
+async function saveWaTemplates(){
+  var box=document.getElementById('wa-settings-box'); if(!box||!box._cats) return;
+  var cats=box._cats;
+  document.querySelectorAll('.wa-tpl-edit').forEach(function(ta){
+    var ci=+ta.dataset.ci, ti=+ta.dataset.ti;
+    if(cats[ci] && cats[ci].items && cats[ci].items[ti]) cats[ci].items[ti].body=ta.value;
+  });
+  var r=await req('POST','/wa-templates',{templates:cats});
+  var st=document.getElementById('wa-tpl-status');
+  if(r&&r.ok){ _waTemplatesCache=cats; if(st){st.innerHTML='Saved &#10003;';setTimeout(function(){st.textContent='';},2000);} }
+  else toast('&#9888;&#65039;', (r&&r.error)||'Save failed');
+}
 function emailConfigHTML(s){
   return '<div style="margin:18px 0;border-top:2px solid #534AB7;padding-top:16px">'
     + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
@@ -6289,6 +6334,102 @@ async function handleSingleCDBResume(file, key) {
 
 
 // ─── WHATSAPP HANDLERS IN PROFILE ────────────────────────────────────────────
+// ═══ WhatsApp: per-candidate thread + categorized template panel ═══════════
+async function cpLoadWaThread(cid){
+  var el=document.getElementById('cp-wa-thread-'+cid); if(!el) return;
+  var r; try{ r=await req('GET','/candidates/'+cid+'/wa-thread'); }catch(e){ el.innerHTML='<div style="color:#B42318;font-size:12px;padding:8px">Could not load thread</div>'; return; }
+  var msgs=(r&&r.messages)||[];
+  if(!msgs.length){ el.innerHTML='<div style="color:#667085;font-size:12px;padding:14px;text-align:center;background:#fff;border-radius:6px">No WhatsApp messages yet.<br><span style="font-size:11px">Sent &amp; received messages will appear here once your listener is connected.</span></div>'; return; }
+  el.innerHTML=msgs.map(function(m){
+    var inb=(m.direction==='inbound');
+    var when=m.created_at?(_journeyDateLabel(m.created_at)+' '+_journeyTime(m.created_at)):'';
+    return '<div style="display:flex;justify-content:'+(inb?'flex-start':'flex-end')+';margin:4px 0">'
+      +'<div style="max-width:80%;background:'+(inb?'#fff':'#DCF8C6')+';border-radius:9px;padding:6px 9px;box-shadow:0 1px 1px rgba(0,0,0,.06)">'
+      +'<div style="font-size:12.5px;color:#111b21;white-space:pre-wrap;line-height:1.5">'+esc(m.content||'')+'</div>'
+      +'<div style="font-size:9.5px;color:#667781;margin-top:2px;text-align:right">'+esc(when)+'</div>'
+      +'</div></div>';
+  }).join('');
+  el.scrollTop=el.scrollHeight;
+}
+
+var _waTemplatesCache=null;
+async function waLoadTemplates(force){
+  if(_waTemplatesCache && !force) return _waTemplatesCache;
+  try{ var r=await req('GET','/wa-templates'); _waTemplatesCache=(r&&r.templates)||[]; }catch(e){ _waTemplatesCache=[]; }
+  return _waTemplatesCache;
+}
+
+function waFillTemplate(body, cand){
+  var firstName=((cand.name||'').trim().split(' ')[0])||(cand.name||'');
+  var you=(S.settings&&S.settings.recruiter_name)||'';
+  var role='', loc='';
+  if(S.activeMandate && (cand.mandate_id==null || cand.mandate_id===S.activeMandate.id)){ role=S.activeMandate.role||''; loc=S.activeMandate.location||''; }
+  var out=String(body||'');
+  out = loc ? out.replace(/\{\{ in \{\{Location\}\}\}\}/g, ' in '+loc) : out.replace(/\{\{ in \{\{Location\}\}\}\}/g, '');
+  out = out.replace(/\{\{Name\}\}/g, firstName)
+           .replace(/\{\{You\}\}/g, you||'HireLab')
+           .replace(/\{\{Role\}\}/g, role||'this role')
+           .replace(/\{\{Location\}\}/g, loc||'[location]')
+           .replace(/\{\{Date\}\}/g, '[date]')
+           .replace(/\{\{Time\}\}/g, '[time]')
+           .replace(/\{\{Mode\}\}/g, '[mode]')
+           .replace(/\{\{DOJ\}\}/g, '[joining date]')
+           .replace(/\{\{WorkMode\}\}/g, '[work mode]');
+  return out;
+}
+
+async function openWhatsAppPanel(cid){
+  var cand; try{ cand=await req('GET','/candidates/'+cid); }catch(e){ toast('ERR','Could not load candidate'); return; }
+  if(!cand||!cand.id){ toast('ERR','Candidate not found'); return; }
+  S._waCand=cand;
+  document.querySelectorAll('.wa-pop').forEach(function(p){ p.style.display='none'; });
+  var cats=await waLoadTemplates(false);
+  var drawer=document.getElementById('wa-drawer');
+  if(!drawer){ drawer=document.createElement('div'); drawer.id='wa-drawer';
+    drawer.style.cssText='position:fixed;top:0;right:0;height:100%;width:440px;max-width:92vw;background:#fff;border-left:0.5px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.08);z-index:9000;display:flex;flex-direction:column';
+    document.body.appendChild(drawer);
+  }
+  var phoneClean=(cand.phone||'').replace(/\D/g,'');
+  var listHtml=cats.map(function(cat){
+    return '<div style="margin-bottom:6px"><div style="font-size:11px;font-weight:700;color:#0F6E56;margin:10px 0 4px">'+esc(cat.cat)+'</div>'
+      +(cat.items||[]).map(function(t){ return '<button class="wa-tpl-item" data-id="'+esc(t.id)+'" style="display:block;width:100%;text-align:left;background:#F6F8F7;border:0.5px solid var(--line);border-radius:7px;padding:7px 9px;margin-bottom:4px;font-size:12px;color:#1f2a37;cursor:pointer">'+esc(t.title)+'</button>'; }).join('')
+      +'</div>';
+  }).join('');
+  drawer.innerHTML='<div style="padding:12px 16px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'
+    +'<div style="font-size:14px;font-weight:600;color:#0F6E56;display:flex;align-items:center;gap:7px">&#128172; WhatsApp &middot; '+esc((cand.name||'').split(' ')[0]||'')+'</div>'
+    +'<button onclick="closeWhatsAppPanel()" style="background:none;border:none;font-size:20px;color:#999;cursor:pointer;line-height:1">&times;</button></div>'
+    +'<div style="flex:1;overflow-y:auto;padding:14px">'
+    +(phoneClean?'':'<div style="background:#FFF3E0;border:0.5px solid #FFCC80;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:11.5px;color:#E65100">&#9888;&#65039; Is candidate ka phone number nahi hai — pehle add karo.</div>')
+    +'<div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">Template chuno — edit karo — bhejo</div>'
+    +listHtml
+    +'</div>'
+    +'<div style="border-top:0.5px solid var(--line);padding:12px 14px;flex-shrink:0;background:#fafafa">'
+    +'<textarea id="wa-preview" class="inp" rows="5" placeholder="Template pe click karo, ya yahan likho…" style="font-size:12.5px;width:100%;box-sizing:border-box;resize:vertical"></textarea>'
+    +'<div style="display:flex;gap:8px;margin-top:8px">'
+    +'<button class="btn" onclick="waCopyPreview()" style="font-size:12px">&#128203; Copy</button>'
+    +'<button class="btn" style="flex:1;background:#25D366;color:#fff;border:none;font-size:13px;justify-content:center" onclick="waSendPreview()">&#128172; Send on WhatsApp</button>'
+    +'</div></div>';
+  drawer.querySelectorAll('.wa-tpl-item').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var id=btn.dataset.id; var tpl=null;
+      cats.forEach(function(cat){ (cat.items||[]).forEach(function(t){ if(t.id===id) tpl=t; }); });
+      if(tpl){ document.getElementById('wa-preview').value=waFillTemplate(tpl.body, S._waCand); }
+    });
+  });
+}
+function closeWhatsAppPanel(){ var d=document.getElementById('wa-drawer'); if(d) d.remove(); }
+function waCopyPreview(){ var t=document.getElementById('wa-preview'); if(t){ t.select(); try{document.execCommand('copy');}catch(e){} toast('OK','Copied'); } }
+async function waSendPreview(){
+  var cand=S._waCand; if(!cand){ return; }
+  var msg=(document.getElementById('wa-preview').value||'').trim();
+  var phone=(cand.phone||'').replace(/\D/g,'');
+  if(!phone){ toast('ERR','No phone number'); return; }
+  var num=phone.length===10?'91'+phone:phone;
+  window.open('https://wa.me/'+num+(msg?('?text='+encodeURIComponent(msg)):''),'_blank');
+  try{ await req('POST','/candidates/'+cand.id+'/stage',{stage:null,note:'WhatsApp message sent',keep_stage:true}); }catch(e){}
+  toast('OK','WhatsApp opened — reply thread listener se sync hoga');
+}
+
 function attachWAHandlers(cand) {
   var cid = cand.id;
 
@@ -10150,11 +10291,8 @@ function toggleReminderPop(cid) {
 }
 
 function toggleWAPop(cid) {
-  var pop = document.getElementById('wa-pop-' + cid);
-  if (!pop) return;
-  var show = pop.style.display === 'none';
-  document.querySelectorAll('.rem-pop, .wa-pop').forEach(function(p){ p.style.display = 'none'; });
-  pop.style.display = show ? 'block' : 'none';
+  // Old popover retired — open the full template + thread panel instead.
+  openWhatsAppPanel(cid);
 }
 
 async function setResponseFromDropdown(cid, resp) {

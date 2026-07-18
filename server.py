@@ -3952,6 +3952,8 @@ TENANT_SETTINGS = {
     'analytics_stale_days',  # dashboard stale-mandate threshold (separate)
     'bd_stale_days',  # BD command center: flag clients silent this many days
     'interview_template',  # default interview communication message
+    'wa_templates',        # JSON: categorized WhatsApp message templates (27 defaults)
+    'wa_inbound_token',    # per-company secret for the WhatsApp listener to post inbound msgs
 }
 
 def _safe_company_id():
@@ -9779,6 +9781,220 @@ def form_config():
 # Intelligence
 
 # Client Submission Sheet
+# ══════════════════════════════════════════════════════════════════════════
+#  WhatsApp — outbound templates + inbound reply capture (via personal-number
+#  listener). Sending is done by the recruiter (wa.me / their phone); a small
+#  linked-device listener POSTs every message (sent + received) to
+#  /api/wa-inbound so the full thread appears per candidate. Receive-only:
+#  the ATS never auto-sends here.
+# ══════════════════════════════════════════════════════════════════════════
+
+WA_DEFAULT_TEMPLATES = [
+    {"cat": "📥 Sourcing / Early stage", "items": [
+        {"id": "intro",       "title": "Intro / First outreach",
+         "body": "Hi {{Name}}, {{You}} here from HireLab. We do senior hiring in Solar, Electrical & Automation.\nThere's a {{Role}} role{{ in {{Location}}}} that looks like a good fit for your profile. Interested in knowing more? 🙂"},
+        {"id": "fu1",         "title": "Follow-up 1 (2-3 days)",
+         "body": "Hi {{Name}}, just following up on my earlier message about the {{Role}} role 🙂 No rush — even if the timing isn't right, that's totally fine. Want me to share the details?"},
+        {"id": "fu2",         "title": "Follow-up 2 (final nudge)",
+         "body": "Hi {{Name}}, last message from my side, promise 🙏 If this or any future role interests you, just ping me anytime. Take care!"},
+        {"id": "share_jd",    "title": "Interested → share JD",
+         "body": "Awesome, {{Name}}! Here's the JD for the {{Role}} role 👇 Have a look — ask me anything if something's unclear, and we can cover the rest on a quick call."},
+        {"id": "cv_request",  "title": "CV / resume request",
+         "body": "Hi {{Name}}, your profile looks interesting 🙂 Could you send me an updated resume? That way I can match you with the right roles."},
+        {"id": "availability","title": "Quick availability check",
+         "body": "Hi {{Name}}, wanted to have a quick 5-10 min chat about a role. What time works for you today? I'll give you a call. 🙂"},
+        {"id": "reactivate",  "title": "Reactivate old candidate",
+         "body": "Hi {{Name}}, it's been a while! How are things going — happy where you are, or open to exploring something new? Just touching base. 🙂"},
+    ]},
+    {"cat": "🗣️ Objection handling", "items": [
+        {"id": "ctc_ask",     "title": "Candidate asks salary/CTC",
+         "body": "Fair question 🙂 The package is competitive, but it's best to discuss once I understand your current fitment. Could you share your current & expected CTC? Then I can position you properly."},
+        {"id": "which_co",    "title": "Which company?",
+         "body": "Totally understand you'd want to know 🙂 The client is a well-known name in this space — I'll share it on a call once there's a mutual fit. Shall we connect for 10 mins?"},
+        {"id": "notice",      "title": "Notice period too long",
+         "body": "Got it, {{Name}}. For the {{Role}} role, notice can be a bit flexible — is a buyout or early release possible on your end? We can work it out with the client."},
+        {"id": "ctc_high",    "title": "Expected CTC mismatch",
+         "body": "Thanks for being upfront, {{Name}} 🙂 The number's slightly above the band for this role, but for a strong profile the gap can often be bridged. Is there some flexibility, or is this firm?"},
+        {"id": "remote",      "title": "Remote / WFH / hybrid",
+         "body": "Good question 🙂 This role is based in {{Location}}. If relocation or commute is a concern, let me know and we'll figure it out."},
+        {"id": "relocate",    "title": "Location / relocation",
+         "body": "Hi {{Name}}, the role is in {{Location}}. Are you open to relocating, or would you prefer to stay in your current city? Either way, I'll guide you."},
+    ]},
+    {"cat": "🎯 Interview stage", "items": [
+        {"id": "sched_call",  "title": "Interested → schedule call",
+         "body": "Perfect, {{Name}}! When works for a 10-min call — today or tomorrow? I'll call you, just share a slot. 📞"},
+        {"id": "qual",        "title": "Qualification ask",
+         "body": "Thanks, {{Name}}! To position your profile well, could you quickly share:\n• Current company\n• Current & expected CTC (LPA)\n• Notice period\n• Location\nTakes 2 mins 🙏"},
+        {"id": "iv_invite",   "title": "Interview invite",
+         "body": "Good news, {{Name}}! 🎉 The client wants to take this forward. Your {{Role}} interview is proposed for {{Date}}, {{Time}} ({{Mode}}). Does this time work? Confirm and I'll send the full details."},
+        {"id": "iv_reminder", "title": "Interview reminder",
+         "body": "Hi {{Name}}, quick reminder — your {{Role}} interview is on {{Date}} at {{Time}}. All set? Let me know if you need anything. All the best! 💪"},
+        {"id": "iv_reschedule","title": "Reschedule interview",
+         "body": "No problem at all, {{Name}} 🙂 Let's reschedule — which day/time would work better for you? I'll coordinate with the client."},
+        {"id": "iv_noshow",   "title": "No-show follow-up",
+         "body": "Hi {{Name}}, we couldn't connect for today's interview — everything okay? 🙂 If something came up, no worries, we can set it up again. Just tell me when suits you."},
+        {"id": "next_round",  "title": "Positive feedback → next round",
+         "body": "Great news, {{Name}}! 🎉 The first round feedback was good and the client is keen on a next round. {{Date}}, {{Time}} is proposed — does that work?"},
+    ]},
+    {"cat": "🤝 Offer & closing", "items": [
+        {"id": "next_steps",  "title": "Post-call → next steps",
+         "body": "Great talking, {{Name}}! As discussed, I'm putting your profile forward for {{Role}}. Send your updated resume here so I can move fast. I'll keep you posted at every step. 🙏"},
+        {"id": "reject",      "title": "Rejection (graceful)",
+         "body": "Hi {{Name}}, the client decided to go in a different direction this time 🙏 The feedback wasn't about your profile — it was purely a role-fit call. I'll keep reaching out for strongly relevant roles — you're on my radar. 🙂"},
+        {"id": "offer",       "title": "Offer rolled out 🎉",
+         "body": "{{Name}}, congratulations! 🎉 The client has rolled out the {{Role}} offer. Sending the detailed offer across — have a look and let's talk through any questions. Really happy for you! 🙌"},
+        {"id": "counter",     "title": "Candidate got a counteroffer",
+         "body": "I understand, {{Name}}, this is an important decision 🙂 Counteroffers are often short-term — weigh the long-term growth, role and company, not just the number. Shall we do a quick call? No pressure, just to help you think it through."},
+        {"id": "prejoin",     "title": "Pre-joining keep-warm",
+         "body": "Hi {{Name}}, hope the prep is going smoothly 🙂 With {{DOJ}} approaching, if you need anything around paperwork or joining, I'm right here. Excited for you! 💪"},
+        {"id": "not_interested","title": "Not interested → graceful close",
+         "body": "No worries at all, {{Name}} 🙌 Thanks for your time! I'll keep your profile on record and only reach out if something strongly relevant comes up. Take care!"},
+    ]},
+]
+
+
+def _wa_norm_phone10(phone):
+    """Return the last-10-digit form of a phone number for matching."""
+    pc = re.sub(r'[^0-9]', '', phone or '')
+    if pc.startswith('91') and len(pc) == 12:
+        pc = pc[2:]
+    return pc[-10:] if len(pc) >= 10 else pc
+
+
+def _wa_get_inbound_token(company_id):
+    """Get (or lazily create) this company's WhatsApp listener token."""
+    conn = get_db()
+    r = conn.execute('SELECT value FROM tenant_settings WHERE company_id=? AND key=?',
+                     (company_id, 'wa_inbound_token')).fetchone()
+    if r and r['value']:
+        conn.close(); return r['value']
+    tok = secrets.token_urlsafe(24)
+    conn.execute('INSERT OR REPLACE INTO tenant_settings (company_id,key,value) VALUES (?,?,?)',
+                 (company_id, 'wa_inbound_token', tok))
+    conn.commit(); conn.close()
+    return tok
+
+
+def _wa_company_for_token(tok):
+    if not tok:
+        return None
+    conn = get_db()
+    r = conn.execute("SELECT company_id FROM tenant_settings WHERE key='wa_inbound_token' AND value=?",
+                     (tok,)).fetchone()
+    conn.close()
+    return r['company_id'] if r else None
+
+
+@app.route('/api/wa-inbound', methods=['POST'])
+def wa_inbound():
+    """The personal-number listener POSTs every message here (sent + received).
+    Auth is by the per-company listener token (NOT a user session). We match the
+    sender to a candidate in that company and store the message; unmatched
+    numbers are ignored (by design)."""
+    d = request.json or {}
+    tok = d.get('token') or request.headers.get('X-WA-Token', '')
+    company_id = _wa_company_for_token(tok)
+    if not company_id:
+        return jsonify({'error': 'invalid listener token'}), 401
+    phone = d.get('phone') or ''
+    text = (d.get('text') or '').strip()
+    direction = 'inbound' if (d.get('direction') or 'inbound') == 'inbound' else 'outbound'
+    wamid = (d.get('wa_message_id') or '').strip()
+    when = d.get('ts') or ts()
+    if not phone or not text:
+        return jsonify({'error': 'phone and text required'}), 400
+
+    p10 = _wa_norm_phone10(phone)
+    if not p10:
+        return jsonify({'ok': True, 'ignored': 'bad_phone'})
+
+    conn = get_db()
+    cand = conn.execute(
+        "SELECT * FROM candidates WHERE owner_id=? AND "
+        "replace(replace(replace(replace(phone,'+',''),' ',''),'-',''),'(','') LIKE ? LIMIT 1",
+        (company_id, '%' + p10)).fetchone()
+    if not cand:
+        conn.close()
+        return jsonify({'ok': True, 'ignored': 'no_candidate_match'})
+
+    # Dedupe re-syncs by WhatsApp's own message id
+    if wamid:
+        dup = conn.execute("SELECT 1 FROM wa_messages WHERE wa_message_id=? LIMIT 1", (wamid,)).fetchone()
+        if dup:
+            conn.close()
+            return jsonify({'ok': True, 'duplicate': True})
+
+    conv = conn.execute(
+        "SELECT * FROM wa_conversations WHERE company_id=? AND candidate_id=? ORDER BY id DESC LIMIT 1",
+        (company_id, cand['id'])).fetchone()
+    if not conv:
+        conv_id = conn.execute(
+            'INSERT INTO wa_conversations (company_id,candidate_id,mandate_id,candidate_phone,'
+            'candidate_name,status,auto_mode,last_message_at,created_at,updated_at) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?)',
+            (company_id, cand['id'], cand['mandate_id'], cand['phone'] or phone,
+             cand['name'] or '', 'active', 0, when, ts(), ts())).lastrowid
+    else:
+        conv_id = conv['id']
+
+    conn.execute(
+        'INSERT INTO wa_messages (conversation_id,direction,sender,content,message_type,'
+        'wa_message_id,created_at) VALUES (?,?,?,?,?,?,?)',
+        (conv_id, direction, (cand['name'] if direction == 'inbound' else 'You'),
+         text, 'text', wamid, when))
+    conn.execute('UPDATE wa_conversations SET last_message_at=?, updated_at=? WHERE id=?',
+                 (when, ts(), conv_id))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'candidate_id': cand['id']})
+
+
+@app.route('/api/candidates/<int:cid>/wa-thread')
+@login_required
+def candidate_wa_thread(cid):
+    """This candidate's WhatsApp thread only (tenant-scoped)."""
+    conn = get_db()
+    if not _tenant_owns_candidate(conn, cid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    conv = conn.execute(
+        "SELECT id FROM wa_conversations WHERE company_id=? AND candidate_id=? ORDER BY id DESC LIMIT 1",
+        (effective_company_id(), cid)).fetchone()
+    if not conv:
+        conn.close(); return jsonify({'ok': True, 'messages': []})
+    msgs = conn.execute(
+        'SELECT direction,sender,content,message_type,created_at FROM wa_messages '
+        'WHERE conversation_id=? ORDER BY id ASC', (conv['id'],)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'messages': [dict(m) for m in msgs]})
+
+
+@app.route('/api/wa-inbound-config')
+@login_required
+def wa_inbound_config():
+    """Config the recruiter pastes into their listener (URL + token)."""
+    tok = _wa_get_inbound_token(effective_company_id())
+    base = request.host_url.rstrip('/')
+    return jsonify({'ok': True, 'url': base + '/api/wa-inbound', 'token': tok})
+
+
+@app.route('/api/wa-templates', methods=['GET', 'POST'])
+@login_required
+def wa_templates():
+    if request.method == 'POST':
+        data = request.json or {}
+        tpls = data.get('templates')
+        if not isinstance(tpls, list):
+            return jsonify({'error': 'templates must be a list'}), 400
+        set_setting('wa_templates', json.dumps(tpls))
+        return jsonify({'ok': True})
+    raw = get_setting('wa_templates', '')
+    if raw:
+        try:
+            return jsonify({'ok': True, 'templates': json.loads(raw)})
+        except Exception:
+            pass
+    return jsonify({'ok': True, 'templates': WA_DEFAULT_TEMPLATES})
+
+
 def _submission_token(mid):
     """Unguessable per-mandate token for the public client-submission link.
     Derived via HMAC(secret, mid) — no storage needed, and an attacker cannot
