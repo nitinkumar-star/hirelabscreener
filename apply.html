@@ -68,6 +68,7 @@ body{font-family:-apple-system,"Segoe UI",sans-serif;background:#f5f5f5;color:#1
 
   <!-- Standard Fields -->
   <div class="g2">
+    <div style="position:absolute;left:-9999px;top:-9999px;height:0;overflow:hidden" aria-hidden="true"><label>Do not fill this<input id="hp-website" name="website" type="text" tabindex="-1" autocomplete="off"></label></div>
     <div class="fg"><label>Full Name *</label><input id="f-name" type="text" placeholder="Rahul Sharma"></div>
     <div class="fg"><label>Phone Number *</label><input id="f-phone" type="tel" placeholder="+91 98100 12345"></div>
   </div>
@@ -226,6 +227,7 @@ document.getElementById('sub-btn').addEventListener('click', async function() {
   if (!name||!phone||!email||!company) { alert('Please fill: Name, Phone, Email, and Current Company'); return; }
   this.textContent = 'Submitting...'; this.disabled = true;
   var fd = new FormData();
+  fd.append('website', (document.getElementById('hp-website')||{}).value||'');
   fd.append('name',name); fd.append('phone',phone);
   fd.append('email',email); fd.append('company',company);
   fd.append('designation', document.getElementById('f-designation').value||'');

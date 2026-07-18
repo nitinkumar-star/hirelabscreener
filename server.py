@@ -151,6 +151,20 @@ def _login_note_fail(ip):
 def _login_clear(ip):
     _LOGIN_FAILS.pop(ip, None)
 
+# ── Generic per-IP rate limiter (for public/unauthenticated endpoints) ──────
+_RL_BUCKETS = {}   # (bucket, ip) -> [timestamps]
+
+def _rate_ok(bucket, max_n, window):
+    """Return True if this IP is still under the limit for `bucket`, else False.
+    Sliding window of `window` seconds, `max_n` requests allowed."""
+    ip = _login_ip()
+    now = time.time()
+    key = (bucket, ip)
+    arr = [t for t in _RL_BUCKETS.get(key, []) if now - t < window]
+    arr.append(now)
+    _RL_BUCKETS[key] = arr
+    return len(arr) <= max_n
+
 # ─────────────────────────────────────────────────────────────────────────
 #  AUTH HELPERS (multi-user)
 # ─────────────────────────────────────────────────────────────────────────
@@ -491,6 +505,9 @@ def auth_signup():
         return jsonify({'error': 'Username can only contain letters, numbers, dots, dashes and underscores'}), 400
     if not email or '@' not in email:
         return jsonify({'error': 'A valid email is required (used for password reset)'}), 400
+    if not d.get('accept_terms'):
+        return jsonify({'error': 'Please accept the Terms of Service and Privacy Policy to continue.'}), 400
+    log_activity('signup_consent', username + ' accepted terms @ ' + ts())
     conn = get_db()
     exists = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
     if exists:
@@ -2844,6 +2861,118 @@ def index():
 @app.route('/v2')
 def recruitos_v2():
     return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'recruitos-live.html'))
+
+# ── Legal pages (Privacy / Terms / Refund) ─────────────────────────────────
+# Served from here so deployment stays single-file. Company details are
+# pre-filled from HireLab's records — confirm the support email + jurisdiction
+# before going live, and have a lawyer review for your final terms.
+_LEGAL_COMPANY = 'HireLab Talent Resource'
+_LEGAL_EMAIL   = 'support@hirelabtalent.com'
+_LEGAL_SITE    = 'hirelabtalent.com'
+_LEGAL_JURIS   = 'Ghaziabad, Uttar Pradesh, India'
+
+def _legal_page(title, body_html):
+    updated = datetime.date.today().strftime('%d %B %Y')
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>' + title + ' — HireLab Screener</title>'
+        '<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:760px;'
+        'margin:0 auto;padding:40px 22px;color:#1f2a37;line-height:1.6;font-size:15px}'
+        'h1{color:#0E2A47;font-size:26px;margin-bottom:4px}h2{color:#0E2A47;font-size:18px;'
+        'margin-top:28px}.upd{color:#8A92A0;font-size:12.5px;margin-bottom:24px}'
+        'a{color:#13A37E}.back{display:inline-block;margin-top:32px;font-size:13px}'
+        'ul{padding-left:20px}li{margin:5px 0}</style></head><body>'
+        '<h1>' + title + '</h1><div class="upd">Last updated: ' + updated + '</div>'
+        + body_html +
+        '<a class="back" href="/">&larr; Back to HireLab Screener</a></body></html>'
+    )
+
+@app.route('/privacy')
+def privacy_page():
+    body = (
+        '<p>' + _LEGAL_COMPANY + ' ("we", "us") operates HireLab Screener, a recruitment '
+        'software platform. This policy explains what data we handle and how we protect it.</p>'
+        '<h2>1. Information we process</h2><ul>'
+        '<li><b>Account data</b> of subscribing recruiters/agencies: name, username, email, agency name.</li>'
+        '<li><b>Candidate data</b> that you (the recruiter) upload or import: names, contact details, '
+        'CVs, work history, compensation and related recruitment information.</li>'
+        '<li><b>Usage/technical data</b>: log entries, IP address, and diagnostic information.</li></ul>'
+        '<h2>2. How we use it</h2><p>To provide and operate the platform, authenticate users, '
+        'process recruitment workflows you initiate, keep the service secure, and provide support. '
+        'We do not sell your data or your candidates\' data.</p>'
+        '<h2>3. Data isolation</h2><p>Each subscribing agency\'s data is logically isolated. '
+        'One agency cannot access another agency\'s candidates, mandates, or files.</p>'
+        '<h2>4. AI processing</h2><p>Some features (parsing, ranking, drafting) send the relevant '
+        'text to third-party AI providers to perform that task. Only the data needed for the '
+        'requested feature is sent.</p>'
+        '<h2>5. Candidate data &amp; your responsibility</h2><p>Recruiters using the platform are '
+        'the data controllers for the candidate information they upload and are responsible for '
+        'having a lawful basis to process it. We act as a processor on your behalf.</p>'
+        '<h2>6. Retention &amp; deletion</h2><p>Data is retained while your subscription is active. '
+        'On cancellation, data is retained during any grace period and then deleted. You may request '
+        'export or deletion of your data by contacting us.</p>'
+        '<h2>7. Security</h2><p>We use authenticated access, per-agency isolation, hashed passwords, '
+        'and encrypted transport (HTTPS). No system is perfectly secure, but we take reasonable steps '
+        'to protect your data.</p>'
+        '<h2>8. Contact</h2><p>Questions or data requests: <a href="mailto:' + _LEGAL_EMAIL + '">'
+        + _LEGAL_EMAIL + '</a> &middot; ' + _LEGAL_SITE + '</p>'
+    )
+    return _legal_page('Privacy Policy', body)
+
+@app.route('/terms')
+def terms_page():
+    body = (
+        '<p>These Terms govern your use of HireLab Screener, provided by ' + _LEGAL_COMPANY + '. '
+        'By creating an account or using the service you agree to these Terms.</p>'
+        '<h2>1. The service</h2><p>HireLab Screener is a subscription-based recruitment software '
+        'platform. We may add, change, or remove features over time.</p>'
+        '<h2>2. Accounts</h2><p>You are responsible for your login credentials and all activity under '
+        'your account. Accounts are approved by an administrator. Keep your password confidential.</p>'
+        '<h2>3. Subscription &amp; billing</h2><p>Access is provided on a per-recruiter subscription '
+        'basis. Fees, billing cycle, and payment method are as agreed at sign-up. Access may be '
+        'suspended for non-payment or on expiry of a trial.</p>'
+        '<h2>4. Acceptable use</h2><ul>'
+        '<li>Only upload candidate data you are lawfully entitled to process.</li>'
+        '<li>Do not attempt to access other agencies\' data, probe, or disrupt the service.</li>'
+        '<li>Do not use the service for unlawful, abusive, or spam activity.</li></ul>'
+        '<h2>5. Your data</h2><p>You retain ownership of the data you upload. You grant us a limited '
+        'licence to process it solely to provide the service. See our '
+        '<a href="/privacy">Privacy Policy</a>.</p>'
+        '<h2>6. Availability</h2><p>We aim for high availability but do not guarantee uninterrupted '
+        'service. Maintenance and occasional downtime may occur.</p>'
+        '<h2>7. Limitation of liability</h2><p>The service is provided "as is". To the extent permitted '
+        'by law, we are not liable for indirect or consequential losses, or for loss of data beyond our '
+        'reasonable control. Our total liability is limited to the fees paid in the preceding 3 months.</p>'
+        '<h2>8. Termination</h2><p>Either party may terminate as per the subscription arrangement. On '
+        'termination, access ends and data is handled per the Privacy Policy.</p>'
+        '<h2>9. Governing law</h2><p>These Terms are governed by the laws of India, with jurisdiction '
+        'in the courts of ' + _LEGAL_JURIS + '.</p>'
+        '<h2>10. Contact</h2><p><a href="mailto:' + _LEGAL_EMAIL + '">' + _LEGAL_EMAIL + '</a> &middot; '
+        + _LEGAL_SITE + '</p>'
+    )
+    return _legal_page('Terms of Service', body)
+
+@app.route('/refund')
+def refund_page():
+    body = (
+        '<p>This policy explains billing, cancellation, and refunds for HireLab Screener '
+        'subscriptions provided by ' + _LEGAL_COMPANY + '.</p>'
+        '<h2>1. Subscriptions</h2><p>Subscriptions are billed per recruiter for the agreed period. '
+        'Access continues until the end of the paid period.</p>'
+        '<h2>2. Cancellation</h2><p>You may cancel at any time by contacting us. Cancellation stops '
+        'future renewals; your access continues until the end of the current paid period.</p>'
+        '<h2>3. Refunds</h2><p>Fees already paid for the current period are generally non-refundable, '
+        'except where required by law. If you believe you were billed in error, contact us within 7 days '
+        'and we will review it in good faith.</p>'
+        '<h2>4. Trials</h2><p>Free-trial periods are not charged. If you do not subscribe before the '
+        'trial ends, access is paused until you subscribe.</p>'
+        '<h2>5. Data after cancellation</h2><p>After cancellation, your data is retained during a short '
+        'grace period and then deleted. Request an export before cancelling if you need your data.</p>'
+        '<h2>6. Contact</h2><p><a href="mailto:' + _LEGAL_EMAIL + '">' + _LEGAL_EMAIL + '</a> &middot; '
+        + _LEGAL_SITE + '</p>'
+    )
+    return _legal_page('Refund &amp; Cancellation Policy', body)
 # ── PWA: installable mobile app (manifest + service worker + icons) ────────
 @app.route('/manifest.webmanifest')
 def pwa_manifest():
@@ -9456,6 +9585,8 @@ def apply_form():
 
 @app.route('/api/public/parse-resume', methods=['POST'])
 def public_parse_resume():
+    if not _rate_ok('pub_parse', 30, 3600):
+        return jsonify({'error': 'Too many requests. Please try again later.'}), 429
     if 'resume' not in request.files:
         return jsonify({'error': 'No file'}), 400
     f = request.files['resume']
@@ -9485,6 +9616,13 @@ def public_parse_resume():
 
 @app.route('/api/submit', methods=['POST'])
 def submit_form():
+    # Spam protection for this PUBLIC endpoint:
+    # (a) per-IP rate limit, (b) honeypot field that only bots fill in.
+    if not _rate_ok('submit', 20, 3600):
+        return jsonify({'error': 'Too many submissions. Please try again later.'}), 429
+    if (request.form.get('website') or '').strip():
+        # Honeypot tripped — pretend success, save nothing.
+        return jsonify({'ok': True})
     name    = request.form.get('name', '').strip()
     phone   = request.form.get('phone', '').strip()
     email   = request.form.get('email', '').strip()
@@ -9627,6 +9765,8 @@ def add_submission_to_pipeline(sid):
 def form_config():
     conn = get_db()
     if request.method == 'POST':
+        if not current_user():          # only logged-in staff may change the form
+            conn.close(); return jsonify({'error': 'Unauthorized'}), 401
         conn.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)',
                      ('form_config', json.dumps(request.json or {})))
         conn.commit(); conn.close()

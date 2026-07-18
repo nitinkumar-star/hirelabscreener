@@ -2234,7 +2234,7 @@ function showAuthScreen(mode) {
 
   if (isReset) {
     h += '<input class="inp" id="auth-pass" type="password" placeholder="New password" autocomplete="new-password" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;reset&#39;)">'
-      + '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">At least 4 characters</div>'
+      + '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">At least 8 characters</div>'
       + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="submitAuth(&#39;reset&#39;)">Set new password</button>';
   } else if (isForgot) {
     h += '<input class="inp" id="auth-user" placeholder="Your username or email" autocomplete="username" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;forgot&#39;)">'
@@ -2247,7 +2247,8 @@ function showAuthScreen(mode) {
       + (isSignup ? '<input class="inp" id="auth-email" type="email" placeholder="Email (for password reset)" autocomplete="email" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
       + '<input class="inp" id="auth-user" placeholder="Username" autocomplete="username" style="margin-bottom:10px;width:100%;box-sizing:border-box">'
       + '<input class="inp" id="auth-pass" type="password" placeholder="Password" autocomplete="' + (isSetup||isSignup?'new-password':'current-password') + '" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;'+mode+'&#39;)">'
-      + ((isSetup||isSignup) ? '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">Password must be at least 4 characters</div>' : '<div style="height:14px"></div>')
+      + ((isSetup||isSignup) ? '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">Password must be at least 8 characters</div>' : '<div style="height:14px"></div>')
+      + (isSignup ? '<label style="display:flex;gap:8px;align-items:flex-start;font-size:11px;color:#5A6472;margin-bottom:14px;cursor:pointer"><input type="checkbox" id="auth-terms" style="margin-top:2px;flex-shrink:0"><span>I agree to the <a href="/terms" target="_blank" style="color:#13A37E;text-decoration:none">Terms of Service</a> and <a href="/privacy" target="_blank" style="color:#13A37E;text-decoration:none">Privacy Policy</a>.</span></label>' : '')
       + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="submitAuth(&#39;'+mode+'&#39;)">' + (isSetup ? 'Create Admin & Continue' : (isSignup ? 'Request Account' : 'Sign In')) + '</button>';
   }
 
@@ -2298,7 +2299,7 @@ async function submitAuth(mode) {
 
   if (mode === 'reset') {
     var np = document.getElementById('auth-pass').value || '';
-    if (np.length < 4) { err.textContent = 'Password must be at least 4 characters'; return; }
+    if (np.length < 8) { err.textContent = 'Password must be at least 8 characters'; return; }
     err.textContent = 'Please wait...';
     var rr = await req('POST', '/auth/reset', { token: window._resetToken || '', password: np });
     if (rr.ok) {
@@ -2331,6 +2332,9 @@ async function submitAuth(mode) {
     payload.company_name = compEl ? (compEl.value || '').trim() : '';
     var emEl = document.getElementById('auth-email');
     payload.email = emEl ? (emEl.value || '').trim() : '';
+    var termsEl = document.getElementById('auth-terms');
+    if (!termsEl || !termsEl.checked) { err.textContent = 'Please accept the Terms of Service and Privacy Policy'; return; }
+    payload.accept_terms = true;
     endpoint = '/auth/signup';
   }
   err.textContent = 'Please wait...';
@@ -4341,7 +4345,7 @@ async function createUser() {
 async function resetUserPwd(uid, username) {
   var np = prompt('New password for "' + username + '" (min 4 chars):');
   if (np === null) return;
-  if (np.length < 4) { toast('ERR','Password min 4 chars'); return; }
+  if (np.length < 8) { toast('ERR','Password min 8 chars'); return; }
   var r = await req('POST', '/users/' + uid + '/password', {password:np});
   if (r.ok) toast('OK','Password updated for '+username);
   else toast('ERR', r.error||'Failed');
