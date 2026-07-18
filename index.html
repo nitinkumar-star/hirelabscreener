@@ -3408,8 +3408,10 @@ async function renderPipeline(el){
   });
 }
 async function openProfile(cid){S.selectedCandidateId=cid;await switchTab('Candidate Profiles');}
-function openSubmissionSheet(){
-  window.open(API+'/mandates/'+S.activeMandate.id+'/submission?stage=Shared+with+Client','_blank','width=1100,height=800,scrollbars=yes');
+async function openSubmissionSheet(){
+  var r = await req('GET','/mandates/'+S.activeMandate.id+'/share-link');
+  var url = (r && r.url) ? r.url : (API+'/mandates/'+S.activeMandate.id+'/submission?stage=Shared+with+Client');
+  window.open(url,'_blank','width=1100,height=800,scrollbars=yes');
 }
 
 // ── CANDIDATE PROFILES ─────────────────────────────────────────────────────

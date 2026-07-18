@@ -89,7 +89,7 @@ def add_cors_headers(resp):
 # ── Login Protection ──────────────────────────────────────────────────────────
 from functools import wraps
 from flask import session, redirect as flask_redirect
-import hashlib, secrets
+import hashlib, secrets, hmac
 
 def _get_secret_key():
     # 1) Prefer env var (set SECRET_KEY in Render for best security)
@@ -9779,11 +9779,43 @@ def form_config():
 # Intelligence
 
 # Client Submission Sheet
+def _submission_token(mid):
+    """Unguessable per-mandate token for the public client-submission link.
+    Derived via HMAC(secret, mid) — no storage needed, and an attacker cannot
+    forge it without the server secret."""
+    key = app.secret_key or 'fallback'
+    if isinstance(key, str):
+        key = key.encode()
+    return hmac.new(key, ('submission:%d' % mid).encode(), hashlib.sha256).hexdigest()[:24]
+
+
+@app.route('/api/mandates/<int:mid>/share-link')
+@login_required
+def mandate_share_link(mid):
+    """Return the public, tokenised client-submission URL for a mandate the
+    current tenant owns. Recruiters share THIS link with clients."""
+    conn = get_db()
+    if not _tenant_owns_mandate(conn, mid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    conn.close()
+    base = request.host_url.rstrip('/')
+    url = base + '/api/mandates/' + str(mid) + '/submission?stage=Shared+with+Client&t=' + _submission_token(mid)
+    return jsonify({'ok': True, 'url': url})
+
+
 @app.route('/api/mandates/<int:mid>/submission')
 def client_submission(mid):
     conn = get_db()
     m = conn.execute('SELECT * FROM mandates WHERE id=?', (mid,)).fetchone()
-    if not m: conn.close(); return jsonify({'error':'Not found'}), 404
+    if not m:
+        conn.close(); return ('Not found', 404)
+    # Access = logged-in owner (recruiter preview) OR a valid share token
+    # (client link). Anything else 404s, so mandate ids can't be enumerated to
+    # read another agency's shared candidates.
+    tok = request.args.get('t', '')
+    is_owner = bool(current_user()) and m['owner_id'] == effective_company_id()
+    if not is_owner and not (tok and secrets.compare_digest(tok, _submission_token(mid))):
+        conn.close(); return ('Not found', 404)
     stage_filter = request.args.get('stage', 'Shared with Client')
     cands = conn.execute(
         'SELECT * FROM candidates WHERE mandate_id=? AND stage=? ORDER BY ai_score DESC',
