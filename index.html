@@ -3694,14 +3694,21 @@ function renderProfileDetail(c){
   cvCard+='</div>';
 
   // Communications: WhatsApp + Email + Call analysis
-  var waCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
-    +'<div class="cp-lbl2" style="margin:0;color:#0F6E56">&#128172; WhatsApp</div>'
-    +'<div style="display:flex;gap:7px">'
-    +'<button class="cp-hbtn" onclick="cpLoadWaThread('+c.id+')">&#8635; Refresh</button>'
-    +'<button class="cp-hbtn" style="background:#25D366;color:#fff;border-color:transparent" onclick="openWhatsAppPanel('+c.id+')">&#9998; Templates / Send</button>'
-    +'</div></div>'
-    +'<div id="cp-wa-thread-'+c.id+'" style="max-height:460px;overflow-y:auto;background:#ECE5DD;border-radius:8px;padding:8px"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading…</div></div>'
-    +'<div style="margin-top:8px"><button class="cp-hbtn" style="color:#0F6E56" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')">&#129302; Start AI Conversation</button></div>'
+  var waCard='<div class="cp-card2" style="padding:0;overflow:hidden">'
+    +'<div style="background:#075E54;padding:10px 14px;display:flex;align-items:center;justify-content:space-between">'
+      +'<div style="display:flex;align-items:center;gap:9px">'
+        +'<div style="width:34px;height:34px;border-radius:50%;background:#25D366;display:flex;align-items:center;justify-content:center;font-size:17px">&#128172;</div>'
+        +'<div><div style="font-size:13px;font-weight:600;color:#fff;line-height:1.2">WhatsApp</div><div style="font-size:10.5px;color:rgba(255,255,255,.7)">'+esc(c.phone||'No number')+'</div></div>'
+      +'</div>'
+      +'<button class="cp-hbtn" title="Refresh" style="background:rgba(255,255,255,.15);color:#fff;border-color:transparent;padding:5px 9px" onclick="cpLoadWaThread('+c.id+')">&#8635;</button>'
+    +'</div>'
+    +'<div id="cp-wa-thread-'+c.id+'" style="height:360px;overflow-y:auto;background:#ECE5DD;padding:12px 10px"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading…</div></div>'
+    +'<div style="display:flex;gap:7px;align-items:flex-end;padding:9px 10px;background:#F0F2F5;border-top:0.5px solid rgba(0,0,0,.06)">'
+      +'<button class="cp-hbtn" title="Templates" style="flex-shrink:0;height:38px;background:#fff;padding:0 12px" onclick="openWhatsAppPanel('+c.id+')">&#9776;</button>'
+      +'<textarea id="wa-compose-'+c.id+'" data-phone="'+esc(c.phone||'')+'" rows="1" placeholder="Type a message, ya template chuno…" style="flex:1;resize:none;border:0.5px solid rgba(0,0,0,.12);border-radius:19px;padding:9px 14px;font-size:12.5px;font-family:inherit;max-height:110px;line-height:1.4;box-sizing:border-box" oninput="this.style.height=&#39;auto&#39;;this.style.height=Math.min(this.scrollHeight,110)+&#39;px&#39;"></textarea>'
+      +'<button title="Send on WhatsApp" style="flex-shrink:0;background:#25D366;color:#fff;border:none;width:38px;height:38px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center" onclick="waComposeSend('+c.id+')">&#10148;</button>'
+    +'</div>'
+    +'<div style="padding:6px 12px 10px;background:#F0F2F5"><button class="cp-hbtn" style="color:#0F6E56;font-size:11px" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')">&#129302; Start AI Conversation</button></div>'
     +'</div>';
   var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">&#9993; Email thread</div><div style="display:flex;gap:7px"><button class="cp-hbtn" onclick="cpLoadEmailThread('+c.id+')">&#8635; Refresh</button><button class="cp-hbtn" style="background:#185FA5;color:#fff;border-color:transparent" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">&#9998; Compose / AI</button></div></div><div id="cp-email-'+c.id+'" style="max-height:460px;overflow-y:auto"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading emails…</div></div></div>';
   var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload a call recording — Groq transcribes, Claude analyses &amp; auto-updates CTC/company.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
@@ -3726,7 +3733,7 @@ function renderProfileDetail(c){
 
   // Reminder popup hidden holder is not needed; reminders are inline.
   // Tab bar
-  var tabs=[['overview','Overview'],['resume','Resume'],['comms','Communications'],['interviews','Interviews'],['history','History']];
+  var tabs=[['overview','Overview'],['resume','Resume'],['comms','Communications'],['call','Call Analysis'],['history','History']];
   html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
@@ -3734,9 +3741,9 @@ function renderProfileDetail(c){
   // Resume
   html+='<div class="cp-pane" id="cp-pane-resume" style="display:none">'+cvCard+'</div>';
   // Communications
-  html+='<div class="cp-pane" id="cp-pane-comms" style="display:none">'+waCard+emailCard+callCard+'</div>';
-  // Interviews
-  html+='<div class="cp-pane" id="cp-pane-interviews" style="display:none"><div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">Interviews</div><button class="btn btn-g" onclick="openInterviewModal('+c.id+')">&#128197; Schedule interview</button></div><div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Schedule rounds and send the invite via WhatsApp or email.</div><div id="cp-interviews-'+c.id+'"><div class="loading" style="padding:12px"><div class="spinner"></div>Loading…</div></div></div></div>';
+  html+='<div class="cp-pane" id="cp-pane-comms" style="display:none">'+waCard+emailCard+'</div>';
+  // Call Analysis (its own tab, next to Communications)
+  html+='<div class="cp-pane" id="cp-pane-call" style="display:none">'+callCard+'</div>';
   // History
   html+='<div class="cp-pane" id="cp-pane-history" style="display:none"><div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">Candidate Journey</div><button class="cp-hbtn" onclick="cpLoadHistory('+c.id+')">&#8635; Refresh</button></div><div id="cp-hist-'+c.id+'"><div class="loading" style="padding:12px"><div class="spinner"></div>Loading…</div></div></div></div>';
 
@@ -3755,12 +3762,11 @@ function renderProfileDetail(c){
   // Pre-load tab content so Communications / Interviews / History are ready
   try{ cpLoadEmailThread(c.id); }catch(e){}
   try{ cpLoadWaThread(c.id); }catch(e){}
-  try{ cpLoadInterviews(c.id); }catch(e){}
   try{ cpLoadHistory(c.id); }catch(e){}
 }
 
 function cpTab(name){
-  ['overview','resume','comms','interviews','history'].forEach(function(t){
+  ['overview','resume','comms','call','history'].forEach(function(t){
     var p=document.getElementById('cp-pane-'+t); if(p) p.style.display=(t===name)?'block':'none';
     var b=document.getElementById('cp-tab-'+t); if(b) b.classList.toggle('active', t===name);
   });
@@ -6384,40 +6390,78 @@ async function openWhatsAppPanel(cid){
   S._waCand=cand;
   document.querySelectorAll('.wa-pop').forEach(function(p){ p.style.display='none'; });
   var cats=await waLoadTemplates(false);
+  var composeEl=document.getElementById('wa-compose-'+cid);
+
+  // Backdrop: click outside closes. Also shrink the main screen behind it.
+  var bd=document.getElementById('wa-backdrop');
+  if(!bd){ bd=document.createElement('div'); bd.id='wa-backdrop';
+    bd.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:8998;opacity:0;transition:opacity .2s';
+    bd.addEventListener('click', closeWhatsAppPanel);
+    document.body.appendChild(bd);
+    requestAnimationFrame(function(){ bd.style.opacity='1'; });
+  }
+  var main=document.getElementById('main');
+  if(main){ main.style.transition='transform .22s ease, filter .22s ease'; main.style.transformOrigin='left center'; main.style.transform='scale(0.97)'; main.style.filter='brightness(0.96)'; }
+
   var drawer=document.getElementById('wa-drawer');
   if(!drawer){ drawer=document.createElement('div'); drawer.id='wa-drawer';
-    drawer.style.cssText='position:fixed;top:0;right:0;height:100%;width:440px;max-width:92vw;background:#fff;border-left:0.5px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.08);z-index:9000;display:flex;flex-direction:column';
+    drawer.style.cssText='position:fixed;top:0;right:0;height:100%;width:420px;max-width:92vw;background:#fff;box-shadow:-8px 0 30px rgba(0,0,0,.12);z-index:9000;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s ease';
     document.body.appendChild(drawer);
+    requestAnimationFrame(function(){ drawer.style.transform='translateX(0)'; });
   }
   var phoneClean=(cand.phone||'').replace(/\D/g,'');
   var listHtml=cats.map(function(cat){
     return '<div style="margin-bottom:6px"><div style="font-size:11px;font-weight:700;color:#0F6E56;margin:10px 0 4px">'+esc(cat.cat)+'</div>'
-      +(cat.items||[]).map(function(t){ return '<button class="wa-tpl-item" data-id="'+esc(t.id)+'" style="display:block;width:100%;text-align:left;background:#F6F8F7;border:0.5px solid var(--line);border-radius:7px;padding:7px 9px;margin-bottom:4px;font-size:12px;color:#1f2a37;cursor:pointer">'+esc(t.title)+'</button>'; }).join('')
+      +(cat.items||[]).map(function(t){ return '<button class="wa-tpl-item" data-id="'+esc(t.id)+'" style="display:block;width:100%;text-align:left;background:#F6F8F7;border:0.5px solid var(--line);border-radius:7px;padding:8px 10px;margin-bottom:4px;font-size:12px;color:#1f2a37;cursor:pointer">'+esc(t.title)+'</button>'; }).join('')
       +'</div>';
   }).join('');
-  drawer.innerHTML='<div style="padding:12px 16px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'
-    +'<div style="font-size:14px;font-weight:600;color:#0F6E56;display:flex;align-items:center;gap:7px">&#128172; WhatsApp &middot; '+esc((cand.name||'').split(' ')[0]||'')+'</div>'
-    +'<button onclick="closeWhatsAppPanel()" style="background:none;border:none;font-size:20px;color:#999;cursor:pointer;line-height:1">&times;</button></div>'
-    +'<div style="flex:1;overflow-y:auto;padding:14px">'
-    +(phoneClean?'':'<div style="background:#FFF3E0;border:0.5px solid #FFCC80;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:11.5px;color:#E65100">&#9888;&#65039; Is candidate ka phone number nahi hai — pehle add karo.</div>')
-    +'<div style="font-size:10.5px;color:var(--muted);margin-bottom:6px">Template chuno — edit karo — bhejo</div>'
-    +listHtml
-    +'</div>'
-    +'<div style="border-top:0.5px solid var(--line);padding:12px 14px;flex-shrink:0;background:#fafafa">'
-    +'<textarea id="wa-preview" class="inp" rows="5" placeholder="Template pe click karo, ya yahan likho…" style="font-size:12.5px;width:100%;box-sizing:border-box;resize:vertical"></textarea>'
-    +'<div style="display:flex;gap:8px;margin-top:8px">'
-    +'<button class="btn" onclick="waCopyPreview()" style="font-size:12px">&#128203; Copy</button>'
-    +'<button class="btn" style="flex:1;background:#25D366;color:#fff;border:none;font-size:13px;justify-content:center" onclick="waSendPreview()">&#128172; Send on WhatsApp</button>'
-    +'</div></div>';
+
+  var footer = composeEl
+    ? '<div style="border-top:0.5px solid var(--line);padding:10px 14px;background:#fafafa;font-size:11px;color:var(--muted)">Template pe click karo &rarr; message chat box me aa jayega, wahan edit karke bhejo.</div>'
+    : '<div style="border-top:0.5px solid var(--line);padding:12px 14px;background:#fafafa">'
+        +(phoneClean?'':'<div style="color:#E65100;font-size:11px;margin-bottom:6px">&#9888;&#65039; Phone number nahi hai.</div>')
+        +'<textarea id="wa-preview" class="inp" rows="5" placeholder="Template pe click karo..." style="font-size:12.5px;width:100%;box-sizing:border-box;resize:vertical"></textarea>'
+        +'<div style="display:flex;gap:8px;margin-top:8px">'
+        +'<button class="btn" onclick="waCopyPreview()" style="font-size:12px">&#128203; Copy</button>'
+        +'<button class="btn" style="flex:1;background:#25D366;color:#fff;border:none;font-size:13px;justify-content:center" onclick="waSendPreview()">&#128172; Send on WhatsApp</button>'
+        +'</div></div>';
+
+  drawer.innerHTML='<div style="padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#075E54">'
+    +'<div style="font-size:14px;font-weight:600;color:#fff;display:flex;align-items:center;gap:7px">&#128172; Templates &middot; '+esc((cand.name||'').split(' ')[0]||'')+'</div>'
+    +'<button onclick="closeWhatsAppPanel()" style="background:none;border:none;font-size:22px;color:rgba(255,255,255,.85);cursor:pointer;line-height:1">&times;</button></div>'
+    +'<div style="flex:1;overflow-y:auto;padding:14px">'+listHtml+'</div>'
+    +footer;
+
   drawer.querySelectorAll('.wa-tpl-item').forEach(function(btn){
     btn.addEventListener('click', function(){
       var id=btn.dataset.id; var tpl=null;
       cats.forEach(function(cat){ (cat.items||[]).forEach(function(t){ if(t.id===id) tpl=t; }); });
-      if(tpl){ document.getElementById('wa-preview').value=waFillTemplate(tpl.body, S._waCand); }
+      if(!tpl) return;
+      var filled=waFillTemplate(tpl.body, S._waCand);
+      var ce=document.getElementById('wa-compose-'+cid);
+      if(ce){ ce.value=filled; ce.style.height='auto'; ce.style.height=Math.min(ce.scrollHeight,110)+'px'; closeWhatsAppPanel(); setTimeout(function(){ ce.focus(); },210); }
+      else { var pv=document.getElementById('wa-preview'); if(pv) pv.value=filled; }
     });
   });
 }
-function closeWhatsAppPanel(){ var d=document.getElementById('wa-drawer'); if(d) d.remove(); }
+async function waComposeSend(cid){
+  var ta=document.getElementById('wa-compose-'+cid); if(!ta) return;
+  var msg=(ta.value||'').trim(); if(!msg) return;
+  var phone=(ta.getAttribute('data-phone')||'').replace(/\D/g,'');
+  if(!phone){ toast('ERR','No phone number'); return; }
+  var num=phone.length===10?'91'+phone:phone;
+  window.open('https://wa.me/'+num+'?text='+encodeURIComponent(msg),'_blank');
+  ta.value=''; ta.style.height='auto';
+  toast('OK','WhatsApp opened - reply thread listener se sync hoga');
+}
+function closeWhatsAppPanel(){
+  var d=document.getElementById('wa-drawer');
+  if(d){ d.style.transform='translateX(100%)'; setTimeout(function(){ if(d&&d.parentNode) d.remove(); },210); }
+  var bd=document.getElementById('wa-backdrop');
+  if(bd){ bd.style.opacity='0'; setTimeout(function(){ if(bd&&bd.parentNode) bd.remove(); },210); }
+  var main=document.getElementById('main');
+  if(main){ main.style.transform=''; main.style.filter=''; }
+}
 function waCopyPreview(){ var t=document.getElementById('wa-preview'); if(t){ t.select(); try{document.execCommand('copy');}catch(e){} toast('OK','Copied'); } }
 async function waSendPreview(){
   var cand=S._waCand; if(!cand){ return; }
