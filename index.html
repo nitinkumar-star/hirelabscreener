@@ -3708,7 +3708,10 @@ function renderProfileDetail(c){
       +'<textarea id="wa-compose-'+c.id+'" data-phone="'+esc(c.phone||'')+'" rows="1" placeholder="Type a message, ya template chuno…" style="flex:1;resize:none;border:0.5px solid rgba(0,0,0,.12);border-radius:19px;padding:9px 14px;font-size:12.5px;font-family:inherit;max-height:110px;line-height:1.4;box-sizing:border-box" oninput="this.style.height=&#39;auto&#39;;this.style.height=Math.min(this.scrollHeight,110)+&#39;px&#39;"></textarea>'
       +'<button title="Send on WhatsApp" style="flex-shrink:0;background:#25D366;color:#fff;border:none;width:38px;height:38px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center" onclick="waComposeSend('+c.id+')">&#10148;</button>'
     +'</div>'
-    +'<div style="padding:6px 12px 10px;background:#F0F2F5"><button class="cp-hbtn" style="color:#0F6E56;font-size:11px" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')">&#129302; Start AI Conversation</button></div>'
+    +'<div style="padding:6px 12px 10px;background:#F0F2F5;display:flex;gap:8px;flex-wrap:wrap">'
+      +'<button id="wa-draft-btn-'+c.id+'" class="cp-hbtn" style="color:#534AB7;font-size:11px" onclick="waDraftReply('+c.id+')">&#10024; Draft in my style</button>'
+      +'<button class="cp-hbtn" style="color:#0F6E56;font-size:11px" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')">&#129302; Start AI Conversation</button>'
+    +'</div>'
     +'</div>';
   var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">&#9993; Email thread</div><div style="display:flex;gap:7px"><button class="cp-hbtn" onclick="cpLoadEmailThread('+c.id+')">&#8635; Refresh</button><button class="cp-hbtn" style="background:#185FA5;color:#fff;border-color:transparent" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">&#9998; Compose / AI</button></div></div><div id="cp-email-'+c.id+'" style="max-height:460px;overflow-y:auto"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading emails…</div></div></div>';
   var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload a call recording — Groq transcribes, Claude analyses &amp; auto-updates CTC/company.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
@@ -3772,9 +3775,9 @@ function cpTab(name){
   });
   var cid=window._cpCid;
   if(!cid) return;
-  if(name==='comms'){ try{ cpLoadEmailThread(cid); }catch(e){} try{ cpLoadWaThread(cid); }catch(e){} }
-  else if(name==='interviews'){ cpLoadInterviews(cid); }
-  else if(name==='history'){ cpLoadHistory(cid); }
+  if(name==='comms'){ try{ cpLoadEmailThread(cid); }catch(e){} try{ cpLoadWaThread(cid); }catch(e){} startWaPoll(cid); }
+  else { stopWaPoll(); }
+  if(name==='history'){ cpLoadHistory(cid); }
 }
 
 async function cpLoadHistory(cid){
@@ -4238,8 +4241,30 @@ async function renderWaSettings(){
   });
   tpl+='<div style="font-size:10.5px;color:var(--muted);margin:6px 0 10px">Placeholders: {{Name}} {{You}} {{Role}} {{Location}} {{Date}} {{Time}} {{Mode}} {{DOJ}}</div>';
   tpl+='<button class="btn btn-g" onclick="saveWaTemplates()">&#128190; Save WhatsApp Templates</button> <span id="wa-tpl-status" style="font-size:11px;color:#888;margin-left:8px"></span>';
-  box.innerHTML=setup+tpl;
+  var styleP = '';
+  try{ var sp=await req('GET','/settings'); styleP=(sp&&sp.wa_style_profile)||''; }catch(e){}
+  var stylecard='<div class="card" style="margin-bottom:14px"><div class="card-body">'
+    +'<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:4px">&#10024; My communication style</div>'
+    +'<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:8px">DeepSeek tumhare bheje hue WhatsApp messages padhke seekhta hai ki tum kaise likhte ho. Phir AI drafts + auto-replies tumhari style me aate hain. Jitne zyada messages, utni accurate style.</div>'
+    +'<button class="btn btn-g" onclick="waLearnStyle()" id="wa-learn-btn">&#10024; Learn / update my style</button> <span id="wa-learn-status" style="font-size:11px;color:#888;margin-left:8px"></span>'
+    +'<div id="wa-style-box" style="margin-top:10px;font-size:11.5px;color:#333;white-space:pre-wrap;background:#F6F8F7;border-radius:8px;padding:'+(styleP?'10px':'0')+';line-height:1.5">'+(styleP?esc(styleP):'')+'</div>'
+    +'</div></div>';
+  box.innerHTML=setup+stylecard+tpl;
   box._cats=cats;
+}
+async function waLearnStyle(){
+  var btn=document.getElementById('wa-learn-btn'), st=document.getElementById('wa-learn-status');
+  if(btn){ btn.disabled=true; }
+  if(st){ st.textContent='Learning from your messages…'; }
+  try{
+    var r=await req('POST','/wa-learn-style',{});
+    if(r&&r.ok){
+      var box=document.getElementById('wa-style-box');
+      if(box){ box.style.padding='10px'; box.textContent=r.profile||''; }
+      if(st){ st.innerHTML='Learned from '+(r.learned_from||0)+' messages &#10003;'; setTimeout(function(){st.textContent='';},4000); }
+    } else { if(st){ st.textContent=''; } toast('&#9888;&#65039;', (r&&r.error)||'Could not learn'); }
+  }catch(e){ if(st){ st.textContent=''; } toast('ERR','Failed'); }
+  if(btn){ btn.disabled=false; }
 }
 async function saveWaTemplates(){
   var box=document.getElementById('wa-settings-box'); if(!box||!box._cats) return;
@@ -6341,10 +6366,12 @@ async function handleSingleCDBResume(file, key) {
 
 // ─── WHATSAPP HANDLERS IN PROFILE ────────────────────────────────────────────
 // ═══ WhatsApp: per-candidate thread + categorized template panel ═══════════
-async function cpLoadWaThread(cid){
+async function cpLoadWaThread(cid, silent){
   var el=document.getElementById('cp-wa-thread-'+cid); if(!el) return;
-  var r; try{ r=await req('GET','/candidates/'+cid+'/wa-thread'); }catch(e){ el.innerHTML='<div style="color:#B42318;font-size:12px;padding:8px">Could not load thread</div>'; return; }
+  var r; try{ r=await req('GET','/candidates/'+cid+'/wa-thread'); }catch(e){ if(!silent) el.innerHTML='<div style="color:#B42318;font-size:12px;padding:8px">Could not load thread</div>'; return; }
   var msgs=(r&&r.messages)||[];
+  if(silent && el.dataset.msgcount===String(msgs.length)) return;   // nothing new -> no flicker
+  el.dataset.msgcount=String(msgs.length);
   if(!msgs.length){ el.innerHTML='<div style="color:#667085;font-size:12px;padding:14px;text-align:center;background:#fff;border-radius:6px">No WhatsApp messages yet.<br><span style="font-size:11px">Sent &amp; received messages will appear here once your listener is connected.</span></div>'; return; }
   el.innerHTML=msgs.map(function(m){
     var inb=(m.direction==='inbound');
@@ -6356,6 +6383,29 @@ async function cpLoadWaThread(cid){
       +'</div></div>';
   }).join('');
   el.scrollTop=el.scrollHeight;
+}
+
+// Auto-refresh the open thread so candidate replies appear without manual refresh.
+var _waPoll=null;
+function startWaPoll(cid){
+  stopWaPoll();
+  _waPoll=setInterval(function(){
+    if(!document.getElementById('cp-wa-thread-'+cid)){ stopWaPoll(); return; }
+    cpLoadWaThread(cid, true);
+  }, 6000);
+}
+function stopWaPoll(){ if(_waPoll){ clearInterval(_waPoll); _waPoll=null; } }
+
+async function waDraftReply(cid){
+  var ta=document.getElementById('wa-compose-'+cid); if(!ta) return;
+  var btn=document.getElementById('wa-draft-btn-'+cid);
+  if(btn){ btn.disabled=true; btn.textContent='…thinking'; }
+  try{
+    var r=await req('POST','/candidates/'+cid+'/wa-draft',{});
+    if(r&&r.ok&&r.draft){ ta.value=r.draft; ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,110)+'px'; ta.focus(); }
+    else toast('&#9888;&#65039;', (r&&r.error)||'Could not draft');
+  }catch(e){ toast('ERR','Draft failed'); }
+  if(btn){ btn.disabled=false; btn.innerHTML='&#10024; Draft in my style'; }
 }
 
 var _waTemplatesCache=null;
@@ -6452,7 +6502,7 @@ async function waComposeSend(cid){
   var num=phone.length===10?'91'+phone:phone;
   window.open('https://wa.me/'+num+'?text='+encodeURIComponent(msg),'_blank');
   ta.value=''; ta.style.height='auto';
-  toast('OK','WhatsApp opened - reply thread listener se sync hoga');
+  try{ await req('POST','/candidates/'+cid+'/wa-send-log',{text:msg}); cpLoadWaThread(cid); }catch(e){}
 }
 function closeWhatsAppPanel(){
   var d=document.getElementById('wa-drawer');
@@ -6470,8 +6520,8 @@ async function waSendPreview(){
   if(!phone){ toast('ERR','No phone number'); return; }
   var num=phone.length===10?'91'+phone:phone;
   window.open('https://wa.me/'+num+(msg?('?text='+encodeURIComponent(msg)):''),'_blank');
-  try{ await req('POST','/candidates/'+cand.id+'/stage',{stage:null,note:'WhatsApp message sent',keep_stage:true}); }catch(e){}
-  toast('OK','WhatsApp opened — reply thread listener se sync hoga');
+  try{ if(msg) await req('POST','/candidates/'+cand.id+'/wa-send-log',{text:msg}); }catch(e){}
+  toast('OK','WhatsApp opened');
 }
 
 function attachWAHandlers(cand) {

@@ -3954,6 +3954,7 @@ TENANT_SETTINGS = {
     'interview_template',  # default interview communication message
     'wa_templates',        # JSON: categorized WhatsApp message templates (27 defaults)
     'wa_inbound_token',    # per-company secret for the WhatsApp listener to post inbound msgs
+    'wa_style_profile',    # DeepSeek-learned summary of how this recruiter writes (for AI drafts)
 }
 
 def _safe_company_id():
@@ -9937,6 +9938,20 @@ def wa_inbound():
     else:
         conv_id = conv['id']
 
+    # If this is an OUTBOUND message the ATS already logged instantly (when the
+    # recruiter clicked Send), don't insert a duplicate — just backfill the real
+    # WhatsApp message id onto that row so future syncs dedupe by id.
+    if direction == 'outbound':
+        prior = conn.execute(
+            "SELECT id FROM wa_messages WHERE conversation_id=? AND direction='outbound' "
+            "AND content=? AND (wa_message_id IS NULL OR wa_message_id='') "
+            "ORDER BY id DESC LIMIT 1", (conv_id, text)).fetchone()
+        if prior:
+            if wamid:
+                conn.execute("UPDATE wa_messages SET wa_message_id=? WHERE id=?", (wamid, prior['id']))
+            conn.commit(); conn.close()
+            return jsonify({'ok': True, 'merged': True})
+
     conn.execute(
         'INSERT INTO wa_messages (conversation_id,direction,sender,content,message_type,'
         'wa_message_id,created_at) VALUES (?,?,?,?,?,?,?)',
@@ -9965,6 +9980,131 @@ def candidate_wa_thread(cid):
         'WHERE conversation_id=? ORDER BY id ASC', (conv['id'],)).fetchall()
     conn.close()
     return jsonify({'ok': True, 'messages': [dict(m) for m in msgs]})
+
+
+@app.route('/api/candidates/<int:cid>/wa-send-log', methods=['POST'])
+@login_required
+def wa_send_log(cid):
+    """Log an outbound WhatsApp message instantly (when the recruiter clicks
+    Send in the ATS) so the thread updates immediately. The listener later sees
+    the same message and dedupes it against this row (see wa_inbound)."""
+    d = request.json or {}
+    text = (d.get('text') or '').strip()
+    if not text:
+        return jsonify({'error': 'empty'}), 400
+    company_id = effective_company_id()
+    conn = get_db()
+    cand = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?', (cid, company_id)).fetchone()
+    if not cand:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    conv = conn.execute(
+        "SELECT id FROM wa_conversations WHERE company_id=? AND candidate_id=? ORDER BY id DESC LIMIT 1",
+        (company_id, cid)).fetchone()
+    if conv:
+        conv_id = conv['id']
+    else:
+        conv_id = conn.execute(
+            'INSERT INTO wa_conversations (company_id,candidate_id,mandate_id,candidate_phone,'
+            'candidate_name,status,auto_mode,last_message_at,created_at,updated_at) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?)',
+            (company_id, cid, cand['mandate_id'], cand['phone'] or '', cand['name'] or '',
+             'active', 0, ts(), ts(), ts())).lastrowid
+    conn.execute(
+        'INSERT INTO wa_messages (conversation_id,direction,sender,content,message_type,'
+        'wa_message_id,created_at) VALUES (?,?,?,?,?,?,?)',
+        (conv_id, 'outbound', 'You', text, 'text', '', ts()))
+    conn.execute('UPDATE wa_conversations SET last_message_at=?, updated_at=? WHERE id=?', (ts(), ts(), conv_id))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/wa-learn-style', methods=['POST'])
+@login_required
+def wa_learn_style():
+    """Read this company's OUTBOUND WhatsApp messages and have DeepSeek write a
+    concise 'how this recruiter communicates' style guide, saved for AI drafts."""
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not set in Settings.'}), 400
+    company_id = effective_company_id()
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT m.content FROM wa_messages m JOIN wa_conversations c ON c.id=m.conversation_id "
+        "WHERE c.company_id=? AND m.direction='outbound' AND length(trim(m.content))>0 "
+        "ORDER BY m.id DESC LIMIT 120", (company_id,)).fetchall()
+    conn.close()
+    msgs = [r['content'] for r in rows if r['content']]
+    if len(msgs) < 5:
+        return jsonify({'error': 'Not enough messages yet. Kuch WhatsApp messages bhejo, phir try karo.', 'count': len(msgs)}), 400
+    sample = "\n---\n".join(msgs[:120])
+    system_msg = (
+        "You analyse how a recruiter writes WhatsApp messages, so another AI can "
+        "later write messages that sound EXACTLY like them. Read the recruiter's "
+        "real sent messages and produce a concise style guide (6-9 short bullet "
+        "points) covering: language (Hindi/English/Hinglish mix), tone & warmth, "
+        "typical greetings and sign-offs, emoji usage, message length, formality, "
+        "and any recurring phrases or habits. Be specific and practical. Output "
+        "ONLY the bullet-point style guide, nothing else.")
+    try:
+        resp = call_deepseek(ds_key, {
+            'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 500,
+            'messages': [{'role': 'system', 'content': system_msg},
+                         {'role': 'user', 'content': "Recruiter's sent messages:\n\n" + sample}]})
+        profile = resp.json()['choices'][0]['message']['content'].strip()
+    except TokenCapError:
+        return jsonify({'error': 'Token limit reached.'}), 429
+    except Exception as e:
+        return jsonify({'error': 'AI call failed: ' + str(e)[:100]}), 500
+    if not profile:
+        return jsonify({'error': 'Could not generate a style profile.'}), 500
+    set_setting('wa_style_profile', profile)
+    return jsonify({'ok': True, 'profile': profile, 'learned_from': len(msgs)})
+
+
+@app.route('/api/candidates/<int:cid>/wa-draft', methods=['POST'])
+@login_required
+def wa_draft_reply(cid):
+    """Draft the next WhatsApp reply for a candidate, in the recruiter's own
+    learned style + recent conversation context."""
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not set in Settings.'}), 400
+    company_id = effective_company_id()
+    conn = get_db()
+    cand = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?', (cid, company_id)).fetchone()
+    if not cand:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    conv = conn.execute(
+        "SELECT id FROM wa_conversations WHERE company_id=? AND candidate_id=? ORDER BY id DESC LIMIT 1",
+        (company_id, cid)).fetchone()
+    thread = []
+    if conv:
+        rows = conn.execute(
+            "SELECT direction, content FROM wa_messages WHERE conversation_id=? ORDER BY id DESC LIMIT 12",
+            (conv['id'],)).fetchall()
+        thread = list(reversed([dict(r) for r in rows]))
+    conn.close()
+    if not thread:
+        return jsonify({'error': 'No conversation yet to reply to.'}), 400
+    convo_txt = "\n".join([('Candidate: ' if m['direction'] == 'inbound' else 'Me: ') + (m['content'] or '') for m in thread])
+    style = get_setting('wa_style_profile', '')
+    style_block = ("Write EXACTLY in my personal style:\n" + style + "\n\n") if style else ""
+    system_msg = (
+        "You are helping a recruiter draft the next WhatsApp reply to a candidate. "
+        + style_block +
+        "Rules: natural and human, match my style above, never invent salary/CTC "
+        "numbers or a client name, keep it concise. Output ONLY the reply text.")
+    try:
+        resp = call_deepseek(ds_key, {
+            'model': 'deepseek-chat', 'temperature': 0.5, 'max_tokens': 220,
+            'messages': [{'role': 'system', 'content': system_msg},
+                         {'role': 'user', 'content': "Conversation so far:\n" + convo_txt + "\n\nDraft my next reply:"}]})
+        draft = resp.json()['choices'][0]['message']['content'].strip()
+    except TokenCapError:
+        return jsonify({'error': 'Token limit reached.'}), 429
+    except Exception as e:
+        return jsonify({'error': 'AI call failed: ' + str(e)[:100]}), 500
+    return jsonify({'ok': True, 'draft': draft, 'styled': bool(style)})
 
 
 @app.route('/api/wa-inbound-config')
