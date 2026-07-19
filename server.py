@@ -981,6 +981,10 @@ def _reminder_scheduler_loop():
             conn.close()
         except Exception as e:
             print(f'[reminder-scheduler] loop error: {e}')
+        try:
+            _wa_followup_scan()
+        except Exception as _we:
+            print(f'[wa-followup] scan error: {_we}')
         _time.sleep(60)
 
 
@@ -3955,6 +3959,7 @@ TENANT_SETTINGS = {
     'wa_templates',        # JSON: categorized WhatsApp message templates (27 defaults)
     'wa_inbound_token',    # per-company secret for the WhatsApp listener to post inbound msgs
     'wa_style_profile',    # DeepSeek-learned summary of how this recruiter writes (for AI drafts)
+    'wa_followup_hours',   # hours to wait before AI suggests a follow-up (default 24)
 }
 
 def _safe_company_id():
@@ -9799,7 +9804,7 @@ WA_DEFAULT_TEMPLATES = [
         {"id": "fu2",         "title": "Follow-up 2 (final nudge)",
          "body": "Hi {{Name}}, last message from my side, promise 🙏 If this or any future role interests you, just ping me anytime. Take care!"},
         {"id": "share_jd",    "title": "Interested → share JD",
-         "body": "Awesome, {{Name}}! Here's the JD for the {{Role}} role 👇 Have a look — ask me anything if something's unclear, and we can cover the rest on a quick call."},
+         "body": "Awesome, {{Name}}! Here's the JD for the {{Role}} role 👇\n\n{{JD}}\n\nHave a look — ask me anything if something's unclear, and we can cover the rest on a quick call."},
         {"id": "cv_request",  "title": "CV / resume request",
          "body": "Hi {{Name}}, your profile looks interesting 🙂 Could you send me an updated resume? That way I can match you with the right roles."},
         {"id": "availability","title": "Quick availability check",
@@ -10194,6 +10199,246 @@ def wa_outbox_ack():
                  (status, d.get('wa_message_id', ''), ts(), oid, company_id))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
+
+
+def _ensure_wa_suggestions(conn):
+    conn.execute('''CREATE TABLE IF NOT EXISTS wa_suggestions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER, candidate_id INTEGER, conversation_id INTEGER,
+        kind TEXT, message TEXT, reason TEXT, based_on TEXT,
+        status TEXT DEFAULT 'pending', created_at TEXT)''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_wa_sugg ON wa_suggestions(company_id,status)')
+
+
+def _tenant_setting_raw(conn, company_id, key, default=''):
+    """Read a tenant setting by explicit company_id (no session needed — used by
+    the background scheduler)."""
+    r = conn.execute('SELECT value FROM tenant_settings WHERE company_id=? AND key=?',
+                     (company_id, key)).fetchone()
+    if r and (r['value'] not in (None, '')):
+        return r['value']
+    g = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+    return (g['value'] if (g and g['value']) else default)
+
+
+def _hours_since(ts_str):
+    if not ts_str:
+        return None
+    try:
+        import datetime as _dt
+        t = _dt.datetime.fromisoformat(ts_str)
+        return (_ist_now() - t).total_seconds() / 3600.0
+    except Exception:
+        return None
+
+
+def _wa_analyze_conversation(thread_txt, hours_since, style, stage, wait_hours):
+    """Ask DeepSeek for the single best next action on this conversation."""
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return None
+    style_block = ("The recruiter writes like this — match it in any message:\n" + style + "\n\n") if style else ""
+    system_msg = (
+        "You assist a recruiter running WhatsApp chats with candidates. Read the FULL "
+        "conversation (Me = recruiter, Candidate = candidate) and how long since the last "
+        "message, then choose the single best next action.\n\n" + style_block +
+        "Respond with ONLY a JSON object:\n"
+        '{"action":"followup"|"not_interested"|"none","message":"<the WhatsApp follow-up '
+        'to send, ONLY when action=followup, written in the recruiter\'s style>","reason":"<one short line>"}\n\n'
+        "Rules:\n"
+        f"- 'followup' ONLY if the candidate showed interest but a needed action is still pending "
+        f"(e.g. hasn't sent an updated resume/profile) AND at least {wait_hours} hours passed since the "
+        "last message. Write a gentle, non-pushy nudge.\n"
+        "- 'not_interested' ONLY if the candidate clearly declined or said not interested / not looking.\n"
+        "- 'none' if it's too soon, the candidate already provided what was needed, the recruiter already "
+        "acknowledged it (e.g. said thanks for sharing), or nothing is needed.\n"
+        "- NEVER invent salary/CTC numbers or a client name.")
+    user_msg = ("Hours since last message: " + str(hours_since) + "\nCandidate stage: " + (stage or '') +
+                "\n\nConversation:\n" + thread_txt + "\n\nReturn the decision as JSON.")
+    try:
+        resp = call_deepseek(ds_key, {'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 320,
+            'messages': [{'role': 'system', 'content': system_msg}, {'role': 'user', 'content': user_msg}]})
+        data = parse_json(resp.json()['choices'][0]['message']['content'])
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+_last_wa_scan = 0
+
+def _wa_followup_scan(force=False):
+    """Background pass: for each active WhatsApp conversation that's gone quiet,
+    ask DeepSeek whether to suggest a follow-up or a 'move to Not Interested'.
+    Self-gated to run at most every ~3 hours (unless force)."""
+    global _last_wa_scan
+    now = _time.time()
+    if not force and (now - _last_wa_scan) < 3 * 3600:
+        return
+    _last_wa_scan = now
+    if not get_setting('deepseek_api_key'):
+        return
+    TERMINAL = ('Not Interested', 'Placed', 'Not Suitable',
+                'Client Rejected on Paper', 'Client Rejected After Interview')
+    conn = get_db()
+    _ensure_wa_suggestions(conn)
+    try:
+        rows = conn.execute(
+            "SELECT cv.id conv_id, cv.company_id, cv.candidate_id, cv.last_message_at, ca.stage "
+            "FROM wa_conversations cv JOIN candidates ca ON ca.id=cv.candidate_id "
+            "WHERE cv.status='active' ORDER BY cv.last_message_at DESC LIMIT 200").fetchall()
+    except Exception:
+        conn.close(); return
+    analyzed = 0
+    for r in rows:
+        if analyzed >= 12:
+            break
+        stage = r['stage'] or ''
+        if stage in TERMINAL:
+            continue
+        last_at = r['last_message_at'] or ''
+        try:
+            wait_hours = int(_tenant_setting_raw(conn, r['company_id'], 'wa_followup_hours', '24'))
+        except Exception:
+            wait_hours = 24
+        hs = _hours_since(last_at)
+        if hs is None or hs < wait_hours:
+            continue
+        # already looked at this exact conversation state? skip.
+        if conn.execute("SELECT 1 FROM wa_suggestions WHERE conversation_id=? AND based_on=? LIMIT 1",
+                        (r['conv_id'], last_at)).fetchone():
+            continue
+        # a pending suggestion already waiting? don't pile up.
+        if conn.execute("SELECT 1 FROM wa_suggestions WHERE conversation_id=? AND status='pending' LIMIT 1",
+                        (r['conv_id'],)).fetchone():
+            continue
+        msgs = conn.execute("SELECT direction, content FROM wa_messages WHERE conversation_id=? "
+                            "ORDER BY id ASC LIMIT 30", (r['conv_id'],)).fetchall()
+        if not msgs:
+            continue
+        thread_txt = "\n".join([('Candidate: ' if m['direction'] == 'inbound' else 'Me: ') + (m['content'] or '') for m in msgs])
+        style = _tenant_setting_raw(conn, r['company_id'], 'wa_style_profile', '')
+        analyzed += 1
+        data = _wa_analyze_conversation(thread_txt, int(hs), style, stage, wait_hours)
+        if not data:
+            continue
+        action = (data.get('action') or 'none').strip()
+        reason = (data.get('reason') or '')[:200]
+        if action == 'followup' and (data.get('message') or '').strip():
+            kind, msg, status = 'followup', data['message'].strip(), 'pending'
+        elif action == 'not_interested':
+            kind, msg, status = 'not_interested', '', 'pending'
+        else:
+            kind, msg, status = 'none', '', 'skipped'   # record so we don't re-analyze same state
+        conn.execute("INSERT INTO wa_suggestions (company_id,candidate_id,conversation_id,kind,message,"
+                     "reason,based_on,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                     (r['company_id'], r['candidate_id'], r['conv_id'], kind, msg, reason, last_at, status, ts()))
+        conn.commit()
+    conn.close()
+
+
+@app.route('/api/wa-suggestions')
+@login_required
+def wa_suggestions_list():
+    company_id = effective_company_id()
+    conn = get_db(); _ensure_wa_suggestions(conn)
+    rows = conn.execute(
+        "SELECT s.id, s.candidate_id, s.kind, s.message, s.reason, s.created_at, "
+        "c.name cand_name, c.phone cand_phone "
+        "FROM wa_suggestions s JOIN candidates c ON c.id=s.candidate_id "
+        "WHERE s.company_id=? AND s.status='pending' ORDER BY s.id DESC LIMIT 100",
+        (company_id,)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'suggestions': [dict(r) for r in rows]})
+
+
+@app.route('/api/wa-suggestions/<int:sid>/approve', methods=['POST'])
+@login_required
+def wa_suggestion_approve(sid):
+    company_id = effective_company_id()
+    conn = get_db(); _ensure_wa_suggestions(conn)
+    s = conn.execute("SELECT * FROM wa_suggestions WHERE id=? AND company_id=? AND status='pending'",
+                     (sid, company_id)).fetchone()
+    if not s:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    cand = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
+                        (s['candidate_id'], company_id)).fetchone()
+    if not cand:
+        conn.close(); return jsonify({'error': 'Candidate not found'}), 404
+
+    if s['kind'] == 'followup':
+        # allow the user to tweak the message before approving
+        text = ((request.json or {}).get('message') or s['message'] or '').strip()
+        digits = re.sub(r'[^0-9]', '', cand['phone'] or '')
+        if not digits:
+            conn.close(); return jsonify({'error': 'No phone number'}), 400
+        if len(digits) == 10:
+            digits = '91' + digits
+        _ensure_wa_outbox(conn)
+        conn.execute(
+            'INSERT INTO wa_messages (conversation_id,direction,sender,content,message_type,'
+            'wa_message_id,created_at) VALUES (?,?,?,?,?,?,?)',
+            (s['conversation_id'], 'outbound', 'You', text, 'text', '', ts()))
+        conn.execute('UPDATE wa_conversations SET last_message_at=?, updated_at=? WHERE id=?',
+                     (ts(), ts(), s['conversation_id']))
+        conn.execute('INSERT INTO wa_outbox (company_id,candidate_id,phone,text,status,created_at) '
+                     'VALUES (?,?,?,?,?,?)', (company_id, s['candidate_id'], digits, text, 'pending', ts()))
+    elif s['kind'] == 'not_interested':
+        old = cand['stage']
+        conn.execute('UPDATE candidates SET stage=?, updated_at=? WHERE id=? AND owner_id=?',
+                     ('Not Interested', ts(), s['candidate_id'], company_id))
+        conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) '
+                     'VALUES (?,?,?,?,?)', (s['candidate_id'], old, 'Not Interested',
+                                            'Auto-moved (AI: ' + (s['reason'] or 'not interested') + ')', ts()))
+    conn.execute("UPDATE wa_suggestions SET status='sent' WHERE id=?", (sid,))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/wa-suggestions/<int:sid>/dismiss', methods=['POST'])
+@login_required
+def wa_suggestion_dismiss(sid):
+    conn = get_db(); _ensure_wa_suggestions(conn)
+    conn.execute("UPDATE wa_suggestions SET status='dismissed' WHERE id=? AND company_id=?",
+                 (sid, effective_company_id()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/wa-suggestions/scan-now', methods=['POST'])
+@login_required
+def wa_suggestions_scan_now():
+    """Manually trigger a scan (for testing / on-demand)."""
+    try:
+        _wa_followup_scan(force=True)
+    except Exception as e:
+        return jsonify({'error': str(e)[:120]}), 500
+    return wa_suggestions_list()
+
+
+@app.route('/api/candidates/<int:cid>/jd-text')
+@login_required
+def candidate_jd_text(cid):
+    """The candidate's mandate JD as plain text, with CTC/salary lines stripped
+    (for the 'Share JD' WhatsApp template)."""
+    conn = get_db()
+    cand = conn.execute('SELECT mandate_id FROM candidates WHERE id=? AND owner_id=?',
+                        (cid, effective_company_id())).fetchone()
+    if not cand or not cand['mandate_id']:
+        conn.close(); return jsonify({'ok': True, 'jd': ''})
+    m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                     (cand['mandate_id'], effective_company_id())).fetchone()
+    conn.close()
+    if not m:
+        return jsonify({'ok': True, 'jd': ''})
+    jd = html_to_text(m['jd']) if m['jd'] else ''
+    if jd.strip():
+        # Sentence/clause-level strip: drop only the bits mentioning
+        # compensation, keep the rest of the JD intact.
+        _kws = ['ctc', 'salary', 'compensation', 'package', 'lpa', 'lakh', 'stipend',
+                'remuneration', 'pay range', 'budget', 'per annum', 'in-hand', 'take home']
+        parts = re.split(r'(?<=[.\n;])\s+', jd)
+        jd = ' '.join([p for p in parts if not any(k in p.lower() for k in _kws)]).strip()
+    return jsonify({'ok': True, 'jd': jd.strip()})
 
 
 @app.route('/api/wa-inbound-config')

@@ -759,6 +759,7 @@ body{font-size:14px !important; line-height:1.5}
     <span style="font-size:10px;color:rgba(255,255,255,0.3)">HireLab Screener v2</span>
     <button class="db-btn" onclick="exportAll()">&#8595; Export JSON</button>
     <label class="db-btn" style="cursor:pointer">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="importAll(this)"></label>
+    <button class="db-btn" onclick="openWaSuggestions()" style="position:relative">&#10024; Follow-ups<span id="wa-sugg-badge" style="display:none;position:absolute;top:-6px;right:-6px;background:#E5484D;color:#fff;font-size:9px;font-weight:700;min-width:15px;height:15px;border-radius:8px;padding:0 3px;line-height:15px;text-align:center">0</span></button>
     <span class="db-status" id="db-status"></span>
     <div id="user-bar" style="margin-left:auto;display:flex;align-items:center;gap:12px"></div>
   </div>
@@ -6396,6 +6397,61 @@ function startWaPoll(cid){
 }
 function stopWaPoll(){ if(_waPoll){ clearInterval(_waPoll); _waPoll=null; } }
 
+// ─── AI Follow-up suggestions ──────────────────────────────────────────────
+async function updateWaSuggBadge(){
+  try{ var r=await req('GET','/wa-suggestions'); var n=((r&&r.suggestions)||[]).length;
+    var b=document.getElementById('wa-sugg-badge'); if(!b) return;
+    if(n>0){ b.textContent=n; b.style.display='inline-block'; } else b.style.display='none';
+  }catch(e){}
+}
+function _waSuggClose(){ var d=document.getElementById('wa-sugg-drawer'); if(d) d.remove(); var bd=document.getElementById('wa-sugg-bd'); if(bd) bd.remove(); }
+async function openWaSuggestions(){
+  var r; try{ r=await req('GET','/wa-suggestions'); }catch(e){ toast('ERR','Load failed'); return; }
+  var sugg=(r&&r.suggestions)||[];
+  _waSuggClose();
+  var bd=document.createElement('div'); bd.id='wa-sugg-bd'; bd.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:8998'; bd.onclick=_waSuggClose; document.body.appendChild(bd);
+  var d=document.createElement('div'); d.id='wa-sugg-drawer'; d.style.cssText='position:fixed;top:0;right:0;height:100%;width:460px;max-width:94vw;background:#fff;box-shadow:-8px 0 30px rgba(0,0,0,.12);z-index:9000;display:flex;flex-direction:column';
+  var body = sugg.length ? sugg.map(function(s){
+    var isFu = s.kind==='followup';
+    return '<div style="border:0.5px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
+        +'<div style="font-size:13px;font-weight:600">'+esc(s.cand_name||'Candidate')+'</div>'
+        +'<span style="font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:6px;background:'+(isFu?'#E8F4EE;color:#127A57':'#FDECEC;color:#C4321C')+'">'+(isFu?'FOLLOW-UP':'NOT INTERESTED')+'</span>'
+      +'</div>'
+      +'<div style="font-size:11px;color:var(--muted);margin-bottom:8px">'+esc(s.reason||'')+'</div>'
+      +(isFu ? '<textarea id="sugg-msg-'+s.id+'" rows="3" class="inp" style="font-size:12px;width:100%;box-sizing:border-box;resize:vertical">'+esc(s.message||'')+'</textarea>'
+             : '<div style="font-size:12px;color:#333;background:#FDECEC;border-radius:7px;padding:8px">Move <b>'+esc(s.cand_name||'')+'</b> to <b>Not Interested</b>?</div>')
+      +'<div style="display:flex;gap:8px;margin-top:8px">'
+        +'<button class="btn btn-g" style="flex:1;justify-content:center;font-size:12px" onclick="waSuggApprove('+s.id+','+(isFu?'true':'false')+')">'+(isFu?'&#10148; Approve &amp; Send':'&#10003; Move')+'</button>'
+        +'<button class="btn btn-o" style="font-size:12px" onclick="waSuggDismiss('+s.id+')">Dismiss</button>'
+      +'</div></div>';
+  }).join('') : '<div style="text-align:center;color:var(--muted);font-size:12.5px;padding:34px 12px">Koi pending follow-up nahi.<br><span style="font-size:11px">Jab candidate reply kare aur action pending ho, AI yahan suggest karega.</span></div>';
+  d.innerHTML='<div style="padding:13px 16px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'
+    +'<div style="font-size:15px;font-weight:600;color:var(--navy)">&#10024; AI Follow-ups</div>'
+    +'<button onclick="_waSuggClose()" style="background:none;border:none;font-size:22px;color:#999;cursor:pointer">&times;</button></div>'
+    +'<div style="padding:10px 16px;border-bottom:0.5px solid var(--line);flex-shrink:0"><button class="cp-hbtn" onclick="waSuggScanNow(this)">&#8635; Scan now</button> <span style="font-size:10.5px;color:var(--muted);margin-left:6px">AI khud bhi har few ghante scan karta hai</span></div>'
+    +'<div style="flex:1;overflow-y:auto;padding:14px">'+body+'</div>';
+  document.body.appendChild(d);
+}
+async function waSuggApprove(sid, isFu){
+  var payload={};
+  if(isFu){ var t=document.getElementById('sugg-msg-'+sid); if(t) payload.message=t.value; }
+  try{ var r=await req('POST','/wa-suggestions/'+sid+'/approve',payload);
+    if(r&&r.ok){ toast('OK', isFu?'Sending…':'Moved to Not Interested'); openWaSuggestions(); updateWaSuggBadge(); }
+    else toast('&#9888;&#65039;',(r&&r.error)||'Failed');
+  }catch(e){ toast('ERR','Failed'); }
+}
+async function waSuggDismiss(sid){
+  try{ await req('POST','/wa-suggestions/'+sid+'/dismiss',{}); openWaSuggestions(); updateWaSuggBadge(); }catch(e){}
+}
+async function waSuggScanNow(btn){
+  if(btn){ btn.disabled=true; btn.textContent='Scanning…'; }
+  try{ await req('POST','/wa-suggestions/scan-now',{}); }catch(e){}
+  openWaSuggestions(); updateWaSuggBadge();
+}
+setTimeout(function(){ updateWaSuggBadge(); }, 3000);
+setInterval(function(){ updateWaSuggBadge(); }, 180000);
+
 async function waDraftReply(cid){
   var ta=document.getElementById('wa-compose-'+cid); if(!ta) return;
   var btn=document.getElementById('wa-draft-btn-'+cid);
@@ -6483,13 +6539,18 @@ async function openWhatsAppPanel(cid){
     +footer;
 
   drawer.querySelectorAll('.wa-tpl-item').forEach(function(btn){
-    btn.addEventListener('click', function(){
+    btn.addEventListener('click', async function(){
       var id=btn.dataset.id; var tpl=null;
       cats.forEach(function(cat){ (cat.items||[]).forEach(function(t){ if(t.id===id) tpl=t; }); });
       if(!tpl) return;
       var filled=waFillTemplate(tpl.body, S._waCand);
+      if(filled.indexOf('{{JD}}')>=0){
+        btn.textContent='Loading JD…';
+        var jd=''; try{ var jr=await req('GET','/candidates/'+cid+'/jd-text'); jd=(jr&&jr.jd)||''; }catch(e){}
+        filled=filled.replace(/\{\{JD\}\}/g, jd || '[JD not available — add it to the mandate]');
+      }
       var ce=document.getElementById('wa-compose-'+cid);
-      if(ce){ ce.value=filled; ce.style.height='auto'; ce.style.height=Math.min(ce.scrollHeight,110)+'px'; closeWhatsAppPanel(); setTimeout(function(){ ce.focus(); },210); }
+      if(ce){ ce.value=filled; ce.style.height='auto'; ce.style.height=Math.min(ce.scrollHeight,180)+'px'; closeWhatsAppPanel(); setTimeout(function(){ ce.focus(); },210); }
       else { var pv=document.getElementById('wa-preview'); if(pv) pv.value=filled; }
     });
   });
