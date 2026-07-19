@@ -6497,12 +6497,12 @@ async function openWhatsAppPanel(cid){
 async function waComposeSend(cid){
   var ta=document.getElementById('wa-compose-'+cid); if(!ta) return;
   var msg=(ta.value||'').trim(); if(!msg) return;
-  var phone=(ta.getAttribute('data-phone')||'').replace(/\D/g,'');
-  if(!phone){ toast('ERR','No phone number'); return; }
-  var num=phone.length===10?'91'+phone:phone;
-  window.open('https://wa.me/'+num+'?text='+encodeURIComponent(msg),'_blank');
   ta.value=''; ta.style.height='auto';
-  try{ await req('POST','/candidates/'+cid+'/wa-send-log',{text:msg}); cpLoadWaThread(cid); }catch(e){}
+  try{
+    var r=await req('POST','/candidates/'+cid+'/wa-queue-send',{text:msg});
+    if(r&&r.ok){ toast('OK','Sending via WhatsApp…'); cpLoadWaThread(cid); }
+    else { ta.value=msg; toast('&#9888;&#65039;',(r&&r.error)||'Could not send'); }
+  }catch(e){ ta.value=msg; toast('ERR','Send failed'); }
 }
 function closeWhatsAppPanel(){
   var d=document.getElementById('wa-drawer');
@@ -6516,12 +6516,12 @@ function waCopyPreview(){ var t=document.getElementById('wa-preview'); if(t){ t.
 async function waSendPreview(){
   var cand=S._waCand; if(!cand){ return; }
   var msg=(document.getElementById('wa-preview').value||'').trim();
-  var phone=(cand.phone||'').replace(/\D/g,'');
-  if(!phone){ toast('ERR','No phone number'); return; }
-  var num=phone.length===10?'91'+phone:phone;
-  window.open('https://wa.me/'+num+(msg?('?text='+encodeURIComponent(msg)):''),'_blank');
-  try{ if(msg) await req('POST','/candidates/'+cand.id+'/wa-send-log',{text:msg}); }catch(e){}
-  toast('OK','WhatsApp opened');
+  if(!msg){ toast('ERR','Type a message'); return; }
+  try{
+    var r=await req('POST','/candidates/'+cand.id+'/wa-queue-send',{text:msg});
+    if(r&&r.ok){ toast('OK','Sending via WhatsApp…'); closeWhatsAppPanel(); }
+    else toast('&#9888;&#65039;',(r&&r.error)||'Could not send');
+  }catch(e){ toast('ERR','Send failed'); }
 }
 
 function attachWAHandlers(cand) {

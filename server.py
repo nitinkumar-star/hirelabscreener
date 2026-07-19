@@ -10107,6 +10107,95 @@ def wa_draft_reply(cid):
     return jsonify({'ok': True, 'draft': draft, 'styled': bool(style)})
 
 
+def _ensure_wa_outbox(conn):
+    conn.execute('''CREATE TABLE IF NOT EXISTS wa_outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER, candidate_id INTEGER, phone TEXT, text TEXT,
+        status TEXT DEFAULT 'pending', wa_message_id TEXT DEFAULT '',
+        created_at TEXT, sent_at TEXT)''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_wa_outbox_status ON wa_outbox(company_id,status)')
+
+
+@app.route('/api/candidates/<int:cid>/wa-queue-send', methods=['POST'])
+@login_required
+def wa_queue_send(cid):
+    """Queue an outbound message for the listener to send from the recruiter's
+    WhatsApp in the background (no wa.me tab). Also logs it to the thread now so
+    it appears instantly."""
+    d = request.json or {}
+    text = (d.get('text') or '').strip()
+    if not text:
+        return jsonify({'error': 'empty'}), 400
+    company_id = effective_company_id()
+    conn = get_db()
+    cand = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?', (cid, company_id)).fetchone()
+    if not cand:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    digits = re.sub(r'[^0-9]', '', cand['phone'] or '')
+    if not digits:
+        conn.close(); return jsonify({'error': 'No phone number'}), 400
+    if len(digits) == 10:
+        digits = '91' + digits
+    _ensure_wa_outbox(conn)
+    conv = conn.execute(
+        "SELECT id FROM wa_conversations WHERE company_id=? AND candidate_id=? ORDER BY id DESC LIMIT 1",
+        (company_id, cid)).fetchone()
+    if conv:
+        conv_id = conv['id']
+    else:
+        conv_id = conn.execute(
+            'INSERT INTO wa_conversations (company_id,candidate_id,mandate_id,candidate_phone,'
+            'candidate_name,status,auto_mode,last_message_at,created_at,updated_at) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?)',
+            (company_id, cid, cand['mandate_id'], cand['phone'] or '', cand['name'] or '',
+             'active', 0, ts(), ts(), ts())).lastrowid
+    conn.execute(
+        'INSERT INTO wa_messages (conversation_id,direction,sender,content,message_type,'
+        'wa_message_id,created_at) VALUES (?,?,?,?,?,?,?)',
+        (conv_id, 'outbound', 'You', text, 'text', '', ts()))
+    conn.execute('UPDATE wa_conversations SET last_message_at=?, updated_at=? WHERE id=?', (ts(), ts(), conv_id))
+    conn.execute('INSERT INTO wa_outbox (company_id,candidate_id,phone,text,status,created_at) '
+                 'VALUES (?,?,?,?,?,?)', (company_id, cid, digits, text, 'pending', ts()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'queued': True})
+
+
+@app.route('/api/wa-outbox')
+def wa_outbox_pending():
+    """Listener polls this (with its token) for messages to send."""
+    tok = request.args.get('token') or request.headers.get('X-WA-Token', '')
+    company_id = _wa_company_for_token(tok)
+    if not company_id:
+        return jsonify({'error': 'invalid token'}), 401
+    conn = get_db(); _ensure_wa_outbox(conn)
+    rows = conn.execute(
+        "SELECT id, phone, text FROM wa_outbox WHERE company_id=? AND status='pending' "
+        "ORDER BY id ASC LIMIT 20", (company_id,)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'messages': [dict(r) for r in rows]})
+
+
+@app.route('/api/wa-outbox/ack', methods=['POST'])
+def wa_outbox_ack():
+    """Listener reports a queued message as sent (or failed)."""
+    d = request.json or {}
+    tok = d.get('token') or request.headers.get('X-WA-Token', '')
+    company_id = _wa_company_for_token(tok)
+    if not company_id:
+        return jsonify({'error': 'invalid token'}), 401
+    oid = d.get('id')
+    if not oid:
+        return jsonify({'error': 'id required'}), 400
+    status = d.get('status', 'sent')
+    if status not in ('sent', 'failed'):
+        status = 'sent'
+    conn = get_db(); _ensure_wa_outbox(conn)
+    conn.execute("UPDATE wa_outbox SET status=?, wa_message_id=?, sent_at=? WHERE id=? AND company_id=?",
+                 (status, d.get('wa_message_id', ''), ts(), oid, company_id))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
 @app.route('/api/wa-inbound-config')
 @login_required
 def wa_inbound_config():
