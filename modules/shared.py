@@ -76,3 +76,19 @@ def record_changes(entity_type, entity_id, before, after, fields,
                    actor_type='user', actor_name=''):
     return _core().record_changes(entity_type, entity_id, before, after, fields,
                                   actor_type, actor_name)
+
+
+# ── Extra seams used by the scheduler module ───────────────────────────────
+def app_secret():
+    """The Flask secret key (used to derive unforgeable public link tokens)."""
+    return _core().app.secret_key
+
+
+def platform_smtp_send(to_email, subject, plain_body, html_body=None):
+    """Send a system email (booking confirmations etc.) via the core's SMTP."""
+    return _core()._platform_smtp_send(to_email, subject, plain_body, html_body)
+
+
+def log_candidate_event(cid, event_type, detail=''):
+    """Write to a candidate's journey timeline."""
+    return _core().log_candidate_event(cid, event_type, detail)

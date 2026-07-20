@@ -28,6 +28,7 @@ _MODULE_NAMES = [
     'xp',
     'wa_agent',
     'freelancer',
+    'scheduler',
 ]
 
 _MIGRATIONS = []
@@ -73,5 +74,16 @@ def register_all(app):
             if hasattr(mod, 'bp'):
                 app.register_blueprint(mod.bp)
                 print(f'[modules] mounted: {name}')
+            # A module may expose extra blueprints (e.g. public HTML pages served
+            # at a non-/api path). Mount any Blueprint attribute besides `bp`.
+            from flask import Blueprint as _BP
+            for attr in dir(mod):
+                obj = getattr(mod, attr)
+                if attr != 'bp' and isinstance(obj, _BP):
+                    try:
+                        app.register_blueprint(obj)
+                        print(f'[modules] mounted extra blueprint: {name}.{attr}')
+                    except Exception as e:
+                        print(f'[modules] failed extra bp {name}.{attr}: {e}')
         except Exception as e:
             print(f'[modules] failed to mount {name}: {e}')
