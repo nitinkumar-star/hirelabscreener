@@ -1205,7 +1205,7 @@ input[type=checkbox]{width:auto}
 @media(max-width:600px){.cell{min-height:68px}.cell .chip{font-size:9px;padding:1px 4px}}
 """
 
-_CONSOLE_HTML = """<!doctype html><html lang="en"><head>
+_CONSOLE_HTML = r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Scheduler · HireLab</title><style>__CSS__</style></head><body>
 <div class="top"><a class="back" href="/">&#8592; App</a><div class="logo">H</div><h1>Scheduler</h1></div>
@@ -1229,9 +1229,9 @@ function boot(){
 }
 function render(){
   el("root").innerHTML='<div class="tabs main">'
-    +'<button class="'+(TAB==="calendar"?"on":"")+'" onclick="go('calendar')">Calendar</button>'
-    +'<button class="'+(TAB==="bookings"?"on":"")+'" onclick="go('bookings')">Bookings</button>'
-    +'<button class="'+(TAB==="availability"?"on":"")+'" onclick="go('availability')">Availability</button>'
+    +'<button class="'+(TAB==="calendar"?"on":"")+'" onclick="go(\u0027calendar\u0027)">Calendar</button>'
+    +'<button class="'+(TAB==="bookings"?"on":"")+'" onclick="go(\u0027bookings\u0027)">Bookings</button>'
+    +'<button class="'+(TAB==="availability"?"on":"")+'" onclick="go(\u0027availability\u0027)">Availability</button>'
     +'</div><div id="panel"></div>';
   if(TAB==="calendar")renderCalendar();
   else if(TAB==="bookings")renderBookings();
@@ -1264,7 +1264,7 @@ function drawGrid(cells){
       var other=d.getMonth()!==calMonth.getMonth();
       var chips=evs.slice(0,3).map(function(e){return '<div class="chip '+cls(e.kind)+'">'+esc(t12((e.when||"").slice(11,16)))+' '+esc(e.title)+'</div>';}).join("");
       var more=evs.length>3?'<div class="more">+'+(evs.length-3)+' more</div>':'';
-      h+='<div class="cell'+(other?" other":"")+(k===today?" today":"")+(selDay===k?" sel":"")+'" onclick="pickDay(''+k+'')"><div class="dn">'+d.getDate()+'</div>'+chips+more+'</div>';}
+      h+='<div class="cell'+(other?" other":"")+(k===today?" today":"")+(selDay===k?" sel":"")+'" onclick="pickDay(\u0027'+k+'\u0027)"><div class="dn">'+d.getDate()+'</div>'+chips+more+'</div>';}
     h+='</div>';}
   el("cgrid").innerHTML=h;if(selDay)renderAgenda();
 }
@@ -1278,7 +1278,7 @@ function renderAgenda(){
   var dd=new Date(selDay+"T00:00:00").toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long"});
   if(!evs.length){box.innerHTML='<div class="ag-h">'+dd+'</div><div class="empty">Nothing scheduled.</div>';return;}
   box.innerHTML='<div class="ag-h">'+dd+'</div>'+evs.map(function(e){
-    var wa=e.phone?'<button class="btn sm wa" onclick="waEvent(''+esc((e.phone||"").replace(/[^0-9]/g,""))+'',''+esc((e.title||"").replace(/'/g,""))+'')">WhatsApp</button>':"";
+    var wa=e.phone?'<button class="btn sm wa" onclick="waEvent(\u0027'+esc((e.phone||"").replace(/[^0-9]/g,""))+'\u0027,\u0027'+esc((e.title||"").replace(/\u0027/g,""))+'\u0027)">WhatsApp</button>':"";
     return '<div class="ag-item"><div class="ag-time">'+esc(t12((e.when||"").slice(11,16)))+'</div>'
       +'<div class="ag-body"><div class="tt"><span class="kdot '+cls(e.kind)+'"></span>'+esc(e.title)+'</div><div class="st">'+esc(e.subtitle||"")+'</div></div>'+wa+'</div>';}).join("");
 }
@@ -1286,7 +1286,7 @@ function waEvent(ph,name){if(!ph)return;if(ph.length===10)ph="91"+ph;window.open
 
 /* ---------------- BOOKINGS ---------------- */
 function renderBookings(){
-  el("panel").innerHTML='<div class="card"><div class="tabs"><button id="tb-up" class="on" onclick="setScope('upcoming')">Upcoming</button><button id="tb-pa" onclick="setScope('past')">Past</button></div><div id="mlist"><div class="spin"></div></div></div>';
+  el("panel").innerHTML='<div class="card"><div class="tabs"><button id="tb-up" class="on" onclick="setScope(\u0027upcoming\u0027)">Upcoming</button><button id="tb-pa" onclick="setScope(\u0027past\u0027)">Past</button></div><div id="mlist"><div class="spin"></div></div></div>';
   loadMeetings();
 }
 function setScope(s){scope=s;var u=el("tb-up"),p=el("tb-pa");if(u)u.classList.toggle("on",s==="upcoming");if(p)p.classList.toggle("on",s==="past");loadMeetings();}
@@ -1300,9 +1300,9 @@ function renderMeetings(){var box=el("mlist");if(!box)return;
     var acts="";
     if(m.status==="confirmed"){
       if(m.guest_phone)acts+='<button class="btn sm wa" onclick="waConfirm('+m.id+')">WhatsApp</button>';
-      acts+='<button class="btn sm ghost" onclick="mstatus('+m.id+','completed')">Done</button>';
-      acts+='<button class="btn sm ghost" onclick="mstatus('+m.id+','no_show')">No-show</button>';
-      acts+='<button class="btn sm warn" onclick="mstatus('+m.id+','cancelled')">Cancel</button>';
+      acts+='<button class="btn sm ghost" onclick="mstatus('+m.id+',\u0027completed\u0027)">Done</button>';
+      acts+='<button class="btn sm ghost" onclick="mstatus('+m.id+',\u0027no_show\u0027)">No-show</button>';
+      acts+='<button class="btn sm warn" onclick="mstatus('+m.id+',\u0027cancelled\u0027)">Cancel</button>';
     }
     return '<div class="mtg"><div class="when">'+whenFmt(m.start_at)+'</div>'
       +'<div class="who">'+esc(m.guest_name||"Guest")+(m.guest_phone?" &middot; "+esc(m.guest_phone):"")+'</div>'
@@ -1311,7 +1311,7 @@ function renderMeetings(){var box=el("mlist");if(!box)return;
 }
 function waConfirm(id){var m=MEET.filter(function(x){return x.id===id;})[0];if(!m)return;
   var ph=(m.guest_phone||"").replace(/[^0-9]/g,"");if(ph.length===10)ph="91"+ph;
-  var msg="Hi "+(m.guest_name||"")+", confirming our meeting on "+whenFmt(m.start_at)+" IST"+(m.mode?" ("+m.mode+")":"")+". — "+(m.host_name||"HireLab");
+  var msg="Hi "+(m.guest_name||"")+", confirming our meeting on "+whenFmt(m.start_at)+" IST"+(m.mode?" ("+m.mode+")":"")+". \u2014 "+(m.host_name||"HireLab");
   window.open("https://wa.me/"+ph+"?text="+encodeURIComponent(msg),"_blank");}
 function mstatus(id,st){if(st==="cancelled"&&!confirm("Cancel this booking?"))return;
   fetch("/api/scheduler/meetings/"+id+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:st})})
@@ -1350,7 +1350,7 @@ function renderModes(){var all=["Phone","Video","In-person"];
   el("modes").innerHTML=all.map(function(m){var on=(AV.modes||[]).indexOf(m)>=0;
     return '<label><input type="checkbox" value="'+m+'" '+(on?"checked":"")+'> '+m+'</label>';}).join("");}
 function renderBlocked(){el("blocked").innerHTML=(AV.blocked_dates||[]).map(function(d){
-  return '<span class="chip">'+d+' <b onclick="rmBlocked(''+d+'')">&times;</b></span>';}).join("");}
+  return '<span class="chip">'+d+' <b onclick="rmBlocked(\u0027'+d+'\u0027)">&times;</b></span>';}).join("");}
 function addBlocked(){var v=el("bd").value;if(!v)return;AV.blocked_dates=AV.blocked_dates||[];if(AV.blocked_dates.indexOf(v)<0)AV.blocked_dates.push(v);AV.blocked_dates.sort();renderBlocked();}
 function rmBlocked(d){AV.blocked_dates=AV.blocked_dates.filter(function(x){return x!==d;});renderBlocked();}
 function copyLink(){var i=el("pub");i.select();navigator.clipboard.writeText(i.value).then(function(){toast("Link copied");});}
