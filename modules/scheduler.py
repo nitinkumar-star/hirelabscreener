@@ -588,6 +588,66 @@ def ref_token():
     return jsonify({'ok': True, 'url': url})
 
 
+@bp.route('/calendar', methods=['GET'])
+@login_required
+def calendar_events():
+    """All events for the tenant in a date range, for the month calendar:
+    booked appointments (meetings) + reminders + interviews. Each event is
+    {kind, when, title, subtitle, candidate_id, phone, id}. Tenant-scoped."""
+    frm = (request.args.get('from') or '')[:10]
+    to = (request.args.get('to') or '')[:10]
+    if not frm or not to:
+        return jsonify({'error': 'from/to required'}), 400
+    cid = effective_company_id()
+    conn = get_db()
+    events = []
+
+    # 1) Booked appointments (self-book + manual)
+    for m in conn.execute(
+        "SELECT m.id, m.start_at, m.guest_name, m.guest_phone, m.mode, m.candidate_id, "
+        "m.crm_client_id, c.name AS cand_name FROM meetings m "
+        "LEFT JOIN candidates c ON c.id=m.candidate_id "
+        "WHERE m.company_id=? AND m.status='confirmed' AND substr(m.start_at,1,10) BETWEEN ? AND ?",
+        (cid, frm, to)).fetchall():
+        events.append({'kind': 'appointment', 'id': m['id'], 'when': m['start_at'],
+                       'title': m['guest_name'] or 'Meeting',
+                       'subtitle': ' · '.join([x for x in [m['mode'], m['cand_name']] if x]) or 'Booked',
+                       'candidate_id': m['candidate_id'] or 0, 'phone': m['guest_phone'] or ''})
+
+    # 2) Reminders (open only)
+    try:
+        for r in conn.execute(
+            "SELECT r.id, r.due_at, r.note, r.candidate_name, r.candidate_id, c.phone AS cand_phone "
+            "FROM reminders r LEFT JOIN candidates c ON c.id=r.candidate_id "
+            "WHERE r.owner_id=? AND r.done=0 AND substr(r.due_at,1,10) BETWEEN ? AND ?",
+            (cid, frm, to)).fetchall():
+            events.append({'kind': 'reminder', 'id': r['id'], 'when': r['due_at'],
+                           'title': r['candidate_name'] or 'Reminder',
+                           'subtitle': r['note'] or 'Reminder',
+                           'candidate_id': r['candidate_id'] or 0, 'phone': r['cand_phone'] or ''})
+    except Exception as e:
+        print('[scheduler] reminders fetch skipped: %s' % e)
+
+    # 3) Interviews (not cancelled)
+    try:
+        for i in conn.execute(
+            "SELECT i.id, i.scheduled_at, i.round_name, i.mode, i.candidate_id, i.status, "
+            "c.name AS cand_name, c.phone AS cand_phone FROM interviews i "
+            "LEFT JOIN candidates c ON c.id=i.candidate_id "
+            "WHERE i.owner_id=? AND substr(i.scheduled_at,1,10) BETWEEN ? AND ? "
+            "AND (i.status IS NULL OR i.status NOT IN ('cancelled','canceled'))",
+            (cid, frm, to)).fetchall():
+            events.append({'kind': 'interview', 'id': i['id'], 'when': i['scheduled_at'],
+                           'title': i['cand_name'] or 'Interview',
+                           'subtitle': ' · '.join([x for x in [i['round_name'], i['mode']] if x]) or 'Interview',
+                           'candidate_id': i['candidate_id'] or 0, 'phone': i['cand_phone'] or ''})
+    except Exception as e:
+        print('[scheduler] interviews fetch skipped: %s' % e)
+
+    conn.close()
+    return jsonify({'ok': True, 'events': events})
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  PUBLIC ROUTES  (guest-facing — NO login)
 # ══════════════════════════════════════════════════════════════════════════
@@ -1108,6 +1168,41 @@ input[type=checkbox]{width:auto}
 .toast.show{opacity:1}
 .muted{color:var(--muted)}.spin{width:20px;height:20px;border:2.5px solid var(--em-l);border-top-color:var(--em);border-radius:50%;animation:sp .7s linear infinite;margin:30px auto}@keyframes sp{to{transform:rotate(360deg)}}
 .empty{text-align:center;color:var(--muted);padding:24px 10px;font-size:13px}
+.tabs.main{display:flex;gap:6px;margin-bottom:16px}
+.calhead{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.calhead .mlabel{font-weight:700;font-size:15px;min-width:140px;text-align:center}
+.navb{width:32px;height:32px;border:1px solid var(--line);background:#fff;border-radius:8px;font-size:16px;cursor:pointer;color:var(--soft)}
+.navb:hover{border-color:var(--em);color:var(--em)}
+.legend{display:flex;gap:14px;margin-bottom:12px;font-size:11.5px;color:var(--soft);flex-wrap:wrap}
+.lg{display:flex;align-items:center;gap:6px}
+.lg:before{content:"";width:9px;height:9px;border-radius:3px;display:inline-block}
+.lg.ap:before{background:#0f6e56}.lg.rm:before{background:#c47a1a}.lg.iv:before{background:#3a5bd0}
+.cgrid{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.crow{display:grid;grid-template-columns:repeat(7,1fr)}
+.crow.head .dow{padding:7px 4px;font-size:10.5px;font-weight:700;text-transform:uppercase;color:var(--muted);text-align:center;background:var(--bg);border-bottom:1px solid var(--line)}
+.cell{min-height:82px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:4px 4px 5px;cursor:pointer;overflow:hidden}
+.cell:nth-child(7n){border-right:none}
+.cell.other{background:#fbfaf8}.cell.other .dn{color:#c3bfb5}
+.cell.today .dn{background:var(--em);color:#fff;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center}
+.cell.sel{outline:2px solid var(--em);outline-offset:-2px}
+.cell:hover{background:var(--em-l)}
+.cell .dn{font-size:12px;font-weight:600;color:var(--soft);margin-bottom:3px;height:20px}
+.cell .chip{font-size:9.5px;line-height:1.35;padding:2px 5px;border-radius:5px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.cell .chip.ap{background:#e7f2ee;color:#0b5946}
+.cell .chip.rm{background:#f9eede;color:#8a5a12}
+.cell .chip.iv{background:#e8edfb;color:#2a3f96}
+.cell .more{font-size:9px;color:var(--muted);font-weight:600;padding-left:3px}
+#dayagenda{margin-top:16px}
+.ag-h{font-size:12px;font-weight:700;color:var(--soft);margin-bottom:6px}
+.ag-item{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
+.ag-item:last-child{border-bottom:none}
+.ag-time{font-size:12px;font-weight:700;color:var(--soft);min-width:64px;padding-top:1px}
+.ag-body{flex:1;min-width:0}
+.ag-body .tt{font-weight:600;font-size:13.5px}
+.ag-body .st{font-size:12px;color:var(--muted);margin-top:1px}
+.kdot{display:inline-block;width:8px;height:8px;border-radius:3px;margin-right:5px;vertical-align:middle}
+.kdot.ap{background:#0f6e56}.kdot.rm{background:#c47a1a}.kdot.iv{background:#3a5bd0}
+@media(max-width:600px){.cell{min-height:68px}.cell .chip{font-size:9px;padding:1px 4px}}
 """
 
 _CONSOLE_HTML = """<!doctype html><html lang="en"><head>
@@ -1118,25 +1213,119 @@ _CONSOLE_HTML = """<!doctype html><html lang="en"><head>
 <div class="toast" id="toast"></div>
 <script>
 var AV=null, DAYS=[["mon","Mon"],["tue","Tue"],["wed","Wed"],["thu","Thu"],["fri","Fri"],["sat","Sat"],["sun","Sun"]];
-var scope="upcoming", MEET=[];
+var TAB="calendar", scope="upcoming", MEET=[];
+var calMonth=new Date(), calEvents=[], selDay=null;
 function el(id){return document.getElementById(id);}
 function esc(s){return (s||"").replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
 function toast(t){var e=el("toast");e.textContent=t;e.classList.add("show");setTimeout(function(){e.classList.remove("show");},1800);}
 function t12(t){if(!t)return"";var p=t.split(":"),h=+p[0],m=p[1];var ap=h>=12?"PM":"AM";var hh=h%12||12;return hh+":"+m+" "+ap;}
-function whenFmt(iso){try{var d=new Date(iso);return d.toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"})+", "+t12(iso.slice(11,16));}catch(e){return iso;}}
+function iso(d){var m=(d.getMonth()+1),day=d.getDate();return d.getFullYear()+"-"+(m<10?"0":"")+m+"-"+(day<10?"0":"")+day;}
+function whenFmt(s){try{var d=new Date(s);return d.toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"})+", "+t12(s.slice(11,16));}catch(e){return s;}}
+function cls(k){return k==="appointment"?"ap":(k==="reminder"?"rm":"iv");}
 
 function boot(){
   fetch("/api/scheduler/availability").then(function(r){if(r.status===401){location.href="/login";return null;}return r.json();})
-  .then(function(j){if(!j)return;AV=j.availability;loadMeetings();}).catch(function(){el("root").innerHTML='<div class="empty">Could not load. Refresh?</div>';});
+  .then(function(j){if(!j)return;AV=j.availability;render();}).catch(function(){el("root").innerHTML='<div class="empty">Could not load. Refresh?</div>';});
 }
 function render(){
-  el("root").innerHTML=
+  el("root").innerHTML='<div class="tabs main">'
+    +'<button class="'+(TAB==="calendar"?"on":"")+'" onclick="go('calendar')">Calendar</button>'
+    +'<button class="'+(TAB==="bookings"?"on":"")+'" onclick="go('bookings')">Bookings</button>'
+    +'<button class="'+(TAB==="availability"?"on":"")+'" onclick="go('availability')">Availability</button>'
+    +'</div><div id="panel"></div>';
+  if(TAB==="calendar")renderCalendar();
+  else if(TAB==="bookings")renderBookings();
+  else renderAvailability();
+}
+function go(t){TAB=t;render();}
+
+/* ---------------- CALENDAR ---------------- */
+function calShift(n){calMonth=new Date(calMonth.getFullYear(),calMonth.getMonth()+n,1);selDay=null;renderCalendar();}
+function calToday(){calMonth=new Date();selDay=iso(new Date());renderCalendar();}
+function renderCalendar(){
+  var first=new Date(calMonth.getFullYear(),calMonth.getMonth(),1);
+  var wd=(first.getDay()+6)%7;var start=new Date(first);start.setDate(first.getDate()-wd);
+  var cells=[];for(var i=0;i<42;i++){var d=new Date(start);d.setDate(start.getDate()+i);cells.push(d);}
+  var ml=calMonth.toLocaleDateString("en-IN",{month:"long",year:"numeric"});
+  el("panel").innerHTML='<div class="card">'
+    +'<div class="calhead"><button class="navb" onclick="calShift(-1)">&#8249;</button><div class="mlabel">'+ml+'</div><button class="navb" onclick="calShift(1)">&#8250;</button><button class="btn sm ghost" onclick="calToday()">Today</button></div>'
+    +'<div class="legend"><span class="lg ap">Appointment</span><span class="lg rm">Reminder</span><span class="lg iv">Interview</span></div>'
+    +'<div class="cgrid" id="cgrid"><div class="spin"></div></div><div id="dayagenda"></div></div>';
+  fetch("/api/scheduler/calendar?from="+iso(cells[0])+"&to="+iso(cells[41]))
+  .then(r=>r.json()).then(function(j){calEvents=(j&&j.events)||[];drawGrid(cells);})
+  .catch(function(){el("cgrid").innerHTML='<div class="empty">Could not load events.</div>';});
+}
+function drawGrid(cells){
+  var byDay={};calEvents.forEach(function(e){var k=(e.when||"").slice(0,10);(byDay[k]=byDay[k]||[]).push(e);});
+  var dows=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];var today=iso(new Date());
+  var h='<div class="crow head">'+dows.map(function(d){return '<div class="dow">'+d+'</div>';}).join("")+'</div>';
+  for(var w=0;w<6;w++){h+='<div class="crow">';
+    for(var i=0;i<7;i++){var d=cells[w*7+i];var k=iso(d);var evs=(byDay[k]||[]).sort(function(a,b){return (a.when||"").localeCompare(b.when||"");});
+      var other=d.getMonth()!==calMonth.getMonth();
+      var chips=evs.slice(0,3).map(function(e){return '<div class="chip '+cls(e.kind)+'">'+esc(t12((e.when||"").slice(11,16)))+' '+esc(e.title)+'</div>';}).join("");
+      var more=evs.length>3?'<div class="more">+'+(evs.length-3)+' more</div>':'';
+      h+='<div class="cell'+(other?" other":"")+(k===today?" today":"")+(selDay===k?" sel":"")+'" onclick="pickDay(''+k+'')"><div class="dn">'+d.getDate()+'</div>'+chips+more+'</div>';}
+    h+='</div>';}
+  el("cgrid").innerHTML=h;if(selDay)renderAgenda();
+}
+function pickDay(k){selDay=k;
+  [].forEach.call(document.querySelectorAll(".cell"),function(c){c.classList.remove("sel");});
+  renderCalendar();
+}
+function renderAgenda(){
+  var evs=calEvents.filter(function(e){return (e.when||"").slice(0,10)===selDay;}).sort(function(a,b){return (a.when||"").localeCompare(b.when||"");});
+  var box=el("dayagenda");if(!box)return;
+  var dd=new Date(selDay+"T00:00:00").toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long"});
+  if(!evs.length){box.innerHTML='<div class="ag-h">'+dd+'</div><div class="empty">Nothing scheduled.</div>';return;}
+  box.innerHTML='<div class="ag-h">'+dd+'</div>'+evs.map(function(e){
+    var wa=e.phone?'<button class="btn sm wa" onclick="waEvent(''+esc((e.phone||"").replace(/[^0-9]/g,""))+'',''+esc((e.title||"").replace(/'/g,""))+'')">WhatsApp</button>':"";
+    return '<div class="ag-item"><div class="ag-time">'+esc(t12((e.when||"").slice(11,16)))+'</div>'
+      +'<div class="ag-body"><div class="tt"><span class="kdot '+cls(e.kind)+'"></span>'+esc(e.title)+'</div><div class="st">'+esc(e.subtitle||"")+'</div></div>'+wa+'</div>';}).join("");
+}
+function waEvent(ph,name){if(!ph)return;if(ph.length===10)ph="91"+ph;window.open("https://wa.me/"+ph,"_blank");}
+
+/* ---------------- BOOKINGS ---------------- */
+function renderBookings(){
+  el("panel").innerHTML='<div class="card"><div class="tabs"><button id="tb-up" class="on" onclick="setScope('upcoming')">Upcoming</button><button id="tb-pa" onclick="setScope('past')">Past</button></div><div id="mlist"><div class="spin"></div></div></div>';
+  loadMeetings();
+}
+function setScope(s){scope=s;var u=el("tb-up"),p=el("tb-pa");if(u)u.classList.toggle("on",s==="upcoming");if(p)p.classList.toggle("on",s==="past");loadMeetings();}
+function loadMeetings(){if(el("mlist"))el("mlist").innerHTML='<div class="spin"></div>';
+  fetch("/api/scheduler/meetings?scope="+scope).then(r=>r.json()).then(function(j){MEET=(j&&j.meetings)||[];renderMeetings();}).catch(function(){});}
+function renderMeetings(){var box=el("mlist");if(!box)return;
+  if(!MEET.length){box.innerHTML='<div class="empty">No '+scope+' bookings yet.<br>Share your link to get started.</div>';return;}
+  box.innerHTML=MEET.map(function(m){
+    var link=m.candidate_name?('<span class="pill link">'+esc(m.candidate_name)+'</span>'):(m.crm_client_id?'<span class="pill link">Client</span>':'');
+    var st=m.status==="cancelled"?'<span class="pill cx">Cancelled</span>':(m.status==="completed"?'<span class="pill done">Done</span>':(m.status==="no_show"?'<span class="pill cx">No-show</span>':'<span class="pill">Confirmed</span>'));
+    var acts="";
+    if(m.status==="confirmed"){
+      if(m.guest_phone)acts+='<button class="btn sm wa" onclick="waConfirm('+m.id+')">WhatsApp</button>';
+      acts+='<button class="btn sm ghost" onclick="mstatus('+m.id+','completed')">Done</button>';
+      acts+='<button class="btn sm ghost" onclick="mstatus('+m.id+','no_show')">No-show</button>';
+      acts+='<button class="btn sm warn" onclick="mstatus('+m.id+','cancelled')">Cancel</button>';
+    }
+    return '<div class="mtg"><div class="when">'+whenFmt(m.start_at)+'</div>'
+      +'<div class="who">'+esc(m.guest_name||"Guest")+(m.guest_phone?" &middot; "+esc(m.guest_phone):"")+'</div>'
+      +'<div class="meta">'+st+link+(m.mode?'<span>'+esc(m.mode)+'</span>':"")+(m.purpose?'<span>&middot; '+esc(m.purpose)+'</span>':"")+'</div>'
+      +(acts?'<div class="acts">'+acts+'</div>':"")+'</div>';}).join("");
+}
+function waConfirm(id){var m=MEET.filter(function(x){return x.id===id;})[0];if(!m)return;
+  var ph=(m.guest_phone||"").replace(/[^0-9]/g,"");if(ph.length===10)ph="91"+ph;
+  var msg="Hi "+(m.guest_name||"")+", confirming our meeting on "+whenFmt(m.start_at)+" IST"+(m.mode?" ("+m.mode+")":"")+". — "+(m.host_name||"HireLab");
+  window.open("https://wa.me/"+ph+"?text="+encodeURIComponent(msg),"_blank");}
+function mstatus(id,st){if(st==="cancelled"&&!confirm("Cancel this booking?"))return;
+  fetch("/api/scheduler/meetings/"+id+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:st})})
+  .then(r=>r.json()).then(function(){toast("Updated");loadMeetings();});}
+
+/* ---------------- AVAILABILITY ---------------- */
+function renderAvailability(){
+  el("panel").innerHTML=
    '<div class="card" style="margin-bottom:16px"><h2>Your booking link</h2>'
    +'<div class="linkrow"><input id="pub" readonly value="'+esc(AV.public_url)+'">'
    +'<button class="btn sm" onclick="copyLink()">Copy</button>'
    +'<a class="btn sm ghost" href="'+esc(AV.public_url)+'" target="_blank">Open</a></div>'
    +'<label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px"><input type="checkbox" id="en" '+(AV.enabled?"checked":"")+'> Accept new bookings</label></div>'
-   +'<div class="grid"><div class="card"><h2>Availability</h2><div id="days"></div>'
+   +'<div class="card"><h2>Availability</h2><div id="days"></div>'
      +'<div class="field" style="margin-top:14px"><label>Headline (shown on booking page)</label><input id="hl" value="'+esc(AV.headline)+'" placeholder="Quick screening call"></div>'
      +'<div class="row2"><div class="field"><label>Slot length</label><select id="slot">'
        +[15,20,30,45,60].map(function(n){return '<option value="'+n+'" '+(AV.slot_minutes==n?"selected":"")+'>'+n+' min</option>';}).join("")+'</select></div>'
@@ -1146,9 +1335,8 @@ function render(){
      +'<div class="field"><label>Meeting types</label><div class="modes" id="modes"></div></div>'
      +'<div class="field"><label>Default location / video link</label><input id="loc" value="'+esc(AV.default_location)+'" placeholder="e.g. Google Meet link or office address"></div>'
      +'<div class="field"><label>Blocked dates</label><div style="display:flex;gap:8px"><input type="date" id="bd"><button class="btn sm ghost" onclick="addBlocked()">Add</button></div><div class="chips" id="blocked"></div></div>'
-     +'<div class="save-bar"><button class="btn" style="width:100%" onclick="saveAv()">Save availability</button></div></div>'
-   +'<div class="card"><h2>Bookings</h2><div class="tabs"><button id="tb-up" class="on" onclick="setScope(\\'upcoming\\')">Upcoming</button><button id="tb-pa" onclick="setScope(\\'past\\')">Past</button></div><div id="mlist"><div class="spin"></div></div></div></div>';
-  renderDays();renderModes();renderBlocked();renderMeetings();
+     +'<div class="save-bar"><button class="btn" style="width:100%" onclick="saveAv()">Save availability</button></div></div>';
+  renderDays();renderModes();renderBlocked();
 }
 function renderDays(){
   el("days").innerHTML=DAYS.map(function(d){var w=(AV.weekly_hours[d[0]]||[]);var on=w.length>0;
@@ -1162,7 +1350,7 @@ function renderModes(){var all=["Phone","Video","In-person"];
   el("modes").innerHTML=all.map(function(m){var on=(AV.modes||[]).indexOf(m)>=0;
     return '<label><input type="checkbox" value="'+m+'" '+(on?"checked":"")+'> '+m+'</label>';}).join("");}
 function renderBlocked(){el("blocked").innerHTML=(AV.blocked_dates||[]).map(function(d){
-  return '<span class="chip">'+d+' <b onclick="rmBlocked(\\''+d+'\\')">&times;</b></span>';}).join("");}
+  return '<span class="chip">'+d+' <b onclick="rmBlocked(''+d+'')">&times;</b></span>';}).join("");}
 function addBlocked(){var v=el("bd").value;if(!v)return;AV.blocked_dates=AV.blocked_dates||[];if(AV.blocked_dates.indexOf(v)<0)AV.blocked_dates.push(v);AV.blocked_dates.sort();renderBlocked();}
 function rmBlocked(d){AV.blocked_dates=AV.blocked_dates.filter(function(x){return x!==d;});renderBlocked();}
 function copyLink(){var i=el("pub");i.select();navigator.clipboard.writeText(i.value).then(function(){toast("Link copied");});}
@@ -1176,33 +1364,6 @@ function saveAv(){
   fetch("/api/scheduler/availability",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
   .then(r=>r.json()).then(function(j){AV=j.availability;toast("Saved");}).catch(function(){toast("Save failed");});
 }
-function setScope(s){scope=s;el("tb-up").classList.toggle("on",s==="upcoming");el("tb-pa").classList.toggle("on",s==="past");loadMeetings();}
-function loadMeetings(){if(el("mlist"))el("mlist").innerHTML='<div class="spin"></div>';
-  fetch("/api/scheduler/meetings?scope="+scope).then(r=>r.json()).then(function(j){MEET=(j&&j.meetings)||[];if(!AV.public_url){AV.public_url=location.origin+"/book/"+(AV.token||"");}if(!el("days"))render();else renderMeetings();}).catch(function(){});}
-function renderMeetings(){var box=el("mlist");if(!box)return;
-  if(!MEET.length){box.innerHTML='<div class="empty">No '+scope+' bookings yet.<br>Share your link to get started.</div>';return;}
-  box.innerHTML=MEET.map(function(m){
-    var link=m.candidate_name?('<span class="pill link">'+esc(m.candidate_name)+'</span>'):(m.crm_client_id?'<span class="pill link">Client</span>':'');
-    var st=m.status==="cancelled"?'<span class="pill cx">Cancelled</span>':(m.status==="completed"?'<span class="pill done">Done</span>':(m.status==="no_show"?'<span class="pill cx">No-show</span>':'<span class="pill">Confirmed</span>'));
-    var acts="";
-    if(m.status==="confirmed"){
-      if(m.guest_phone)acts+='<button class="btn sm wa" onclick="waConfirm('+m.id+')">WhatsApp</button>';
-      if(scope==="past"||true){acts+='<button class="btn sm ghost" onclick="mstatus('+m.id+',\\'completed\\')">Done</button>';
-      acts+='<button class="btn sm ghost" onclick="mstatus('+m.id+',\\'no_show\\')">No-show</button>';}
-      acts+='<button class="btn sm warn" onclick="mstatus('+m.id+',\\'cancelled\\')">Cancel</button>';
-    }
-    return '<div class="mtg"><div class="when">'+whenFmt(m.start_at)+'</div>'
-      +'<div class="who">'+esc(m.guest_name||"Guest")+(m.guest_phone?' &middot; '+esc(m.guest_phone):"")+'</div>'
-      +'<div class="meta">'+st+link+(m.mode?'<span>'+esc(m.mode)+'</span>':"")+(m.purpose?'<span>&middot; '+esc(m.purpose)+'</span>':"")+'</div>'
-      +(acts?'<div class="acts">'+acts+'</div>':"")+'</div>';}).join("");
-}
-function waConfirm(id){var m=MEET.filter(function(x){return x.id===id;})[0];if(!m)return;
-  var ph=(m.guest_phone||"").replace(/[^0-9]/g,"");if(ph.length===10)ph="91"+ph;
-  var msg="Hi "+(m.guest_name||"")+", confirming our meeting on "+whenFmt(m.start_at)+" IST"+(m.mode?" ("+m.mode+")":"")+". — "+(m.host_name||"HireLab");
-  window.open("https://wa.me/"+ph+"?text="+encodeURIComponent(msg),"_blank");}
-function mstatus(id,st){if(st==="cancelled"&&!confirm("Cancel this booking?"))return;
-  fetch("/api/scheduler/meetings/"+id+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:st})})
-  .then(r=>r.json()).then(function(){toast("Updated");loadMeetings();});}
 boot();
 </script></body></html>"""
 
