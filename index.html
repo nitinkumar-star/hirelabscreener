@@ -3290,7 +3290,13 @@ async function renderPipeline(el){
   const sharedCnt=(all||[]).filter(c=>c.stage==='Shared with Client').length;
   const placedCnt=(all||[]).filter(c=>c.stage==='Placed').length;
 
+  var _st=(S.activeMandate.status||'active');
+  var _stBg=_st==='hold'?'#FAEEDA':_st==='closed'?'#F2F4F7':'#E1F5EE';
+  var _stFg=_st==='hold'?'#854F0B':_st==='closed'?'#555':'#0F6E56';
+  var _stDot=_st==='hold'?'#EF9F27':_st==='closed'?'#888':'#1D9E75';
+  var _stLabel=_st==='hold'?'On Hold':_st==='closed'?'Closed':'Active';
   el.innerHTML = '<div style="padding:7px 14px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:8px;background:#fff;flex-shrink:0;flex-wrap:wrap">'
+    +'<button onclick="openStatusModal('+S.activeMandate.id+')" title="Change position status" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:6px;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;background:'+_stBg+';color:'+_stFg+'"><span style="width:7px;height:7px;border-radius:50%;background:'+_stDot+'"></span>'+_stLabel+' &#9662;</button>'
     +'<span style="font-size:11px;color:#888">'+inPipeline.length+' in pipeline</span>'
     +(sharedCnt?'<span class="pill pill-p" style="font-size:10px">'+sharedCnt+' shared</span>':'')
     +(placedCnt?'<span class="pill pill-g" style="font-size:10px">'+placedCnt+' placed</span>':'')
