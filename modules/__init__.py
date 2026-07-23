@@ -29,6 +29,7 @@ _MODULE_NAMES = [
     'wa_agent',
     'freelancer',
     'scheduler',
+    'orgmap',
 ]
 
 _MIGRATIONS = []
