@@ -9967,6 +9967,46 @@ def wa_inbound():
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'candidate_id': cand['id']})
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  Ye poora block server.py me paste karo.
+#
+#  KAHAN:  wa_inbound() function ke theek BAAD.
+#          Dhundo:  @app.route('/api/candidates/<int:cid>/wa-thread')
+#          Uske THEEK UPAR ye paste kar do.
+#
+#  KYUN:   Naya WhatsApp kai chats me asli number ki jagah ek anonymous id
+#          bhejta hai (108332094382256@lid). Us se candidate match nahi hota.
+#          Listener ko candidate numbers chahiye taaki wo WhatsApp se unke
+#          LID poochh ke mapping bana le. Ye endpoint wahi list deta hai.
+#
+#  SAFE:   Sirf padhta hai, kuch change nahi karta. Auth wahi listener token
+#          hai jo /api/wa-inbound use karta hai. Login session ki zarurat nahi.
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.route('/api/wa-phones', methods=['POST'])
+def wa_phones():
+    """Listener ko is company ke candidate phone numbers deta hai, taaki wo
+    WhatsApp se unke LID (anonymous id) nikaal ke mapping bana sake.
+    Sirf 10-digit numbers, duplicate hata ke."""
+    d = request.json or {}
+    tok = d.get('token') or request.headers.get('X-WA-Token', '')
+    company_id = _wa_company_for_token(tok)
+    if not company_id:
+        return jsonify({'error': 'invalid listener token'}), 401
+
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT phone FROM candidates WHERE owner_id=? AND phone IS NOT NULL AND phone!=''",
+        (company_id,)).fetchall()
+    conn.close()
+
+    seen, out = set(), []
+    for r in rows:
+        p = _wa_norm_phone10(r['phone'])
+        if len(p) == 10 and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return jsonify({'ok': True, 'phones': out})
 
 @app.route('/api/candidates/<int:cid>/wa-thread')
 @login_required
