@@ -469,3 +469,565 @@ def sync():
 def orgmap_page():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return send_file(os.path.join(root, 'orgmap.html'))
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  WAVE 2 — candidate  <->  org node
+#
+#  CONTACT SYNC POLICY (deliberate, and the safe reading of "auto-sync"):
+#    • one side empty  -> filled automatically, silently, both directions
+#    • both filled and different -> NOTHING is overwritten; the difference is
+#      returned as a `conflict` for the user to resolve in one click
+#  A verified phone number is expensive to obtain and impossible to notice
+#  when it silently disappears, so last-write-wins is not used anywhere here.
+# ══════════════════════════════════════════════════════════════════════════
+SYNC_FIELDS = (            # (org_people col, candidates col)
+    ('phone', 'phone'),
+    ('email', 'email'),
+    ('linkedin', 'linkedin_url'),
+)
+
+
+def _cand_cols(conn):
+    return {r['name'] for r in conn.execute('PRAGMA table_info(candidates)').fetchall()}
+
+
+def _slugify(s, taken):
+    base = re.sub(r'[^a-z0-9]+', '-', (s or '').lower()).strip('-') or 'n'
+    key, i = base, 0
+    while key in taken:
+        i += 1
+        key = f'{base}-{i}'
+    return key
+
+
+def _get_candidate(conn, cid):
+    """Candidate row, only if it belongs to this tenant."""
+    r = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not r:
+        return None
+    cols = r.keys()
+    if 'owner_id' in cols and r['owner_id'] != effective_company_id():
+        return None
+    return r
+
+
+def _find_org_company(cur, tenant, name):
+    """Match a free-text candidate company to a mapped company.
+
+    Candidates carry whatever the recruiter typed ('ABB'), while the map holds
+    the formal name ('ABB India Ltd'). Exact-key matching alone would miss that
+    pair, which both empties the Reports-to picker AND silently creates a
+    duplicate company on every save. So: exact key first, then containment
+    either way (guarded to >=3 chars so 'LT' can't swallow 'L&T Infotech').
+    """
+    nk = _norm(name)
+    if not nk:
+        return None
+    rows = cur.execute(
+        'SELECT * FROM org_companies WHERE company_id=? AND is_active=1', (tenant,)).fetchall()
+    for r in rows:
+        if r['normalized_name'] == nk:
+            return r
+    if len(nk) >= 3:
+        cands = [r for r in rows
+                 if r['normalized_name'] and len(r['normalized_name']) >= 3
+                 and (r['normalized_name'].startswith(nk) or nk.startswith(r['normalized_name']))]
+        if len(cands) == 1:
+            return cands[0]
+    return None
+
+
+def _ensure_org_company(cur, tenant, name):
+    """Find (by normalised name) or create the mapped company for a candidate."""
+    name = (name or '').strip() or 'Unmapped'
+    row = _find_org_company(cur, tenant, name)
+    if row:
+        return row['id'], row['ext_key']
+    taken = {r['ext_key'] for r in cur.execute(
+        'SELECT ext_key FROM org_companies WHERE company_id=?', (tenant,)).fetchall()}
+    ext = _slugify(name, taken)
+    now = ts()
+    cur.execute('''INSERT INTO org_companies
+        (company_id, ext_key, name, normalized_name, created_at, updated_at)
+        VALUES (?,?,?,?,?,?)''', (tenant, ext, name, _norm(name), now, now))
+    return cur.lastrowid, ext
+
+
+def _ensure_node_for_candidate(cur, tenant, cand):
+    """Return the org node for this candidate, creating + linking it if needed."""
+    row = cur.execute(
+        '''SELECT p.* FROM org_people p
+           JOIN org_person_links l ON l.org_person_id = p.id
+           WHERE l.company_id=? AND l.candidate_id=? LIMIT 1''',
+        (tenant, cand['id'])).fetchone()
+    if row:
+        return row
+
+    oc_id, _ = _ensure_org_company(cur, tenant, cand['company'])
+    taken = {r['ext_key'] for r in cur.execute(
+        'SELECT ext_key FROM org_people WHERE org_company_id=?', (oc_id,)).fetchall()}
+    ext = _slugify(cand['name'], taken)
+    now = ts()
+    cur.execute('''INSERT INTO org_people
+        (company_id, org_company_id, ext_key, name, title, city, phone, email, linkedin,
+         type, status, source, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,'Employee','contacted','ats',?,?)''',
+        (tenant, oc_id, ext, cand['name'] or '', cand['designation'] or '',
+         cand['location'] or '', cand['phone'] or '', cand['email'] or '',
+         (cand['linkedin_url'] if 'linkedin_url' in cand.keys() else '') or '', now, now))
+    pid = cur.lastrowid
+    cur.execute('''INSERT OR IGNORE INTO org_person_links
+        (company_id, org_person_id, candidate_id, link_source, linked_by, linked_at)
+        VALUES (?,?,?,'auto_from_ats',?,?)''',
+        (tenant, pid, cand['id'], real_user_id() or 0, now))
+    return cur.execute('SELECT * FROM org_people WHERE id=?', (pid,)).fetchone()
+
+
+def _sync_contacts(cur, node, cand, cand_cols):
+    """Fill blanks both ways; report (never silently resolve) real differences."""
+    conflicts, node_set, cand_set = [], {}, {}
+    for ncol, ccol in SYNC_FIELDS:
+        if ccol not in cand_cols:
+            continue
+        nv = (node[ncol] or '').strip()
+        cv = (cand[ccol] or '').strip()
+        if nv and not cv:
+            cand_set[ccol] = nv
+        elif cv and not nv:
+            node_set[ncol] = cv
+        elif nv and cv and nv.replace(' ', '') != cv.replace(' ', ''):
+            conflicts.append({'field': ncol, 'org': nv, 'ats': cv})
+    if node_set:
+        cur.execute('UPDATE org_people SET {} , updated_at=? WHERE id=?'.format(
+            ', '.join(f'{k}=?' for k in node_set)),
+            tuple(node_set.values()) + (ts(), node['id']))
+    if cand_set:
+        cur.execute('UPDATE candidates SET {} WHERE id=?'.format(
+            ', '.join(f'{k}=?' for k in cand_set)),
+            tuple(cand_set.values()) + (cand['id'],))
+    return conflicts, bool(node_set or cand_set)
+
+
+def _node_brief(r, extra=None):
+    d = {'pid': r['id'], 'ext_key': r['ext_key'], 'name': r['name'],
+         'title': r['title'], 'city': r['city'], 'region': r['region'],
+         'phone': r['phone'], 'email': r['email'], 'status': r['status'],
+         'target': bool(r['target'])}
+    if extra:
+        d.update(extra)
+    return d
+
+
+@bp.route('/for-candidate/<int:cid>', methods=['GET'])
+@login_required
+@orgmap_required
+def for_candidate(cid):
+    """Everything the candidate-profile widget shows, in one call."""
+    tenant = effective_company_id()
+    conn = get_db()
+    try:
+        cand = _get_candidate(conn, cid)
+        if not cand:
+            return jsonify({'error': 'not_found'}), 404
+        cur = conn.cursor()
+        cols = _cand_cols(conn)
+
+        link = cur.execute(
+            '''SELECT p.* FROM org_people p
+               JOIN org_person_links l ON l.org_person_id=p.id
+               WHERE l.company_id=? AND l.candidate_id=? LIMIT 1''',
+            (tenant, cid)).fetchone()
+
+        out = {'candidate': {'id': cid, 'name': cand['name'],
+                             'company': cand['company'], 'phone': cand['phone']},
+               'node': None, 'manager': None, 'reports': [],
+               'suggestions': [], 'conflicts': [], 'other_rows': [],
+               'org_company': None, 'synced': False}
+
+        if not link:
+            # not mapped yet -> offer likely matches (phone first, then name)
+            phone = re.sub(r'\D', '', cand['phone'] or '')[-10:]
+            sugg = []
+            if phone:
+                sugg = cur.execute(
+                    '''SELECT * FROM org_people
+                       WHERE company_id=? AND REPLACE(REPLACE(phone,' ',''),'-','') LIKE ?
+                       LIMIT 5''', (tenant, '%' + phone)).fetchall()
+            if not sugg and (cand['name'] or '').strip():
+                sugg = cur.execute(
+                    '''SELECT * FROM org_people
+                       WHERE company_id=? AND LOWER(name)=LOWER(?) LIMIT 5''',
+                    (tenant, cand['name'].strip())).fetchall()
+            seen = {r['org_person_id'] for r in cur.execute(
+                'SELECT org_person_id FROM org_person_links WHERE company_id=?',
+                (tenant,)).fetchall()}
+            out['suggestions'] = [_node_brief(r) for r in sugg if r['id'] not in seen]
+            conn.commit()
+            return jsonify(out)
+
+        conflicts, changed = _sync_contacts(cur, link, cand, cols)
+        link = cur.execute('SELECT * FROM org_people WHERE id=?', (link['id'],)).fetchone()
+
+        co = cur.execute('SELECT * FROM org_companies WHERE id=?',
+                         (link['org_company_id'],)).fetchone()
+        mgr = None
+        if link['manager_id']:
+            m = cur.execute('SELECT * FROM org_people WHERE id=?',
+                            (link['manager_id'],)).fetchone()
+            if m:
+                mgr = _node_brief(m)
+        reports = cur.execute(
+            'SELECT * FROM org_people WHERE manager_id=? ORDER BY name', (link['id'],)).fetchall()
+        others = cur.execute(
+            '''SELECT c.id, c.stage, m.role, m.client
+               FROM org_person_links l
+               JOIN candidates c ON c.id=l.candidate_id
+               LEFT JOIN mandates m ON m.id=c.mandate_id
+               WHERE l.org_person_id=? AND c.id<>?''', (link['id'], cid)).fetchall()
+
+        out.update({
+            'node': _node_brief(link),
+            'org_company': {'ext_key': co['ext_key'], 'name': co['name']} if co else None,
+            'manager': mgr,
+            'reports': [_node_brief(r) for r in reports],
+            'conflicts': conflicts,
+            'synced': changed,
+            'other_rows': [{'id': r['id'], 'stage': r['stage'],
+                            'role': r['role'] or '', 'client': r['client'] or ''}
+                           for r in others],
+        })
+        conn.commit()
+        return jsonify(out)
+    finally:
+        conn.close()
+
+
+@bp.route('/set-manager', methods=['POST'])
+@login_required
+@orgmap_required
+def set_manager():
+    """Tag a candidate's reporting manager. Creates the candidate's own node
+    and (if needed) the manager's node, then wires the reporting line."""
+    d = request.get_json(silent=True) or {}
+    cid = int(d.get('candidate_id') or 0)
+    tenant = effective_company_id()
+    conn = get_db()
+    try:
+        cand = _get_candidate(conn, cid)
+        if not cand:
+            return jsonify({'error': 'not_found'}), 404
+        cur = conn.cursor()
+        node = _ensure_node_for_candidate(cur, tenant, cand)
+
+        if d.get('clear'):
+            cur.execute('UPDATE org_people SET manager_id=NULL, manager_ext_key="", updated_at=? WHERE id=?',
+                        (ts(), node['id']))
+            conn.commit()
+            return jsonify({'ok': True, 'cleared': True})
+
+        mgr_ext = (d.get('manager_ext_key') or '').strip()
+        if mgr_ext:
+            mgr = cur.execute('SELECT * FROM org_people WHERE org_company_id=? AND ext_key=?',
+                              (node['org_company_id'], mgr_ext)).fetchone()
+            if not mgr:
+                return jsonify({'error': 'manager_not_found'}), 404
+        else:
+            name = (d.get('manager_name') or '').strip()
+            if not name:
+                return jsonify({'error': 'manager_name_required'}), 400
+            taken = {r['ext_key'] for r in cur.execute(
+                'SELECT ext_key FROM org_people WHERE org_company_id=?',
+                (node['org_company_id'],)).fetchall()}
+            ext = _slugify(name, taken)
+            now = ts()
+            cur.execute('''INSERT INTO org_people
+                (company_id, org_company_id, ext_key, name, title, type, status,
+                 source, confidence, created_at, updated_at)
+                VALUES (?,?,?,?,?,'Employee','none','candidate-said','medium',?,?)''',
+                (tenant, node['org_company_id'], ext, name,
+                 (d.get('manager_title') or '').strip(), now, now))
+            mgr = cur.execute('SELECT * FROM org_people WHERE id=?',
+                              (cur.lastrowid,)).fetchone()
+
+        if mgr['id'] == node['id']:
+            return jsonify({'error': 'self_manager'}), 400
+        # cycle guard: a person cannot report to their own subordinate
+        seen, cur_id = set(), mgr['manager_id']
+        while cur_id and cur_id not in seen:
+            if cur_id == node['id']:
+                return jsonify({'error': 'would_create_loop'}), 400
+            seen.add(cur_id)
+            r = cur.execute('SELECT manager_id FROM org_people WHERE id=?', (cur_id,)).fetchone()
+            cur_id = r['manager_id'] if r else None
+
+        cur.execute('UPDATE org_people SET manager_id=?, manager_ext_key=?, updated_at=? WHERE id=?',
+                    (mgr['id'], mgr['ext_key'], ts(), node['id']))
+        conn.commit()
+        try:
+            log_activity('orgmap_set_manager', f"{cand['name']} -> {mgr['name']}",
+                         entity_type='candidate', entity_id=cid)
+        except Exception:
+            pass
+        return jsonify({'ok': True, 'manager': _node_brief(mgr),
+                        'node': _node_brief(node)})
+    finally:
+        conn.close()
+
+
+@bp.route('/people-search', methods=['GET'])
+@login_required
+@orgmap_required
+def people_search():
+    """Type-ahead for the Reports-to picker."""
+    q = (request.args.get('q') or '').strip()
+    tenant = effective_company_id()
+    cid = request.args.get('candidate_id')
+    conn = get_db()
+    try:
+        sql = '''SELECT p.*, c.name conm, c.ext_key coext FROM org_people p
+                 JOIN org_companies c ON c.id=p.org_company_id
+                 WHERE p.company_id=? AND c.is_active=1'''
+        args = [tenant]
+        # Keep the picker inside the candidate's own company when we can match
+        # it. If we can't, show everything rather than an empty box — a wrong
+        # scope that hides real people is worse than a slightly wider list.
+        scoped = False
+        if cid:
+            cand = _get_candidate(conn, int(cid))
+            if cand and (cand['company'] or '').strip():
+                co = _find_org_company(conn.cursor(), tenant, cand['company'])
+                if co:
+                    sql += ' AND c.id=?'
+                    args.append(co['id'])
+                    scoped = True
+        if q:
+            sql += ' AND (p.name LIKE ? OR p.title LIKE ?)'
+            args += [f'%{q}%', f'%{q}%']
+        sql += ' ORDER BY (p.manager_id IS NULL) DESC, p.name LIMIT 20'
+        rows = conn.execute(sql, args).fetchall()
+        return jsonify({'people': [_node_brief(r, {'company': r['conm']}) for r in rows], 'scoped': scoped})
+    finally:
+        conn.close()
+
+
+@bp.route('/link', methods=['POST'])
+@login_required
+@orgmap_required
+def link_person():
+    d = request.get_json(silent=True) or {}
+    cid = int(d.get('candidate_id') or 0)
+    pid = int(d.get('org_person_id') or 0)
+    tenant = effective_company_id()
+    conn = get_db()
+    try:
+        cand = _get_candidate(conn, cid)
+        node = conn.execute('SELECT * FROM org_people WHERE id=? AND company_id=?',
+                            (pid, tenant)).fetchone()
+        if not cand or not node:
+            return jsonify({'error': 'not_found'}), 404
+        cur = conn.cursor()
+        cur.execute('''INSERT OR IGNORE INTO org_person_links
+            (company_id, org_person_id, candidate_id, link_source, linked_by, linked_at)
+            VALUES (?,?,?,?,?,?)''',
+            (tenant, pid, cid, d.get('source') or 'manual', real_user_id() or 0, ts()))
+        _sync_contacts(cur, node, cand, _cand_cols(conn))
+        conn.commit()
+        return jsonify({'ok': True})
+    finally:
+        conn.close()
+
+
+@bp.route('/unlink', methods=['POST'])
+@login_required
+@orgmap_required
+def unlink_person():
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        conn.execute('DELETE FROM org_person_links WHERE company_id=? AND candidate_id=? AND org_person_id=?',
+                     (effective_company_id(), int(d.get('candidate_id') or 0),
+                      int(d.get('org_person_id') or 0)))
+        conn.commit()
+        return jsonify({'ok': True})
+    finally:
+        conn.close()
+
+
+@bp.route('/candidate-search', methods=['GET'])
+@login_required
+@orgmap_required
+def candidate_search():
+    """Search ATS candidates from inside the org map drawer."""
+    q = (request.args.get('q') or '').strip()
+    if not q:
+        return jsonify({'candidates': []})
+    tenant = effective_company_id()
+    conn = get_db()
+    try:
+        has_owner = 'owner_id' in _cand_cols(conn)
+        sql = '''SELECT c.id, c.name, c.company, c.designation, c.phone, c.stage,
+                        m.role, m.client
+                 FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id
+                 WHERE (c.name LIKE ? OR c.phone LIKE ?)'''
+        args = [f'%{q}%', f'%{q}%']
+        if has_owner:
+            sql += ' AND c.owner_id=?'
+            args.append(tenant)
+        sql += ' ORDER BY c.updated_at DESC LIMIT 15'
+        rows = conn.execute(sql, args).fetchall()
+        return jsonify({'candidates': [dict(r) for r in rows]})
+    finally:
+        conn.close()
+
+
+@bp.route('/mandates', methods=['GET'])
+@login_required
+@orgmap_required
+def open_mandates():
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            '''SELECT id, role, client FROM mandates
+               WHERE owner_id=? AND status='active' ORDER BY created_at DESC LIMIT 50''',
+            (effective_company_id(),)).fetchall()
+        return jsonify({'mandates': [dict(r) for r in rows]})
+    finally:
+        conn.close()
+
+
+@bp.route('/create-candidate', methods=['POST'])
+@login_required
+@orgmap_required
+def create_candidate_from_node():
+    """Turn a mapped person into a real candidate on a chosen mandate."""
+    d = request.get_json(silent=True) or {}
+    pid = int(d.get('org_person_id') or 0)
+    mid = int(d.get('mandate_id') or 0)
+    tenant = effective_company_id()
+    conn = get_db()
+    try:
+        node = conn.execute('SELECT * FROM org_people WHERE id=? AND company_id=?',
+                            (pid, tenant)).fetchone()
+        mand = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                            (mid, tenant)).fetchone()
+        if not node or not mand:
+            return jsonify({'error': 'not_found'}), 404
+
+        dup = conn.execute(
+            '''SELECT c.id FROM org_person_links l JOIN candidates c ON c.id=l.candidate_id
+               WHERE l.org_person_id=? AND c.mandate_id=?''', (pid, mid)).fetchone()
+        if dup:
+            return jsonify({'error': 'already_on_mandate', 'candidate_id': dup['id']}), 409
+
+        co = conn.execute('SELECT name FROM org_companies WHERE id=?',
+                          (node['org_company_id'],)).fetchone()
+        cols = _cand_cols(conn)
+        now = ts()
+        cur = conn.cursor()
+        fields = {
+            'mandate_id': mid, 'name': node['name'], 'company': co['name'] if co else '',
+            'designation': node['title'], 'location': node['city'],
+            'phone': node['phone'], 'email': node['email'],
+            'stage': 'Screening', 'created_at': now, 'updated_at': now,
+        }
+        if 'owner_id' in cols:
+            fields['owner_id'] = tenant
+        if 'linkedin_url' in cols:
+            fields['linkedin_url'] = node['linkedin']
+        if 'general_comments' in cols:
+            fields['general_comments'] = ('Sourced from Org Map. ' + (node['notes'] or '')).strip()
+        keys = [k for k in fields if k in cols or k == 'mandate_id']
+        cur.execute('INSERT INTO candidates ({}) VALUES ({})'.format(
+            ','.join(keys), ','.join('?' * len(keys))),
+            tuple(fields[k] for k in keys))
+        cid = cur.lastrowid
+        cur.execute('''INSERT OR IGNORE INTO org_person_links
+            (company_id, org_person_id, candidate_id, link_source, linked_by, linked_at)
+            VALUES (?,?,?,'created_from_map',?,?)''',
+            (tenant, pid, cid, real_user_id() or 0, now))
+        if (node['status'] or 'none') == 'none':
+            cur.execute('UPDATE org_people SET status="contacted", updated_at=? WHERE id=?',
+                        (now, pid))
+        conn.commit()
+        try:
+            log_activity('orgmap_create_candidate',
+                         f"{node['name']} -> {mand['role']}", entity_type='candidate',
+                         entity_id=cid)
+        except Exception:
+            pass
+        return jsonify({'ok': True, 'candidate_id': cid})
+    finally:
+        conn.close()
+
+
+@bp.route('/resolve-conflict', methods=['POST'])
+@login_required
+@orgmap_required
+def resolve_conflict():
+    """User picks which side is right for one field. Only then do we overwrite."""
+    d = request.get_json(silent=True) or {}
+    cid = int(d.get('candidate_id') or 0)
+    field = (d.get('field') or '').strip()
+    keep = (d.get('keep') or '').strip()          # 'org' | 'ats'
+    pair = dict((n, c) for n, c in SYNC_FIELDS)
+    if field not in pair or keep not in ('org', 'ats'):
+        return jsonify({'error': 'bad_request'}), 400
+    tenant = effective_company_id()
+    conn = get_db()
+    try:
+        cand = _get_candidate(conn, cid)
+        if not cand:
+            return jsonify({'error': 'not_found'}), 404
+        cur = conn.cursor()
+        node = cur.execute(
+            '''SELECT p.* FROM org_people p JOIN org_person_links l ON l.org_person_id=p.id
+               WHERE l.company_id=? AND l.candidate_id=? LIMIT 1''', (tenant, cid)).fetchone()
+        if not node:
+            return jsonify({'error': 'not_linked'}), 404
+        ccol = pair[field]
+        if keep == 'org':
+            cur.execute(f'UPDATE candidates SET {ccol}=? WHERE id=?', (node[field], cid))
+            val = node[field]
+        else:
+            cur.execute(f'UPDATE org_people SET {field}=?, last_verified=?, updated_at=? WHERE id=?',
+                        (cand[ccol], ts(), ts(), node['id']))
+            val = cand[ccol]
+        conn.commit()
+        return jsonify({'ok': True, 'value': val})
+    finally:
+        conn.close()
+
+
+@bp.route('/node', methods=['GET'])
+@login_required
+@orgmap_required
+def node_info():
+    """Resolve a map node (by internal id, or by company+slug for nodes the
+    browser created seconds ago) and list every ATS row it is linked to."""
+    tenant = effective_company_id()
+    pid = request.args.get('pid')
+    conn = get_db()
+    try:
+        if pid:
+            node = conn.execute('SELECT * FROM org_people WHERE id=? AND company_id=?',
+                                (int(pid), tenant)).fetchone()
+        else:
+            node = conn.execute(
+                '''SELECT p.* FROM org_people p JOIN org_companies c ON c.id=p.org_company_id
+                   WHERE p.company_id=? AND c.ext_key=? AND p.ext_key=?''',
+                (tenant, request.args.get('company_ext') or '',
+                 request.args.get('ext_key') or '')).fetchone()
+        if not node:
+            return jsonify({'pid': None, 'candidates': []})
+        rows = conn.execute(
+            '''SELECT c.id, c.stage, c.mandate_id, m.role, m.client
+               FROM org_person_links l JOIN candidates c ON c.id=l.candidate_id
+               LEFT JOIN mandates m ON m.id=c.mandate_id
+               WHERE l.org_person_id=? ORDER BY c.updated_at DESC''',
+            (node['id'],)).fetchall()
+        return jsonify({'pid': node['id'], 'ext_key': node['ext_key'],
+                        'name': node['name'],
+                        'candidates': [dict(r) for r in rows]})
+    finally:
+        conn.close()
