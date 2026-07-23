@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Org Map — RecruitOS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+:root{
+  --ink-900:#080D18; --ink-850:#0B1220; --ink-800:#0E1526; --ink-700:#121B30;
+  --ink-650:#16203A; --ink-600:#1A2540; --line:#26324F; --line-soft:#1E2942;
+  --text:#EAF0FA; --dim:#8A9BB5; --mute:#5B6E8C;
+  --emerald:#10B981; --emerald-d:#0C8F65; --emerald-glow:rgba(16,185,129,.25);
+  --iris:#7C6CF0; --iris-d:#5B4BD6; --gold:#F5B301;
+  --s-none:#64748B; --s-contacted:#3B82F6; --s-interested:#F59E0B;
+  --s-shortlisted:#10B981; --s-rejected:#F43F5E;
+  --font-d:'Space Grotesk',system-ui,sans-serif;
+  --font-b:'Inter',system-ui,sans-serif;
+  --font-m:'JetBrains Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-b);background:var(--ink-900);color:var(--text);overflow:hidden;-webkit-font-smoothing:antialiased}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font-family:inherit}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px;border:2px solid var(--ink-800)}
+::-webkit-scrollbar-track{background:transparent}
+
+.app{display:grid;grid-template-rows:56px 1fr;height:100vh}
+
+/* ---------- TOPBAR ---------- */
+.topbar{display:flex;align-items:center;gap:16px;padding:0 16px;background:var(--ink-850);border-bottom:1px solid var(--line-soft);z-index:40}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--font-d);font-weight:700;font-size:16px;letter-spacing:-.02em;white-space:nowrap}
+.brand .mark{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--emerald),var(--emerald-d));display:flex;align-items:center;justify-content:center;box-shadow:0 0 16px var(--emerald-glow)}
+.brand .mark svg{width:16px;height:16px}
+.brand .sub{color:var(--emerald);font-weight:500}
+.company-pick{display:flex;align-items:center;gap:8px;background:var(--ink-700);border:1px solid var(--line);border-radius:9px;padding:6px 10px;min-width:190px}
+.company-pick select{background:none;border:none;color:var(--text);font-weight:600;font-size:13px;flex:1;outline:none;cursor:pointer}
+.company-pick select option{background:var(--ink-700)}
+.searchbox{flex:1;max-width:440px;display:flex;align-items:center;gap:8px;background:var(--ink-700);border:1px solid var(--line);border-radius:9px;padding:7px 12px}
+.searchbox:focus-within{border-color:var(--emerald)}
+.searchbox input{background:none;border:none;color:var(--text);font-size:13px;flex:1;outline:none}
+.searchbox input::placeholder{color:var(--mute)}
+.searchbox .count{font-family:var(--font-m);font-size:11px;color:var(--dim);white-space:nowrap}
+.topbar-actions{display:flex;gap:8px;margin-left:auto}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:9px;font-size:12.5px;font-weight:600;background:var(--ink-700);border:1px solid var(--line);color:var(--text);transition:.14s;white-space:nowrap}
+.btn:hover{border-color:var(--emerald);background:var(--ink-650)}
+.btn svg{width:15px;height:15px}
+.btn.prim{background:linear-gradient(135deg,var(--emerald),var(--emerald-d));border-color:transparent;color:#04120C}
+.btn.prim:hover{filter:brightness(1.08)}
+.btn.iris{border-color:var(--iris-d)}.btn.iris:hover{border-color:var(--iris);background:rgba(124,108,240,.1)}
+.dd{position:relative}
+.dd-menu{position:absolute;top:calc(100% + 6px);right:0;background:var(--ink-700);border:1px solid var(--line);border-radius:11px;padding:6px;min-width:190px;box-shadow:0 18px 44px rgba(0,0,0,.55);display:none;z-index:60}
+.dd.open .dd-menu{display:block;animation:pop .13s ease}
+@keyframes pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.dd-item{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 10px;border-radius:8px;font-size:12.5px;font-weight:500;color:var(--text)}
+.dd-item:hover{background:var(--ink-600)}
+.dd-item svg{width:15px;height:15px;color:var(--dim)}
+.dd-sep{height:1px;background:var(--line-soft);margin:5px 4px}
+
+/* ---------- BODY ---------- */
+.body{display:grid;grid-template-columns:236px 1fr;overflow:hidden}
+.sidebar{background:var(--ink-850);border-right:1px solid var(--line-soft);overflow-y:auto;padding:14px 12px;display:flex;flex-direction:column;gap:18px}
+.side-h{font-family:var(--font-d);font-size:10.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--mute);margin-bottom:9px;display:flex;align-items:center;justify-content:space-between}
+.side-h button{color:var(--emerald);font-size:11px;font-weight:600}
+.comp-list{display:flex;flex-direction:column;gap:3px}
+.comp-item{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:8px;font-size:12.5px;font-weight:500;color:var(--dim);cursor:pointer}
+.comp-item .dot{width:7px;height:7px;border-radius:50%;background:var(--line);flex-shrink:0}
+.comp-item:hover{background:var(--ink-700);color:var(--text)}
+.comp-item.active{background:var(--ink-650);color:var(--text)}
+.comp-item.active .dot{background:var(--emerald);box-shadow:0 0 8px var(--emerald-glow)}
+.comp-item .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.comp-item .cnt{font-family:var(--font-m);font-size:10px;color:var(--mute)}
+
+.filter-group{margin-bottom:4px}
+.chk{display:flex;align-items:center;gap:9px;padding:6px 7px;border-radius:7px;font-size:12px;color:var(--dim);cursor:pointer}
+.chk:hover{color:var(--text)}
+.chk input{appearance:none;width:15px;height:15px;border:1.5px solid var(--line);border-radius:4px;flex-shrink:0;position:relative;cursor:pointer}
+.chk input:checked{background:var(--emerald);border-color:var(--emerald)}
+.chk input:checked::after{content:'';position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #04120C;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.chk .sw{width:9px;height:9px;border-radius:3px;flex-shrink:0}
+.chk .c{margin-left:auto;font-family:var(--font-m);font-size:10px;color:var(--mute)}
+.legend{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim)}
+.legend .row{display:flex;align-items:center;gap:8px}
+.legend .sw{width:11px;height:11px;border-radius:3px}
+
+/* ---------- CANVAS ---------- */
+.canvas-wrap{position:relative;overflow:hidden;background:var(--ink-800)}
+#chart{width:100%;height:100%;display:block;cursor:grab}
+#chart:active{cursor:grabbing}
+.node-card{cursor:pointer}
+.node-card .card-bg{fill:var(--ink-650);stroke:var(--line);stroke-width:1;transition:stroke .12s,filter .12s}
+.node-card.mgr .card-bg{stroke:var(--emerald-d);stroke-width:1.4}
+.node-card:hover .card-bg{stroke:var(--emerald);filter:drop-shadow(0 0 10px var(--emerald-glow))}
+.node-card.sel .card-bg{stroke:var(--emerald);stroke-width:2}
+.node-card.dim{opacity:.16}
+.node-card .nm{fill:var(--text);font-family:var(--font-b);font-weight:600;font-size:13px}
+.node-card .tl{fill:var(--dim);font-family:var(--font-b);font-size:11px}
+.node-card .lc{fill:var(--mute);font-family:var(--font-m);font-size:9.5px}
+.node-card .star{fill:var(--gold);font-size:15px}
+.node-card .ext{fill:none;stroke:var(--iris);stroke-width:1}
+.node-card .ext-t{fill:var(--iris);font-family:var(--font-m);font-size:8px;font-weight:500;letter-spacing:.04em}
+.link{fill:none;stroke:var(--line);stroke-width:1.4}
+.link.hl{stroke:var(--emerald);stroke-width:1.8}
+.toggle{cursor:pointer}
+.toggle circle{fill:var(--ink-700);stroke:var(--line);stroke-width:1.3;transition:.12s}
+.toggle:hover circle{stroke:var(--emerald)}
+.toggle.collapsed circle{fill:var(--emerald);stroke:var(--emerald)}
+.toggle text{font-family:var(--font-m);font-size:10px;font-weight:600;fill:var(--dim);text-anchor:middle}
+.toggle.collapsed text{fill:#04120C}
+
+/* zoom controls */
+.zoom-ctl{position:absolute;left:16px;bottom:76px;display:flex;flex-direction:column;gap:6px;z-index:20}
+.zoom-ctl button{width:36px;height:36px;border-radius:9px;background:var(--ink-700);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--text);font-size:16px}
+.zoom-ctl button:hover{border-color:var(--emerald)}
+.zoom-ctl button svg{width:16px;height:16px}
+
+/* stats bar */
+.statbar{position:absolute;left:16px;right:16px;bottom:14px;height:48px;background:rgba(11,18,32,.82);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:12px;display:flex;align-items:center;gap:6px;padding:0 14px;z-index:20;overflow-x:auto}
+.stat{display:flex;align-items:center;gap:7px;padding:4px 11px;border-radius:8px;white-space:nowrap}
+.stat .v{font-family:var(--font-m);font-weight:600;font-size:14px}
+.stat .k{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.stat.pipe{cursor:pointer}
+.stat.pipe:hover{background:var(--ink-700)}
+.stat .pd{width:9px;height:9px;border-radius:50%}
+.statsep{width:1px;height:22px;background:var(--line-soft);margin:0 4px}
+
+/* ---------- DRAWER ---------- */
+.drawer{position:absolute;top:0;right:0;height:100%;width:380px;background:var(--ink-850);border-left:1px solid var(--line);transform:translateX(100%);transition:transform .22s cubic-bezier(.4,0,.2,1);z-index:50;display:flex;flex-direction:column;box-shadow:-20px 0 50px rgba(0,0,0,.4)}
+.drawer.open{transform:none}
+.dh{padding:18px 20px 14px;border-bottom:1px solid var(--line-soft)}
+.dh .row1{display:flex;align-items:flex-start;gap:12px}
+.dh .avatar{width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,var(--ink-600),var(--ink-700));border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-family:var(--font-d);font-weight:700;font-size:17px;color:var(--emerald);flex-shrink:0}
+.dh .who{flex:1;min-width:0}
+.dh .who .n{font-family:var(--font-d);font-weight:700;font-size:16px;line-height:1.2}
+.dh .who .t{font-size:12.5px;color:var(--dim);margin-top:3px}
+.dh .who .l{font-family:var(--font-m);font-size:10.5px;color:var(--mute);margin-top:5px}
+.dh .close{width:30px;height:30px;border-radius:8px;background:var(--ink-700);display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.dh .close:hover{color:var(--text);background:var(--ink-600)}
+.dh .close svg{width:15px;height:15px}
+.dbody{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:18px}
+.fld label{display:block;font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);margin-bottom:8px}
+.seg{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+.seg button{padding:8px 4px;border-radius:8px;font-size:10.5px;font-weight:600;background:var(--ink-700);border:1px solid var(--line);color:var(--dim);display:flex;flex-direction:column;align-items:center;gap:5px}
+.seg button .sd{width:8px;height:8px;border-radius:50%}
+.seg button.on{color:var(--text);border-color:currentColor}
+.tgt-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:11px;border-radius:9px;background:var(--ink-700);border:1px solid var(--line);font-weight:600;font-size:13px;color:var(--dim)}
+.tgt-btn.on{background:rgba(245,179,1,.12);border-color:var(--gold);color:var(--gold)}
+.inp,.txt{width:100%;background:var(--ink-800);border:1px solid var(--line);border-radius:9px;padding:10px 12px;color:var(--text);font-size:13px;outline:none}
+.inp:focus,.txt:focus{border-color:var(--emerald)}
+.txt{resize:vertical;min-height:80px;line-height:1.5}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.df{padding:14px 20px;border-top:1px solid var(--line-soft);display:flex;gap:9px}
+.df .btn{flex:1;justify-content:center}
+.btn.danger{border-color:#5a2230;color:#f4849a}.btn.danger:hover{background:rgba(244,63,94,.1);border-color:var(--s-rejected)}
+
+/* ---------- MODAL ---------- */
+.overlay{position:fixed;inset:0;background:rgba(4,8,16,.72);backdrop-filter:blur(4px);z-index:80;display:none;align-items:center;justify-content:center;padding:24px}
+.overlay.open{display:flex;animation:fade .15s}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.modal{background:var(--ink-800);border:1px solid var(--line);border-radius:16px;width:100%;max-width:560px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 30px 80px rgba(0,0,0,.6);animation:rise .18s ease}
+@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.mh{padding:20px 22px 16px;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;gap:11px}
+.mh .mi{width:34px;height:34px;border-radius:9px;background:var(--ink-650);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--emerald)}
+.mh.iris .mi{color:var(--iris);border-color:var(--iris-d)}
+.mh .mt{font-family:var(--font-d);font-weight:700;font-size:16px}
+.mh .ms{font-size:11.5px;color:var(--dim);margin-top:2px}
+.mh .close{margin-left:auto}
+.mbody{padding:20px 22px;overflow-y:auto;display:flex;flex-direction:column;gap:16px}
+.mf{padding:16px 22px;border-top:1px solid var(--line-soft);display:flex;gap:9px;justify-content:flex-end}
+.tabs{display:flex;gap:5px;background:var(--ink-850);border:1px solid var(--line);border-radius:10px;padding:4px}
+.tabs button{flex:1;padding:8px;border-radius:7px;font-size:12px;font-weight:600;color:var(--dim)}
+.tabs button.on{background:var(--ink-650);color:var(--text)}
+.hint{font-size:11.5px;color:var(--mute);line-height:1.5}
+.hint code{font-family:var(--font-m);color:var(--emerald);background:var(--ink-850);padding:1px 5px;border-radius:4px}
+.drop{border:1.5px dashed var(--line);border-radius:12px;padding:28px;text-align:center;color:var(--dim);font-size:13px;transition:.14s}
+.drop:hover,.drop.drag{border-color:var(--emerald);color:var(--text);background:rgba(16,185,129,.04)}
+.parse-stat{font-size:12px;color:var(--emerald);font-family:var(--font-m)}
+
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink-650);border:1px solid var(--emerald-d);color:var(--text);padding:11px 18px;border-radius:10px;font-size:13px;font-weight:500;z-index:100;opacity:0;transition:.25s;box-shadow:0 12px 30px rgba(0,0,0,.5);display:flex;align-items:center;gap:9px}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast svg{width:16px;height:16px;color:var(--emerald)}
+
+/* data-file pill */
+.filepill{display:flex;align-items:center;gap:8px;padding:6px 11px;border-radius:9px;background:var(--ink-700);border:1px solid var(--line);font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer;transition:.14s}
+.filepill:hover{border-color:var(--emerald)}
+.filepill .fdot{width:8px;height:8px;border-radius:50%;background:var(--s-rejected);flex-shrink:0}
+.filepill.linked .fdot{background:var(--emerald);box-shadow:0 0 8px var(--emerald-glow)}
+.filepill.linked{border-color:var(--emerald-d)}
+.filepill.dirty .fdot{background:var(--gold);box-shadow:0 0 8px rgba(245,179,1,.4)}
+.filepill .fname{max-width:150px;overflow:hidden;text-overflow:ellipsis;color:var(--dim);font-weight:500;font-family:var(--font-m);font-size:11px}
+.filepill.linked .fname{color:var(--emerald)}
+.filepill svg{width:14px;height:14px;color:var(--dim);flex-shrink:0}
+
+.banner{position:fixed;bottom:0;left:0;right:0;background:linear-gradient(90deg,rgba(245,179,1,.14),rgba(245,179,1,.06));border-top:1px solid var(--gold);padding:11px 18px;display:none;align-items:center;gap:14px;z-index:90;font-size:12.5px;color:var(--text)}
+.banner.show{display:flex}
+.banner b{color:var(--gold)}
+.banner .bx{margin-left:auto;display:flex;gap:8px}
+.banner .btn{padding:7px 13px}
+.banner .btn.gold{background:var(--gold);color:#1A1200;border-color:transparent;font-weight:700}
+.store-warn{position:fixed;bottom:14px;right:14px;background:rgba(245,179,1,.1);border:1px solid var(--gold);color:var(--gold);padding:8px 12px;border-radius:9px;font-size:11px;z-index:70;max-width:260px;display:none}
+
+@media(max-width:860px){.body{grid-template-columns:1fr}.sidebar{display:none}.searchbox{display:none}.drawer{width:100%}}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="brand"><span class="mark"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="5" r="2.4" fill="#04120C"/><circle cx="5" cy="18" r="2.4" fill="#04120C"/><circle cx="19" cy="18" r="2.4" fill="#04120C"/><path d="M12 7.4V12M12 12L5 15.6M12 12l7 3.6" stroke="#04120C" stroke-width="1.6"/></svg></span>HireLab<span class="sub">OrgMapper</span></div>
+    <div class="company-pick">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8A9BB5" stroke-width="2"><path d="M3 21h18M6 21V7l6-4 6 4v14M10 9h4M10 13h4M10 17h4"/></svg>
+      <select id="companySel"></select>
+    </div>
+    <div class="searchbox">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5B6E8C" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input id="search" placeholder="Search name, title, city…" autocomplete="off">
+      <span class="count" id="searchCount"></span>
+    </div>
+    <div class="topbar-actions">
+      <div class="filepill" id="filePill" onclick="filePillClick()" title="Where your data is saved">
+        <span class="fdot"></span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2h9l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M14 2v6h6"/></svg>
+        <span class="fname" id="fileName">Connect data file</span>
+      </div>
+      <div class="dd" id="addDd">
+        <button class="btn prim" onclick="toggleDd('addDd')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Add data</button>
+        <div class="dd-menu">
+          <button class="dd-item" onclick="openManual()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.3 3.1-5 7-5s7 1.7 7 5"/></svg>Add one person</button>
+          <button class="dd-item" onclick="openImport()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M8 11l4 4 4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>Import Excel / CSV</button>
+          <button class="dd-item" onclick="openPaste()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h4"/></svg>Paste &amp; auto-parse</button>
+        </div>
+      </div>
+      <div class="dd" id="expDd">
+        <button class="btn" onclick="toggleDd('expDd')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15V3M8 7l4-4 4 4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>Export</button>
+        <div class="dd-menu">
+          <button class="dd-item" onclick="exportPNG()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-9 9"/></svg>Chart as PNG</button>
+          <button class="dd-item" onclick="exportPDF()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2h9l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M14 2v6h6"/></svg>Chart as PDF</button>
+          <button class="dd-item" onclick="exportXLSX()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M10 4v16"/></svg>Data as Excel</button>
+          <div class="dd-sep"></div>
+          <button class="dd-item" onclick="backupJSON()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v6H4zM4 14h16v6H4z"/><circle cx="8" cy="7" r="1"/><circle cx="8" cy="17" r="1"/></svg>Backup all (JSON)</button>
+          <button class="dd-item" onclick="document.getElementById('restoreFile').click()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 108-8 8 8 0 00-6 2.7L4 9M4 4v5h5"/></svg>Restore backup</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <div>
+        <div class="side-h">Companies <button onclick="newCompany()">+ New</button></div>
+        <div class="comp-list" id="compList"></div>
+      </div>
+      <div>
+        <div class="side-h">Pipeline status</div>
+        <div class="filter-group" id="statusFilters"></div>
+      </div>
+      <div>
+        <div class="side-h">Region</div>
+        <div class="filter-group" id="regionFilters"></div>
+      </div>
+      <div>
+        <div class="side-h">Show</div>
+        <label class="chk"><input type="checkbox" id="fTarget"><span class="sw" style="background:var(--gold)"></span>Targets only</label>
+        <label class="chk"><input type="checkbox" id="fExt"><span class="sw" style="background:var(--iris)"></span>External / contract</label>
+      </div>
+      <div style="margin-top:auto">
+        <div class="side-h">Node legend</div>
+        <div class="legend">
+          <div class="row"><span class="sw" style="border:1.4px solid var(--emerald-d);background:transparent"></span>People manager</div>
+          <div class="row"><span style="color:var(--gold)">★</span>Target candidate</div>
+          <div class="row"><span class="sw" style="border:1px solid var(--iris);background:transparent"></span>External / contract</div>
+          <div class="row"><span style="font-family:var(--font-m);color:var(--emerald)">+N</span>Collapsed team</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CANVAS -->
+    <div class="canvas-wrap">
+      <svg id="chart"></svg>
+      <div class="zoom-ctl">
+        <button onclick="zoomBy(1.3)" title="Zoom in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M11 8v6M8 11h6M21 21l-4-4"/></svg></button>
+        <button onclick="zoomBy(.77)" title="Zoom out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M8 11h6M21 21l-4-4"/></svg></button>
+        <button onclick="fitView()" title="Fit to screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        <button onclick="expandAll(true)" title="Expand all"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button onclick="expandAll(false)" title="Collapse to top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+      </div>
+      <div class="statbar" id="statbar"></div>
+
+      <!-- DRAWER -->
+      <div class="drawer" id="drawer">
+        <div class="dh">
+          <div class="row1">
+            <div class="avatar" id="dAvatar">–</div>
+            <div class="who"><div class="n" id="dName">–</div><div class="t" id="dTitle">–</div><div class="l" id="dLoc">–</div></div>
+            <button class="close" onclick="closeDrawer()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+          </div>
+        </div>
+        <div class="dbody">
+          <div class="fld"><label>Pipeline status</label><div class="seg" id="statusSeg"></div></div>
+          <button class="tgt-btn" id="tgtBtn" onclick="toggleTarget()"><span id="tgtStar">☆</span><span id="tgtLbl">Mark as target</span></button>
+          <div class="fld"><label>Notes</label><textarea class="txt" id="dNotes" placeholder="Recruiter notes, CTC, notice period, last contact…"></textarea></div>
+          <div class="grid2">
+            <div class="fld"><label>Phone</label><input class="inp" id="dPhone" placeholder="+91…"></div>
+            <div class="fld"><label>Email</label><input class="inp" id="dEmail" placeholder="name@…"></div>
+          </div>
+          <div class="fld"><label>LinkedIn</label><input class="inp" id="dLinkedin" placeholder="linkedin.com/in/…"></div>
+          <div style="height:1px;background:var(--line-soft)"></div>
+          <div class="fld"><label>Designation</label><input class="inp" id="dTitleEdit"></div>
+          <div class="grid2">
+            <div class="fld"><label>City</label><input class="inp" id="dCity"></div>
+            <div class="fld"><label>Region</label><input class="inp" id="dRegion"></div>
+          </div>
+          <div class="fld"><label>Reports to</label><select class="inp" id="dManager"></select></div>
+        </div>
+        <div class="df">
+          <button class="btn danger" onclick="deletePerson()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>Remove</button>
+          <button class="btn prim" onclick="saveDrawer()">Save changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MANUAL ADD MODAL -->
+<div class="overlay" id="manualOv">
+  <div class="modal">
+    <div class="mh"><div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.3 3.1-5 7-5s7 1.7 7 5"/></svg></div><div><div class="mt">Add a person</div><div class="ms">Add one node to the current org</div></div><button class="btn close" onclick="closeOv('manualOv')"><svg width="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+    <div class="mbody">
+      <div class="fld"><label>Full name</label><input class="inp" id="mName" placeholder="e.g. Priya Sharma"></div>
+      <div class="fld"><label>Designation</label><input class="inp" id="mTitle" placeholder="e.g. Sales Manager"></div>
+      <div class="grid2">
+        <div class="fld"><label>City</label><input class="inp" id="mCity"></div>
+        <div class="fld"><label>Region</label><input class="inp" id="mRegion" placeholder="North / West / …"></div>
+      </div>
+      <div class="grid2">
+        <div class="fld"><label>Type</label><select class="inp" id="mType"><option>Employee</option><option>External / Contract</option></select></div>
+        <div class="fld"><label>Reports to</label><select class="inp" id="mManager"></select></div>
+      </div>
+    </div>
+    <div class="mf"><button class="btn" onclick="closeOv('manualOv')">Cancel</button><button class="btn prim" onclick="addManual()">Add person</button></div>
+  </div>
+</div>
+
+<!-- IMPORT MODAL -->
+<div class="overlay" id="importOv">
+  <div class="modal">
+    <div class="mh"><div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M8 11l4 4 4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></div><div><div class="mt">Import Excel / CSV</div><div class="ms">Build a new org from a spreadsheet</div></div><button class="btn close" onclick="closeOv('importOv')"><svg width="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+    <div class="mbody">
+      <div class="fld"><label>New company name</label><input class="inp" id="impCompany" placeholder="e.g. Siemens — Smart Infra"></div>
+      <div class="drop" id="impDrop">Drop a <b>.xlsx / .csv</b> here, or click to choose<input type="file" id="impFile" accept=".xlsx,.xls,.csv" hidden></div>
+      <div class="hint">Needs a <code>Name</code> column and a <code>Reports To</code> column (manager's exact name). Optional: <code>Designation</code>, <code>City</code>, <code>Region</code>, <code>Country</code>, <code>Type</code>. Header names are matched loosely. The person whose manager isn't found becomes the top of the chart.</div>
+      <div class="parse-stat" id="impStat"></div>
+    </div>
+    <div class="mf"><button class="btn" onclick="closeOv('importOv')">Cancel</button><button class="btn prim" id="impGo" onclick="doImport()" disabled>Create org</button></div>
+  </div>
+</div>
+
+<!-- PASTE MODAL -->
+<div class="overlay" id="pasteOv">
+  <div class="modal">
+    <div class="mh iris"><div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h4"/></svg></div><div><div class="mt">Paste &amp; auto-parse</div><div class="ms">Turn pasted rows into an org — runs locally, no keys</div></div><button class="btn close" onclick="closeOv('pasteOv')"><svg width="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+    <div class="mbody">
+      <div class="fld"><label>New company name</label><input class="inp" id="pasteCompany" placeholder="e.g. Schneider — India"></div>
+      <div class="tabs" id="pasteTabs">
+        <button class="on" data-mode="table" onclick="setPasteMode('table')">Table (with headers)</button>
+        <button data-mode="lines" onclick="setPasteMode('lines')">Simple lines</button>
+      </div>
+      <div class="hint" id="pasteHint"></div>
+      <textarea class="txt" id="pasteText" style="min-height:150px;font-family:var(--font-m);font-size:12px" placeholder="Paste here…" oninput="previewPaste()"></textarea>
+      <div class="parse-stat" id="pasteStat"></div>
+    </div>
+    <div class="mf"><button class="btn" onclick="closeOv('pasteOv')">Cancel</button><button class="btn prim iris" id="pasteGo" onclick="doPaste()" disabled style="color:#fff">Create org</button></div>
+  </div>
+</div>
+
+<input type="file" id="restoreFile" accept=".json" hidden>
+<div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg><span id="toastMsg"></span></div>
+<div class="store-warn" id="storeWarn">This browser can't keep an offline copy. Your data still saves to RecruitOS normally.</div>
+<div class="banner" id="banner">
+  <span id="bannerMsg"></span>
+  <div class="bx" id="bannerBtns"></div>
+</div>
+
+<script>
+const SEED = /*__SEED__*/[{"name": "Morten Wierod", "title": "CEO, ABB Ltd", "city": "Zurich", "country": "CHE", "region": "International", "type": "Employee", "team": null, "id": "morten-wierod", "managerId": null, "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Giampiero Frisio", "title": "President, Electrification Business Area", "city": "Zurich", "country": "CHE", "region": "International", "type": "Employee", "team": null, "id": "giampiero-frisio", "managerId": "morten-wierod", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Piero Giorgio Schiannini", "title": "(Electrification leadership)", "city": "", "country": "", "region": "International", "type": "Employee", "team": null, "id": "piero-giorgio-schiannini", "managerId": "giampiero-frisio", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Mike Mustapha", "title": "(Electrification leadership)", "city": "", "country": "", "region": "International", "type": "Employee", "team": null, "id": "mike-mustapha", "managerId": "piero-giorgio-schiannini", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Kiran Dutt G", "title": "Marketing & Sales Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 22, "id": "kiran-dutt-g", "managerId": "mike-mustapha", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Abhishek Rana", "title": "Sales Manager", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": 5, "id": "abhishek-rana", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ajay Kumar Garg", "title": "Sales Manager - Product", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": 2, "id": "ajay-kumar-garg", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Anand Deshpande", "title": "Sales Manager", "city": "Bhubaneswar", "country": "IND", "region": "East", "type": "Employee", "team": 7, "id": "anand-deshpande", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Jothi Prakash S", "title": "Sales Manager - Product", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 10, "id": "jothi-prakash-s", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Dhananjay Navalu Sanas", "title": "Marketing Manager - Product", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 4, "id": "dhananjay-navalu-sanas", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Immanuel Paul", "title": "Sales Manager - Product", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": 9, "id": "immanuel-paul", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Kurapapu Sunil", "title": "Sales Manager", "city": "Hyderabad", "country": "IND", "region": "South", "type": "Employee", "team": 12, "id": "kurapapu-sunil", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Etienne Ronald Delport", "title": "Marketing & Sales Manager", "city": "Johannesburg", "country": "ZAF", "region": "International", "type": "Employee", "team": 17, "id": "etienne-ronald-delport", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Mahesh Kumar G B", "title": "Segment Sales Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 9, "id": "mahesh-kumar-g-b", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ganapati Kamat", "title": "Sales Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 1, "id": "ganapati-kamat", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rajib Chatterjee", "title": "Sales Manager", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": 6, "id": "rajib-chatterjee", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ganesh Mendon G", "title": "Sales Manager - Product", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 1, "id": "ganesh-mendon-g", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Gopuraj N", "title": "Sales Manager - Systems", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 4, "id": "gopuraj-n", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Hitesh Ahuja", "title": "Sales Manager", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": 11, "id": "hitesh-ahuja", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Saiil Sharma", "title": "Market Developer - Africa", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 7, "id": "saiil-sharma", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Subrata Kumar Dey", "title": "Sales Manager", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": 8, "id": "subrata-kumar-dey", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sujit Joseph", "title": "HR Business Partner", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 3, "id": "sujit-joseph", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sunil J", "title": "Product Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 5, "id": "sunil-j", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Theodore Moses", "title": "Sales Manager", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": 7, "id": "theodore-moses", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vikash Kumar", "title": "Sales Manager", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": 9, "id": "vikash-kumar", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Raju B Deshle", "title": "Sales Manager - Product", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": 7, "id": "raju-b-deshle", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Dharmendrakumar Hat.", "title": "Segment Sales Manager", "city": "Vadodara", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "dharmendrakumar-hat", "managerId": "kiran-dutt-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Harkaran Tiwana", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": 5, "id": "harkaran-tiwana", "managerId": "abhishek-rana", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Naveen Kumar", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": 2, "id": "naveen-kumar", "managerId": "abhishek-rana", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Naveen Uppal", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": 3, "id": "naveen-uppal", "managerId": "abhishek-rana", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rohit Sharma", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": 4, "id": "rohit-sharma", "managerId": "abhishek-rana", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sanjeev Guleria", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": 2, "id": "sanjeev-guleria", "managerId": "abhishek-rana", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Aakash Gaurav Sharma", "title": "Technical Promotion Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "aakash-gaurav-sharma", "managerId": "harkaran-tiwana", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Anurag Agnihotri", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "anurag-agnihotri", "managerId": "harkaran-tiwana", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "ARUN SHARMA", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "arun-sharma", "managerId": "harkaran-tiwana", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Gagandeep Singh", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "gagandeep-singh", "managerId": "harkaran-tiwana", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Yogesh Chander Sarwal", "title": "Technical Promotion Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "yogesh-chander-sarwal", "managerId": "harkaran-tiwana", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sukhwant Singh [C]", "title": "External Reference Job", "city": "Chandigarh", "country": "IND", "region": "North", "type": "External / Contract", "team": null, "id": "sukhwant-singh-c", "managerId": "naveen-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "VISHWAS VERMA [C]", "title": "External Reference Job", "city": "Chandigarh", "country": "IND", "region": "North", "type": "External / Contract", "team": null, "id": "vishwas-verma-c", "managerId": "naveen-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Amrinder Singh", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "amrinder-singh", "managerId": "naveen-uppal", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ankush Kumar", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "ankush-kumar", "managerId": "naveen-uppal", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Gaurav Giri", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "gaurav-giri", "managerId": "naveen-uppal", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Deepak Yadav", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "deepak-yadav", "managerId": "rohit-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sarvesh Kumar", "title": "Sales Specialist", "city": "Ludhiana", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "sarvesh-kumar", "managerId": "rohit-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shubham Pathania", "title": "Sales Specialist", "city": "Ludhiana", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "shubham-pathania", "managerId": "rohit-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vishal Sidana", "title": "Sales Specialist", "city": "Ludhiana", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "vishal-sidana", "managerId": "rohit-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Aamir Masood Tantray", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "aamir-masood-tantray", "managerId": "sanjeev-guleria", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Jyoti Handa", "title": "Sales Specialist", "city": "Chandigarh", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "jyoti-handa", "managerId": "sanjeev-guleria", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Abinash Sharma", "title": "Channel Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "abinash-sharma", "managerId": "ajay-kumar-garg", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Kamlesh B Pandey", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "kamlesh-b-pandey", "managerId": "ajay-kumar-garg", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Alok Kumar Pandey", "title": "Sales Specialist - Product", "city": "Jamshedpur", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "alok-kumar-pandey", "managerId": "anand-deshpande", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Jyoti Shankar", "title": "Sales Specialist", "city": "Jamshedpur", "country": "IND", "region": "East", "type": "Employee", "team": 4, "id": "jyoti-shankar", "managerId": "anand-deshpande", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Manoja Kumar Misra", "title": "Sales Specialist", "city": "Bhubaneswar", "country": "IND", "region": "East", "type": "Employee", "team": 3, "id": "manoja-kumar-misra", "managerId": "anand-deshpande", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ashirwad Dahima", "title": "Retail Sales Specialist", "city": "Bhubaneswar", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "ashirwad-dahima", "managerId": "anand-deshpande", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ashit Kumar Sahu", "title": "Marketing & Sales Specialist", "city": "Bhubaneswar", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "ashit-kumar-sahu", "managerId": "anand-deshpande", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shakti Prasad Kar", "title": "Sales Specialist", "city": "Bhubaneswar", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "shakti-prasad-kar", "managerId": "anand-deshpande", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Somnath Manna", "title": "Technical Promotions Specialist", "city": "Bhubaneswar", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "somnath-manna", "managerId": "anand-deshpande", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Gajendra Kumar Singh [C]", "title": "External Reference Job", "city": "Jamshedpur", "country": "IND", "region": "East", "type": "External / Contract", "team": null, "id": "gajendra-kumar-singh-c", "managerId": "jyoti-shankar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Gautam Kumar [C]", "title": "External Reference Job", "city": "Jamshedpur", "country": "IND", "region": "East", "type": "External / Contract", "team": null, "id": "gautam-kumar-c", "managerId": "jyoti-shankar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Kunal Ranjan [C]", "title": "External Reference Job", "city": "Jamshedpur", "country": "IND", "region": "East", "type": "External / Contract", "team": null, "id": "kunal-ranjan-c", "managerId": "jyoti-shankar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Niranjan Kumar", "title": "Sales Specialist", "city": "Bhubaneswar", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "niranjan-kumar", "managerId": "jyoti-shankar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Arindam Ghosh", "title": "Sales Specialist", "city": "Raipur", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "arindam-ghosh", "managerId": "manoja-kumar-misra", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Asit Kumar Behera", "title": "Sales Specialist", "city": "Bhubaneswar", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "asit-kumar-behera", "managerId": "manoja-kumar-misra", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Chandan Gajpalla", "title": "Sales Manager", "city": "Raipur", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "chandan-gajpalla", "managerId": "manoja-kumar-misra", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Madhav Girish", "title": "Team Leader - Technical Promotion", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 8, "id": "madhav-girish", "managerId": "jothi-prakash-s", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Naveen S N", "title": "Team Leader - Sales", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 2, "id": "naveen-s-n", "managerId": "jothi-prakash-s", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shashikumar K V", "title": "Channel Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 5, "id": "shashikumar-k-v", "managerId": "jothi-prakash-s", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Varunraj P", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 2, "id": "varunraj-p", "managerId": "jothi-prakash-s", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vijaykumar KB", "title": "Team Leader - Installer Segment", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 4, "id": "vijaykumar-kb", "managerId": "jothi-prakash-s", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Aneesh Kumar A S", "title": "Sales Specialist", "city": "Kochi", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "aneesh-kumar-a-s", "managerId": "jothi-prakash-s", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Harigovind GS", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "harigovind-gs", "managerId": "jothi-prakash-s", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Satish A Deshpande", "title": "Sales Manager - Product", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "satish-a-deshpande", "managerId": "jothi-prakash-s", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shiva Shanker Reddy", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "shiva-shanker-reddy", "managerId": "jothi-prakash-s", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sreedas K P", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "sreedas-k-p", "managerId": "jothi-prakash-s", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ashalatha N", "title": "Sales and Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "ashalatha-n", "managerId": "madhav-girish", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Gopal Vaidhyanathan", "title": "Sales Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "gopal-vaidhyanathan", "managerId": "madhav-girish", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Laxmikanta Behera", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "laxmikanta-behera", "managerId": "madhav-girish", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pramod Kumar Aigal", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "pramod-kumar-aigal", "managerId": "madhav-girish", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sushma Chiniwalar", "title": "Sales and Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "sushma-chiniwalar", "managerId": "madhav-girish", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Upamanyu Adhikary", "title": "Technical Promotion Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "upamanyu-adhikary", "managerId": "madhav-girish", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Nobin Babu", "title": "Sales Specialist (OEM)", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "nobin-babu", "managerId": "naveen-s-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rakesh Rao A", "title": "Sales Specialist (OEM)", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "rakesh-rao-a", "managerId": "naveen-s-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Anand Naragund", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "anand-naragund", "managerId": "shashikumar-k-v", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Lijish N", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "lijish-n", "managerId": "shashikumar-k-v", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Manjunath Angadi", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "manjunath-angadi", "managerId": "shashikumar-k-v", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ramasubramani S", "title": "Sales Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "ramasubramani-s", "managerId": "shashikumar-k-v", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Subrahmanya S Shetti", "title": "Sales Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "subrahmanya-s-shetti", "managerId": "shashikumar-k-v", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pramod K D", "title": "Retail Sales Specialist", "city": "Kochi", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "pramod-k-d", "managerId": "varunraj-p", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rahul G", "title": "Retail Sales Specialist", "city": "Kochi", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "rahul-g", "managerId": "varunraj-p", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Balaji B M", "title": "Sales Specialist - Installer", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "balaji-b-m", "managerId": "vijaykumar-kb", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "B Chetan", "title": "Sales Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "b-chetan", "managerId": "vijaykumar-kb", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sanjay Hegde", "title": "Sales Specialist - Product", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "sanjay-hegde", "managerId": "vijaykumar-kb", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Subrana Keshari Patra", "title": "Sales Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "subrana-keshari-patra", "managerId": "vijaykumar-kb", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Devchandra Kuril", "title": "Marketing Manager - Product", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 13, "id": "devchandra-kuril", "managerId": "dhananjay-navalu-sanas", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Joel Vipin Dsouza", "title": "EL Product Marketing Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 6, "id": "joel-vipin-dsouza", "managerId": "dhananjay-navalu-sanas", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Akshay Arun Mandlekar", "title": "Marketing Communications Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "akshay-arun-mandlekar", "managerId": "dhananjay-navalu-sanas", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vivek C Mouli", "title": "Senior Data Science & AI Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "vivek-c-mouli", "managerId": "dhananjay-navalu-sanas", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "K Kartik Dubey", "title": "Product Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "k-kartik-dubey", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Abhishek Chandrakant.", "title": "Product Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "abhishek-chandrakant", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Akshay Balaraj Menon", "title": "Product Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "akshay-balaraj-menon", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ananya Sreeram", "title": "Marketing & Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "ananya-sreeram", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Apurba Mondal", "title": "Product Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "apurba-mondal", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ashok Kumar G", "title": "Technical Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "ashok-kumar-g", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Harini JM", "title": "Marketing & Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "harini-jm", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Naveen David", "title": "Marketing Specialist - Product", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "naveen-david", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Raghavendra H M", "title": "Product Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "raghavendra-h-m", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ravi Yashwant Yadav", "title": "Marketing Specialist - Product", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "ravi-yashwant-yadav", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rohit Pathak", "title": "Product Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "rohit-pathak", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sumukh G", "title": "Marketing Specialist - Product", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "sumukh-g", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Harsh Balkrishna More", "title": "Technical Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "harsh-balkrishna-more", "managerId": "devchandra-kuril", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ananya Sankolli", "title": "Sales and Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "ananya-sankolli", "managerId": "joel-vipin-dsouza", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ashok C", "title": "Product Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "ashok-c", "managerId": "joel-vipin-dsouza", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Harshith", "title": "Intern", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "harshith", "managerId": "joel-vipin-dsouza", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Jangale Mandar Liladhar", "title": "Product Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "jangale-mandar-liladhar", "managerId": "joel-vipin-dsouza", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Jyotiska Mahakud", "title": "Sales and Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "jyotiska-mahakud", "managerId": "joel-vipin-dsouza", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Syed Shane Abbas Zaidi", "title": "Product Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "syed-shane-abbas-zaidi", "managerId": "joel-vipin-dsouza", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Amrish A. Soitkar", "title": "Sales Manager", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": 5, "id": "amrish-a-soitkar", "managerId": "immanuel-paul", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sachin Paradkar", "title": "Sales Manager", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": 6, "id": "sachin-paradkar", "managerId": "immanuel-paul", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "S. Mishra", "title": "Sales Manager", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": 7, "id": "s-mishra", "managerId": "immanuel-paul", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sumit Tiwary", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": 9, "id": "sumit-tiwary", "managerId": "immanuel-paul", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Manohar M Prabhu [C]", "title": "External Reference Job", "city": "Mumbai", "country": "IND", "region": "West", "type": "External / Contract", "team": null, "id": "manohar-m-prabhu-c", "managerId": "immanuel-paul", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Nitin Kumar Shukla", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "nitin-kumar-shukla", "managerId": "immanuel-paul", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Priya Babar Mane", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "priya-babar-mane", "managerId": "immanuel-paul", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Samir Abdul Wahid Sha.", "title": "Technical Promotion Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "samir-abdul-wahid-sha", "managerId": "immanuel-paul", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shoeb Sayyad", "title": "Sales Manager", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "shoeb-sayyad", "managerId": "immanuel-paul", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Abhishek Pradeep Kulk.", "title": "Sales Manager", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "abhishek-pradeep-kulk", "managerId": "amrish-a-soitkar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ashish Saxena", "title": "Sales Manager", "city": "Indore", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "ashish-saxena", "managerId": "amrish-a-soitkar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pawan Ravindra Dahake", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "pawan-ravindra-dahake", "managerId": "amrish-a-soitkar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pooja Prakash Khochare", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "pooja-prakash-khochare", "managerId": "amrish-a-soitkar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sushant Baliram Patil", "title": "Sales Specialist - Product", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "sushant-baliram-patil", "managerId": "amrish-a-soitkar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Jay Mahesh Upadhyay", "title": "Sales Manager", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "jay-mahesh-upadhyay", "managerId": "sachin-paradkar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Namaswin Tushar Mehta", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "namaswin-tushar-mehta", "managerId": "sachin-paradkar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Prabal Trivedi", "title": "Sales Specialist", "city": "Indore", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "prabal-trivedi", "managerId": "sachin-paradkar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Prashant Narayanrao B.", "title": "Sales Manager - Contractor", "city": "Nagpur", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "prashant-narayanrao-b", "managerId": "sachin-paradkar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rohan Dhananjay Gujar", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "rohan-dhananjay-gujar", "managerId": "sachin-paradkar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Saraswatinandan Vijay.", "title": "Sales Manager", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "saraswatinandan-vijay", "managerId": "sachin-paradkar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Tushar More", "title": "Sales Specialist - Product", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": 2, "id": "tushar-more", "managerId": "s-mishra", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Abhishek Madhukar Pa.", "title": "Sales Specialist - Product", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "abhishek-madhukar-pa", "managerId": "s-mishra", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Amit Singh Bhadauria", "title": "Sales Manager - Indore territory", "city": "Indore", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "amit-singh-bhadauria", "managerId": "s-mishra", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Bhullar Baljinder Singh.", "title": "Sales Manager - Vapi territory", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "bhullar-baljinder-singh", "managerId": "s-mishra", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Bhushan Vasant Khand.", "title": "Sales Specialist - Product", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "bhushan-vasant-khand", "managerId": "s-mishra", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Uday Krishnaji Bhagwat", "title": "Sales Specialist - Product", "city": "Nagpur", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "uday-krishnaji-bhagwat", "managerId": "s-mishra", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vaibhav Balasaheb Paw.", "title": "Sales Manager", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "vaibhav-balasaheb-paw", "managerId": "s-mishra", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Siddhi Dipesh Wathark.", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "siddhi-dipesh-wathark", "managerId": "sumit-tiwary", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Anita Tanaji Patil", "title": "Sales and Marketing Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "anita-tanaji-patil", "managerId": "sumit-tiwary", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Anu R Pillai", "title": "Sales and Marketing Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "anu-r-pillai", "managerId": "sumit-tiwary", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ashish Ramprakash Sin.", "title": "Sales Manager", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "ashish-ramprakash-sin", "managerId": "sumit-tiwary", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pradeep Singh", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "pradeep-singh", "managerId": "sumit-tiwary", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pranali Kala", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "pranali-kala", "managerId": "sumit-tiwary", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sheetal Amit Wagh", "title": "Manager - Business Development", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "sheetal-amit-wagh", "managerId": "sumit-tiwary", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Siddharth Rajendra Gai.", "title": "Marketing & Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "siddharth-rajendra-gai", "managerId": "sumit-tiwary", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Trupti Nandkumar More", "title": "Sales Specialist - Building end", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "trupti-nandkumar-more", "managerId": "sumit-tiwary", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Mekala Bhaskar", "title": "Retail Sales Manager", "city": "Hyderabad", "country": "IND", "region": "South", "type": "Employee", "team": 2, "id": "mekala-bhaskar", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Bindiri Jagath Durga Sir.", "title": "Sales Specialist", "city": "Hyderabad", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "bindiri-jagath-durga-sir", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Gundabattula Vamsi Pri.", "title": "Marketing & Sales Specialist", "city": "Hyderabad", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "gundabattula-vamsi-pri", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Male Sampath Reddy", "title": "Sales Specialist - Product", "city": "Hyderabad", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "male-sampath-reddy", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Mukku Phani Krishna", "title": "Sales Specialist", "city": "Hyderabad", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "mukku-phani-krishna", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pillala Ganesh", "title": "Sales Specialist", "city": "Hyderabad", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "pillala-ganesh", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Polinati Madhu Murali", "title": "Sales Specialist", "city": "Hyderabad", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "polinati-madhu-murali", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rampelly Srinath", "title": "Sales Specialist", "city": "Hyderabad", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "rampelly-srinath", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Jayaraju P", "title": "Sales Specialist", "city": "Visakhapatnam", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "jayaraju-p", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "YENNAM ANIL KUMAR", "title": "Segment Specialist", "city": "Hyderabad", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "yennam-anil-kumar", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vakkapatla Anjaneyulu", "title": "Sr Manager Sales", "city": "Hyderabad", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "vakkapatla-anjaneyulu", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Panchadarla Janardhan.", "title": "Sales Specialist", "city": "Visakhapatnam", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "panchadarla-janardhan", "managerId": "kurapapu-sunil", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "CHEPALA SIVA KUMAR.", "title": "External Reference Job", "city": "Visakhapatnam", "country": "IND", "region": "South", "type": "External / Contract", "team": null, "id": "chepala-siva-kumar", "managerId": "mekala-bhaskar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Mohd Gouse Pasha [C]", "title": "External Reference Job", "city": "Hyderabad", "country": "IND", "region": "South", "type": "External / Contract", "team": null, "id": "mohd-gouse-pasha-c", "managerId": "mekala-bhaskar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Abhilash M", "title": "Retail Sales Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 1, "id": "abhilash-m", "managerId": "mahesh-kumar-g-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Mandar Suryakant Mule", "title": "Sales Specialist - Product", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": 8, "id": "mandar-suryakant-mule", "managerId": "mahesh-kumar-g-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Amarjith X [C]", "title": "External Reference Job", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "External / Contract", "team": null, "id": "amarjith-x-c", "managerId": "mahesh-kumar-g-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Basavaraju L", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "basavaraju-l", "managerId": "mahesh-kumar-g-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Dhupani Lahari", "title": "Sales and Marketing Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "dhupani-lahari", "managerId": "mahesh-kumar-g-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Gagandeep Singh Mong.", "title": "Sales Support Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "gagandeep-singh-mong", "managerId": "mahesh-kumar-g-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "K S Naveen", "title": "Chanel Marketing Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "k-s-naveen", "managerId": "mahesh-kumar-g-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Maniarasan E", "title": "Sales Support Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "maniarasan-e", "managerId": "mahesh-kumar-g-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vetrivel K", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "vetrivel-k", "managerId": "mahesh-kumar-g-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Prathviraj.", "title": "Sales Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 7, "id": "prathviraj", "managerId": "abhilash-m", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Christi Ranjith", "title": "Sales Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "christi-ranjith", "managerId": "prathviraj", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Dilip S [C]", "title": "External Reference Job", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "External / Contract", "team": null, "id": "dilip-s-c", "managerId": "prathviraj", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Dwarampudi S M Doray.", "title": "Retail Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "dwarampudi-s-m-doray", "managerId": "prathviraj", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Girish C", "title": "Sales Specialist - Product", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "girish-c", "managerId": "prathviraj", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "MaheshKumar YR [C]", "title": "External Reference Job", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "External / Contract", "team": null, "id": "maheshkumar-yr-c", "managerId": "prathviraj", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rahul D Goundadka Go.", "title": "External Reference Job", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "External / Contract", "team": null, "id": "rahul-d-goundadka-go", "managerId": "prathviraj", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Yogesh J [C]", "title": "External Reference Job", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "External / Contract", "team": null, "id": "yogesh-j-c", "managerId": "prathviraj", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Anand Prakash Singh", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "anand-prakash-singh", "managerId": "mandar-suryakant-mule", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Anil Waman Bhosale [C]", "title": "External Reference Job", "city": "Mumbai", "country": "IND", "region": "West", "type": "External / Contract", "team": null, "id": "anil-waman-bhosale-c", "managerId": "mandar-suryakant-mule", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Nilesh Arjun Darade", "title": "Sales Specialist", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "nilesh-arjun-darade", "managerId": "mandar-suryakant-mule", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Praful Gajanan Kamble.", "title": "External Reference Job", "city": "Mumbai", "country": "IND", "region": "West", "type": "External / Contract", "team": null, "id": "praful-gajanan-kamble", "managerId": "mandar-suryakant-mule", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shahzad Firoz Qureshi.", "title": "External Reference Job", "city": "Mumbai", "country": "IND", "region": "West", "type": "External / Contract", "team": null, "id": "shahzad-firoz-qureshi", "managerId": "mandar-suryakant-mule", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shailesh Ashok Tambe.", "title": "External Reference Job", "city": "Mumbai", "country": "IND", "region": "West", "type": "External / Contract", "team": null, "id": "shailesh-ashok-tambe", "managerId": "mandar-suryakant-mule", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vijay Siddharth Sawant", "title": "Retail Sales Manager", "city": "Nashik", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "vijay-siddharth-sawant", "managerId": "mandar-suryakant-mule", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Yogesh Shantaram Jam.", "title": "External Reference Job", "city": "Mumbai", "country": "IND", "region": "West", "type": "External / Contract", "team": null, "id": "yogesh-shantaram-jam", "managerId": "mandar-suryakant-mule", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Kavya Shree B", "title": "Pricing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "kavya-shree-b", "managerId": "ganapati-kamat", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Amitava Choudhury", "title": "Sales Specialist - Product", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": 3, "id": "amitava-choudhury", "managerId": "rajib-chatterjee", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Biswajit Chatterjee", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "biswajit-chatterjee", "managerId": "rajib-chatterjee", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sanjeev Kumar Mohara.", "title": "Sales Specialist - Product", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": 5, "id": "sanjeev-kumar-mohara", "managerId": "rajib-chatterjee", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Satyajit Bose", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": 1, "id": "satyajit-bose", "managerId": "rajib-chatterjee", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Uttam Kumar Pattanayak", "title": "Technical Promotion Lead", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": 2, "id": "uttam-kumar-pattanayak", "managerId": "rajib-chatterjee", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Brahmananda Singha", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "brahmananda-singha", "managerId": "rajib-chatterjee", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Arif Billah Akhan", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "arif-billah-akhan", "managerId": "amitava-choudhury", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Imran Khan", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "imran-khan", "managerId": "amitava-choudhury", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shantanu Dey", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "shantanu-dey", "managerId": "amitava-choudhury", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Aniket Ganguly", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "aniket-ganguly", "managerId": "sanjeev-kumar-mohara", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Arghya Santra", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "arghya-santra", "managerId": "sanjeev-kumar-mohara", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Jyotirmoy Paul", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "jyotirmoy-paul", "managerId": "sanjeev-kumar-mohara", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Koushik Dutta", "title": "Sales Specialist - Product", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "koushik-dutta", "managerId": "sanjeev-kumar-mohara", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Nilanjan Bhowmick", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "nilanjan-bhowmick", "managerId": "sanjeev-kumar-mohara", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Kaustuv Bhattacharya", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "kaustuv-bhattacharya", "managerId": "satyajit-bose", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Arunima Samanta", "title": "Technical Specialist - TP", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "arunima-samanta", "managerId": "uttam-kumar-pattanayak", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sudeshna Bhattacharya", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "sudeshna-bhattacharya", "managerId": "uttam-kumar-pattanayak", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Jitendra Khare", "title": "Sales Specialist - Product", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": 5, "id": "jitendra-khare", "managerId": "ganesh-mendon-g", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Debjit Roy", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "debjit-roy", "managerId": "jitendra-khare", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Lakshminarayana R", "title": "WA Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "lakshminarayana-r", "managerId": "jitendra-khare", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Prashant Choudhury", "title": "Sales Specialist", "city": "Bhubaneswar", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "prashant-choudhury", "managerId": "jitendra-khare", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Prateek Dixit", "title": "Sales Specialist", "city": "Lucknow", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "prateek-dixit", "managerId": "jitendra-khare", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sathyamoorthy M", "title": "WA Sales Specialist", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "sathyamoorthy-m", "managerId": "jitendra-khare", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Nitin Raina", "title": "Sales Manager", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": 8, "id": "nitin-raina", "managerId": "gopuraj-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ashish Trivedi", "title": "Sales Manager - Product", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "ashish-trivedi", "managerId": "gopuraj-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Nagaraj P", "title": "Building Segment Manager", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "nagaraj-p", "managerId": "gopuraj-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rajkumar Khanapure", "title": "Segment Manager", "city": "Mumbai", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "rajkumar-khanapure", "managerId": "gopuraj-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rupak Dey", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "rupak-dey", "managerId": "nitin-raina", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shikha Verma", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "shikha-verma", "managerId": "nitin-raina", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sidharth Sharma", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "sidharth-sharma", "managerId": "nitin-raina", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Bandu Ramanna Khava.", "title": "Sales Specialist Retail", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": 1, "id": "bandu-ramanna-khava", "managerId": "hitesh-ahuja", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ashutosh Nandkumar K.", "title": "Sales Manager", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "ashutosh-nandkumar-k", "managerId": "hitesh-ahuja", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Bhushan Umrao Bhoyar", "title": "Sales Specialist - OEM", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "bhushan-umrao-bhoyar", "managerId": "hitesh-ahuja", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Onkar Indrajit Tate", "title": "Sales Specialist - Product", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "onkar-indrajit-tate", "managerId": "hitesh-ahuja", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pankaj Shambabu Desh.", "title": "Sales Specialist", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "pankaj-shambabu-desh", "managerId": "hitesh-ahuja", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Prashant Singh", "title": "Sales Specialist", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "prashant-singh", "managerId": "hitesh-ahuja", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pravin Vasant Vanarase", "title": "Sales Specialist - Products", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "pravin-vasant-vanarase", "managerId": "hitesh-ahuja", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rahul Parbat Wadkar", "title": "Manager Business Development", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "rahul-parbat-wadkar", "managerId": "hitesh-ahuja", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sagar Shivling Hingmire", "title": "Sales Manager Panel Builder", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "sagar-shivling-hingmire", "managerId": "hitesh-ahuja", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shubham Sunil Thakur", "title": "Sales Specialist", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "shubham-sunil-thakur", "managerId": "hitesh-ahuja", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vasubandhu Satywan.", "title": "Sales Specialist", "city": "Pune", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "vasubandhu-satywan", "managerId": "hitesh-ahuja", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Adeniji Samuel Ayodeji", "title": "Sales Specialist", "city": "Ikeja", "country": "NGA", "region": "International", "type": "Employee", "team": null, "id": "adeniji-samuel-ayodeji", "managerId": "saiil-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ankitesh Biragudev", "title": "Sales Manager - East Africa", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "ankitesh-biragudev", "managerId": "saiil-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ileh Faith Londah", "title": "Sales Specialist", "city": "Ikeja", "country": "NGA", "region": "International", "type": "Employee", "team": null, "id": "ileh-faith-londah", "managerId": "saiil-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Kushan Chathuranga Ile.", "title": "Sales Specialist", "city": "Colombo", "country": "LKA", "region": "International", "type": "Employee", "team": null, "id": "kushan-chathuranga-ile", "managerId": "saiil-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "OLUWATIMILEHIN OJO", "title": "Sales Specialist", "city": "Ikeja", "country": "NGA", "region": "International", "type": "Employee", "team": null, "id": "oluwatimilehin-ojo", "managerId": "saiil-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sadeesh Edirisinghe", "title": "Area Sales Manager", "city": "Colombo", "country": "LKA", "region": "International", "type": "Employee", "team": null, "id": "sadeesh-edirisinghe", "managerId": "saiil-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vikash Kumar (Africa)", "title": "Marketing Manager - East Africa", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "vikash-kumar-africa", "managerId": "saiil-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "S M Niamat Ullah", "title": "Service Sales Specialist", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": null, "id": "s-m-niamat-ullah", "managerId": "subrata-kumar-dey", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Arifuzzaman Kaiser", "title": "Sales Manager", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": 2, "id": "arifuzzaman-kaiser", "managerId": "subrata-kumar-dey", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "M.M. Golame Kibrya", "title": "Sales Specialist", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": 2, "id": "m-m-golame-kibrya", "managerId": "subrata-kumar-dey", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Mostafa Salman Nur", "title": "Sales Specialist", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": 2, "id": "mostafa-salman-nur", "managerId": "subrata-kumar-dey", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Abdullah Al Mutansir", "title": "Service Sales Specialist", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": null, "id": "abdullah-al-mutansir", "managerId": "subrata-kumar-dey", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Birabor Saha [C]", "title": "External Reference Job", "city": "Dhaka", "country": "BGD", "region": "International", "type": "External / Contract", "team": null, "id": "birabor-saha-c", "managerId": "subrata-kumar-dey", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Md. Washim Sarker [C]", "title": "External Reference Job", "city": "Dhaka", "country": "BGD", "region": "International", "type": "External / Contract", "team": null, "id": "md-washim-sarker-c", "managerId": "subrata-kumar-dey", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Naim Hossain Emon", "title": "Technical Specialist", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": null, "id": "naim-hossain-emon", "managerId": "subrata-kumar-dey", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Mahmud Parvez Raj", "title": "Sales Specialist", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": null, "id": "mahmud-parvez-raj", "managerId": "arifuzzaman-kaiser", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Abdul Al Mamun", "title": "Associate Project Manager", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": null, "id": "abdul-al-mamun", "managerId": "arifuzzaman-kaiser", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "MD Abdullah", "title": "Manager - Marketing & Sales", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": null, "id": "md-abdullah", "managerId": "m-m-golame-kibrya", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Md Mamunoor Razob S.", "title": "Sales Specialist", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": null, "id": "md-mamunoor-razob-s", "managerId": "m-m-golame-kibrya", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Fahim Alam Ador", "title": "Sales Specialist", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": null, "id": "fahim-alam-ador", "managerId": "mostafa-salman-nur", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sourav Deb Nath", "title": "Sales Specialist", "city": "Dhaka", "country": "BGD", "region": "International", "type": "Employee", "team": null, "id": "sourav-deb-nath", "managerId": "mostafa-salman-nur", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sreejith N", "title": "Sales Manager - Building Solutions", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": 5, "id": "sreejith-n", "managerId": "sunil-j", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Bijo Joseph", "title": "Product Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "bijo-joseph", "managerId": "sunil-j", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Kiran Kumar", "title": "Market Development Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "kiran-kumar", "managerId": "sunil-j", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pranav K", "title": "EL Product Marketing Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "pranav-k", "managerId": "sunil-j", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vasu A", "title": "Market Development Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "vasu-a", "managerId": "sunil-j", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ajay Kumar (Bldg)", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "ajay-kumar-bldg", "managerId": "sreejith-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Anmol Misri", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "anmol-misri", "managerId": "sreejith-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Gaurav Sharma", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "gaurav-sharma", "managerId": "sreejith-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sourav Paul", "title": "Sales Specialist", "city": "Kolkata", "country": "IND", "region": "East", "type": "Employee", "team": null, "id": "sourav-paul", "managerId": "sreejith-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Yogesh", "title": "Sales Specialist", "city": "Bangalore", "country": "IND", "region": "Bangalore (HQ)", "type": "Employee", "team": null, "id": "yogesh", "managerId": "sreejith-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Balasubramani S", "title": "Team Leader - Retail", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": 1, "id": "balasubramani-s", "managerId": "theodore-moses", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "D Nagarajan", "title": "Sales Specialist - Product", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": 2, "id": "d-nagarajan", "managerId": "theodore-moses", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Srivatsan B", "title": "Sales Manager", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": 3, "id": "srivatsan-b", "managerId": "theodore-moses", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sundar Rajan Sathya N.", "title": "Team Leader - Technical", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": 2, "id": "sundar-rajan-sathya-n", "managerId": "theodore-moses", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vasanth Raj E", "title": "Sales Manager", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": 2, "id": "vasanth-raj-e", "managerId": "theodore-moses", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Prabavathi", "title": "Marketing & Sales Specialist", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "prabavathi", "managerId": "theodore-moses", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Roopasri J", "title": "Sales and Marketing Specialist", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "roopasri-j", "managerId": "theodore-moses", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "karthik p [C]", "title": "External Reference Job", "city": "Chennai", "country": "IND", "region": "South", "type": "External / Contract", "team": null, "id": "karthik-p-c", "managerId": "balasubramani-s", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Arunkumar Balasubra.", "title": "Sales Specialist - Product", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "arunkumar-balasubra", "managerId": "d-nagarajan", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ganesh M", "title": "Sales Specialist - Product", "city": "Coimbatore", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "ganesh-m", "managerId": "d-nagarajan", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ezhil Vedan Palanisamy", "title": "Sales Manager", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "ezhil-vedan-palanisamy", "managerId": "srivatsan-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Martin Yesu Raja Steph.", "title": "Sales Manager", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "martin-yesu-raja-steph", "managerId": "srivatsan-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Senthil Kumar K", "title": "Manager Sales", "city": "Coimbatore", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "senthil-kumar-k", "managerId": "srivatsan-b", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "K Dinu David", "title": "EL Product Marketing Specialist", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "k-dinu-david", "managerId": "sundar-rajan-sathya-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Marslin Sunil Antony M", "title": "Sales Specialist", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "marslin-sunil-antony-m", "managerId": "sundar-rajan-sathya-n", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Saravanan B", "title": "Sales Manager - OEM Channel", "city": "Coimbatore", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "saravanan-b", "managerId": "vasanth-raj-e", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Veeramohan Marimuthu", "title": "Sales Manager", "city": "Chennai", "country": "IND", "region": "South", "type": "Employee", "team": null, "id": "veeramohan-marimuthu", "managerId": "vasanth-raj-e", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Naveen Bisen", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "naveen-bisen", "managerId": "vikash-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ajay Kumar", "title": "Sales Specialist - Product", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": 5, "id": "ajay-kumar", "managerId": "vikash-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rohit", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "rohit", "managerId": "vikash-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Devendra Niranjan", "title": "Sales Specialist - Product", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": 4, "id": "devendra-niranjan", "managerId": "vikash-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Mukul Khandal", "title": "Sales Manager", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": 4, "id": "mukul-khandal", "managerId": "vikash-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pankaj Kumar", "title": "Sales Specialist - Product", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": 3, "id": "pankaj-kumar", "managerId": "vikash-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rajesh Sharma", "title": "Sales Manager - Product", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": 3, "id": "rajesh-sharma", "managerId": "vikash-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vijay Jain", "title": "Sales Manager", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": 5, "id": "vijay-jain", "managerId": "vikash-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vineet Kumar", "title": "Sales Specialist - Product", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": 4, "id": "vineet-kumar", "managerId": "vikash-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Deepak Kumar Rai", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "deepak-kumar-rai", "managerId": "ajay-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Monica Bhandari", "title": "Business Development Manager", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "monica-bhandari", "managerId": "ajay-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Ritu Verma", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "ritu-verma", "managerId": "ajay-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rizwan Siddiqui", "title": "Sales Specialist - Product", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "rizwan-siddiqui", "managerId": "ajay-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shobhit Dixit", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "shobhit-dixit", "managerId": "ajay-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Abhishek Saxena", "title": "Sales Specialist", "city": "Lucknow", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "abhishek-saxena", "managerId": "devendra-niranjan", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Rahul Kumar Pandey", "title": "Sales Manager", "city": "Lucknow", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "rahul-kumar-pandey", "managerId": "devendra-niranjan", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Santosh Kumar", "title": "Sales Specialist", "city": "Dehradun", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "santosh-kumar", "managerId": "devendra-niranjan", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Surendra Singh Gautam", "title": "Sales Specialist", "city": "Lucknow", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "surendra-singh-gautam", "managerId": "devendra-niranjan", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Himanshu Jhawar", "title": "OEM Sales Manager", "city": "Jaipur", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "himanshu-jhawar", "managerId": "mukul-khandal", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Mohd Irshad", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "mohd-irshad", "managerId": "mukul-khandal", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Pradeep Vyas", "title": "Sales Specialist", "city": "Jaipur", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "pradeep-vyas", "managerId": "mukul-khandal", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shubham Mathur", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "shubham-mathur", "managerId": "mukul-khandal", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Jaiveer Singh Bisht", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "jaiveer-singh-bisht", "managerId": "pankaj-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Saumitra Shukla", "title": "Sales Specialist - Product", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "saumitra-shukla", "managerId": "pankaj-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vijay kumar Pandey", "title": "FES Sales Installer", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "vijay-kumar-pandey", "managerId": "pankaj-kumar", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Arjun Kumar Singh", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "arjun-kumar-singh", "managerId": "rajesh-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Itender Yadav", "title": "Retail Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "itender-yadav", "managerId": "rajesh-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Raju Sarkar", "title": "Retail Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "raju-sarkar", "managerId": "rajesh-sharma", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Amit Singh Faryal", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "amit-singh-faryal", "managerId": "vijay-jain", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Kashish Kalra", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "kashish-kalra", "managerId": "vijay-jain", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Piyush Aggarwal", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "piyush-aggarwal", "managerId": "vijay-jain", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shashi Kumar", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "shashi-kumar", "managerId": "vijay-jain", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Yogendra Giri", "title": "Sales Specialist", "city": "Faridabad", "country": "IND", "region": "North", "type": "Employee", "team": null, "id": "yogendra-giri", "managerId": "vijay-jain", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Kandarp Atul Amin", "title": "Sales Specialist", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": 6, "id": "kandarp-atul-amin", "managerId": "raju-b-deshle", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Sujal Dilipkumar Bhatt", "title": "Sales Specialist - Product", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": 6, "id": "sujal-dilipkumar-bhatt", "managerId": "raju-b-deshle", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Akshay Jagdish Bipotkar", "title": "Sales Specialist", "city": "Vadodara", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "akshay-jagdish-bipotkar", "managerId": "raju-b-deshle", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Bollu Mounika", "title": "Marketing & Sales Specialist", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "bollu-mounika", "managerId": "raju-b-deshle", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Darji Mayankkumar Jay.", "title": "Sales Specialist", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "darji-mayankkumar-jay", "managerId": "raju-b-deshle", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Shankar Lad [C]", "title": "External Reference Job", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "External / Contract", "team": null, "id": "shankar-lad-c", "managerId": "raju-b-deshle", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Vinaykumar Dilipkumar.", "title": "Sales Specialist", "city": "Vadodara", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "vinaykumar-dilipkumar", "managerId": "raju-b-deshle", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Aditya Shah", "title": "Sales Specialist", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "aditya-shah", "managerId": "kandarp-atul-amin", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Joshi Jigar Jitendrabhai", "title": "Sales Manager", "city": "Vadodara", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "joshi-jigar-jitendrabhai", "managerId": "kandarp-atul-amin", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Milin Patel", "title": "Sales Specialist", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "milin-patel", "managerId": "kandarp-atul-amin", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Amit Siddharth Shelat", "title": "Sales Specialist", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "amit-siddharth-shelat", "managerId": "sujal-dilipkumar-bhatt", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Darpankumar Suryakan.", "title": "Sales Specialist", "city": "Vadodara", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "darpankumar-suryakan", "managerId": "sujal-dilipkumar-bhatt", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Gupta Ravikant Sudama.", "title": "Sales Specialist", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "gupta-ravikant-sudama", "managerId": "sujal-dilipkumar-bhatt", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Hardikkumar Narendra.", "title": "Sales Manager", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "hardikkumar-narendra", "managerId": "sujal-dilipkumar-bhatt", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Mandir Darshan Rajesh.", "title": "Sales Specialist", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "mandir-darshan-rajesh", "managerId": "sujal-dilipkumar-bhatt", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}, {"name": "Utsav Patel", "title": "Sales Specialist", "city": "Ahmedabad", "country": "IND", "region": "West", "type": "Employee", "team": null, "id": "utsav-patel", "managerId": "sujal-dilipkumar-bhatt", "status": "none", "target": false, "notes": "", "phone": "", "email": "", "linkedin": ""}]/*__ENDSEED__*/;
+const STORE_KEY='hirelab_orgmapper_v1';
+const NW=214,NH=70,GX=22,GY=58;
+const STATUSES=[
+ {k:'none',label:'Not contacted',color:'#64748B'},
+ {k:'contacted',label:'Contacted',color:'#3B82F6'},
+ {k:'interested',label:'Interested',color:'#F59E0B'},
+ {k:'shortlisted',label:'Shortlisted',color:'#10B981'},
+ {k:'rejected',label:'Rejected',color:'#F43F5E'},
+];
+const SC=Object.fromEntries(STATUSES.map(s=>[s.k,s.color]));
+const SL=Object.fromEntries(STATUSES.map(s=>[s.k,s.label]));
+
+let store=null, hasStorage=true;
+let collapsed={};        // per-company: {companyId:Set}
+let selId=null;
+let filters={status:new Set(STATUSES.map(s=>s.k)), region:new Set(), target:false, ext:false, search:''};
+let zoom, svg, gRoot;
+let matchIds=new Set(), matchList=[], matchIdx=-1;
+
+/* ============ PERSISTENCE ENGINE — RecruitOS server-backed ============
+   Wave 1: the org map lives in the RecruitOS database, not in this browser.
+     load  : GET  /api/org/bootstrap   (one call — every company + person)
+     save  : POST /api/org/sync        (debounced, sends the whole store)
+     cache : localStorage mirror, used ONLY if the server is unreachable
+   The rest of this app is untouched: it still just calls saveStore().
+======================================================================= */
+const API='/api/org';
+const FSA=false;                                   // file-picker path retired
+let dirty=false, lastSavedAt=null;
+let syncState='idle';                              // idle|saving|saved|error|offline
+let syncT=null, syncing=false, pendingSync=false;
+
+function payload(){
+  return {v:1,savedAt:new Date().toISOString(),store,
+    collapsed:Object.fromEntries(Object.entries(collapsed).map(([k,s])=>[k,[...s]]))};
+}
+function applyPayload(d){
+  if(!d||!d.store||!d.store.companies) throw new Error('Not an OrgMapper file');
+  store=d.store; collapsed={};
+  if(d.collapsed)Object.entries(d.collapsed).forEach(([k,v])=>collapsed[k]=new Set(v));
+  hydrate();
+}
+
+function hydrate(){
+  if(!store.companies[store.active]) store.active=Object.keys(store.companies)[0];
+  Object.keys(store.companies).forEach(cid=>{
+    if(!collapsed[cid]) collapsed[cid]=defaultCollapsed(store.companies[cid].people);
+  });
+}
+function seedFirstRun(){
+  store={companies:{},active:null};
+  const id='abb-electrification';
+  store.companies[id]={id,name:'ABB \u2014 Electrification (India+)',
+    createdAt:new Date().toISOString(),people:clone(SEED)};
+  store.active=id; hydrate();
+}
+function cacheLocal(){
+  try{
+    localStorage.setItem(STORE_KEY,JSON.stringify(store));
+    localStorage.setItem(STORE_KEY+'_bak',JSON.stringify(payload()));
+    hasStorage=true;
+  }catch(e){ hasStorage=false; }
+}
+
+/* ---- LOAD ---- */
+async function loadStore(){
+  try{
+    const r=await fetch(API+'/bootstrap',{headers:{Accept:'application/json'}});
+    if(r.status===401){ location.href='/login'; return; }
+    if(r.status===403){
+      document.body.innerHTML='<div style="padding:60px;text-align:center;font-family:Inter,sans-serif;color:#EAF0FA;background:#080D18;height:100vh">'
+        +'<h2 style="margin-bottom:10px">Org Map is not enabled</h2>'
+        +'<p style="color:#8A9BB5">This workspace does not have the Org Map add-on.</p>'
+        +'<p style="margin-top:20px"><a href="/" style="color:#10B981">\u2190 Back to RecruitOS</a></p></div>';
+      store=null; return;
+    }
+    const d=await r.json();
+    if(d && d.store && d.store.companies && Object.keys(d.store.companies).length){
+      store=d.store; hydrate(); cacheLocal();
+      syncState='saved'; lastSavedAt=new Date();
+      return;
+    }
+    // Server has nothing yet -> first run. Seed ABB and push it up immediately.
+    seedFirstRun(); cacheLocal();
+    await syncNow(false);
+  }catch(e){
+    // Offline / server down: keep working from the local mirror.
+    try{ const raw=localStorage.getItem(STORE_KEY); if(raw) store=JSON.parse(raw); }catch(_){}
+    if(!store) seedFirstRun();
+    hydrate();
+    syncState='offline';
+    setTimeout(()=>toast('Server unreachable \u2014 working from local copy'),600);
+  }
+}
+
+/* ---- SAVE (every edit in the app funnels through here) ---- */
+function saveStore(){
+  dirty=true; syncState='saving'; updateFilePill();
+  cacheLocal();
+  clearTimeout(syncT);
+  syncT=setTimeout(()=>syncNow(false),700);
+}
+
+async function syncNow(force){
+  if(syncing){ pendingSync=true; return; }
+  syncing=true;
+  try{
+    const r=await fetch(API+'/sync',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({store,force:!!force})});
+
+    if(r.status===401){
+      syncState='error'; updateFilePill();
+      showBanner('Your session expired \u2014 nothing is being saved. Log in again to continue.',
+        [{label:'Log in',cls:'gold',fn:()=>location.href='/login'}]);
+      return;
+    }
+    if(r.status===409){                       // shrink guard tripped
+      const d=await r.json();
+      syncState='error'; updateFilePill();
+      showBanner('\u26A0 '+(d.message||'Large deletion blocked.')+
+        ' If you meant to do this, save anyway \u2014 otherwise reload the server copy.',
+        [{label:'Save anyway',cls:'gold',fn:()=>{hideBanner();syncNow(true);}},
+         {label:'Reload from server',cls:'',fn:()=>location.reload()}]);
+      return;
+    }
+    if(!r.ok) throw new Error('http '+r.status);
+    await r.json();
+    dirty=false; syncState='saved'; lastSavedAt=new Date();
+  }catch(e){
+    syncState='offline';
+    clearTimeout(syncT);
+    syncT=setTimeout(()=>syncNow(force),8000);   // keep retrying quietly
+  }finally{
+    syncing=false; updateFilePill();
+    if(pendingSync){ pendingSync=false; syncNow(false); }
+  }
+}
+
+/* ---- status pill (replaces the old data-file pill) ---- */
+function updateFilePill(){
+  const pill=document.getElementById('filePill'), nm=document.getElementById('fileName');
+  if(!pill)return;
+  nm.textContent={idle:'RecruitOS',saving:'Saving\u2026',saved:'Saved',
+                  error:'Not saved',offline:'Offline \u2014 retrying'}[syncState]||'RecruitOS';
+  pill.classList.toggle('linked',syncState==='saved'||syncState==='idle');
+  pill.classList.toggle('dirty',syncState!=='saved'&&syncState!=='idle');
+  pill.title=(syncState==='saved'&&lastSavedAt)
+    ? 'Saved to RecruitOS \u00B7 '+lastSavedAt.toLocaleTimeString()
+    : 'Org Map data is stored in your RecruitOS database';
+}
+function filePillClick(){
+  if(syncState==='saved'){ toast('Everything is saved'); return; }
+  toast('Saving now\u2026'); syncNow(syncState==='error');
+}
+
+/* ---- deep link: /orgmap?person=<slug|id> ---- */
+function revealPerson(key){
+  const ppl=people();
+  const p=ppl.find(x=>x.id===key||String(x._pid||'')===String(key));
+  if(!p)return false;
+  const m={}; ppl.forEach(x=>m[x.id]=x);
+  const s=collapsed[store.active];
+  let cur=m[p.managerId];
+  while(cur){ s.delete(cur.id); cur=m[cur.managerId]; }
+  render(); centerOn(p.id); openDrawer(p.id);
+  return true;
+}
+
+/* ---- retired file-picker entry points (kept as no-ops) ---- */
+function connectFile(){ toast('Your data saves to RecruitOS automatically'); }
+function disconnectFile(){}
+async function restoreHandle(){}
+function openFileMenu(){ toast('Your data saves to RecruitOS automatically'); }
+async function writeFile(){ return true; }
+function scheduleWrite(){}
+
+function showBanner(html,btns){
+  document.getElementById('bannerMsg').innerHTML=html;
+  const bx=document.getElementById('bannerBtns'); bx.innerHTML='';
+  btns.forEach(b=>{const el=document.createElement('button');el.className='btn '+(b.cls||'');el.textContent=b.label;el.onclick=b.fn;bx.appendChild(el);});
+  document.getElementById('banner').classList.add('show');
+}
+function hideBanner(){document.getElementById('banner').classList.remove('show');}
+
+function clone(o){return JSON.parse(JSON.stringify(o));}
+function comp(){return store.companies[store.active];}
+function people(){return comp().people;}
+function byId(){const m={};people().forEach(p=>m[p.id]=p);return m;}
+
+function defaultCollapsed(ppl){
+  // Open the spine down to the biggest-fanout "hub", show the hub's reports,
+  // and collapse each report's own team. Works for deep chains and flat orgs alike.
+  const m={};ppl.forEach(p=>m[p.id]=p);
+  const kids={};ppl.forEach(p=>{if(p.managerId&&m[p.managerId])(kids[p.managerId]=kids[p.managerId]||[]).push(p.id);});
+  const childrenOf=id=>kids[id]||[];
+  const roots=ppl.filter(p=>!p.managerId||!m[p.managerId]).map(p=>p.id);
+  const depth={};
+  const walk=(id,d)=>{depth[id]=d;childrenOf(id).forEach(c=>walk(c,d+1));};
+  roots.forEach(r=>walk(r,0));
+  let hubId=roots[0],hubC=-1;
+  ppl.forEach(p=>{const c=childrenOf(p.id).length;if(c>hubC){hubC=c;hubId=p.id;}});
+  const hubDepth=depth[hubId]||0;
+  const col=new Set();
+  ppl.forEach(p=>{ if((depth[p.id]||0)>hubDepth && childrenOf(p.id).length){ col.add(p.id);} });
+  return col;
+}
+
+/* ---------- build tree data ---------- */
+function buildHierarchy(){
+  const ppl=people(); const m={};ppl.forEach(p=>m[p.id]=p);
+  const kids={}; ppl.forEach(p=>{ if(p.managerId&&m[p.managerId]){(kids[p.managerId]=kids[p.managerId]||[]).push(p);} });
+  const roots=ppl.filter(p=>!p.managerId||!m[p.managerId]);
+  const col=collapsed[store.active]||new Set();
+  const make=p=>{
+    const node={id:p.id,p};
+    const ch=kids[p.id]||[];
+    node.hasKids=ch.length>0;
+    node.kidCount=ch.length;
+    if(node.hasKids && !col.has(p.id)) node.children=ch.map(make);
+    return node;
+  };
+  let rootData;
+  if(roots.length===1){rootData=make(roots[0]);}
+  else {rootData={id:'__root__',p:{name:'(top)'},virtual:true,children:roots.map(make),hasKids:true,kidCount:roots.length};}
+  return rootData;
+}
+
+/* ---------- render ---------- */
+function render(){
+  const rootData=buildHierarchy();
+  const root=d3.hierarchy(rootData,d=>d.children);
+  const tree=d3.tree().nodeSize([NW+GX,NH+GY]).separation((a,b)=>a.parent===b.parent?1:1.12);
+  tree(root);
+  let nodes=root.descendants(), links=root.links();
+  if(rootData.virtual){ nodes=nodes.filter(n=>!n.data.virtual); links=links.filter(l=>!l.source.data.virtual); }
+
+  computeMatches();
+  gRoot.selectAll('*').remove();
+  const gl=gRoot.append('g').attr('class','links');
+  const gn=gRoot.append('g').attr('class','nodes');
+
+  // links (elbow)
+  gl.selectAll('path').data(links).enter().append('path')
+    .attr('class','link')
+    .attr('data-t',d=>d.target.data.id)
+    .attr('d',d=>{
+      const sx=d.source.x, sy=d.source.y+NH/2, tx=d.target.x, ty=d.target.y-NH/2;
+      const my=(sy+ty)/2;
+      return `M${sx},${sy} V${my} H${tx} V${ty}`;
+    });
+
+  // nodes
+  const nsel=gn.selectAll('g.node-card').data(nodes).enter().append('g')
+    .attr('class',d=>'node-card'+(d.data.p.team||isMgr(d.data.p)?' mgr':'')+(d.data.id===selId?' sel':''))
+    .attr('data-id',d=>d.data.id)
+    .attr('transform',d=>`translate(${d.x-NW/2},${d.y-NH/2})`)
+    .on('click',(e,d)=>openDrawer(d.data.id))
+    .on('mouseenter',(e,d)=>highlightPath(d,true))
+    .on('mouseleave',(e,d)=>highlightPath(d,false));
+
+  nsel.append('rect').attr('class','card-bg').attr('width',NW).attr('height',NH).attr('rx',11);
+  // status strip
+  nsel.append('rect').attr('x',9).attr('y',13).attr('width',4).attr('height',NH-26).attr('rx',2)
+    .attr('fill',d=>SC[d.data.p.status||'none']);
+  // name
+  nsel.append('text').attr('class','nm').attr('x',24).attr('y',26).text(d=>trunc(d.data.p.name,25));
+  // title
+  nsel.append('text').attr('class','tl').attr('x',24).attr('y',43).text(d=>trunc(d.data.p.title||'—',30));
+  // location
+  nsel.append('text').attr('class','lc').attr('x',24).attr('y',59)
+    .text(d=>[d.data.p.city,d.data.p.region].filter(Boolean).map(x=>x.replace(' (HQ)','')).join(' · ')||'—');
+  // target star
+  nsel.filter(d=>d.data.p.target).append('text').attr('class','star').attr('x',NW-19).attr('y',22).text('★');
+  // external pill
+  const ex=nsel.filter(d=>isExt(d.data.p));
+  ex.append('rect').attr('class','ext').attr('x',NW-42).attr('y',NH-21).attr('width',32).attr('height',14).attr('rx',7);
+  ex.append('text').attr('class','ext-t').attr('x',NW-26).attr('y',NH-11).attr('text-anchor','middle').text('EXT');
+  // collapse toggle
+  const col=collapsed[store.active]||new Set();
+  const tg=nsel.filter(d=>d.data.hasKids).append('g')
+    .attr('class',d=>'toggle'+(col.has(d.data.id)?' collapsed':''))
+    .attr('transform',`translate(${NW/2},${NH})`)
+    .on('click',(e,d)=>{e.stopPropagation();toggleCollapse(d.data.id);});
+  tg.append('circle').attr('r',11);
+  tg.append('text').attr('dy',3.5).text(d=>col.has(d.data.id)?('+'+countDesc(d.data.p.id)):'–');
+
+  applyFilterDim();
+  renderStats();
+}
+
+function trunc(s,n){s=s||'';return s.length>n?s.slice(0,n-1)+'…':s;}
+function isMgr(p){const kids=people().filter(x=>x.managerId===p.id);return kids.length>0;}
+function isExt(p){return (p.type||'').toLowerCase().includes('ext')||(p.title||'').toLowerCase().includes('external');}
+function countDesc(id){const kids={};people().forEach(p=>{if(p.managerId)(kids[p.managerId]=kids[p.managerId]||[]).push(p.id);});let c=0;const st=[...(kids[id]||[])];while(st.length){const x=st.pop();c++;(kids[x]||[]).forEach(k=>st.push(k));}return c;}
+
+function toggleCollapse(id){const s=collapsed[store.active];s.has(id)?s.delete(id):s.add(id);render();}
+function expandAll(expand){
+  const s=new Set();
+  if(!expand){ people().forEach(p=>{ if(isMgr(p)&&p.managerId) s.add(p.id); }); }
+  collapsed[store.active]=s; render(); if(!expand) fitView();
+}
+
+/* ---------- highlight path ---------- */
+function highlightPath(d,on){
+  const ids=new Set(); let n=d;
+  while(n){ ids.add(n.data.id); n=n.parent; }
+  gRoot.selectAll('.link').classed('hl',l=>on&&ids.has(l.target.data.id));
+}
+
+/* ---------- matches / search ---------- */
+function computeMatches(){
+  matchIds=new Set(); matchList=[];
+  const q=filters.search.trim().toLowerCase();
+  if(!q) return;
+  people().forEach(p=>{
+    const hay=(p.name+' '+(p.title||'')+' '+(p.city||'')+' '+(p.region||'')).toLowerCase();
+    if(hay.includes(q)){matchIds.add(p.id);matchList.push(p.id);}
+  });
+}
+function doSearch(){
+  filters.search=document.getElementById('search').value;
+  computeMatches();
+  // expand ancestors of matches
+  if(filters.search.trim()){
+    const m=byId(); const s=collapsed[store.active];
+    matchList.forEach(id=>{let cur=m[id];while(cur&&cur.managerId){s.delete(cur.managerId);cur=m[cur.managerId];}});
+  }
+  matchIdx=-1;
+  render();
+  document.getElementById('searchCount').textContent=filters.search.trim()?(matchList.length+' found'):'';
+  if(matchList.length){matchIdx=0;centerOn(matchList[0]);}
+}
+function nextMatch(){ if(!matchList.length)return; matchIdx=(matchIdx+1)%matchList.length; centerOn(matchList[matchIdx]); }
+
+/* ---------- filters ---------- */
+function applyFilterDim(){
+  const anyStatus=filters.status.size<STATUSES.length;
+  const anyRegion=filters.region.size>0;
+  gRoot.selectAll('.node-card').classed('dim',function(d){
+    const p=d.data.p;
+    let show=true;
+    if(anyStatus && !filters.status.has(p.status||'none')) show=false;
+    if(anyRegion && !filters.region.has(p.region)) show=false;
+    if(filters.target && !p.target) show=false;
+    if(filters.ext && !isExt(p)) show=false;
+    if(filters.search.trim() && !matchIds.has(p.id)) show=false;
+    return !show;
+  });
+}
+
+/* ---------- stats ---------- */
+function renderStats(){
+  const ppl=people();
+  const total=ppl.length;
+  const mgrs=ppl.filter(isMgr).length;
+  const tgts=ppl.filter(p=>p.target).length;
+  const byS={}; STATUSES.forEach(s=>byS[s.k]=0); ppl.forEach(p=>byS[p.status||'none']++);
+  let h=`<div class="stat"><span class="v">${total}</span><span class="k">People</span></div>
+   <div class="statsep"></div><div class="stat"><span class="v">${mgrs}</span><span class="k">Managers</span></div>
+   <div class="stat"><span class="v" style="color:var(--gold)">${tgts}</span><span class="k">Targets</span></div>
+   <div class="statsep"></div>`;
+  STATUSES.forEach(s=>{ h+=`<div class="stat pipe" onclick="quickFilterStatus('${s.k}')"><span class="pd" style="background:${s.color}"></span><span class="v">${byS[s.k]}</span><span class="k">${s.label}</span></div>`; });
+  document.getElementById('statbar').innerHTML=h;
+}
+function quickFilterStatus(k){
+  if(filters.status.size===1&&filters.status.has(k)){filters.status=new Set(STATUSES.map(s=>s.k));}
+  else{filters.status=new Set([k]);}
+  syncStatusChecks(); applyFilterDim();
+}
+
+/* ---------- zoom ---------- */
+function initChart(){
+  svg=d3.select('#chart');
+  gRoot=svg.append('g');
+  zoom=d3.zoom().scaleExtent([0.08,2.5]).on('zoom',e=>gRoot.attr('transform',e.transform));
+  svg.call(zoom).on('dblclick.zoom',null);
+}
+function zoomBy(f){svg.transition().duration(200).call(zoom.scaleBy,f);}
+function fitView(){
+  const b=gRoot.node().getBBox(); const w=svg.node().clientWidth, h=svg.node().clientHeight;
+  if(!b.width) return;
+  const pad=60, scale=Math.min((w-pad)/b.width,(h-pad)/b.height,1.4);
+  const tx=w/2-(b.x+b.width/2)*scale, ty=(h-b.height*scale)/2-b.y*scale+20;
+  svg.transition().duration(350).call(zoom.transform,d3.zoomIdentity.translate(tx,ty).scale(scale));
+}
+function centerOn(id){
+  const node=gRoot.select(`[data-id="${CSS.escape(id)}"]`);
+  if(node.empty())return;
+  const t=node.attr('transform'); const m=/translate\(([-\d.]+),([-\d.]+)\)/.exec(t); if(!m)return;
+  const x=+m[1]+NW/2, y=+m[2]+NH/2;
+  const w=svg.node().clientWidth,h=svg.node().clientHeight,scale=1;
+  svg.transition().duration(400).call(zoom.transform,d3.zoomIdentity.translate(w/2-x*scale,h/2-y*scale).scale(scale));
+  selId=id; gRoot.selectAll('.node-card').classed('sel',d=>d.data.id===id);
+}
+
+/* ---------- drawer ---------- */
+function openDrawer(id){
+  selId=id; const p=byId()[id]; if(!p)return;
+  gRoot.selectAll('.node-card').classed('sel',d=>d.data.id===id);
+  document.getElementById('dAvatar').textContent=(p.name||'?').trim()[0]||'?';
+  document.getElementById('dName').textContent=p.name;
+  document.getElementById('dTitle').textContent=p.title||'—';
+  document.getElementById('dLoc').textContent=[p.city,p.region&&p.region.replace(' (HQ)',''),p.country].filter(Boolean).join(' · ')||'—';
+  // status seg
+  const seg=document.getElementById('statusSeg'); seg.innerHTML='';
+  STATUSES.forEach(s=>{ const b=document.createElement('button'); b.innerHTML=`<span class="sd" style="background:${s.color}"></span>${s.label}`;
+    if((p.status||'none')===s.k){b.classList.add('on');b.style.color=s.color;}
+    b.onclick=()=>{seg.querySelectorAll('button').forEach(x=>{x.classList.remove('on');x.style.color='';}); b.classList.add('on'); b.style.color=s.color; b.dataset.sel=s.k; seg.dataset.val=s.k;};
+    seg.appendChild(b); });
+  seg.dataset.val=p.status||'none';
+  // target
+  setTgtUI(p.target);
+  document.getElementById('dNotes').value=p.notes||'';
+  document.getElementById('dPhone').value=p.phone||'';
+  document.getElementById('dEmail').value=p.email||'';
+  document.getElementById('dLinkedin').value=p.linkedin||'';
+  document.getElementById('dTitleEdit').value=p.title||'';
+  document.getElementById('dCity').value=p.city||'';
+  document.getElementById('dRegion').value=p.region||'';
+  fillManagerSelect('dManager',p.id,p.managerId);
+  document.getElementById('drawer').classList.add('open');
+}
+function closeDrawer(){document.getElementById('drawer').classList.remove('open');selId=null;gRoot.selectAll('.node-card').classed('sel',false);}
+let tgtState=false;
+function setTgtUI(v){tgtState=!!v;document.getElementById('tgtBtn').classList.toggle('on',tgtState);document.getElementById('tgtStar').textContent=tgtState?'★':'☆';document.getElementById('tgtLbl').textContent=tgtState?'Target candidate':'Mark as target';}
+function toggleTarget(){setTgtUI(!tgtState);}
+function saveDrawer(){
+  const p=byId()[selId]; if(!p)return;
+  p.status=document.getElementById('statusSeg').dataset.val||'none';
+  p.target=tgtState;
+  p.notes=document.getElementById('dNotes').value;
+  p.phone=document.getElementById('dPhone').value;
+  p.email=document.getElementById('dEmail').value;
+  p.linkedin=document.getElementById('dLinkedin').value;
+  p.title=document.getElementById('dTitleEdit').value;
+  p.city=document.getElementById('dCity').value;
+  p.region=document.getElementById('dRegion').value;
+  const newMgr=document.getElementById('dManager').value;
+  if(newMgr!==p.id) p.managerId=newMgr||null;
+  saveStore(); render(); toast('Saved '+p.name.split(' ')[0]);
+}
+function deletePerson(){
+  const p=byId()[selId]; if(!p)return;
+  if(!confirm(`Remove ${p.name}? Their reports will move up to ${byId()[p.managerId]?.name||'the top'}.`))return;
+  people().forEach(x=>{if(x.managerId===p.id)x.managerId=p.managerId;});
+  comp().people=people().filter(x=>x.id!==p.id);
+  saveStore(); closeDrawer(); render(); toast('Removed');
+}
+function fillManagerSelect(elId,selfId,current){
+  const el=document.getElementById(elId); el.innerHTML='<option value="">— top of chart —</option>';
+  // avoid selecting a descendant as manager
+  const desc=new Set(); const kids={};people().forEach(p=>{if(p.managerId)(kids[p.managerId]=kids[p.managerId]||[]).push(p.id);});
+  const st=[selfId]; while(st.length){const x=st.pop();desc.add(x);(kids[x]||[]).forEach(k=>st.push(k));}
+  people().filter(p=>!desc.has(p.id)).sort((a,b)=>a.name.localeCompare(b.name)).forEach(p=>{
+    const o=document.createElement('option');o.value=p.id;o.textContent=p.name+(p.title?' · '+trunc(p.title,22):'');
+    if(p.id===current)o.selected=true;el.appendChild(o);
+  });
+}
+
+/* ---------- companies ---------- */
+function renderCompanies(){
+  const sel=document.getElementById('companySel'); sel.innerHTML='';
+  const list=document.getElementById('compList'); list.innerHTML='';
+  Object.values(store.companies).forEach(c=>{
+    const o=document.createElement('option');o.value=c.id;o.textContent=c.name;if(c.id===store.active)o.selected=true;sel.appendChild(o);
+    const it=document.createElement('div');it.className='comp-item'+(c.id===store.active?' active':'');
+    it.innerHTML=`<span class="dot"></span><span class="n">${c.name}</span><span class="cnt">${c.people.length}</span>`;
+    it.onclick=()=>switchCompany(c.id); list.appendChild(it);
+  });
+}
+function switchCompany(id){store.active=id;selId=null;closeDrawer();if(!collapsed[id])collapsed[id]=defaultCollapsed(store.companies[id].people);buildRegionFilters();render();renderCompanies();fitView();saveStore();}
+function newCompany(){
+  const name=prompt('New company name:'); if(!name)return;
+  const id='c'+Date.now(); store.companies[id]={id,name,createdAt:Date.now(),people:[]}; collapsed[id]=new Set();
+  store.active=id; saveStore(); renderCompanies(); buildRegionFilters(); render(); toast('Created "'+name+'"');
+}
+function deleteActiveCompany(){
+  if(Object.keys(store.companies).length<=1){toast('Keep at least one company');return;}
+  if(!confirm('Delete "'+comp().name+'" and all its data?'))return;
+  delete store.companies[store.active]; store.active=Object.keys(store.companies)[0];
+  saveStore(); switchCompany(store.active);
+}
+
+/* ---------- filters UI ---------- */
+function buildStatusFilters(){
+  const el=document.getElementById('statusFilters'); el.innerHTML='';
+  STATUSES.forEach(s=>{
+    const l=document.createElement('label');l.className='chk';
+    l.innerHTML=`<input type="checkbox" data-k="${s.k}" checked><span class="sw" style="background:${s.color}"></span>${s.label}<span class="c" id="sc-${s.k}"></span>`;
+    l.querySelector('input').onchange=e=>{e.target.checked?filters.status.add(s.k):filters.status.delete(s.k);applyFilterDim();};
+    el.appendChild(l);
+  });
+}
+function syncStatusChecks(){document.querySelectorAll('#statusFilters input').forEach(i=>{i.checked=filters.status.has(i.dataset.k);});}
+function buildRegionFilters(){
+  const el=document.getElementById('regionFilters'); el.innerHTML='';
+  const regs=[...new Set(people().map(p=>p.region).filter(Boolean))].sort();
+  filters.region=new Set();
+  regs.forEach(r=>{
+    const l=document.createElement('label');l.className='chk';
+    const n=people().filter(p=>p.region===r).length;
+    l.innerHTML=`<input type="checkbox" value="${r}"><span>${r}</span><span class="c">${n}</span>`;
+    l.querySelector('input').onchange=e=>{e.target.checked?filters.region.add(r):filters.region.delete(r);applyFilterDim();};
+    el.appendChild(l);
+  });
+}
+
+/* ---------- add / import / paste ---------- */
+function slug(s){return (s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'n';}
+function uid(base){let b=slug(base),i=0,ids=new Set(people().map(p=>p.id));while(ids.has(i?b+'-'+i:b))i++;return i?b+'-'+i:b;}
+function freshPerson(o){return Object.assign({id:uid(o.name),name:o.name,title:o.title||'',managerId:o.managerId||null,city:o.city||'',country:o.country||'',region:o.region||'',type:o.type||'Employee',status:'none',target:false,notes:'',phone:'',email:'',linkedin:''},{});}
+
+function openManual(){closeDd();fillManagerSelect('mManager',null,null);openOv('manualOv');}
+function addManual(){
+  const name=document.getElementById('mName').value.trim(); if(!name){toast('Name needed');return;}
+  const p=freshPerson({name,title:document.getElementById('mTitle').value.trim(),city:document.getElementById('mCity').value.trim(),region:document.getElementById('mRegion').value.trim(),type:document.getElementById('mType').value,managerId:document.getElementById('mManager').value||null});
+  people().push(p); saveStore(); closeOv('manualOv'); render(); toast('Added '+name.split(' ')[0]);
+  ['mName','mTitle','mCity','mRegion'].forEach(i=>document.getElementById(i).value='');
+}
+
+let importRows=null;
+function openImport(){closeDd();importRows=null;document.getElementById('impStat').textContent='';document.getElementById('impGo').disabled=true;document.getElementById('impCompany').value='';openOv('importOv');}
+function handleImportFile(file){
+  const rd=new FileReader();
+  rd.onload=e=>{
+    try{
+      const wb=XLSX.read(e.target.result,{type:'binary'});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+      importRows=mapRows(rows);
+      document.getElementById('impStat').textContent=importRows.length+' people detected · '+importRows.filter(r=>!r._mgr).length+' at top level';
+      document.getElementById('impGo').disabled=importRows.length===0;
+      if(!document.getElementById('impCompany').value) document.getElementById('impCompany').value=file.name.replace(/\.(xlsx|xls|csv)$/i,'');
+    }catch(err){document.getElementById('impStat').textContent='Could not read file: '+err.message;}
+  };
+  rd.readAsBinaryString(file);
+}
+function pick(o,keys){for(const k of Object.keys(o)){const kk=k.toLowerCase().replace(/[^a-z]/g,'');if(keys.includes(kk))return o[k];}return '';}
+function mapRows(rows){
+  return rows.map(r=>({
+    name:String(pick(r,['name','fullname','employee','person'])).trim(),
+    title:String(pick(r,['designation','title','role','jobtitle'])).trim(),
+    _mgr:String(pick(r,['reportsto','manager','reportstomanager','supervisor','managername'])).trim(),
+    city:String(pick(r,['city','location'])).trim(),
+    country:String(pick(r,['country'])).trim(),
+    region:String(pick(r,['region','zone','area'])).trim(),
+    type:String(pick(r,['type','employmenttype','category'])).trim()||'Employee',
+  })).filter(r=>r.name);
+}
+function buildOrgFromRows(rows){
+  // create people with ids, then link managers by name
+  const nameId={}; const ppl=[];
+  const ids=new Set();
+  rows.forEach(r=>{let b=slug(r.name),i=0;while(ids.has(i?b+'-'+i:b))i++;const id=i?b+'-'+i:b;ids.add(id);nameId[r.name]=nameId[r.name]||id;
+    ppl.push({id,_name:r.name,_mgr:r._mgr,title:r.title,city:r.city,country:r.country,region:r.region,type:r.type});});
+  return ppl.map(p=>({id:p.id,name:p._name,title:p.title,managerId:(p._mgr&&nameId[p._mgr]&&nameId[p._mgr]!==p.id)?nameId[p._mgr]:null,city:p.city,country:p.country,region:p.region,type:p.type||'Employee',status:'none',target:false,notes:'',phone:'',email:'',linkedin:''}));
+}
+function doImport(){
+  if(!importRows||!importRows.length)return;
+  const name=document.getElementById('impCompany').value.trim()||'Imported org';
+  const id='c'+Date.now(); store.companies[id]={id,name,createdAt:Date.now(),people:buildOrgFromRows(importRows)};
+  collapsed[id]=defaultCollapsed(store.companies[id].people); store.active=id;
+  saveStore(); closeOv('importOv'); renderCompanies(); buildRegionFilters(); render(); fitView(); toast('Imported '+importRows.length+' people');
+}
+
+let pasteMode='table';
+function openPaste(){closeDd();document.getElementById('pasteText').value='';document.getElementById('pasteStat').textContent='';document.getElementById('pasteGo').disabled=true;document.getElementById('pasteCompany').value='';setPasteMode('table');openOv('pasteOv');}
+function setPasteMode(m){pasteMode=m;document.querySelectorAll('#pasteTabs button').forEach(b=>b.classList.toggle('on',b.dataset.mode===m));
+  document.getElementById('pasteHint').innerHTML=m==='table'
+    ?'Paste rows with a header line. Tab or comma separated. Recognised headers: <code>Name</code>, <code>Reports To</code>, <code>Designation</code>, <code>City</code>, <code>Region</code>, <code>Type</code>.'
+    :'One person per line: <code>Name, Designation, Manager</code> (comma or tab). Manager is optional — leave blank for the top person. Example:<br><code>Kiran Dutt G, Sales Manager,</code><br><code>Abhishek Rana, Sales Specialist, Kiran Dutt G</code>';
+  previewPaste();}
+function parsePaste(){
+  const txt=document.getElementById('pasteText').value.trim(); if(!txt)return[];
+  let lines=txt.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  const sep=l=>l.includes('\t')?l.split('\t'):l.split(',');
+  if(pasteMode==='table'){
+    if(lines.length<2)return[];
+    const rawHead=sep(lines[0]).map(h=>h.trim());
+    const objs=lines.slice(1).map(l=>{const c=sep(l);const o={};rawHead.forEach((h,i)=>o[h]=(c[i]||'').trim());return o;});
+    return mapRows(objs);
+  } else {
+    return lines.map(l=>{const c=sep(l).map(x=>x.trim());return {name:c[0]||'',title:c[1]||'',_mgr:c[2]||'',city:'',country:'',region:'',type:'Employee'};}).filter(r=>r.name);
+  }
+}
+function previewPaste(){
+  const rows=parsePaste();
+  document.getElementById('pasteStat').textContent=rows.length?(rows.length+' people detected'):'';
+  document.getElementById('pasteGo').disabled=rows.length===0;
+}
+function doPaste(){
+  const rows=parsePaste(); if(!rows.length)return;
+  const name=document.getElementById('pasteCompany').value.trim()||'Pasted org';
+  const id='c'+Date.now(); store.companies[id]={id,name,createdAt:Date.now(),people:buildOrgFromRows(rows)};
+  collapsed[id]=defaultCollapsed(store.companies[id].people); store.active=id;
+  saveStore(); closeOv('pasteOv'); renderCompanies(); buildRegionFilters(); render(); fitView(); toast('Built org from '+rows.length+' rows');
+}
+
+/* ---------- exports ---------- */
+function exportXLSX(){closeDd();
+  const aoa=[['Name','Designation','Reports To','City','Country','Region','Type','Status','Target','Phone','Email','LinkedIn','Notes']];
+  const m=byId();
+  people().forEach(p=>aoa.push([p.name,p.title,m[p.managerId]?.name||'',p.city,p.country,p.region,p.type,SL[p.status||'none'],p.target?'Yes':'',p.phone,p.email,p.linkedin,p.notes]));
+  const ws=XLSX.utils.aoa_to_sheet(aoa); ws['!cols']=[{wch:24},{wch:30},{wch:22},{wch:14},{wch:8},{wch:14},{wch:16},{wch:14},{wch:8},{wch:14},{wch:20},{wch:24},{wch:34}];
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Org'); XLSX.writeFile(wb,slug(comp().name)+'.xlsx'); toast('Excel exported');
+}
+async function chartCanvas(){
+  const b=gRoot.node().getBBox(); const pad=40;
+  const clone=svg.node().cloneNode(true);
+  clone.querySelector('g').setAttribute('transform',`translate(${-b.x+pad},${-b.y+pad})`);
+  clone.setAttribute('width',b.width+pad*2); clone.setAttribute('height',b.height+pad*2);
+  clone.setAttribute('viewBox',`0 0 ${b.width+pad*2} ${b.height+pad*2}`);
+  const style=document.createElement('style');
+  style.textContent=getComputedCSS();
+  clone.insertBefore(style,clone.firstChild);
+  const xml=new XMLSerializer().serializeToString(clone);
+  const img=new Image(); img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(xml)));
+  await new Promise(r=>{img.onload=r;img.onerror=r;});
+  const scale=2, cv=document.createElement('canvas'); cv.width=(b.width+pad*2)*scale; cv.height=(b.height+pad*2)*scale;
+  const ctx=cv.getContext('2d'); ctx.fillStyle='#0E1526'; ctx.fillRect(0,0,cv.width,cv.height); ctx.scale(scale,scale);
+  ctx.drawImage(img,0,0); return cv;
+}
+function getComputedCSS(){
+  return `text{font-family:'Inter',sans-serif}.nm{fill:#EAF0FA;font-weight:600;font-size:13px}.tl{fill:#8A9BB5;font-size:11px}.lc{fill:#5B6E8C;font-size:9.5px;font-family:'JetBrains Mono',monospace}.card-bg{fill:#16203A;stroke:#26324F}.node-card.mgr .card-bg{stroke:#0C8F65}.link{fill:none;stroke:#26324F;stroke-width:1.4}.star{fill:#F5B301;font-size:15px}.ext{fill:none;stroke:#7C6CF0}.ext-t{fill:#7C6CF0;font-size:8px;font-family:'JetBrains Mono',monospace}.toggle circle{fill:#121B30;stroke:#26324F}.toggle.collapsed circle{fill:#10B981}.toggle text{font-family:'JetBrains Mono',monospace;font-size:10px;fill:#8A9BB5}.toggle.collapsed text{fill:#04120C}`;
+}
+async function exportPNG(){closeDd();toast('Rendering PNG…');try{const cv=await chartCanvas();const a=document.createElement('a');a.download=slug(comp().name)+'-orgchart.png';a.href=cv.toDataURL('image/png');a.click();}catch(e){toast('PNG failed: '+e.message);}}
+async function exportPDF(){closeDd();toast('Rendering PDF…');try{const cv=await chartCanvas();const{jsPDF}=window.jspdf;const land=cv.width>=cv.height;const pdf=new jsPDF({orientation:land?'l':'p',unit:'px',format:[cv.width/2,cv.height/2]});pdf.addImage(cv.toDataURL('image/png'),'PNG',0,0,cv.width/2,cv.height/2);pdf.save(slug(comp().name)+'-orgchart.pdf');}catch(e){toast('PDF failed: '+e.message);}}
+function backupJSON(){closeDd();const blob=new Blob([JSON.stringify(payload(),null,0)],{type:'application/json'});const a=document.createElement('a');const d=new Date();const stamp=d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')+'-'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0');a.download='hirelab-orgmapper-'+stamp+'.json';a.href=URL.createObjectURL(blob);a.click();toast('Backup downloaded');}
+function restoreJSON(file){const rd=new FileReader();rd.onload=e=>{try{applyPayload(JSON.parse(e.target.result));saveStore();renderCompanies();buildRegionFilters();render();fitView();toast('Backup restored');}catch(err){toast('Invalid backup file');}};rd.readAsText(file);}
+
+/* ---------- ui plumbing ---------- */
+function toggleDd(id){document.querySelectorAll('.dd').forEach(d=>{if(d.id!==id)d.classList.remove('open');});document.getElementById(id).classList.toggle('open');}
+function closeDd(){document.querySelectorAll('.dd').forEach(d=>d.classList.remove('open'));}
+function openOv(id){document.getElementById(id).classList.add('open');}
+function closeOv(id){document.getElementById(id).classList.remove('open');}
+let toastT;function toast(m){const t=document.getElementById('toast');document.getElementById('toastMsg').textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2200);}
+
+document.addEventListener('click',e=>{if(!e.target.closest('.dd'))closeDd();});
+window.addEventListener('resize',()=>{svg.attr('width',svg.node().clientWidth).attr('height',svg.node().clientHeight);});
+
+/* ---------- init ---------- */
+async function init(){
+  await loadStore();
+  if(!store) return;
+  if(!hasStorage)document.getElementById('storeWarn').style.display='block';
+  initChart();
+  buildStatusFilters();
+  buildRegionFilters();
+  renderCompanies();
+  render();
+  fitView();
+  updateFilePill();
+
+
+  // Warn only if edits have not reached the server yet
+  window.addEventListener('beforeunload',e=>{
+    if(dirty && syncState!=='saved'){e.preventDefault();e.returnValue='';}
+  });
+
+  // deep link from a candidate profile: /orgmap?person=<slug>
+  const _dl=new URLSearchParams(location.search).get('person');
+  if(_dl) setTimeout(()=>{ if(!revealPerson(_dl)) toast('That person is not in this map'); },400);
+
+  document.getElementById('companySel').onchange=e=>switchCompany(e.target.value);
+  document.getElementById('search').addEventListener('input',debounce(doSearch,180));
+  document.getElementById('search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();nextMatch();}});
+  document.getElementById('fTarget').onchange=e=>{filters.target=e.target.checked;applyFilterDim();};
+  document.getElementById('fExt').onchange=e=>{filters.ext=e.target.checked;applyFilterDim();};
+
+  const impDrop=document.getElementById('impDrop'),impFile=document.getElementById('impFile');
+  impDrop.onclick=()=>impFile.click();
+  impFile.onchange=e=>{if(e.target.files[0])handleImportFile(e.target.files[0]);};
+  impDrop.ondragover=e=>{e.preventDefault();impDrop.classList.add('drag');};
+  impDrop.ondragleave=()=>impDrop.classList.remove('drag');
+  impDrop.ondrop=e=>{e.preventDefault();impDrop.classList.remove('drag');if(e.dataTransfer.files[0])handleImportFile(e.dataTransfer.files[0]);};
+  document.getElementById('restoreFile').onchange=e=>{if(e.target.files[0])restoreJSON(e.target.files[0]);};
+
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();document.querySelectorAll('.overlay.open').forEach(o=>o.classList.remove('open'));closeDd();}});
+}
+function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};}
+window.addEventListener('DOMContentLoaded',init);
+</script>
+</body>
+</html>
