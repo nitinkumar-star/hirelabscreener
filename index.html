@@ -735,7 +735,7 @@ body{font-size:14px !important; line-height:1.5}
     <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M4 21V8l8-5 8 5v13M9 21v-6h6v6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Clients (CRM)</span><span class="sb-nav-sub">Companies &middot; contacts &middot; org chart</span></span></a>
     <a href="#freelancers" class="sb-gear" id="sb-freelancers" style="display:none" onclick="return navClick(event,openFreelancerAdmin)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21a9 9 0 100-18 9 9 0 000 18z"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Freelancers</span><span class="sb-nav-sub">Sourcers &middot; assignments</span></span></a>
     <a href="#bd" class="sb-gear" id="sb-bd" style="display:none" onclick="return navClick(event,openBd)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">BD Command Center</span><span class="sb-nav-sub">Follow-ups &middot; meetings</span></span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
-    <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Talent</span><span class="sb-nav-sub">Search all candidates &middot; add new</span></span></a><a href="/schedule" class="sb-gear" id="sb-schedule"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Scheduler</span><span class="sb-nav-sub">Availability &middot; bookings</span></span></a>
+    <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Talent</span><span class="sb-nav-sub">Search all candidates &middot; add new</span></span></a><a href="/schedule" class="sb-gear" id="sb-schedule"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Scheduler</span><span class="sb-nav-sub">Availability &middot; bookings</span></span></a><a href="/orgmap" class="sb-gear" id="sb-orgmap"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/><path d="M12 7v4M5 16v-2h14v2M12 11v3"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Org Map</span><span class="sb-nav-sub">Talent mapping &middot; reporting lines</span></span></a>
   </div>
 
   <div class="sb-mand-head"><span class="t">MY MANDATES</span><button class="a" onclick="openModal('modal-mandate')" title="New mandate">+</button></div>
@@ -3747,7 +3747,7 @@ function renderProfileDetail(c){
   html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
-  html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+'</div><div>'+keyFacts+reminders+workCard+'</div></div></div>';
+  html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+'</div><div>'+keyFacts+reminders+workCard+_cpOrgShell(c.id)+'</div></div></div>';
   // Resume
   html+='<div class="cp-pane" id="cp-pane-resume" style="display:none">'+cvCard+'</div>';
   // Communications
@@ -3773,6 +3773,7 @@ function renderProfileDetail(c){
   try{ cpLoadEmailThread(c.id); }catch(e){}
   try{ cpLoadWaThread(c.id); }catch(e){}
   try{ cpLoadHistory(c.id); }catch(e){}
+  try{ cpLoadOrg(c.id); }catch(e){}
 }
 
 function cpTab(name){
@@ -10541,6 +10542,157 @@ async function deleteReminder(rid, cid) {
   var r = await req('DELETE', '/reminders/' + rid, null);
   if (r.ok) { loadCandidateReminders(cid); }
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   ORG MAP — candidate profile widget (Wave 2)
+   Tag a reporting manager without leaving the profile; every tag quietly
+   grows the company map. Contact details fill blanks both ways on their
+   own, but a real difference is never overwritten — it is shown so the
+   recruiter decides which number is the live one.
+   ═══════════════════════════════════════════════════════════════════ */
+function _cpOrgShell(cid){
+  return '<div class="cp-card2" id="cp-org-'+cid+'">'
+       + '<div class="cp-lbl2">Org &amp; Reporting</div>'
+       + '<div style="font-size:12px;color:var(--muted)">Loading…</div></div>';
+}
+function _oe(s){ return esc(String(s==null?'':s)); }
+
+async function cpLoadOrg(cid){
+  var box=document.getElementById('cp-org-'+cid); if(!box) return;
+  var d=await req('GET','/org/for-candidate/'+cid);
+  if(!d || d.error){ box.style.display='none'; return; }   // feature off → stay invisible
+  box.style.display='';
+  window['_org_'+cid]=d;
+  var h='<div class="cp-lbl2" style="display:flex;align-items:center;justify-content:space-between">'
+      + '<span>Org &amp; Reporting</span>';
+  if(d.node) h+='<a href="/orgmap?person='+encodeURIComponent(d.node.ext_key)+'" target="_blank" '
+              + 'style="font-size:11px;font-weight:600;color:#0F6E56;text-decoration:none">View in Org Map ↗</a>';
+  h+='</div>';
+
+  if(d.org_company) h+='<div style="font-size:11px;color:var(--muted);margin:-4px 0 10px">'+_oe(d.org_company.name)+'</div>';
+
+  /* contact differences — surfaced, never silently resolved */
+  (d.conflicts||[]).forEach(function(c){
+    h+='<div style="background:#FFF8E6;border:0.5px solid #F0DFB0;border-radius:9px;padding:8px 10px;margin-bottom:8px;font-size:11.5px">'
+     + '<b>'+_oe(c.field)+' differs.</b> Which one is right?<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">'
+     + '<button class="cp-hbtn" onclick="cpOrgResolve('+cid+',\''+_oe(c.field)+'\',\'ats\')">ATS: '+_oe(c.ats)+'</button>'
+     + '<button class="cp-hbtn" onclick="cpOrgResolve('+cid+',\''+_oe(c.field)+'\',\'org\')">Map: '+_oe(c.org)+'</button>'
+     + '</div></div>';
+  });
+
+  /* not on the map yet */
+  if(!d.node){
+    h+='<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Not on the org map yet.</div>';
+    (d.suggestions||[]).forEach(function(s){
+      h+='<div style="display:flex;align-items:center;gap:8px;justify-content:space-between;padding:7px 0;border-top:0.5px solid var(--line)">'
+       + '<div style="min-width:0"><div style="font-size:12.5px;font-weight:600">'+_oe(s.name)+'</div>'
+       + '<div style="font-size:11px;color:var(--muted)">'+_oe(s.title)+(s.city?' · '+_oe(s.city):'')+'</div></div>'
+       + '<button class="cp-hbtn" onclick="cpOrgLink('+cid+','+s.pid+')">This is them</button></div>';
+    });
+    h+=cpOrgManagerPicker(cid,'Add reporting manager');
+    box.innerHTML=h; return;
+  }
+
+  /* manager */
+  h+='<div style="font-size:11px;color:var(--muted);margin-bottom:3px">Reports to</div>';
+  if(d.manager){
+    h+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px">'
+     + '<div style="min-width:0"><div style="font-size:13px;font-weight:600">'+_oe(d.manager.name)+'</div>'
+     + '<div style="font-size:11px;color:var(--muted)">'+_oe(d.manager.title)+'</div></div>'
+     + '<button class="cp-hbtn" onclick="cpOrgClearManager('+cid+')" title="Remove">✕</button></div>';
+  } else {
+    h+=cpOrgManagerPicker(cid,'Tag manager');
+  }
+
+  /* direct reports */
+  if(d.reports && d.reports.length){
+    h+='<div style="font-size:11px;color:var(--muted);margin:10px 0 3px">Direct reports ('+d.reports.length+')</div>';
+    d.reports.slice(0,6).forEach(function(r){
+      h+='<div style="font-size:12px;padding:3px 0">• '+_oe(r.name)
+       + '<span style="color:var(--muted)"> — '+_oe(r.title)+'</span></div>';
+    });
+    if(d.reports.length>6) h+='<div style="font-size:11px;color:var(--muted)">+'+(d.reports.length-6)+' more</div>';
+  }
+
+  /* the same human on other mandates */
+  if(d.other_rows && d.other_rows.length){
+    h+='<div style="font-size:11px;color:var(--muted);margin:10px 0 3px">Also in your pipeline</div>';
+    d.other_rows.forEach(function(o){
+      h+='<div style="font-size:12px;padding:3px 0;cursor:pointer;color:#0F6E56" onclick="openProfile('+o.id+')">'
+       + '• '+_oe(o.role||'Candidate')+(o.client?' · '+_oe(o.client):'')
+       + '<span style="color:var(--muted)"> ('+_oe(o.stage)+')</span></div>';
+    });
+  }
+  box.innerHTML=h;
+}
+
+function cpOrgManagerPicker(cid,label){
+  return '<div style="margin-top:6px">'
+   + '<input class="inp" id="cp-org-q-'+cid+'" placeholder="'+label+' — type a name…" '
+   + 'oninput="cpOrgSearch('+cid+')" autocomplete="off" '
+   + 'style="width:100%;font-size:12.5px;padding:7px 9px;border:0.5px solid var(--line);border-radius:8px">'
+   + '<div id="cp-org-res-'+cid+'"></div></div>';
+}
+
+var _cpOrgT=null;
+function cpOrgSearch(cid){
+  clearTimeout(_cpOrgT);
+  _cpOrgT=setTimeout(async function(){
+    var q=(document.getElementById('cp-org-q-'+cid)||{}).value||'';
+    var box=document.getElementById('cp-org-res-'+cid); if(!box) return;
+    if(q.trim().length<2){ box.innerHTML=''; return; }
+    var d=await req('GET','/org/people-search?candidate_id='+cid+'&q='+encodeURIComponent(q));
+    var h='';
+    (d.people||[]).forEach(function(p){
+      h+='<div onclick="cpOrgSetManager('+cid+',\''+_oe(p.ext_key)+'\')" '
+       + 'style="padding:6px 8px;cursor:pointer;border-bottom:0.5px solid var(--line);font-size:12px" '
+       + 'onmouseover="this.style.background=\'#F7F6F2\'" onmouseout="this.style.background=\'\'">'
+       + '<b>'+_oe(p.name)+'</b><span style="color:var(--muted)"> — '+_oe(p.title)+'</span></div>';
+    });
+    h+='<div onclick="cpOrgNewManager('+cid+')" style="padding:6px 8px;cursor:pointer;font-size:12px;color:#0F6E56;font-weight:600">'
+     + '+ Add “'+_oe(q)+'” as a new person</div>';
+    box.innerHTML=h;
+  },220);
+}
+
+async function cpOrgSetManager(cid, extKey){
+  var r=await req('POST','/org/set-manager',{candidate_id:cid, manager_ext_key:extKey});
+  if(r && r.error){ alert('Could not tag manager: '+r.error); return; }
+  cpLoadOrg(cid);
+}
+async function cpOrgNewManager(cid){
+  var name=((document.getElementById('cp-org-q-'+cid)||{}).value||'').trim();
+  if(!name) return;
+  var title=prompt('Designation for '+name+'? (optional)','')||'';
+  var r=await req('POST','/org/set-manager',{candidate_id:cid, manager_name:name, manager_title:title});
+  if(r && r.error){ alert('Could not add: '+r.error); return; }
+  cpLoadOrg(cid);
+}
+async function cpOrgClearManager(cid){
+  await req('POST','/org/set-manager',{candidate_id:cid, clear:1});
+  cpLoadOrg(cid);
+}
+async function cpOrgLink(cid,pid){
+  var r=await req('POST','/org/link',{candidate_id:cid, org_person_id:pid});
+  if(r && r.error){ alert('Could not link: '+r.error); return; }
+  cpLoadOrg(cid);
+}
+async function cpOrgResolve(cid, field, keep){
+  await req('POST','/org/resolve-conflict',{candidate_id:cid, field:field, keep:keep});
+  cpLoadOrg(cid);
+}
+
+/* hide the sidebar tab for workspaces without the add-on */
+(function(){
+  function gate(){
+    fetch(API+'/org/stats',{credentials:'include'}).then(function(r){
+      if(r.status===403){ var el=document.getElementById('sb-orgmap'); if(el) el.style.display='none'; }
+    }).catch(function(){});
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',gate);
+  else gate();
+})();
 
 </script>
 </body></html>
