@@ -769,12 +769,13 @@ def register_device():
 @app.route('/api/push-call', methods=['POST'])
 @login_required
 def push_call():
-    """Desktop webapp calls this when user clicks "Call via Phone". We send a
-    Firebase push to ALL the user's registered devices with the phone number
-    and candidate name. The Android app receives it and opens the dialer.
+    """Desktop webapp calls this when the user clicks "Call via Phone".
+    Sends an FCM push to the user's phone(s).
 
-    Uses Firebase Cloud Messaging V1 API (Legacy was shut down June 2024).
-    Requires a service account JSON file on the server."""
+    NOTE: we send a VISIBLE notification (not data-only). Android 10+ forbids an
+    app from launching the dialer from the background, so a silent data push
+    appears to do nothing. With a notification the phone always shows it, and
+    tapping it opens the app with the number ready to dial."""
     d = request.json or {}
     phone = (d.get('phone') or '').strip()
     name = (d.get('name') or 'Candidate').strip()
@@ -783,55 +784,50 @@ def push_call():
 
     uid = real_user_id()
     conn = get_db()
-    tokens = conn.execute('SELECT fcm_token FROM devices WHERE user_id=? AND is_active=1',
-                          (uid,)).fetchall()
+    devs = conn.execute('SELECT fcm_token, device_name FROM devices WHERE user_id=? AND is_active=1',
+                        (uid,)).fetchall()
     conn.close()
-    if not tokens:
+    if not devs:
         return jsonify({'error': 'No phone connected. Open the HireLab Dialer app on your phone and login first.'}), 400
 
-    # Get FCM V1 access token using service account
-    access_token, project_id, err = _get_fcm_access_token()
-    if err:
-        return jsonify({'error': err}), 400
-
-    # Send push to all user's devices via V1 API
-    sent = 0
-    for row in tokens:
-        try:
-            resp = requests.post(
-                f'https://fcm.googleapis.com/v1/projects/{project_id}/messages:send',
-                json={
-                    'message': {
-                        'token': row['fcm_token'],
-                        'data': {'action': 'call', 'phone': phone, 'name': name},
-                        'android': {'priority': 'high'},
-                    }
-                },
-                headers={
-                    'Authorization': f'Bearer {access_token}',
-                    'Content-Type': 'application/json',
-                },
-                timeout=10)
-            if resp.status_code == 200:
-                sent += 1
-            else:
-                print(f'[push-call] FCM V1 error: {resp.status_code} {resp.text[:200]}')
-        except Exception as e:
-            print(f'[push-call] FCM send failed: {e}')
-
+    payload = {
+        'action': 'call',
+        'phone': phone,
+        'name': name,
+        'kind': 'call',
+        'title': 'Call ' + name,
+    }
+    sent = _send_fcm_to_user(uid, payload,
+                             notification={'title': 'Call ' + name,
+                                           'body': 'Tap to dial ' + phone})
     if sent > 0:
-        return jsonify({'ok': True, 'sent': sent, 'message': f'Call push sent! Check your phone.'})
-    else:
-        return jsonify({'error': 'Push failed — try re-opening the Dialer app on your phone.'}), 500
+        return jsonify({'ok': True, 'sent': sent, 'devices': len(devs),
+                        'message': 'Call push sent to %d device(s) - check your phone.' % sent})
+    return jsonify({'error': 'Push failed - try re-opening the Dialer app on your phone.'}), 500
+
+
+@app.route('/api/devices/list')
+@login_required
+def devices_list():
+    """Which phones are registered for pushes (helps diagnose stale devices)."""
+    conn = get_db()
+    rows = conn.execute('SELECT id, device_name, is_active, created_at, updated_at '
+                        'FROM devices WHERE user_id=? ORDER BY id DESC', (real_user_id(),)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'devices': [dict(r) for r in rows]})
 
 
 # ── FCM V1 helper: get OAuth2 access token from service account JSON ─────
 _fcm_token_cache = {'token': '', 'expires': 0, 'project_id': ''}
 
 
-def _send_fcm_to_user(uid, data_payload):
-    """Send a data-only FCM push to all of a user's active devices.
-    data_payload: dict of string->string. Returns number of devices reached."""
+def _send_fcm_to_user(uid, data_payload, notification=None):
+    """Send an FCM push to all of a user's active devices.
+    data_payload: dict of string->string.
+    notification: optional {'title':..., 'body':...}. When provided, Android
+    shows a system-tray notification itself even if the app has no handler for
+    this payload (needed because apps can't launch the dialer from the
+    background on Android 10+). Returns number of devices reached."""
     conn = get_db()
     tokens = conn.execute('SELECT fcm_token FROM devices WHERE user_id=? AND is_active=1',
                           (uid,)).fetchall()
@@ -847,13 +843,21 @@ def _send_fcm_to_user(uid, data_payload):
     sent = 0
     for row in tokens:
         try:
+            _msg = {
+                'token': row['fcm_token'],
+                'data': data,
+                'android': {'priority': 'high'},
+            }
+            if notification:
+                _msg['notification'] = {
+                    'title': str(notification.get('title', '')),
+                    'body': str(notification.get('body', '')),
+                }
+                # Tapping the notification opens the app and hands it the data.
+                _msg['android']['notification'] = {'click_action': 'FLUTTER_NOTIFICATION_CLICK'}
             resp = requests.post(
                 f'https://fcm.googleapis.com/v1/projects/{project_id}/messages:send',
-                json={'message': {
-                    'token': row['fcm_token'],
-                    'data': data,
-                    'android': {'priority': 'high'},
-                }},
+                json={'message': _msg},
                 headers={'Authorization': f'Bearer {access_token}',
                          'Content-Type': 'application/json'},
                 timeout=10)
@@ -3960,6 +3964,7 @@ TENANT_SETTINGS = {
     'wa_inbound_token',    # per-company secret for the WhatsApp listener to post inbound msgs
     'wa_style_profile',    # DeepSeek-learned summary of how this recruiter writes (for AI drafts)
     'wa_followup_hours',   # hours to wait before AI suggests a follow-up (default 24)
+    'wa_auto_categories',  # JSON list of situation categories the agent may auto-send (future)
 }
 
 def _safe_company_id():
@@ -9967,46 +9972,6 @@ def wa_inbound():
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'candidate_id': cand['id']})
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  Ye poora block server.py me paste karo.
-#
-#  KAHAN:  wa_inbound() function ke theek BAAD.
-#          Dhundo:  @app.route('/api/candidates/<int:cid>/wa-thread')
-#          Uske THEEK UPAR ye paste kar do.
-#
-#  KYUN:   Naya WhatsApp kai chats me asli number ki jagah ek anonymous id
-#          bhejta hai (108332094382256@lid). Us se candidate match nahi hota.
-#          Listener ko candidate numbers chahiye taaki wo WhatsApp se unke
-#          LID poochh ke mapping bana le. Ye endpoint wahi list deta hai.
-#
-#  SAFE:   Sirf padhta hai, kuch change nahi karta. Auth wahi listener token
-#          hai jo /api/wa-inbound use karta hai. Login session ki zarurat nahi.
-# ═══════════════════════════════════════════════════════════════════════════
-
-@app.route('/api/wa-phones', methods=['POST'])
-def wa_phones():
-    """Listener ko is company ke candidate phone numbers deta hai, taaki wo
-    WhatsApp se unke LID (anonymous id) nikaal ke mapping bana sake.
-    Sirf 10-digit numbers, duplicate hata ke."""
-    d = request.json or {}
-    tok = d.get('token') or request.headers.get('X-WA-Token', '')
-    company_id = _wa_company_for_token(tok)
-    if not company_id:
-        return jsonify({'error': 'invalid listener token'}), 401
-
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT phone FROM candidates WHERE owner_id=? AND phone IS NOT NULL AND phone!=''",
-        (company_id,)).fetchall()
-    conn.close()
-
-    seen, out = set(), []
-    for r in rows:
-        p = _wa_norm_phone10(r['phone'])
-        if len(p) == 10 and p not in seen:
-            seen.add(p)
-            out.append(p)
-    return jsonify({'ok': True, 'phones': out})
 
 @app.route('/api/candidates/<int:cid>/wa-thread')
 @login_required
@@ -10134,9 +10099,22 @@ def wa_draft_reply(cid):
     convo_txt = "\n".join([('Candidate: ' if m['direction'] == 'inbound' else 'Me: ') + (m['content'] or '') for m in thread])
     style = get_setting('wa_style_profile', '')
     style_block = ("Write EXACTLY in my personal style:\n" + style + "\n\n") if style else ""
+    # classify the situation so we can pull the right learning + track confidence
+    conn2 = get_db()
+    category = 'general'
+    try:
+        cat_ids = ", ".join(WA_CATEGORY_IDS)
+        cresp = call_deepseek(ds_key, {'model': 'deepseek-chat', 'temperature': 0, 'max_tokens': 12,
+            'messages': [{'role': 'system', 'content': 'Classify the recruitment WhatsApp conversation into ONE category id from: ' + cat_ids + '. Reply with ONLY the id.'},
+                         {'role': 'user', 'content': convo_txt[-1500:]}]})
+        c = cresp.json()['choices'][0]['message']['content'].strip().lower()
+        category = c if c in WA_CATEGORY_IDS else 'general'
+    except Exception:
+        category = 'general'
+    learn = _wa_learning_block(conn2, company_id, category)
     system_msg = (
         "You are helping a recruiter draft the next WhatsApp reply to a candidate. "
-        + style_block +
+        + style_block + learn +
         "Rules: natural and human, match my style above, never invent salary/CTC "
         "numbers or a client name, keep it concise. Output ONLY the reply text.")
     try:
@@ -10146,10 +10124,17 @@ def wa_draft_reply(cid):
                          {'role': 'user', 'content': "Conversation so far:\n" + convo_txt + "\n\nDraft my next reply:"}]})
         draft = resp.json()['choices'][0]['message']['content'].strip()
     except TokenCapError:
-        return jsonify({'error': 'Token limit reached.'}), 429
+        conn2.close(); return jsonify({'error': 'Token limit reached.'}), 429
     except Exception as e:
-        return jsonify({'error': 'AI call failed: ' + str(e)[:100]}), 500
-    return jsonify({'ok': True, 'draft': draft, 'styled': bool(style)})
+        conn2.close(); return jsonify({'error': 'AI call failed: ' + str(e)[:100]}), 500
+    # record a 'drafted' row; queue-send later resolves it (approved/edited)
+    _ensure_wa_feedback(conn2)
+    draft_id = conn2.execute(
+        "INSERT INTO wa_agent_feedback (company_id,candidate_id,conversation_id,category,"
+        "agent_draft,sent_text,action,comment,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (company_id, cid, (conv['id'] if conv else None), category, draft, '', 'drafted', '', ts())).lastrowid
+    conn2.commit(); conn2.close()
+    return jsonify({'ok': True, 'draft': draft, 'styled': bool(style), 'draft_id': draft_id, 'category': category})
 
 
 def _ensure_wa_outbox(conn):
@@ -10201,6 +10186,16 @@ def wa_queue_send(cid):
     conn.execute('UPDATE wa_conversations SET last_message_at=?, updated_at=? WHERE id=?', (ts(), ts(), conv_id))
     conn.execute('INSERT INTO wa_outbox (company_id,candidate_id,phone,text,status,created_at) '
                  'VALUES (?,?,?,?,?,?)', (company_id, cid, digits, text, 'pending', ts()))
+    # LEARNING: if this send came from an AI draft, record whether I kept or edited it
+    draft_id = d.get('draft_id')
+    if draft_id:
+        _ensure_wa_feedback(conn)
+        fb = conn.execute("SELECT agent_draft FROM wa_agent_feedback WHERE id=? AND company_id=?",
+                          (draft_id, company_id)).fetchone()
+        if fb:
+            act = 'approved' if text == (fb['agent_draft'] or '').strip() else 'edited'
+            conn.execute("UPDATE wa_agent_feedback SET sent_text=?, action=?, comment=?, resolved_at=? WHERE id=?",
+                         (text, act, (d.get('comment') or '').strip(), ts(), draft_id))
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'queued': True})
 
@@ -10248,6 +10243,11 @@ def _ensure_wa_suggestions(conn):
         kind TEXT, message TEXT, reason TEXT, based_on TEXT,
         status TEXT DEFAULT 'pending', created_at TEXT)''')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_wa_sugg ON wa_suggestions(company_id,status)')
+    # additive column for the learning agent (safe if it already exists)
+    try:
+        conn.execute("ALTER TABLE wa_suggestions ADD COLUMN category TEXT DEFAULT 'followup'")
+    except Exception:
+        pass
 
 
 def _tenant_setting_raw(conn, company_id, key, default=''):
@@ -10272,19 +10272,21 @@ def _hours_since(ts_str):
         return None
 
 
-def _wa_analyze_conversation(thread_txt, hours_since, style, stage, wait_hours):
-    """Ask DeepSeek for the single best next action on this conversation."""
+def _wa_analyze_conversation(thread_txt, hours_since, style, stage, wait_hours, learning=''):
+    """Ask DeepSeek for the single best next action + situation category."""
     ds_key = get_setting('deepseek_api_key')
     if not ds_key:
         return None
     style_block = ("The recruiter writes like this — match it in any message:\n" + style + "\n\n") if style else ""
+    cat_ids = ", ".join(WA_CATEGORY_IDS)
     system_msg = (
         "You assist a recruiter running WhatsApp chats with candidates. Read the FULL "
         "conversation (Me = recruiter, Candidate = candidate) and how long since the last "
-        "message, then choose the single best next action.\n\n" + style_block +
+        "message, then choose the single best next action.\n\n" + style_block + learning +
         "Respond with ONLY a JSON object:\n"
-        '{"action":"followup"|"not_interested"|"none","message":"<the WhatsApp follow-up '
-        'to send, ONLY when action=followup, written in the recruiter\'s style>","reason":"<one short line>"}\n\n'
+        '{"action":"followup"|"not_interested"|"none","category":"<one of: ' + cat_ids + '>",'
+        '"message":"<the WhatsApp follow-up to send, ONLY when action=followup, in the recruiter\'s style>",'
+        '"reason":"<one short line>"}\n\n'
         "Rules:\n"
         f"- 'followup' ONLY if the candidate showed interest but a needed action is still pending "
         f"(e.g. hasn't sent an updated resume/profile) AND at least {wait_hours} hours passed since the "
@@ -10292,11 +10294,12 @@ def _wa_analyze_conversation(thread_txt, hours_since, style, stage, wait_hours):
         "- 'not_interested' ONLY if the candidate clearly declined or said not interested / not looking.\n"
         "- 'none' if it's too soon, the candidate already provided what was needed, the recruiter already "
         "acknowledged it (e.g. said thanks for sharing), or nothing is needed.\n"
+        "- 'category' = the situation this conversation is currently in.\n"
         "- NEVER invent salary/CTC numbers or a client name.")
     user_msg = ("Hours since last message: " + str(hours_since) + "\nCandidate stage: " + (stage or '') +
                 "\n\nConversation:\n" + thread_txt + "\n\nReturn the decision as JSON.")
     try:
-        resp = call_deepseek(ds_key, {'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 320,
+        resp = call_deepseek(ds_key, {'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 340,
             'messages': [{'role': 'system', 'content': system_msg}, {'role': 'user', 'content': user_msg}]})
         data = parse_json(resp.json()['choices'][0]['message']['content'])
         return data if isinstance(data, dict) else None
@@ -10358,11 +10361,22 @@ def _wa_followup_scan(force=False):
         thread_txt = "\n".join([('Candidate: ' if m['direction'] == 'inbound' else 'Me: ') + (m['content'] or '') for m in msgs])
         style = _tenant_setting_raw(conn, r['company_id'], 'wa_style_profile', '')
         analyzed += 1
+        # first pass to know the category, then a learning-aware draft
         data = _wa_analyze_conversation(thread_txt, int(hs), style, stage, wait_hours)
         if not data:
             continue
+        category = (data.get('category') or 'followup').strip()
+        if category not in WA_CATEGORY_IDS:
+            category = 'followup'
         action = (data.get('action') or 'none').strip()
         reason = (data.get('reason') or '')[:200]
+        # re-draft the follow-up using what the recruiter taught us in this category
+        if action == 'followup':
+            learn = _wa_learning_block(conn, r['company_id'], category)
+            if learn:
+                d2 = _wa_analyze_conversation(thread_txt, int(hs), style, stage, wait_hours, learning=learn)
+                if d2 and (d2.get('action') == 'followup') and (d2.get('message') or '').strip():
+                    data = d2
         if action == 'followup' and (data.get('message') or '').strip():
             kind, msg, status = 'followup', data['message'].strip(), 'pending'
         elif action == 'not_interested':
@@ -10370,8 +10384,8 @@ def _wa_followup_scan(force=False):
         else:
             kind, msg, status = 'none', '', 'skipped'   # record so we don't re-analyze same state
         conn.execute("INSERT INTO wa_suggestions (company_id,candidate_id,conversation_id,kind,message,"
-                     "reason,based_on,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                     (r['company_id'], r['candidate_id'], r['conv_id'], kind, msg, reason, last_at, status, ts()))
+                     "reason,based_on,status,created_at,category) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                     (r['company_id'], r['candidate_id'], r['conv_id'], kind, msg, reason, last_at, status, ts(), category))
         conn.commit()
     conn.close()
 
@@ -10383,7 +10397,7 @@ def wa_suggestions_list():
     conn = get_db(); _ensure_wa_suggestions(conn)
     rows = conn.execute(
         "SELECT s.id, s.candidate_id, s.kind, s.message, s.reason, s.created_at, "
-        "c.name cand_name, c.phone cand_phone "
+        "COALESCE(s.category,'followup') category, c.name cand_name, c.phone cand_phone "
         "FROM wa_suggestions s JOIN candidates c ON c.id=s.candidate_id "
         "WHERE s.company_id=? AND s.status='pending' ORDER BY s.id DESC LIMIT 100",
         (company_id,)).fetchall()
@@ -10405,6 +10419,13 @@ def wa_suggestion_approve(sid):
     if not cand:
         conn.close(); return jsonify({'error': 'Candidate not found'}), 404
 
+    category = None
+    try:
+        category = s['category']
+    except Exception:
+        category = 'followup'
+    comment = ((request.json or {}).get('comment') or '').strip()
+
     if s['kind'] == 'followup':
         # allow the user to tweak the message before approving
         text = ((request.json or {}).get('message') or s['message'] or '').strip()
@@ -10422,6 +10443,10 @@ def wa_suggestion_approve(sid):
                      (ts(), ts(), s['conversation_id']))
         conn.execute('INSERT INTO wa_outbox (company_id,candidate_id,phone,text,status,created_at) '
                      'VALUES (?,?,?,?,?,?)', (company_id, s['candidate_id'], digits, text, 'pending', ts()))
+        # LEARNING: did the recruiter send as-is or edit it?
+        act = 'approved' if text == (s['message'] or '').strip() else 'edited'
+        _wa_record_feedback(conn, company_id, s['candidate_id'], s['conversation_id'],
+                            category or 'followup', s['message'] or '', text, act, comment)
     elif s['kind'] == 'not_interested':
         old = cand['stage']
         conn.execute('UPDATE candidates SET stage=?, updated_at=? WHERE id=? AND owner_id=?',
@@ -10429,6 +10454,8 @@ def wa_suggestion_approve(sid):
         conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) '
                      'VALUES (?,?,?,?,?)', (s['candidate_id'], old, 'Not Interested',
                                             'Auto-moved (AI: ' + (s['reason'] or 'not interested') + ')', ts()))
+        _wa_record_feedback(conn, company_id, s['candidate_id'], s['conversation_id'],
+                            'not_interested', 'move to Not Interested', 'moved', 'approved', comment)
     conn.execute("UPDATE wa_suggestions SET status='sent' WHERE id=?", (sid,))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
@@ -10437,9 +10464,17 @@ def wa_suggestion_approve(sid):
 @app.route('/api/wa-suggestions/<int:sid>/dismiss', methods=['POST'])
 @login_required
 def wa_suggestion_dismiss(sid):
+    company_id = effective_company_id()
     conn = get_db(); _ensure_wa_suggestions(conn)
+    s = conn.execute("SELECT * FROM wa_suggestions WHERE id=? AND company_id=?", (sid, company_id)).fetchone()
+    if s:
+        try: cat = s['category'] or 'followup'
+        except Exception: cat = 'followup'
+        _wa_record_feedback(conn, company_id, s['candidate_id'], s['conversation_id'],
+                            cat, s['message'] or '', '', 'rejected',
+                            ((request.json or {}).get('comment') or '').strip())
     conn.execute("UPDATE wa_suggestions SET status='dismissed' WHERE id=? AND company_id=?",
-                 (sid, effective_company_id()))
+                 (sid, company_id))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
@@ -10479,6 +10514,124 @@ def candidate_jd_text(cid):
         parts = re.split(r'(?<=[.\n;])\s+', jd)
         jd = ' '.join([p for p in parts if not any(k in p.lower() for k in _kws)]).strip()
     return jsonify({'ok': True, 'jd': jd.strip()})
+
+
+# ── Agent learning: capture how the recruiter approves/edits AI drafts, so the
+#    agent improves over time and we can track per-situation confidence. ──────
+WA_CATEGORIES = [
+    ('intro',                'Intro / first outreach'),
+    ('followup',             'Follow-up / nudge'),
+    ('share_jd',             'Sharing the JD'),
+    ('cv_request',           'CV / profile request'),
+    ('availability',         'Availability / schedule a call'),
+    ('ctc_salary',           'CTC / salary questions'),
+    ('company_query',        'Which company / client'),
+    ('notice_period',        'Notice period'),
+    ('location_remote',      'Location / relocation / remote'),
+    ('interview_invite',     'Interview invite / scheduling'),
+    ('interview_reminder',   'Interview reminder / reschedule / no-show'),
+    ('offer',                'Offer / closing'),
+    ('counteroffer',         'Counteroffer handling'),
+    ('rejection',            'Rejection (graceful)'),
+    ('not_interested',       'Not interested / decline'),
+    ('pre_joining',          'Pre-joining / keep-warm'),
+    ('reactivation',         'Re-engage old candidate'),
+    ('general',              'General / other'),
+]
+WA_CATEGORY_IDS = [c[0] for c in WA_CATEGORIES]
+
+
+def _ensure_wa_feedback(conn):
+    conn.execute('''CREATE TABLE IF NOT EXISTS wa_agent_feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER, candidate_id INTEGER, conversation_id INTEGER,
+        category TEXT, agent_draft TEXT, sent_text TEXT,
+        action TEXT, comment TEXT, created_at TEXT, resolved_at TEXT)''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_wa_fb ON wa_agent_feedback(company_id,category,action)')
+
+
+def _wa_learning_block(conn, company_id, category):
+    """Recent corrections the recruiter made in this category — fed back into the
+    prompt so the agent 'learns' from every edit immediately."""
+    try:
+        rows = conn.execute(
+            "SELECT agent_draft, sent_text, comment FROM wa_agent_feedback "
+            "WHERE company_id=? AND category=? AND action IN ('edited','approved') "
+            "AND sent_text IS NOT NULL AND sent_text!='' ORDER BY id DESC LIMIT 6",
+            (company_id, category or 'general')).fetchall()
+    except Exception:
+        return ''
+    ex = []
+    for r in rows:
+        drafted = (r['agent_draft'] or '').strip()
+        sent = (r['sent_text'] or '').strip()
+        if not sent:
+            continue
+        if drafted and drafted != sent:
+            block = "You drafted: " + drafted + "\nI actually sent: " + sent
+        else:
+            block = "Good draft (I sent as-is): " + sent
+        if r['comment']:
+            block += "\n(Why: " + r['comment'] + ")"
+        ex.append(block)
+    if not ex:
+        return ''
+    return ("\n\nLearn from how I corrected earlier drafts in this situation — match "
+            "these patterns:\n" + "\n---\n".join(ex) + "\n")
+
+
+def _wa_record_feedback(conn, company_id, candidate_id, conv_id, category,
+                        agent_draft, sent_text, action, comment=''):
+    _ensure_wa_feedback(conn)
+    conn.execute(
+        "INSERT INTO wa_agent_feedback (company_id,candidate_id,conversation_id,category,"
+        "agent_draft,sent_text,action,comment,created_at,resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (company_id, candidate_id, conv_id, category or 'general', agent_draft or '',
+         sent_text or '', action, comment or '', ts(), ts()))
+
+
+@app.route('/api/wa-skillboard')
+@login_required
+def wa_skillboard():
+    """Per-situation confidence: how often the recruiter approved the agent's
+    draft as-is vs edited vs rejected. Drives the 'auto-ready' indicator."""
+    company_id = effective_company_id()
+    conn = get_db(); _ensure_wa_feedback(conn)
+    rows = conn.execute(
+        "SELECT category, action, COUNT(*) n FROM wa_agent_feedback WHERE company_id=? "
+        "AND action IN ('approved','edited','rejected') GROUP BY category, action",
+        (company_id,)).fetchall()
+    agg = {}
+    for r in rows:
+        c = r['category'] or 'general'
+        agg.setdefault(c, {'approved': 0, 'edited': 0, 'rejected': 0})
+        agg[c][r['action']] = r['n']
+    auto = []
+    raw = _tenant_setting_raw(conn, company_id, 'wa_auto_categories', '')
+    if raw:
+        try: auto = json.loads(raw)
+        except Exception: auto = []
+    conn.close()
+    board = []
+    for cid_, label in WA_CATEGORIES:
+        a = agg.get(cid_, {'approved': 0, 'edited': 0, 'rejected': 0})
+        total = a['approved'] + a['edited'] + a['rejected']
+        conf = round(100 * a['approved'] / total) if total else 0
+        board.append({'id': cid_, 'label': label, 'approved': a['approved'], 'edited': a['edited'],
+                      'rejected': a['rejected'], 'total': total, 'confidence': conf,
+                      'auto_ready': (total >= 5 and conf >= 90), 'auto_on': (cid_ in auto)})
+    return jsonify({'ok': True, 'board': board})
+
+
+@app.route('/api/wa-auto-categories', methods=['POST'])
+@login_required
+def wa_auto_categories():
+    cats = (request.json or {}).get('categories')
+    if not isinstance(cats, list):
+        return jsonify({'error': 'categories must be a list'}), 400
+    cats = [c for c in cats if c in WA_CATEGORY_IDS]
+    set_setting('wa_auto_categories', json.dumps(cats))
+    return jsonify({'ok': True})
 
 
 @app.route('/api/wa-inbound-config')
