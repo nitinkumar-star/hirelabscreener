@@ -6554,7 +6554,7 @@ async function openWhatsAppPanel(cid){
   }).join('');
 
   var footer = composeEl
-    ? '<div style="border-top:0.5px solid var(--line);padding:10px 14px;background:#fafafa;font-size:11px;color:var(--muted)">Template pe click karo &rarr; message chat box me aa jayega, wahan edit karke bhejo.</div>'
+    ? '<div style="border-top:0.5px solid var(--line);padding:10px 14px;background:#fafafa;font-size:11px;color:var(--muted)">Template pe click karo &rarr; message chat box me aayega &rarr; Send dabao, WhatsApp prefilled khul jayega.</div>'
     : '<div style="border-top:0.5px solid var(--line);padding:12px 14px;background:#fafafa">'
         +(phoneClean?'':'<div style="color:#E65100;font-size:11px;margin-bottom:6px">&#9888;&#65039; Phone number nahi hai.</div>')
         +'<textarea id="wa-preview" class="inp" rows="5" placeholder="Template pe click karo..." style="font-size:12.5px;width:100%;box-sizing:border-box;resize:vertical"></textarea>'
@@ -6586,17 +6586,25 @@ async function openWhatsAppPanel(cid){
     });
   });
 }
+// Shared: WhatsApp ko prefilled message ke saath kholo, aur thread me log kar do.
+// Baileys/outbox ka koi use nahi — bas wa.me link. Recruiter khud Send dabata hai.
+async function waOpenAndLog(cid, phone, msg){
+  var num=(phone||'').replace(/\D/g,'');
+  if(!num){ toast('&#9888;&#65039;','Phone number nahi hai'); return false; }
+  if(num.length===10) num='91'+num;
+  // Pehle WhatsApp kholo (user gesture ke saath, warna popup block ho jaata hai)
+  window.open('https://wa.me/'+num+'?text='+encodeURIComponent(msg),'_blank');
+  // Phir thread me log karo taaki record rahe (best-effort)
+  try{ await req('POST','/candidates/'+cid+'/wa-send-log',{text:msg}); }catch(e){}
+  return true;
+}
 async function waComposeSend(cid){
   var ta=document.getElementById('wa-compose-'+cid); if(!ta) return;
   var msg=(ta.value||'').trim(); if(!msg) return;
-  var draftId=ta.dataset.draftId||'';
-  ta.value=''; ta.style.height='auto'; delete ta.dataset.draftId;
-  var payload={text:msg}; if(draftId) payload.draft_id=parseInt(draftId,10);
-  try{
-    var r=await req('POST','/candidates/'+cid+'/wa-queue-send',payload);
-    if(r&&r.ok){ toast('OK','Sending via WhatsApp…'); cpLoadWaThread(cid); }
-    else { ta.value=msg; toast('&#9888;&#65039;',(r&&r.error)||'Could not send'); }
-  }catch(e){ ta.value=msg; toast('ERR','Send failed'); }
+  var cand=(S._waCand&&S._waCand.id==cid)?S._waCand:(S._cand||{});
+  var phone=cand.phone||'';
+  var ok=await waOpenAndLog(cid, phone, msg);
+  if(ok){ ta.value=''; ta.style.height='auto'; delete ta.dataset.draftId; toast('OK','WhatsApp opened'); cpLoadWaThread(cid); }
 }
 function closeWhatsAppPanel(){
   var d=document.getElementById('wa-drawer');
@@ -6611,11 +6619,8 @@ async function waSendPreview(){
   var cand=S._waCand; if(!cand){ return; }
   var msg=(document.getElementById('wa-preview').value||'').trim();
   if(!msg){ toast('ERR','Type a message'); return; }
-  try{
-    var r=await req('POST','/candidates/'+cand.id+'/wa-queue-send',{text:msg});
-    if(r&&r.ok){ toast('OK','Sending via WhatsApp…'); closeWhatsAppPanel(); }
-    else toast('&#9888;&#65039;',(r&&r.error)||'Could not send');
-  }catch(e){ toast('ERR','Send failed'); }
+  var ok=await waOpenAndLog(cand.id, cand.phone||'', msg);
+  if(ok){ closeWhatsAppPanel(); }
 }
 
 function attachWAHandlers(cand) {
@@ -8434,8 +8439,8 @@ async function openWaConv(convId){
 
   if(status==='active'){
     inner += '<div style="display:flex;gap:8px;padding-top:12px;border-top:0.5px solid var(--line);margin-top:12px">'
-         + '<input id="wa-reply-input" class="inp" placeholder="Type a message to send manually..." style="flex:1;font-size:12.5px" onkeydown="if(event.key===\'Enter\'){sendWaManual('+convId+')}">'
-         + '<button class="btn" onclick="sendWaManual('+convId+')" style="background:#25D366;color:#fff;border:none;font-size:11.5px">Send</button>'
+         + '<input id="wa-reply-input" class="inp" data-phone="'+esc(phone||'')+'" data-cid="'+((convMeta&&convMeta.candidate_id)||'')+'" placeholder="Type a message..." style="flex:1;font-size:12.5px" onkeydown="if(event.key===\'Enter\'){sendWaManual('+convId+')}">'
+         + '<button class="btn" onclick="sendWaManual('+convId+')" style="background:#25D366;color:#fff;border:none;font-size:11.5px">Send on WhatsApp</button>'
          + '</div>';
   }
   inner += '</div>';
@@ -8474,11 +8479,18 @@ async function sendWaManual(convId){
   if(!input) return;
   var text = (input.value||'').trim();
   if(!text){ toast('ERR','Message khali hai'); return; }
-  input.disabled = true;
-  var r = await req('POST','/wa/conversations/'+convId+'/send',{message:text});
-  input.disabled = false;
-  if(r.ok){ input.value = ''; openWaConv(convId); }
-  else toast('ERR', r.error || 'Send failed');
+  var phone = input.dataset.phone||'';
+  var cid = input.dataset.cid||'';
+  var num = phone.replace(/\D/g,'');
+  if(!num){ toast('&#9888;&#65039;','Is chat me phone number nahi hai'); return; }
+  if(num.length===10) num='91'+num;
+  // WhatsApp kholo (Baileys ka koi role nahi)
+  window.open('https://wa.me/'+num+'?text='+encodeURIComponent(text),'_blank');
+  // Thread me log kar do taaki record rahe
+  if(cid){ try{ await req('POST','/candidates/'+cid+'/wa-send-log',{text:text}); }catch(e){} }
+  input.value = '';
+  toast('OK','WhatsApp opened');
+  setTimeout(function(){ openWaConv(convId); }, 400);
 }
 
 async function startQualification(convId){
