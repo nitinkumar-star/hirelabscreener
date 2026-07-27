@@ -6590,7 +6590,18 @@ async function openWhatsAppPanel(cid){
 // Baileys/outbox ka koi use nahi — bas wa.me link. Recruiter khud Send dabata hai.
 async function waOpenAndLog(cid, phone, msg){
   var num=(phone||'').replace(/\D/g,'');
-  if(!num){ toast('&#9888;&#65039;','Phone number nahi hai'); return false; }
+  if(!num){
+    // DIAGNOSTIC: kyun number nahi mila — saaf dikhao
+    var ta=document.getElementById('wa-compose-'+cid);
+    alert('DEBUG v2 — number nahi mila:\n\n'
+      + 'candidate id: '+cid+'\n'
+      + 'phone jo mila: "'+(phone||'')+'"\n'
+      + 'textarea data-phone: "'+((ta&&ta.dataset.phone)||'(textarea nahi mila)')+'"\n'
+      + '_waCand.phone: "'+((S._waCand&&S._waCand.phone)||'')+'"\n'
+      + '_cand.phone: "'+((S._cand&&S._cand.phone)||'')+'"\n\n'
+      + 'Agar yahan sabhi khali hain to is candidate ki profile me phone number nahi hai.');
+    return false;
+  }
   if(num.length===10) num='91'+num;
   // Pehle WhatsApp kholo (user gesture ke saath, warna popup block ho jaata hai)
   window.open('https://wa.me/'+num+'?text='+encodeURIComponent(msg),'_blank');
@@ -6601,8 +6612,9 @@ async function waOpenAndLog(cid, phone, msg){
 async function waComposeSend(cid){
   var ta=document.getElementById('wa-compose-'+cid); if(!ta) return;
   var msg=(ta.value||'').trim(); if(!msg) return;
-  var cand=(S._waCand&&S._waCand.id==cid)?S._waCand:(S._cand||{});
-  var phone=cand.phone||'';
+  // Phone: pehle textarea ka data-phone (sabse reliable), phir candidate object
+  var cand=(S._waCand&&S._waCand.id==cid)?S._waCand:((S._cand&&S._cand.id==cid)?S._cand:{});
+  var phone=ta.dataset.phone||cand.phone||'';
   var ok=await waOpenAndLog(cid, phone, msg);
   if(ok){ ta.value=''; ta.style.height='auto'; delete ta.dataset.draftId; toast('OK','WhatsApp opened'); cpLoadWaThread(cid); }
 }
