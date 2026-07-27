@@ -797,9 +797,11 @@ def push_call():
         'kind': 'call',
         'title': 'Call ' + name,
     }
-    sent = _send_fcm_to_user(uid, payload,
-                             notification={'title': 'Call ' + name,
-                                           'body': 'Tap to dial ' + phone})
+    # IMPORTANT: send DATA-ONLY (no 'notification' block). The app's CallReceiver
+    # builds the notification itself with a tap-to-dial (ACTION_DIAL tel:) intent.
+    # If we attach a 'notification' block, Android draws it and the app's dial
+    # intent never runs, so tapping only opens the app instead of the dialer.
+    sent = _send_fcm_to_user(uid, payload)
     if sent > 0:
         return jsonify({'ok': True, 'sent': sent, 'devices': len(devs),
                         'message': 'Call push sent to %d device(s) - check your phone.' % sent})
@@ -887,10 +889,18 @@ def _reminder_candidate_details(conn, r):
     except Exception:
         pass
     name = (cand['name'] if cand else '') or r['candidate_name'] or 'Candidate'
+    _tok = _reminder_token(r['id'])
+    try:
+        _base = request.host_url.rstrip('/')
+    except Exception:
+        _base = (os.environ.get('PUBLIC_BASE_URL', '') or 'https://hirelabscreener.onrender.com').rstrip('/')
     return {
         'action': 'reminder',
-        'reminder_id': r['id'],
-        'candidate_id': cid,
+        'reminder_id': str(r['id']),
+        'reminder_token': _tok,
+        'done_url': (_base + '/api/reminders/%d/done?token=%s' % (r['id'], _tok)) if _base else '',
+        'snooze_url': (_base + '/api/reminders/%d/snooze?token=%s' % (r['id'], _tok)) if _base else '',
+        'candidate_id': str(cid),
         'name': name,
         'phone': (cand['phone'] if cand else '') or '',
         'company': (cand['company'] if cand else '') or '',
@@ -960,8 +970,13 @@ def _reminder_scheduler_loop():
                         conn.commit()
                         continue
 
-                    # DUE NOW (or overdue): notify, then repeat every 5 min
+                    # DUE NOW (or overdue): notify, then repeat every 5 min —
+                    # but STOP after 3 pushes so a reminder never spams forever
+                    # (e.g. if the phone app can't reach the server to mark done).
                     if mins_to_due <= 0:
+                        ncount = r['notify_count'] if ('notify_count' in r.keys() and r['notify_count'] is not None) else 0
+                        if ncount >= 3:
+                            continue  # already nudged enough; it stays in the ATS list
                         send = False
                         if not notified_at:
                             send = True
@@ -977,8 +992,8 @@ def _reminder_scheduler_loop():
                             payload['kind'] = 'due'
                             payload['title'] = 'Reminder: ' + payload['name']
                             _send_fcm_to_user(owner, payload)
-                            conn.execute('UPDATE reminders SET notified_at=? WHERE id=?',
-                                         (now_iso, r['id']))
+                            conn.execute('UPDATE reminders SET notified_at=?, notify_count=? WHERE id=?',
+                                         (now_iso, ncount + 1, r['id']))
                             conn.commit()
                 except Exception as _re:
                     print(f'[reminder-scheduler] row error: {_re}')
@@ -2437,6 +2452,7 @@ def init_db():
         ('snoozed_until', "TEXT DEFAULT ''"),      # if snoozed, don't notify until this time
         ('early_warned', "INTEGER DEFAULT 0"),     # sent the 5-10 min advance warning?
         ('owner_id', "INTEGER DEFAULT 0"),
+        ('notify_count', "INTEGER DEFAULT 0"),     # how many due-notifications sent (cap the spam)
     ]:
         try:
             c.execute(f'ALTER TABLE reminders ADD COLUMN {col} {defn}')
@@ -3156,23 +3172,45 @@ def add_reminder():
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
-@app.route('/api/reminders/<int:rid>/done', methods=['POST'])
-@login_required
+def _reminder_token(rid):
+    """Unguessable per-reminder token so the mobile app can mark done/snooze
+    WITHOUT a login session (which is what was failing → 'could not connect')."""
+    key = app.secret_key or 'fallback'
+    if isinstance(key, str):
+        key = key.encode()
+    return hmac.new(key, ('reminder:%d' % rid).encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def _reminder_action_ok(rid):
+    """Authorized if the user has a session OR a valid reminder token."""
+    try:
+        if session.get('user_id'):
+            return True
+    except Exception:
+        pass
+    tok = request.values.get('token', '')
+    return bool(tok) and tok == _reminder_token(rid)
+
+
+@app.route('/api/reminders/<int:rid>/done', methods=['POST', 'GET'])
 def mark_reminder_done(rid):
-    # Works from webapp AND mobile app — both hit the same reminder, so marking
-    # done here stops mobile notifications and clears it from the webapp list.
+    # Works from webapp (session) AND mobile app (token) — marking done here
+    # stops mobile notifications and clears it from the webapp list.
+    if not _reminder_action_ok(rid):
+        return jsonify({'error': 'unauthorized'}), 401
     conn = get_db()
     conn.execute('UPDATE reminders SET done=1 WHERE id=?', (rid,))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
 
-@app.route('/api/reminders/<int:rid>/snooze', methods=['POST'])
-@login_required
+@app.route('/api/reminders/<int:rid>/snooze', methods=['POST', 'GET'])
 def snooze_reminder(rid):
-    """Snooze a reminder. Body: {"minutes": 10} or {"until": "tomorrow"}.
-    Supported: 10, 30, 60 minutes, or 'tomorrow' (9am next day IST)."""
-    d = request.json or {}
+    """Snooze a reminder. Body/query: minutes=10|30|60 or until=tomorrow.
+    Accepts a session OR a valid reminder token (for the mobile app)."""
+    if not _reminder_action_ok(rid):
+        return jsonify({'error': 'unauthorized'}), 401
+    d = request.get_json(silent=True) or request.values or {}
     now = _ist_now()
     until = None
     if d.get('until') == 'tomorrow' or d.get('minutes') == 'tomorrow':
@@ -3190,7 +3228,7 @@ def snooze_reminder(rid):
     conn = get_db()
     # Reset notification state so it fires fresh after the snooze window
     conn.execute(
-        'UPDATE reminders SET snoozed_until=?, notified_at="", early_warned=0 WHERE id=?',
+        'UPDATE reminders SET snoozed_until=?, notified_at="", early_warned=0, notify_count=0 WHERE id=?',
         (until_iso, rid))
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'snoozed_until': until_iso})
