@@ -44,6 +44,7 @@ input:focus,textarea:focus{outline:none;border-color:#1D9E75!important}
 .sb-sub{color:rgba(255,255,255,0.35);font-size:10px;margin-top:1px}
 .sb-status-btn{opacity:0;width:18px;height:18px;border-radius:3px;background:rgba(255,255,255,0.1);border:none;color:rgba(255,255,255,0.5);font-size:12px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:opacity .15s}
 .sb-item:hover .sb-status-btn{opacity:1}
+.sb-jbadge{display:inline-block;font-size:8px;font-weight:700;padding:1px 5px;border-radius:4px;margin-left:6px;vertical-align:middle;letter-spacing:.3px;text-transform:uppercase}
 .sb-new-btn{margin:6px 8px;padding:7px;border:0.5px solid rgba(255,255,255,0.15);border-radius:6px;color:rgba(255,255,255,0.45);font-size:11px;text-align:center;cursor:pointer;background:transparent;width:calc(100% - 16px)}
 .sb-new-btn:hover{background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.75)}
 .sb-spacer{flex:0;min-height:8px}
@@ -1238,16 +1239,6 @@ body{font-size:14px !important; line-height:1.5}
       </div>
     </div>
 
-  </div>
-</div>
-<div class="modal-bg" id="modal-status">
-  <div class="modal" style="max-width:320px">
-    <div class="modal-head"><span class="modal-title">Change Status</span><button class="modal-x" onclick="closeModal('modal-status')">&#10005;</button></div>
-    <div class="modal-body" style="display:flex;flex-direction:column;gap:8px;padding:14px">
-      <button class="btn" onclick="setStatus('active')" style="background:#E1F5EE;color:#0F6E56;justify-content:flex-start;gap:10px;padding:10px 14px"><div style="width:9px;height:9px;border-radius:50%;background:#1D9E75;flex-shrink:0"></div><div><div style="font-weight:500">Active</div><div style="font-size:10px;opacity:.7">Currently sourcing</div></div></button>
-      <button class="btn" onclick="setStatus('hold')" style="background:#FAEEDA;color:#854F0B;justify-content:flex-start;gap:10px;padding:10px 14px"><div style="width:9px;height:9px;border-radius:50%;background:#EF9F27;flex-shrink:0"></div><div><div style="font-weight:500">On Hold</div><div style="font-size:10px;opacity:.7">Temporarily paused</div></div></button>
-      <button class="btn" onclick="setStatus('closed')" style="background:#f0f0f0;color:#555;justify-content:flex-start;gap:10px;padding:10px 14px"><div style="width:9px;height:9px;border-radius:50%;background:#888;flex-shrink:0"></div><div><div style="font-weight:500">Closed</div><div style="font-size:10px;opacity:.7">Position filled or cancelled</div></div></button>
-    </div>
   </div>
 </div>
 
@@ -2741,9 +2732,13 @@ function renderSidebar(){
     html+='<div class="sb-grp-body'+(collapsed?' collapsed':'')+'">';
     html+=list.map(function(m){
       const isA=S.activeMandate&&S.activeMandate.id===m.id;
-      return '<div class="sb-item'+(isA?' active':'')+'" onclick="selectMandate('+m.id+')" style="padding-left:26px">'
+      var _ms=(m.status||'active');
+      var _mb=_ms==='hold'?'<span class="sb-jbadge" style="background:#FAEEDA;color:#854F0B">Hold</span>'
+             :_ms==='closed'?'<span class="sb-jbadge" style="background:#F2F4F7;color:#667085">Closed</span>':'';
+      var _dim=_ms!=='active'?'opacity:.55;':'';
+      return '<div class="sb-item'+(isA?' active':'')+'" onclick="selectMandate('+m.id+')" style="padding-left:26px;'+_dim+'">'
         +'<div class="sb-dot" style="background:'+g.color+'"></div>'
-        +'<div style="flex:1;min-width:0"><div class="sb-name">'+esc(m.role)+'</div>'
+        +'<div style="flex:1;min-width:0"><div class="sb-name">'+esc(m.role)+_mb+'</div>'
         +'<div class="sb-sub">'+esc(m.client)+' &middot; '+esc(m.location||'')+'</div></div>'
         +'<button class="sb-status-btn" onclick="event.stopPropagation();openStatusModal('+m.id+')" title="Change status">&ctdot;</button>'
         +'</div>';
@@ -3801,6 +3796,36 @@ async function cpLoadHistory(cid){
   box.innerHTML=html;
 }
 
+// ── Email body formatter ────────────────────────────────────────────────────
+// Past emails were stored either as plain text (whose line breaks sometimes got
+// collapsed) or as raw HTML (which showed literal <br>/<p> tags). This renders
+// both cleanly: HTML bodies are sanitised + shown as rich text; plain bodies
+// decode entities and keep their line breaks.
+function _decodeEntities(s){
+  var t=document.createElement('textarea'); t.innerHTML=String(s||''); return t.value;
+}
+function formatEmailBody(raw){
+  raw=String(raw||'');
+  var looksHtml=/<\/?(br|p|div|span|b|strong|i|em|u|ul|ol|li|a|table|tr|td|h[1-6]|blockquote|font)\b[^>]*>/i.test(raw);
+  if(looksHtml){
+    var doc;
+    try{ doc=new DOMParser().parseFromString(raw,'text/html'); }catch(e){ doc=null; }
+    if(doc && doc.body){
+      doc.querySelectorAll('script,style,iframe,object,embed,link,meta,title').forEach(function(n){ n.remove(); });
+      doc.querySelectorAll('*').forEach(function(n){
+        [].slice.call(n.attributes||[]).forEach(function(a){
+          var an=(a.name||'').toLowerCase(), av=(a.value||'').toLowerCase().trim();
+          if(an.indexOf('on')===0) n.removeAttribute(a.name);
+          if((an==='href'||an==='src') && av.indexOf('javascript:')===0) n.removeAttribute(a.name);
+        });
+      });
+      return '<div class="email-html-body" style="font-size:12.5px;color:#475467;line-height:1.55;word-break:break-word;max-width:100%">'+doc.body.innerHTML+'</div>';
+    }
+  }
+  var decoded=_decodeEntities(raw);
+  return '<div style="font-size:12.5px;color:#475467;white-space:pre-wrap;line-height:1.55;word-break:break-word">'+esc(decoded)+'</div>';
+}
+
 async function cpLoadEmailThread(cid){
   var el=document.getElementById('cp-email-'+cid); if(!el) return;
   var r;
@@ -3814,7 +3839,7 @@ async function cpLoadEmailThread(cid){
     var contact = sent ? ('Sent &middot; to '+esc(m.to_addr||window._cpEmail||'')) : ('Received &middot; from '+esc(m.from_addr||''));
     return '<div style="padding:12px 0;border-bottom:0.5px solid var(--line)">'
       +'<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="font-size:13px;font-weight:700;color:var(--ink)">'+esc(m.subject||'(no subject)')+'</div><div style="font-size:10.5px;color:var(--muted);white-space:nowrap">'+esc(when)+'</div></div>'
-      +'<div style="font-size:12px;color:#475467;white-space:pre-wrap;line-height:1.55;margin-top:6px">'+esc((m.body||'').slice(0,2000))+((m.body||'').length>2000?'…':'')+'</div>'
+      +'<div style="margin-top:6px">'+formatEmailBody((m.body||'').slice(0,4000))+((m.body||'').length>4000?'<div style="font-size:11px;color:#98A2B3;margin-top:4px">… (truncated)</div>':'')+'</div>'
       +'<div style="font-size:10.5px;color:var(--teal-deep);margin-top:7px">'+contact+'</div>'
       +'</div>';
   }).join('');
@@ -4916,7 +4941,7 @@ async function loadEmailThread(cid){
       + '<span style="font-size:10.5px;font-weight:700;color:' + fg + '">' + (sent ? '&#8599; ' : '&#8600; ') + esc(who) + '</span>'
       + '<span style="font-size:9.5px;color:#98A2B3;margin-left:auto">' + when + '</span></div>'
       + (m.subject ? '<div style="font-size:11px;font-weight:600;color:' + fg + ';margin-bottom:3px">' + esc(m.subject) + '</div>' : '')
-      + '<div style="font-size:11.5px;color:#475467;white-space:pre-wrap;line-height:1.5">' + esc((m.body||'').slice(0, 2000)) + ((m.body||'').length>2000?'…':'') + '</div>'
+      + formatEmailBody((m.body||'').slice(0, 4000)) + ((m.body||'').length>4000?'<div style="font-size:10.5px;color:#98A2B3;margin-top:4px">… (truncated)</div>':'')
       + '</div></div>';
   }).join('');
   // scroll to bottom
@@ -5036,7 +5061,15 @@ function emailFmtSize(size){ if(size) document.execCommand('fontSize', false, si
 
 function _getEmailBody(){
   var el = document.getElementById('email-body');
-  return el ? el.innerHTML.replace(/<br\s*\/?>/gi,'\n').replace(/<[^>]+>/g,'').trim() : '';
+  if(!el) return '';
+  var h = el.innerHTML || '';
+  // Preserve line breaks: <br> and closing block tags -> newline, then strip tags.
+  h = h.replace(/<br\s*\/?>/gi, '\n')
+       .replace(/<\/(p|div|li|h[1-6]|tr|blockquote)>/gi, '\n')
+       .replace(/<[^>]+>/g, '');
+  // Decode HTML entities (&amp; &nbsp; etc.) so the stored plain text is clean.
+  var t = document.createElement('textarea'); t.innerHTML = h;
+  return t.value.replace(/\n{3,}/g, '\n\n').trim();
 }
 function _getEmailBodyHtml(){
   var el = document.getElementById('email-body');
@@ -9881,7 +9914,7 @@ async function _cdLoadEmailThread(clientId, contactId){
       +'<span style="margin-left:auto;font-size:10.5px;color:#98A2B3">'+(m.created_at?_fmtDateTime(m.created_at):'')+'</span></div>'
       +(m.subject?'<div style="font-size:13px;font-weight:600;color:#101828">'+esc(m.subject)+'</div>':'')
       +(m.to?'<div style="font-size:10.5px;color:#98A2B3;margin-top:1px">To: '+esc(m.to)+'</div>':'')
-      +(m.body?'<div style="font-size:12.5px;color:#475467;white-space:pre-wrap;line-height:1.5;margin-top:6px">'+esc(m.body)+'</div>':'')
+      +(m.body?'<div style="margin-top:6px">'+formatEmailBody(m.body)+'</div>':'')
       +'</div>';
   });
   wrap.innerHTML=html;
