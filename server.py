@@ -3560,10 +3560,16 @@ def get_tasks():
         })
 
     # ── Candidate base data for stale + promise detection ────────────────
+    # Only surface candidates attached to a REAL, active position. This means:
+    #   • the job's status must be 'active' (hold / closed jobs are skipped), and
+    #   • the job must not be the "Central Database" pool — candidates from
+    #     deleted jobs get parked there with an 'active' status, and we don't
+    #     want that pool flooding the stale-follow-up list.
+    central_mid = get_or_create_central_mandate()
     cand_rows = conn.execute(
         "SELECT c.id, c.name, c.phone, c.mandate_id, c.updated_at, c.task_snoozed_until, "
         "m.role, m.client FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
-        "WHERE c.owner_id=? AND (m.id IS NULL OR m.status NOT IN ('hold','closed'))", (uid,)
+        "WHERE c.owner_id=? AND m.status='active' AND m.id != ?", (uid, central_mid)
     ).fetchall()
 
     for c in cand_rows:
