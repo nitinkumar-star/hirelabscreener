@@ -1000,10 +1000,6 @@ def _reminder_scheduler_loop():
             conn.close()
         except Exception as e:
             print(f'[reminder-scheduler] loop error: {e}')
-        try:
-            _wa_followup_scan()
-        except Exception as _we:
-            print(f'[wa-followup] scan error: {_we}')
         _time.sleep(60)
 
 
