@@ -6560,12 +6560,15 @@ async function openWhatsAppPanel(cid){
 async function waComposeSend(cid){
   var ta=document.getElementById('wa-compose-'+cid); if(!ta) return;
   var msg=(ta.value||'').trim(); if(!msg) return;
+  var cand=(S._waCand&&S._waCand.id==cid)?S._waCand:((S._cand&&S._cand.id==cid)?S._cand:{});
+  var phone=(ta.dataset.phone||cand.phone||'').replace(/\D/g,'');
+  if(!phone){ toast('WA','Add phone number first'); return; }
+  var waNum=phone.startsWith('91')?phone:'91'+phone;
+  window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg),'_blank');
   ta.value=''; ta.style.height='auto';
-  try{
-    var r=await req('POST','/candidates/'+cid+'/wa-queue-send',{text:msg});
-    if(r&&r.ok){ toast('OK','Sending via WhatsApp…'); cpLoadWaThread(cid); }
-    else { ta.value=msg; toast('&#9888;&#65039;',(r&&r.error)||'Could not send'); }
-  }catch(e){ ta.value=msg; toast('ERR','Send failed'); }
+  toast('OK','WhatsApp opened');
+  try{ await req('POST','/candidates/'+cid+'/stage',{stage:null,note:'WhatsApp message sent',keep_stage:true});
+       var fresh=await req('GET','/candidates/'+cid); if(fresh&&fresh.history) refreshHistory(fresh.history); }catch(e){}
 }
 function closeWhatsAppPanel(){
   var d=document.getElementById('wa-drawer');
@@ -6580,11 +6583,13 @@ async function waSendPreview(){
   var cand=S._waCand; if(!cand){ return; }
   var msg=(document.getElementById('wa-preview').value||'').trim();
   if(!msg){ toast('ERR','Type a message'); return; }
-  try{
-    var r=await req('POST','/candidates/'+cand.id+'/wa-queue-send',{text:msg});
-    if(r&&r.ok){ toast('OK','Sending via WhatsApp…'); closeWhatsAppPanel(); }
-    else toast('&#9888;&#65039;',(r&&r.error)||'Could not send');
-  }catch(e){ toast('ERR','Send failed'); }
+  var phone=(cand.phone||'').replace(/\D/g,'');
+  if(!phone){ toast('WA','Add phone number first'); return; }
+  var waNum=phone.startsWith('91')?phone:'91'+phone;
+  window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg),'_blank');
+  toast('OK','WhatsApp opened'); closeWhatsAppPanel();
+  try{ await req('POST','/candidates/'+cand.id+'/stage',{stage:null,note:'WhatsApp message sent',keep_stage:true});
+       var fresh=await req('GET','/candidates/'+cand.id); if(fresh&&fresh.history) refreshHistory(fresh.history); }catch(e){}
 }
 
 function attachWAHandlers(cand) {
