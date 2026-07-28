@@ -759,7 +759,7 @@ body{font-size:14px !important; line-height:1.5}
     <span style="font-size:10px;color:rgba(255,255,255,0.3)">HireLab Screener v2</span>
     <button class="db-btn" onclick="exportAll()">&#8595; Export JSON</button>
     <label class="db-btn" style="cursor:pointer">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="importAll(this)"></label>
-    <button class="db-btn" onclick="openWaSuggestions()" style="position:relative">&#10024; Follow-ups<span id="wa-sugg-badge" style="display:none;position:absolute;top:-6px;right:-6px;background:#E5484D;color:#fff;font-size:9px;font-weight:700;min-width:15px;height:15px;border-radius:8px;padding:0 3px;line-height:15px;text-align:center">0</span></button>
+
     <span class="db-status" id="db-status"></span>
     <div id="user-bar" style="margin-left:auto;display:flex;align-items:center;gap:12px"></div>
   </div>
@@ -3709,10 +3709,6 @@ function renderProfileDetail(c){
       +'<textarea id="wa-compose-'+c.id+'" data-phone="'+esc(c.phone||'')+'" rows="1" placeholder="Type a message, ya template chuno…" style="flex:1;resize:none;border:0.5px solid rgba(0,0,0,.12);border-radius:19px;padding:9px 14px;font-size:12.5px;font-family:inherit;max-height:110px;line-height:1.4;box-sizing:border-box" oninput="this.style.height=&#39;auto&#39;;this.style.height=Math.min(this.scrollHeight,110)+&#39;px&#39;"></textarea>'
       +'<button title="Send on WhatsApp" style="flex-shrink:0;background:#25D366;color:#fff;border:none;width:38px;height:38px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center" onclick="waComposeSend('+c.id+')">&#10148;</button>'
     +'</div>'
-    +'<div style="padding:6px 12px 10px;background:#F0F2F5;display:flex;gap:8px;flex-wrap:wrap">'
-      +'<button id="wa-draft-btn-'+c.id+'" class="cp-hbtn" style="color:#534AB7;font-size:11px" onclick="waDraftReply('+c.id+')">&#10024; Draft in my style</button>'
-      +'<button class="cp-hbtn" style="color:#0F6E56;font-size:11px" onclick="startAiWhatsApp('+c.id+','+(c.mandate_id||'null')+')">&#129302; Start AI Conversation</button>'
-    +'</div>'
     +'</div>';
   var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">&#9993; Email thread</div><div style="display:flex;gap:7px"><button class="cp-hbtn" onclick="cpLoadEmailThread('+c.id+')">&#8635; Refresh</button><button class="cp-hbtn" style="background:#185FA5;color:#fff;border-color:transparent" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">&#9998; Compose / AI</button></div></div><div id="cp-email-'+c.id+'" style="max-height:460px;overflow-y:auto"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading emails…</div></div></div>';
   var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload a call recording — Groq transcribes, Claude analyses &amp; auto-updates CTC/company.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
@@ -4253,8 +4249,7 @@ async function renderWaSettings(){
   var skillcard='<div style="margin-top:16px"><div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:4px">&#129504; Agent Skill Board</div>'
     +'<div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Har situation me agent kitna accurate hai (tumne bina badle approve kiya = high). 90%+ pe "auto-ready" — chaaho to us situation ko auto-send kar sakte ho.</div>'
     +'<div id="wa-skill-box"><div class="loading" style="padding:10px"><div class="spinner"></div>Loading…</div></div></div>';
-  box.innerHTML=setup+stylecard+skillcard+tpl;
-  renderWaSkillboard();
+  box.innerHTML=tpl;
   box._cats=cats;
 }
 async function renderWaSkillboard(){
@@ -6480,8 +6475,7 @@ async function waSuggScanNow(btn){
   try{ await req('POST','/wa-suggestions/scan-now',{}); }catch(e){}
   openWaSuggestions(); updateWaSuggBadge();
 }
-setTimeout(function(){ updateWaSuggBadge(); }, 3000);
-setInterval(function(){ updateWaSuggBadge(); }, 180000);
+
 
 async function waDraftReply(cid){
   var ta=document.getElementById('wa-compose-'+cid); if(!ta) return;
