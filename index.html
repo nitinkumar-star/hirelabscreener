@@ -6567,6 +6567,7 @@ async function waComposeSend(cid){
   window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg),'_blank');
   ta.value=''; ta.style.height='auto';
   toast('OK','WhatsApp opened');
+  try{ await req('POST','/candidates/'+cid+'/wa-send-log',{text:msg}); cpLoadWaThread(cid); }catch(e){}
   try{ await req('POST','/candidates/'+cid+'/stage',{stage:null,note:'WhatsApp message sent',keep_stage:true});
        var fresh=await req('GET','/candidates/'+cid); if(fresh&&fresh.history) refreshHistory(fresh.history); }catch(e){}
 }
@@ -6588,6 +6589,7 @@ async function waSendPreview(){
   var waNum=phone.startsWith('91')?phone:'91'+phone;
   window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg),'_blank');
   toast('OK','WhatsApp opened'); closeWhatsAppPanel();
+  try{ await req('POST','/candidates/'+cand.id+'/wa-send-log',{text:msg}); cpLoadWaThread(cand.id); }catch(e){}
   try{ await req('POST','/candidates/'+cand.id+'/stage',{stage:null,note:'WhatsApp message sent',keep_stage:true});
        var fresh=await req('GET','/candidates/'+cand.id); if(fresh&&fresh.history) refreshHistory(fresh.history); }catch(e){}
 }
@@ -6623,6 +6625,8 @@ function attachWAHandlers(cand) {
       var msg = buildWAMsg(cand, type);
       window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg), '_blank');
 
+      // Record in the WhatsApp box
+      try{ await req('POST','/candidates/'+cid+'/wa-send-log',{text:msg}); if(typeof cpLoadWaThread==='function') cpLoadWaThread(cid); }catch(e){}
       // Auto log in history
       var typeLabel = type==='msg1' ? 'Intro message' : type==='fu1' ? 'Follow Up 1' : type==='fu2' ? 'Follow Up 2' : type==='fu3' ? 'Follow Up 3' : type==='interview' ? 'Interview invite' : type==='docs' ? 'Docs request' : 'Message';
       await req('POST', '/candidates/'+cid+'/stage', {stage:null, note:'WhatsApp '+typeLabel+' sent', keep_stage:true});
