@@ -3929,6 +3929,16 @@ function _deepPane(cid, md, at, running){
   }
   return head+'</div>'+(md||running?'<div class="cp-card2" style="margin-top:0">'+body+'</div>':body);
 }
+function _deepErrBox(cid, msg){
+  return '<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px">'
+    +'<div><div class="cp-lbl2" style="margin:0">AI Hiring Analysis</div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">Deep capability-first evaluation of this candidate vs the role JD.</div></div>'
+    +'<button class="btn btn-g" style="font-size:11px;padding:6px 14px;background:#534AB7;color:#fff;border:none" onclick="runDeepAnalysis('+cid+')">&#8635; Try again</button></div>'
+    +'<div style="margin-top:10px;background:#FDECEA;border:1px solid #F5C2C0;border-radius:10px;padding:12px 14px">'
+    +'<div style="font-size:12.5px;font-weight:700;color:#B42318;margin-bottom:4px">&#9888; Analysis failed</div>'
+    +'<div style="font-size:12px;color:#7A271A;line-height:1.5;word-break:break-word">'+esc(String(msg||'Unknown error'))+'</div>'
+    +'<div style="font-size:10.5px;color:#98564F;margin-top:8px">Yeh exact message mujhe bhej do — main fix kar doonga.</div>'
+    +'</div></div>';
+}
 async function cpLoadDeepAnalysis(cid){
   var box=document.getElementById('cp-ai-'+cid); if(!box) return;
   if(box.getAttribute('data-loaded')==='1' && !box.getAttribute('data-running')) return; // already have it
@@ -3946,11 +3956,12 @@ async function runDeepAnalysis(cid){
   box.innerHTML=_deepPane(cid, '', '', true);
   var r;
   try{ r=await req('POST','/candidates/'+cid+'/deep-analysis',{}); }
-  catch(e){ box.removeAttribute('data-running'); box.innerHTML=_deepPane(cid,'','',false); toast('Error','Analysis failed: '+esc(String(e))); return; }
+  catch(e){ box.removeAttribute('data-running'); box.innerHTML=_deepErrBox(cid, e && e.message ? e.message : e); toast('Error','Analysis failed'); return; }
   box.removeAttribute('data-running');
-  if(r && r.error){ box.innerHTML=_deepPane(cid,'','',false); toast('Error', esc(String(r.error))); return; }
+  if(r && r.error){ box.innerHTML=_deepErrBox(cid, r.error); toast('Error','Analysis failed'); return; }
+  if(!r || !r.md){ box.innerHTML=_deepErrBox(cid, 'Server returned an empty response.'); return; }
   box.setAttribute('data-loaded','1');
-  box.innerHTML=_deepPane(cid, r.md||'', r.at||'', false);
+  box.innerHTML=_deepPane(cid, r.md, r.at||'', false);
   toast('OK','Analysis ready');
 }
 
