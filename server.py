@@ -2122,6 +2122,14 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Migrate: add deep AI-analysis cache column (single additive column).
+    # Stores a JSON blob {"md": "<markdown report>", "at": "<ts>", "model": "..."}
+    # so the "AI Analysis" profile tab opens instantly; "Re-run" refreshes it.
+    try:
+        c.execute('ALTER TABLE candidates ADD COLUMN deep_analysis TEXT DEFAULT ""')
+    except sqlite3.OperationalError:
+        pass  # already exists
+
     # Migrate: add embedding columns to candidates for semantic search
     for col, typ in [('embedding', 'TEXT'), ('embedding_text', 'TEXT'), ('embedded_at', 'TEXT')]:
         try:
@@ -4433,6 +4441,230 @@ def rate_candidate(cid):
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'suitability': suit, 'selection_probability': prob,
                     'reasoning': data.get('reasoning', '')})
+
+# ── Deep AI Analysis (capability-first hiring-manager evaluation) ─────────────
+# A much richer evaluation than the quick /rate score. Judges ONLY demonstrated
+# capability from the resume vs the JD, and returns a full markdown report:
+# match score, skill table, strengths/gaps, transferable skills, interview
+# questions and a final verdict. Result is cached in candidates.deep_analysis.
+DEEP_ANALYSIS_PROMPT = """# ROLE
+
+You are a world-class Hiring Manager, Technical Interviewer, and Recruitment Expert with 20+ years of experience hiring top performers across Engineering, Manufacturing, Software, Sales, Finance, Supply Chain, Operations, Semiconductor, Automotive, Data Center, Power Systems, Industrial Automation, AI, Cloud, and Enterprise Technology.
+
+Your responsibility is NOT to filter candidates based on years of experience, salary, company brand, education, location, age, gender, notice period, or resume formatting.
+
+Your only objective is to determine:
+
+"Can this person successfully perform this job?"
+
+You must think exactly like an experienced hiring manager.
+
+# PRIMARY EVALUATION PRINCIPLE
+
+Judge candidates ONLY on demonstrated capability. Capability is determined from evidence of: Technical Skills, Functional Skills, Domain Knowledge, Tools Used, Technologies Worked On, Project Complexity, Responsibilities, Ownership, Achievements, Problem Solving, Decision Making, Leadership (if applicable), Scale of Work, Hands-on Experience, Business Impact, Learning Ability, Adaptability.
+
+Ignore years of experience unless they explain skill maturity. Never assume that someone with 15 years is better than someone with 4 years. Always prefer evidence over duration.
+
+# STRICTLY IGNORE
+
+Do NOT increase or decrease score because of: Years of experience, Current CTC, Expected CTC, Location, Nationality, Gender, College, Degree, University ranking, Company Brand, Notice Period, Resume Design, Grammar, English Fluency, Resume Length, Job Hopping, Career Gap. These are NOT evaluation criteria.
+
+# INPUTS
+
+You will receive: 1. Complete Job Description  2. Candidate Resume
+
+# STEP 1 — Understand the Job (internal, do not display)
+Extract: Primary Technical Skills, Secondary Skills, Domain Knowledge, Mandatory Technologies, Optional Technologies, Responsibilities, Expected Deliverables, Seniority Level, Business Problems to Solve.
+
+# STEP 2 — Analyse the Resume
+Extract evidence of: Technical Skills, Functional Expertise, Projects, Tools, Platforms, Industries, Products, Responsibilities, Leadership, Achievements, Business Impact, Complexity, Scale, Hands-on Work, Ownership, Cross-functional exposure.
+
+# STEP 3 — Skill Matching
+For every required skill determine: Strong Evidence / Moderate Evidence / Weak Evidence / No Evidence. Evidence must always come from the resume. Never hallucinate.
+
+# STEP 4 — Transferable Skills
+If exact technology is missing but equivalent experience exists, identify transferable skills (e.g. Allen Bradley PLC <-> Siemens PLC <-> Mitsubishi PLC; AWS <-> Azure <-> GCP; Oracle <-> SQL Server <-> PostgreSQL; React <-> Angular <-> Vue; AutoCAD <-> SolidWorks). Do not reject candidates because tools differ if underlying competency is similar.
+
+# STEP 5 — Identify Missing Skills
+List only skills that appear important in the JD but have no evidence.
+
+# STEP 6 — Confidence Analysis
+Estimate confidence that candidate can perform the job. Use evidence only.
+
+# OUTPUT FORMAT (use this exact markdown structure and section order)
+
+## Candidate Match Score
+
+Overall Match: XX / 100
+
+Recommendation: Strong Hire | Hire | Borderline | Reject
+
+## Skill Match Table
+
+| Required Skill | Match Level | Resume Evidence |
+|---------------|------------|----------------|
+
+## Strengths
+(bullet list)
+
+## Skill Gaps
+(bullet list)
+
+## Transferable Skills
+(bullet list)
+
+## Business Impact
+Explain why this candidate could create value.
+
+## Risks
+Mention only genuine skill-related risks. Never mention salary, location, notice period or years.
+
+## Hiring Confidence
+High | Medium | Low  — explain why.
+
+## Interview Focus Areas
+List the areas that require validation during interview.
+
+## Suggested Interview Questions
+Generate 8-12 highly targeted interview questions based ONLY on missing evidence or weak areas. Every question must validate a specific skill; avoid generic HR questions; prefer scenario-based, troubleshooting, architecture/design, hands-on and decision-making questions; progressively increase difficulty. Format each as:
+
+Question N
+Purpose:
+Expected Strong Answer Should Demonstrate:
+
+## Final Hiring Verdict
+Summarize in 5-8 lines: Can the candidate do the job? Why? What evidence supports this? What remains unverified? Should the recruiter move forward? Base the verdict ONLY on demonstrated capability. Never use years, salary, location, company reputation, or education as deciding factors.
+
+# GOLDEN RULE
+The goal is NOT the most experienced candidate — it is the most CAPABLE candidate. Evidence beats assumptions. Skills beat tenure. Capability beats pedigree."""
+
+
+def _deep_analysis_inputs(conn, c, m):
+    """Build the (jd_text, resume_text) pair fed to the deep-analysis model.
+    Prefers the candidate's FULL uploaded resume; falls back to structured
+    profile fields when no CV file is available so the tool still works."""
+    jd_text = html_to_text(m['jd']) if m['jd'] else ''
+    jd_block = (f"Role: {m['role']} at {m['client']}\n"
+                f"Location: {m['location']}\n"
+                f"CTC band: {m['ctc_min']}-{m['ctc_max']} LPA\n\n"
+                + (jd_text.strip() if jd_text.strip()
+                   else "(No full JD text on file — evaluate against the role title above.)"))
+
+    resume_text = _candidate_cv_text(c, max_chars=12000)
+    if not resume_text.strip():
+        # Fallback: assemble a structured resume from parsed fields.
+        try:
+            skills = json.loads(c['key_skills'] or '[]')
+            if isinstance(skills, list): skills = ', '.join(str(s) for s in skills)
+        except Exception:
+            skills = ''
+        try:
+            sec = json.loads(c['secondary_skills'] or '[]')
+            if isinstance(sec, list): sec = ', '.join(str(s) for s in sec)
+        except Exception:
+            sec = ''
+        wh_lines = []
+        try:
+            for w in conn.execute(
+                'SELECT company, designation, start_date, end_date FROM work_history '
+                'WHERE candidate_id=? ORDER BY id ASC', (c['id'],)).fetchall():
+                span = ' '.join(x for x in [(w['start_date'] or ''), '-', (w['end_date'] or '')] if x).strip(' -')
+                wh_lines.append(f"- {w['designation'] or ''} at {w['company'] or ''} ({span})".strip())
+        except Exception:
+            pass
+        resume_text = (
+            f"Name: {c['name']}\n"
+            f"Current: {c['designation']} at {c['company']} ({c['experience']} yrs total)\n"
+            f"Qualification: {c['qualification']}\n"
+            f"Industry: {c['industry_background']}\n"
+            f"Primary skills: {skills}\n"
+            f"Secondary skills: {sec}\n"
+            + ("Career history:\n" + '\n'.join(wh_lines) + '\n' if wh_lines else '')
+            + f"Summary: {c['career_summary'] or ''}\n"
+            "(Note: full resume file not uploaded — evaluation based on the structured profile above.)")
+    return jd_block, resume_text
+
+
+@app.route('/api/candidates/<int:cid>/deep-analysis', methods=['GET'])
+@login_required
+def get_deep_analysis(cid):
+    """Return the cached deep-analysis report for this candidate (if any)."""
+    conn = get_db()
+    c = conn.execute('SELECT deep_analysis FROM candidates WHERE id=? AND owner_id=?',
+                     (cid, effective_company_id())).fetchone()
+    conn.close()
+    if not c:
+        return jsonify({'error': 'Candidate not found'}), 404
+    raw = (c['deep_analysis'] or '').strip()
+    if not raw:
+        return jsonify({'ok': True, 'cached': False})
+    try:
+        data = json.loads(raw)
+        return jsonify({'ok': True, 'cached': True, 'md': data.get('md', ''),
+                        'at': data.get('at', ''), 'model': data.get('model', '')})
+    except Exception:
+        return jsonify({'ok': True, 'cached': False})
+
+
+@app.route('/api/candidates/<int:cid>/deep-analysis', methods=['POST'])
+@login_required
+def run_deep_analysis(cid):
+    """Generate a full capability-first hiring-manager analysis of the candidate
+    against their mandate's JD using DeepSeek, cache it, and return the markdown."""
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
+
+    conn = get_db()
+    c = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
+                     (cid, effective_company_id())).fetchone()
+    if not c:
+        conn.close()
+        return jsonify({'error': 'Candidate not found'}), 404
+    m = conn.execute('SELECT * FROM mandates WHERE id=?', (c['mandate_id'],)).fetchone()
+    if not m:
+        conn.close()
+        return jsonify({'error': 'Mandate not found'}), 404
+
+    jd_block, resume_text = _deep_analysis_inputs(conn, c, m)
+    user_msg = ("JOB DESCRIPTION:\n" + jd_block +
+                "\n\n----------------------------------------\n\n"
+                "CANDIDATE RESUME:\n" + resume_text)
+
+    try:
+        rr = call_deepseek(ds_key,
+            {'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 3500,
+             'messages': [{'role': 'system', 'content': DEEP_ANALYSIS_PROMPT},
+                          {'role': 'user', 'content': user_msg}]},
+            timeout=180, endpoint='deep-analysis')
+        if rr.status_code != 200:
+            err = rr.json().get('error', {}).get('message', rr.text[:200])
+            conn.close()
+            return jsonify({'error': 'DeepSeek error: ' + err}), 500
+        md = rr.json()['choices'][0]['message']['content'].strip()
+    except TokenCapError:
+        conn.close()
+        return jsonify({'error': 'Monthly AI token cap reached.'}), 429
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': str(e)}), 500
+
+    if not md:
+        conn.close()
+        return jsonify({'error': 'Empty response from AI. Try again.'}), 500
+
+    at = ts()
+    blob = json.dumps({'md': md, 'at': at, 'model': 'deepseek-chat'})
+    conn.execute('UPDATE candidates SET deep_analysis=?, updated_at=? WHERE id=?',
+                 (blob, at, cid))
+    conn.commit()
+    try:
+        log_candidate_event(cid, 'note', 'AI deep analysis generated')
+    except Exception:
+        pass
+    conn.close()
+    return jsonify({'ok': True, 'md': md, 'at': at, 'model': 'deepseek-chat'})
+
 
 def _record_embedding(conn, cid, status, *, vec=None, txt=None, error='', duration_ms=0):
     """Single authoritative writer for a candidate's embedding + all metadata.
