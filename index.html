@@ -912,7 +912,11 @@ body{font-size:14px !important; line-height:1.5}
         <div><div style="font-size:14px;font-weight:600">Tasks</div><div style="font-size:11px;color:#888;margin-top:1px">Reminders, follow-ups &amp; new applications</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-        <select id="task-filter" onchange="renderTasksView()" style="font-size:11.5px;padding:6px 10px">
+        <div id="tasks-mode-toggle" style="display:inline-flex;border:0.5px solid #d5d5d5;border-radius:8px;overflow:hidden">
+          <button id="tm-list" onclick="setTasksMode('list')" style="font-size:11.5px;padding:6px 12px;border:none;background:#0F6E56;color:#fff;cursor:pointer">List</button>
+          <button id="tm-board" onclick="setTasksMode('board')" style="font-size:11.5px;padding:6px 12px;border:none;background:#fff;color:#555;cursor:pointer">Board</button>
+        </div>
+        <select id="task-filter" onchange="renderTasksActive()" style="font-size:11.5px;padding:6px 10px">
           <option value="">All types</option>
           <option value="reminder">Reminders</option>
           <option value="stale">Stale candidates</option>
@@ -921,7 +925,8 @@ body{font-size:14px !important; line-height:1.5}
           <option value="updated">Updated resume received</option>
           <option value="submission">New submissions</option>
         </select>
-        <button class="btn btn-o" style="font-size:11px" onclick="renderTasksView()">&#8635; Refresh</button>
+        <button class="btn btn-g" style="font-size:11px" onclick="openNewTask()">&#43; New Task</button>
+        <button class="btn btn-o" style="font-size:11px" onclick="renderTasksActive()">&#8635; Refresh</button>
         <button class="btn btn-o" onclick="closeTasks()">&#10005; Close</button>
       </div>
     </div>
@@ -1245,6 +1250,44 @@ body{font-size:14px !important; line-height:1.5}
 
 
 
+
+<!-- New Task Modal -->
+<div class="modal-bg" id="modal-newtask">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head"><span class="modal-title">New Task</span><button class="modal-x" onclick="closeModal('modal-newtask')">&#10005;</button></div>
+    <div class="modal-body" style="padding:16px;display:flex;flex-direction:column;gap:13px">
+      <div class="fg-row">
+        <label>Task *</label>
+        <textarea class="ta" id="nt-note" rows="2" placeholder="e.g. Call L&amp;T HR for interview feedback"></textarea>
+      </div>
+      <div class="fg-row" style="position:relative">
+        <label>Link a candidate <span style="color:#98A2B3;font-weight:400">(optional)</span></label>
+        <input class="inp" id="nt-cand-search" autocomplete="off" placeholder="Search candidate by name / company / phone…" oninput="_ntCandSearch(this.value)" onfocus="_ntCandSearch(this.value)">
+        <input type="hidden" id="nt-cand-id" value="">
+        <div id="nt-cand-chosen" style="display:none;margin-top:6px;font-size:12.5px"></div>
+        <div id="nt-cand-results" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:30;background:#fff;border:0.5px solid #ddd;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow:auto;margin-top:2px"></div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <div class="fg-row" style="flex:1">
+          <label>Due <span style="color:#98A2B3;font-weight:400">(optional)</span></label>
+          <input type="datetime-local" class="inp" id="nt-due">
+        </div>
+        <div class="fg-row" style="flex:1">
+          <label>Column</label>
+          <select class="inp" id="nt-stage">
+            <option value="todo">To Do</option>
+            <option value="doing">In Progress</option>
+            <option value="done">Done</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-o" onclick="closeModal('modal-newtask')">Cancel</button>
+      <button class="btn btn-g" id="nt-save-btn" onclick="saveNewTask()">Create Task &#8594;</button>
+    </div>
+  </div>
+</div>
 
 <!-- Central Database Add Candidate Modal -->
 <div class="modal-bg" id="modal-cdb-add">
@@ -4508,6 +4551,8 @@ async function setStatus(status){
   m.status=status;S.mandates=S.mandates.map(x=>x.id===m.id?m:x);
   if(S.activeMandate?.id===m.id)S.activeMandate.status=status;
   renderSidebar();closeModal('modal-status');
+  try{ var jv=document.getElementById('jobs-view'); if(jv && jv.style.display!=='none' && typeof renderJobs==='function') renderJobs(); }catch(e){}
+  try{ if(S.activeMandate && S.activeMandate.id===m.id){ var _c=document.getElementById('content'); if(_c && typeof renderPipeline==='function') renderPipeline(_c); } }catch(e){}
   toast('✅','Status &rarr; '+(status==='active'?'Active':status==='hold'?'On Hold':'Closed'));
 }
 
@@ -8071,7 +8116,7 @@ function openTasks() {
   var sc = document.getElementById('sb-central'); if (sc) sc.className = 'sb-gear';
   document.getElementById('sb-gear').className = 'sb-gear';
   S.settingsOpen = false;
-  renderTasksView();
+  renderTasksActive();
 
   writeHash();
 }
@@ -9049,7 +9094,7 @@ function renderJobs(){
       +'<div style="font-size:12px;color:#555;margin-top:3px">'+esc(m.client||'')+'</div>'
       +'<div style="font-size:11px;color:#888;margin-top:2px">'+esc(m.location||'')+(m.division?' &middot; '+esc(m.division):'')+'</div></div>'
       +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'
-      +'<span class="pill" style="background:'+dotC+'22;color:'+dotC+'">'+statusLabel+'</span>'
+      +'<button onclick="event.stopPropagation();openStatusModal('+m.id+')" title="Change status (Active / Hold / Closed)" class="pill" style="background:'+dotC+'22;color:'+dotC+';border:none;cursor:pointer;font:inherit;display:inline-flex;align-items:center;gap:4px">'+statusLabel+' &#9662;</button>'
       +((m.ctc_min||m.ctc_max)?'<span style="font-size:10px;color:#aaa">&#8377;'+(m.ctc_min||0)+'&ndash;'+(m.ctc_max||0)+'L</span>':'')
       +'</div></div></div>';
   }).join('');
@@ -10215,6 +10260,173 @@ async function renderStageCandidatesPage(stagesStr){
   }
   html += '</div>';
   body.innerHTML = html;
+}
+
+// ── Tasks: List / Board mode ────────────────────────────────────────────────
+function setTasksMode(mode){
+  S._tasksMode = (mode==='board') ? 'board' : 'list';
+  var bl=document.getElementById('tm-list'), bb=document.getElementById('tm-board');
+  var tf=document.getElementById('task-filter');
+  if(bl&&bb){
+    var onCss='background:#0F6E56;color:#fff', offCss='background:#fff;color:#555';
+    bl.style.cssText='font-size:11.5px;padding:6px 12px;border:none;cursor:pointer;'+(S._tasksMode==='list'?onCss:offCss);
+    bb.style.cssText='font-size:11.5px;padding:6px 12px;border:none;cursor:pointer;'+(S._tasksMode==='board'?onCss:offCss);
+  }
+  if(tf) tf.style.display = (S._tasksMode==='board') ? 'none' : '';
+  renderTasksActive();
+}
+function renderTasksActive(){
+  if(S._tasksMode==='board') return renderTasksBoard();
+  return renderTasksView();
+}
+
+// ── New Task modal ──────────────────────────────────────────────────────────
+function openNewTask(){
+  var n=document.getElementById('nt-note'); if(n) n.value='';
+  var d=document.getElementById('nt-due'); if(d) d.value='';
+  var st=document.getElementById('nt-stage'); if(st) st.value = (S._tasksMode==='board') ? 'todo' : 'todo';
+  _ntClearCand();
+  var s=document.getElementById('nt-cand-search'); if(s) s.value='';
+  openModal('modal-newtask');
+  setTimeout(function(){ if(n) n.focus(); }, 60);
+}
+function _ntClearCand(){
+  var h=document.getElementById('nt-cand-id'); if(h) h.value='';
+  var ch=document.getElementById('nt-cand-chosen'); if(ch){ ch.style.display='none'; ch.innerHTML=''; }
+  var rs=document.getElementById('nt-cand-results'); if(rs){ rs.style.display='none'; rs.innerHTML=''; }
+  var si=document.getElementById('nt-cand-search'); if(si) si.style.display='';
+}
+var _ntSearchTimer=null;
+var _ntResults=[];
+function _ntCandSearch(q){
+  q=(q||'').trim();
+  var rs=document.getElementById('nt-cand-results'); if(!rs) return;
+  if(_ntSearchTimer) clearTimeout(_ntSearchTimer);
+  if(q.length<2){ rs.style.display='none'; rs.innerHTML=''; return; }
+  _ntSearchTimer=setTimeout(async function(){
+    var r=await req('GET','/central-db/search?q='+encodeURIComponent(q));
+    _ntResults=((r&&(r.candidates||r.results))||[]).slice(0,8);
+    if(!_ntResults.length){ rs.innerHTML='<div style="padding:10px 12px;font-size:12px;color:#98A2B3">No matches</div>'; rs.style.display='block'; return; }
+    rs.innerHTML=_ntResults.map(function(c){
+      var sub=[c.designation,c.company].filter(Boolean).join(' @ ')||(c.phone||'');
+      return '<div onclick="_ntPickCand('+c.id+')" style="padding:9px 12px;border-bottom:0.5px solid #f0f0f0;cursor:pointer;font-size:12.5px">'
+        +'<div style="font-weight:600;color:#0a2540">'+esc(c.name||'Unnamed')+'</div>'
+        +(sub?'<div style="font-size:11px;color:#888;margin-top:1px">'+esc(sub)+'</div>':'')+'</div>';
+    }).join('');
+    rs.style.display='block';
+  }, 240);
+}
+function _ntPickCand(id){
+  var c=null; for(var i=0;i<_ntResults.length;i++){ if(_ntResults[i].id===id){ c=_ntResults[i]; break; } }
+  if(!c) return;
+  var name=c.name||'Unnamed';
+  var sub=[c.designation,c.company].filter(Boolean).join(' @ ')||(c.phone||'');
+  var h=document.getElementById('nt-cand-id'); if(h) h.value=id;
+  var ch=document.getElementById('nt-cand-chosen');
+  var si=document.getElementById('nt-cand-search');
+  var rs=document.getElementById('nt-cand-results');
+  if(rs){ rs.style.display='none'; rs.innerHTML=''; }
+  if(si) si.style.display='none';
+  if(ch){
+    ch.style.display='block';
+    ch.innerHTML='<span style="display:inline-flex;align-items:center;gap:8px;background:#E7F6EF;color:#0F6E56;border-radius:20px;padding:5px 12px">'
+      +'<b>'+esc(name)+'</b>'+(sub?'<span style="opacity:.75;font-weight:400">'+esc(sub)+'</span>':'')
+      +'<span onclick="_ntClearCand()" style="cursor:pointer;font-weight:700;margin-left:2px">&#10005;</span></span>';
+  }
+}
+async function saveNewTask(){
+  var note=(document.getElementById('nt-note')||{}).value||'';
+  var cid=(document.getElementById('nt-cand-id')||{}).value||'';
+  var due=(document.getElementById('nt-due')||{}).value||'';
+  var stage=(document.getElementById('nt-stage')||{}).value||'todo';
+  note=note.trim();
+  if(!note && !cid){ toast('ERR','Task text likho (ya candidate link karo)'); return; }
+  var btn=document.getElementById('nt-save-btn'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  var payload={ note:note, due_at:due, stage:stage };
+  if(cid) payload.candidate_id=parseInt(cid,10);
+  var r=await req('POST','/reminders',payload);
+  if(btn){ btn.disabled=false; btn.innerHTML='Create Task &#8594;'; }
+  if(r && r.ok){
+    toast('✅','Task created');
+    closeModal('modal-newtask');
+    renderTasksActive();
+    if(typeof updateTasksBadge==='function') updateTasksBadge();
+  } else {
+    toast('ERR',(r&&r.error)||'Failed to create task');
+  }
+}
+
+// ── Kanban board ────────────────────────────────────────────────────────────
+var _taskDragId=null;
+function _taskDragStart(ev,id){ _taskDragId=id; try{ ev.dataTransfer.setData('text/plain',String(id)); ev.dataTransfer.effectAllowed='move'; }catch(e){} }
+function _taskAllowDrop(ev){ ev.preventDefault(); try{ ev.dataTransfer.dropEffect='move'; }catch(e){} }
+function _taskColEnter(ev){ ev.currentTarget.style.background='#EEF6F2'; }
+function _taskColLeave(ev){ ev.currentTarget.style.background=''; }
+async function _taskDrop(ev,stage){
+  ev.preventDefault(); ev.currentTarget.style.background='';
+  var id=_taskDragId; if(!id){ try{ id=parseInt(ev.dataTransfer.getData('text/plain'),10); }catch(e){} }
+  _taskDragId=null;
+  if(!id) return;
+  await _taskMove(id,stage);
+}
+async function _taskMove(id,stage){
+  var r=await req('POST','/reminders/'+id+'/stage',{stage:stage});
+  if(r&&r.ok){ renderTasksBoard(); if(typeof updateTasksBadge==='function') updateTasksBadge(); }
+  else toast('ERR','Could not move task');
+}
+async function _taskDelete(id){
+  if(!confirm('Delete this task?')) return;
+  var r=await req('DELETE','/reminders/'+id);
+  if(r&&r.ok){ renderTasksBoard(); if(typeof updateTasksBadge==='function') updateTasksBadge(); toast('OK','Task deleted'); }
+}
+function _taskDueLabel(due){
+  if(!due) return '';
+  try{ var d=new Date(due); return d.toLocaleDateString('en-IN',{day:'numeric',month:'short'})+' '+d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; }
+}
+async function renderTasksBoard(){
+  var body=document.getElementById('tasks-body'); if(!body) return;
+  body.style.padding='16px';
+  body.innerHTML='<div class="loading"><div class="spinner"></div>Loading board...</div>';
+  var r=await req('GET','/tasks/board');
+  if(!r||!r.ok){ body.innerHTML='<div style="padding:20px;color:#E24B4A">Failed to load board</div>'; return; }
+  var cols=r.columns||{todo:[],doing:[],done:[]};
+  var defs=[['todo','To Do','#185FA5','#E6F1FB'],['doing','In Progress','#854F0B','#FAEEDA'],['done','Done','#0F6E56','#E1F5EE']];
+  function card(t){
+    var isDone=t.stage==='done';
+    var due=_taskDueLabel(t.due_at);
+    var overdue=false;
+    if(t.due_at && !isDone){ try{ overdue=new Date(t.due_at)<new Date(); }catch(e){} }
+    var titleTxt = t.candidate_id ? (t.candidate_name||'Candidate') : (t.note||'Task');
+    var sub = t.candidate_id ? [t.note, t.mandate_label].filter(Boolean).join(' &middot; ') : '';
+    var callBtn = t.phone ? '<a href="tel:'+esc(t.phone)+'" onclick="event.stopPropagation()" class="btn btn-o" style="font-size:10.5px;padding:4px 8px;text-decoration:none">&#128222;</a>' : '';
+    var openAttr = t.candidate_id ? ' onclick="openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')" style="cursor:pointer"' : ' style="cursor:default"';
+    return '<div draggable="true" ondragstart="_taskDragStart(event,'+t.id+')" '
+      +'style="background:#fff;border:0.5px solid #e6e6e6;border-left:3px solid '+(isDone?'#1D9E75':(overdue?'#E24B4A':'#cbd5e1'))+';border-radius:9px;padding:10px 11px;margin-bottom:9px;box-shadow:0 1px 2px rgba(0,0,0,.05)">'
+      +'<div'+openAttr+'>'
+      +'<div style="font-size:12.5px;font-weight:600;color:#0a2540;line-height:1.3;'+(isDone?'text-decoration:line-through;opacity:.65':'')+'">'+esc(titleTxt)+'</div>'
+      +(sub?'<div style="font-size:11px;color:#888;margin-top:3px">'+esc(sub)+'</div>':'')
+      +(t.candidate_id?'':'<div style="font-size:9.5px;color:#98A2B3;margin-top:3px;text-transform:uppercase;letter-spacing:.4px">Standalone</div>')
+      +'</div>'
+      +'<div style="display:flex;align-items:center;gap:6px;margin-top:8px">'
+      +(due?'<span style="font-size:10.5px;color:'+(overdue?'#E24B4A':'#185FA5')+'">&#128197; '+due+'</span>':'')
+      +'<div style="margin-left:auto;display:flex;gap:5px">'+callBtn
+      +'<button onclick="event.stopPropagation();_taskDelete('+t.id+')" class="btn btn-o" style="font-size:10.5px;padding:4px 8px" title="Delete">&#128465;</button>'
+      +'</div></div></div>';
+  }
+  var html='<div style="display:flex;gap:14px;align-items:flex-start;min-height:100%;overflow-x:auto;padding-bottom:8px">';
+  defs.forEach(function(d){
+    var list=cols[d[0]]||[];
+    html+='<div ondragover="_taskAllowDrop(event)" ondragenter="_taskColEnter(event)" ondragleave="_taskColLeave(event)" ondrop="_taskDrop(event,\''+d[0]+'\')" '
+      +'style="flex:1;min-width:270px;max-width:420px;background:#F4F5F3;border-radius:12px;padding:11px;transition:background .12s">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:11px;padding:0 2px">'
+      +'<span style="width:9px;height:9px;border-radius:50%;background:'+d[2]+'"></span>'
+      +'<span style="font-size:12.5px;font-weight:700;color:'+d[2]+'">'+d[1]+'</span>'
+      +'<span style="font-size:11px;color:#98A2B3;background:'+d[3]+';border-radius:10px;padding:1px 8px;margin-left:auto">'+list.length+'</span></div>'
+      +(list.length?list.map(card).join(''):'<div style="font-size:11.5px;color:#b0b0b0;text-align:center;padding:18px 0">Drop tasks here</div>')
+      +'</div>';
+  });
+  html+='</div>';
+  body.innerHTML=html;
 }
 
 async function renderTasksView() {
