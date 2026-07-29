@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file, Response
+    from flask import Flask, request, jsonify, send_file, Response
 from flask_cors import CORS
 import sqlite3, json, os, datetime, requests, shutil, io, re, smtplib, time
 from email.mime.text import MIMEText
@@ -4638,16 +4638,24 @@ def run_deep_analysis(cid):
                           {'role': 'user', 'content': user_msg}]},
             timeout=180, endpoint='deep-analysis')
         if rr.status_code != 200:
-            err = rr.json().get('error', {}).get('message', rr.text[:200])
+            try:
+                err = rr.json().get('error', {}).get('message', rr.text[:300])
+            except Exception:
+                err = rr.text[:300]
             conn.close()
-            return jsonify({'error': 'DeepSeek error: ' + err}), 500
+            return jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502
         md = rr.json()['choices'][0]['message']['content'].strip()
     except TokenCapError:
         conn.close()
         return jsonify({'error': 'Monthly AI token cap reached.'}), 429
-    except Exception as e:
+    except requests.exceptions.Timeout:
         conn.close()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'DeepSeek timed out (>180s). Try again — the resume/JD may be very long.'}), 504
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        conn.close()
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
 
     if not md:
         conn.close()
