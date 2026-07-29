@@ -10370,14 +10370,30 @@ async function _taskDrop(ev,stage){
   await _taskMove(id,stage);
 }
 async function _taskMove(id,stage){
+  // Optimistic: update the cached board and repaint instantly, sync in background.
+  if(S._boardCols){
+    var moved=null;
+    ['todo','doing','done'].forEach(function(k){
+      var arr=S._boardCols[k]||[]; var i=arr.map(function(x){return x.id;}).indexOf(id);
+      if(i>=0){ moved=arr.splice(i,1)[0]; }
+    });
+    if(moved){ moved.stage=stage; (S._boardCols[stage]=S._boardCols[stage]||[]).unshift(moved); _paintBoard(S._boardCols); }
+  }
   var r=await req('POST','/reminders/'+id+'/stage',{stage:stage});
-  if(r&&r.ok){ renderTasksBoard(); if(typeof updateTasksBadge==='function') updateTasksBadge(); }
-  else toast('ERR','Could not move task');
+  if(r&&r.ok){ if(typeof updateTasksBadge==='function') updateTasksBadge(); }
+  else { toast('ERR','Could not move task'); renderTasksBoard(); }
 }
 async function _taskDelete(id){
   if(!confirm('Delete this task?')) return;
+  if(S._boardCols){
+    ['todo','doing','done'].forEach(function(k){
+      S._boardCols[k]=(S._boardCols[k]||[]).filter(function(x){return x.id!==id;});
+    });
+    _paintBoard(S._boardCols);
+  }
   var r=await req('DELETE','/reminders/'+id);
-  if(r&&r.ok){ renderTasksBoard(); if(typeof updateTasksBadge==='function') updateTasksBadge(); toast('OK','Task deleted'); }
+  if(r&&r.ok){ toast('OK','Task deleted'); if(typeof updateTasksBadge==='function') updateTasksBadge(); }
+  else { toast('ERR','Delete failed'); renderTasksBoard(); }
 }
 function _taskDueLabel(due){
   if(!due) return '';
@@ -10389,7 +10405,12 @@ async function renderTasksBoard(){
   body.innerHTML='<div class="loading"><div class="spinner"></div>Loading board...</div>';
   var r=await req('GET','/tasks/board');
   if(!r||!r.ok){ body.innerHTML='<div style="padding:20px;color:#E24B4A">Failed to load board</div>'; return; }
-  var cols=r.columns||{todo:[],doing:[],done:[]};
+  S._boardCols=r.columns||{todo:[],doing:[],done:[]};
+  _paintBoard(S._boardCols);
+}
+function _paintBoard(cols){
+  var body=document.getElementById('tasks-body'); if(!body) return;
+  cols=cols||{todo:[],doing:[],done:[]};
   var defs=[['todo','To Do','#185FA5','#E6F1FB'],['doing','In Progress','#854F0B','#FAEEDA'],['done','Done','#0F6E56','#E1F5EE']];
   function card(t){
     var isDone=t.stage==='done';
@@ -10400,7 +10421,7 @@ async function renderTasksBoard(){
     var sub = t.candidate_id ? [t.note, t.mandate_label].filter(Boolean).join(' &middot; ') : '';
     var callBtn = t.phone ? '<a href="tel:'+esc(t.phone)+'" onclick="event.stopPropagation()" class="btn btn-o" style="font-size:10.5px;padding:4px 8px;text-decoration:none">&#128222;</a>' : '';
     var openAttr = t.candidate_id ? ' onclick="openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')" style="cursor:pointer"' : ' style="cursor:default"';
-    return '<div draggable="true" ondragstart="_taskDragStart(event,'+t.id+')" '
+    return '<div id="tcard-'+t.id+'" draggable="true" ondragstart="_taskDragStart(event,'+t.id+')" '
       +'style="background:#fff;border:0.5px solid #e6e6e6;border-left:3px solid '+(isDone?'#1D9E75':(overdue?'#E24B4A':'#cbd5e1'))+';border-radius:9px;padding:10px 11px;margin-bottom:9px;box-shadow:0 1px 2px rgba(0,0,0,.05)">'
       +'<div'+openAttr+'>'
       +'<div style="font-size:12.5px;font-weight:600;color:#0a2540;line-height:1.3;'+(isDone?'text-decoration:line-through;opacity:.65':'')+'">'+esc(titleTxt)+'</div>'
@@ -10481,7 +10502,7 @@ async function renderTasksView() {
       : '';
     var snoozeBtn = '<button class="btn btn-o" style="font-size:11px;padding:6px 9px" title="Snooze" onclick="event.stopPropagation();openSnoozeModal(\''+t.type+'\','+t.ref_id+',\''+esc(t.title).replace(/&#39;/g,"").replace(/\x27/g,"")+'\')">&#9200;</button>';
 
-    return '<div style="background:#fff;padding:13px 15px;display:flex;align-items:center;gap:12px">'
+    return '<div id="trow-'+t.type+'-'+t.ref_id+'" style="background:#fff;padding:13px 15px;display:flex;align-items:center;gap:12px">'
       + '<div style="width:38px;height:38px;border-radius:50%;background:'+ac[0]+';display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:600;color:'+ac[1]+';flex-shrink:0">'+esc(initials(t.title))+'</div>'
       + '<div style="flex:1;min-width:0;cursor:pointer" onclick="'+(t.candidate_id?('openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')'):'openResponses()')+'">'
       + '<div style="font-size:14px;font-weight:600;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(t.title)+'</div>'
@@ -10495,10 +10516,11 @@ async function renderTasksView() {
 
   function section(title, color, list){
     if (!list.length) return '';
-    var h = '<div style="font-size:12.5px;font-weight:600;color:'+color+';margin:0 0 8px;display:flex;align-items:center;gap:6px">'+title+'</div>';
-    h += '<div style="display:flex;flex-direction:column;gap:1px;background:var(--line);border-radius:12px;overflow:hidden;margin-bottom:20px">';
+    var h = '<div class="task-section">';
+    h += '<div style="font-size:12.5px;font-weight:600;color:'+color+';margin:0 0 8px;display:flex;align-items:center;gap:6px">'+title+'</div>';
+    h += '<div class="task-rows" style="display:flex;flex-direction:column;gap:1px;background:var(--line);border-radius:12px;overflow:hidden;margin-bottom:20px">';
     list.forEach(function(t){ h += taskRow(t); });
-    h += '</div>';
+    h += '</div></div>';
     return h;
   }
 
@@ -10584,10 +10606,45 @@ function _toggleUpcoming(){
   if (a) a.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
 }
 
+function _removeTaskRow(type, refId){
+  var row = document.getElementById('trow-'+type+'-'+refId);
+  if(row){
+    row.style.transition='opacity .16s ease';
+    row.style.opacity='0';
+    setTimeout(function(){ if(row&&row.parentNode) row.parentNode.removeChild(row); _cleanupEmptyTaskSections(); }, 160);
+  }
+  if(Array.isArray(S._allTasks)){
+    S._allTasks = S._allTasks.filter(function(t){ return !(t.type===type && String(t.ref_id)===String(refId)); });
+  }
+  _recalcTasksBadgeLocal();
+}
+function _cleanupEmptyTaskSections(){
+  var secs = document.querySelectorAll('#tasks-body .task-section');
+  secs.forEach(function(sec){
+    var rows = sec.querySelector('.task-rows');
+    if(rows && rows.children.length===0) sec.remove();
+  });
+  // If nothing left at all, show the "all caught up" state without a full reload.
+  var body=document.getElementById('tasks-body');
+  if(body && !body.querySelector('.task-section') && (S._tasksMode!=='board')){
+    body.innerHTML='<div style="max-width:820px;margin:0 auto"><div style="text-align:center;padding:50px 20px">'
+      +'<div style="font-size:40px;margin-bottom:10px">&#127881;</div>'
+      +'<div style="font-size:15px;font-weight:600;color:var(--navy)">All caught up</div>'
+      +'<div style="font-size:13px;color:var(--muted);margin-top:4px">No pending tasks right now.</div></div></div>';
+  }
+}
+function _recalcTasksBadgeLocal(){
+  var badge=document.getElementById('nav-tasks-badge'); if(!badge) return;
+  var arr=Array.isArray(S._allTasks)?S._allTasks:[];
+  var n=arr.filter(function(t){ return t.section==='overdue' || t.section==='today'; }).length;
+  if(n>0){ badge.textContent=n; badge.style.display='inline-block'; } else { badge.style.display='none'; }
+}
+
 async function markTaskDone(type, refId){
+  _removeTaskRow(type, refId);              // optimistic: row vanishes instantly
   var r = await req('POST', '/tasks/done', {type: type, ref_id: refId});
-  if (r.ok) { toast('OK', 'Marked done'); renderTasksView(); updateTasksBadge(); }
-  else toast('ERR', r.error || 'Failed');
+  if (r.ok) { toast('OK', 'Marked done'); }
+  else { toast('ERR', r.error || 'Failed'); renderTasksActive(); }  // restore on failure
 }
 
 // ── Snooze modal: quick options + custom date & time ────────────────────
@@ -10629,10 +10686,11 @@ function openSnoozeModal(type, refId, title){
 }
 
 async function doSnooze(type, refId, isoDateTime){
-  var r = await req('POST', '/tasks/snooze', {type: type, ref_id: refId, snoozed_until: isoDateTime});
   var m = document.getElementById('snooze-modal'); if (m) m.remove();
-  if (r.ok) { toast('OK', 'Snoozed'); renderTasksView(); updateTasksBadge(); }
-  else toast('ERR', r.error || 'Failed');
+  _removeTaskRow(type, refId);             // optimistic: snoozed row vanishes
+  var r = await req('POST', '/tasks/snooze', {type: type, ref_id: refId, snoozed_until: isoDateTime});
+  if (r.ok) { toast('OK', 'Snoozed'); }
+  else { toast('ERR', r.error || 'Failed'); renderTasksActive(); }
 }
 
 function doSnoozeCustom(type, refId){
