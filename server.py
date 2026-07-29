@@ -4590,8 +4590,13 @@ def _deep_analysis_inputs(conn, c, m):
 def get_deep_analysis(cid):
     """Return the cached deep-analysis report for this candidate (if any)."""
     conn = get_db()
-    c = conn.execute('SELECT deep_analysis FROM candidates WHERE id=? AND owner_id=?',
-                     (cid, effective_company_id())).fetchone()
+    try:
+        c = conn.execute('SELECT deep_analysis FROM candidates WHERE id=? AND owner_id=?',
+                         (cid, effective_company_id())).fetchone()
+    except Exception:
+        # Column not created yet (first boot with this feature) — treat as "no analysis".
+        conn.close()
+        return jsonify({'ok': True, 'cached': False})
     conn.close()
     if not c:
         return jsonify({'error': 'Candidate not found'}), 404
@@ -4615,63 +4620,78 @@ def run_deep_analysis(cid):
     if not ds_key:
         return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
 
-    conn = get_db()
-    c = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
-                     (cid, effective_company_id())).fetchone()
-    if not c:
-        conn.close()
-        return jsonify({'error': 'Candidate not found'}), 404
-    m = conn.execute('SELECT * FROM mandates WHERE id=?', (c['mandate_id'],)).fetchone()
-    if not m:
-        conn.close()
-        return jsonify({'error': 'Mandate not found'}), 404
-
-    jd_block, resume_text = _deep_analysis_inputs(conn, c, m)
-    user_msg = ("JOB DESCRIPTION:\n" + jd_block +
-                "\n\n----------------------------------------\n\n"
-                "CANDIDATE RESUME:\n" + resume_text)
-
+    conn = None
     try:
-        rr = call_deepseek(ds_key,
-            {'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 3500,
-             'messages': [{'role': 'system', 'content': DEEP_ANALYSIS_PROMPT},
-                          {'role': 'user', 'content': user_msg}]},
-            timeout=180, endpoint='deep-analysis')
+        conn = get_db()
+        # Self-heal: guarantee the cache column exists even if the boot-time
+        # migration was skipped for any reason (idempotent, no-op if present).
+        try:
+            conn.execute('ALTER TABLE candidates ADD COLUMN deep_analysis TEXT DEFAULT ""')
+            conn.commit()
+        except Exception:
+            pass
+        c = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
+                         (cid, effective_company_id())).fetchone()
+        if not c:
+            return jsonify({'error': 'Candidate not found'}), 404
+        m = conn.execute('SELECT * FROM mandates WHERE id=?', (c['mandate_id'],)).fetchone()
+        if not m:
+            return jsonify({'error': 'Mandate not found (candidate has no linked role).'}), 404
+
+        jd_block, resume_text = _deep_analysis_inputs(conn, c, m)
+        user_msg = ("JOB DESCRIPTION:\n" + jd_block +
+                    "\n\n----------------------------------------\n\n"
+                    "CANDIDATE RESUME:\n" + resume_text)
+
+        try:
+            rr = call_deepseek(ds_key,
+                {'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 3500,
+                 'messages': [{'role': 'system', 'content': DEEP_ANALYSIS_PROMPT},
+                              {'role': 'user', 'content': user_msg}]},
+                timeout=180, endpoint='deep-analysis')
+        except TokenCapError:
+            return jsonify({'error': 'Monthly AI token cap reached.'}), 429
+        except requests.exceptions.Timeout:
+            return jsonify({'error': 'DeepSeek timed out (>180s). Resume/JD may be very long — try again.'}), 504
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({'error': f'Could not reach DeepSeek — {type(e).__name__}: {e}'}), 502
+
         if rr.status_code != 200:
             try:
                 err = rr.json().get('error', {}).get('message', rr.text[:300])
             except Exception:
                 err = rr.text[:300]
-            conn.close()
             return jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502
-        md = rr.json()['choices'][0]['message']['content'].strip()
-    except TokenCapError:
-        conn.close()
-        return jsonify({'error': 'Monthly AI token cap reached.'}), 429
-    except requests.exceptions.Timeout:
-        conn.close()
-        return jsonify({'error': 'DeepSeek timed out (>180s). Try again — the resume/JD may be very long.'}), 504
+
+        try:
+            md = rr.json()['choices'][0]['message']['content'].strip()
+        except Exception as e:
+            return jsonify({'error': f'Unexpected DeepSeek response: {type(e).__name__}: {e}'}), 502
+
+        if not md:
+            return jsonify({'error': 'AI returned an empty response. Please try again.'}), 502
+
+        at = ts()
+        blob = json.dumps({'md': md, 'at': at, 'model': 'deepseek-chat'})
+        conn.execute('UPDATE candidates SET deep_analysis=?, updated_at=? WHERE id=?',
+                     (blob, at, cid))
+        conn.commit()
+        try:
+            log_candidate_event(cid, 'note', 'AI deep analysis generated')
+        except Exception:
+            pass
+        return jsonify({'ok': True, 'md': md, 'at': at, 'model': 'deepseek-chat'})
+
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        conn.close()
+        import traceback; traceback.print_exc()
         return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
-
-    if not md:
-        conn.close()
-        return jsonify({'error': 'Empty response from AI. Try again.'}), 500
-
-    at = ts()
-    blob = json.dumps({'md': md, 'at': at, 'model': 'deepseek-chat'})
-    conn.execute('UPDATE candidates SET deep_analysis=?, updated_at=? WHERE id=?',
-                 (blob, at, cid))
-    conn.commit()
-    try:
-        log_candidate_event(cid, 'note', 'AI deep analysis generated')
-    except Exception:
-        pass
-    conn.close()
-    return jsonify({'ok': True, 'md': md, 'at': at, 'model': 'deepseek-chat'})
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _record_embedding(conn, cid, status, *, vec=None, txt=None, error='', duration_ms=0):
