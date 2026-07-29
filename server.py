@@ -2449,6 +2449,7 @@ def init_db():
         ('early_warned', "INTEGER DEFAULT 0"),     # sent the 5-10 min advance warning?
         ('owner_id', "INTEGER DEFAULT 0"),
         ('notify_count', "INTEGER DEFAULT 0"),     # how many due-notifications sent (cap the spam)
+        ('stage', "TEXT DEFAULT 'todo'"),          # Kanban column: todo / doing / done
     ]:
         try:
             c.execute(f'ALTER TABLE reminders ADD COLUMN {col} {defn}')
@@ -3148,25 +3149,92 @@ def add_reminder():
     cid   = d.get('candidate_id')
     note  = (d.get('note') or '').strip()
     due   = (d.get('due_at') or '').strip()
-    if not cid or not due:
-        return jsonify({'error': 'candidate_id and due_at required'}), 400
+    stage = (d.get('stage') or 'todo').strip().lower()
+    if stage not in ('todo', 'doing', 'done'):
+        stage = 'todo'
+    # A task needs either its own text (standalone) or a linked candidate.
+    if not note and not cid:
+        return jsonify({'error': 'note or candidate_id required'}), 400
 
     conn = get_db()
-    cand = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
-    if not cand:
-        conn.close()
-        return jsonify({'error': 'Candidate not found'}), 404
+    cand_id = 0
+    cand_name = ''
+    mandate_id = None
+    mandate_label = ''
+    if cid:
+        cand = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+        if not cand:
+            conn.close()
+            return jsonify({'error': 'Candidate not found'}), 404
+        cand_id = cid
+        cand_name = cand['name'] or ''
+        mandate_id = cand['mandate_id']
+        mandate = conn.execute('SELECT * FROM mandates WHERE id=?', (cand['mandate_id'],)).fetchone()
+        mandate_label = (mandate['role'] + ' — ' + mandate['client']) if mandate else ''
 
-    mandate = conn.execute('SELECT * FROM mandates WHERE id=?', (cand['mandate_id'],)).fetchone()
-    mandate_label = (mandate['role'] + ' — ' + mandate['client']) if mandate else ''
-
+    done_flag = 1 if stage == 'done' else 0
     conn.execute(
-        'INSERT INTO reminders (candidate_id,mandate_id,candidate_name,mandate_label,note,due_at,done,created_at,owner_id) '
-        'VALUES (?,?,?,?,?,?,0,?,?)',
-        (cid, cand['mandate_id'], cand['name'] or '', mandate_label, note, due, ts(), effective_user_id())
+        'INSERT INTO reminders (candidate_id,mandate_id,candidate_name,mandate_label,note,due_at,done,stage,created_at,owner_id) '
+        'VALUES (?,?,?,?,?,?,?,?,?,?)',
+        (cand_id, mandate_id, cand_name, mandate_label, note, due, done_flag, stage, ts(), effective_user_id())
     )
     conn.commit(); conn.close()
     return jsonify({'ok': True})
+
+@app.route('/api/reminders/<int:rid>/stage', methods=['POST'])
+@login_required
+def set_reminder_stage(rid):
+    """Move a task between Kanban columns (todo / doing / done)."""
+    d = request.json or {}
+    stage = (d.get('stage') or '').strip().lower()
+    if stage not in ('todo', 'doing', 'done'):
+        return jsonify({'error': 'invalid stage'}), 400
+    conn = get_db()
+    r = conn.execute('SELECT owner_id FROM reminders WHERE id=?', (rid,)).fetchone()
+    if not r or (r['owner_id'] or 0) != effective_user_id():
+        conn.close()
+        return jsonify({'error': 'not found'}), 404
+    done_flag = 1 if stage == 'done' else 0
+    conn.execute('UPDATE reminders SET stage=?, done=? WHERE id=?', (stage, done_flag, rid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/tasks/board', methods=['GET'])
+@login_required
+def tasks_board():
+    """All manual tasks (reminders) grouped into Kanban columns. Includes done
+    tasks so the Done column is populated. Standalone tasks have candidate_id=0."""
+    conn = get_db()
+    uid = effective_user_id()
+    rows = conn.execute(
+        "SELECT r.*, c.phone AS cand_phone, c.name AS cand_name2 "
+        "FROM reminders r LEFT JOIN candidates c ON c.id = r.candidate_id "
+        "WHERE r.owner_id=? ORDER BY r.id DESC", (uid,)
+    ).fetchall()
+    conn.close()
+    cols = {'todo': [], 'doing': [], 'done': []}
+    for r in rows:
+        keys = r.keys()
+        # Legacy rows: done=1 always lands in the Done column.
+        st = 'done' if r['done'] else ((r['stage'] if 'stage' in keys else None) or 'todo')
+        if st not in cols:
+            st = 'todo'
+        cols[st].append({
+            'id': r['id'],
+            'note': r['note'] or '',
+            'candidate_id': r['candidate_id'] or 0,
+            'candidate_name': (r['candidate_name'] or (r['cand_name2'] if 'cand_name2' in keys else '') or ''),
+            'mandate_id': r['mandate_id'],
+            'mandate_label': r['mandate_label'] or '',
+            'phone': (r['cand_phone'] if 'cand_phone' in keys else '') or '',
+            'due_at': r['due_at'] or '',
+            'stage': st,
+        })
+    # Keep the Done column tidy — most-recent 60 only.
+    cols['done'] = cols['done'][:60]
+    return jsonify({'ok': True, 'columns': cols})
+
 
 def _reminder_token(rid):
     """Unguessable per-reminder token so the mobile app can mark done/snooze
@@ -3550,11 +3618,18 @@ def get_tasks():
             due = datetime.datetime.fromisoformat(r['due_at'])
         except Exception:
             due = now
+        _standalone = not r['candidate_id']
+        if _standalone:
+            _title = r['note'] or 'Task'
+            _subtitle = 'Task'
+        else:
+            _title = r['candidate_name'] or 'Candidate'
+            _subtitle = (r['note'] or 'Reminder') + (' \u00b7 ' + r['mandate_label'] if r['mandate_label'] else '')
         tasks.append({
             'id': 'reminder-' + str(r['id']), 'type': 'reminder', 'ref_id': r['id'],
             'candidate_id': r['candidate_id'], 'mandate_id': r['mandate_id'],
-            'title': r['candidate_name'] or 'Candidate',
-            'subtitle': (r['note'] or 'Reminder') + (' \u00b7 ' + r['mandate_label'] if r['mandate_label'] else ''),
+            'title': _title,
+            'subtitle': _subtitle,
             'phone': (r['cand_phone'] if ('cand_phone' in r.keys()) else '') or '',
             'due_at': r['due_at'], 'section': section_for(due),
         })
