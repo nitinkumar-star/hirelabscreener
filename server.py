@@ -4712,43 +4712,59 @@ def run_deep_analysis(cid):
 # a hook, real selling points, target profile, objection handling and a full
 # spoken call script. Cached in mandates.recruiter_pitch.
 RECRUITER_PITCH_PROMPT = """# ROLE
-You are a professional recruiter writing a SHORT, friendly job-opportunity pitch
-to send to a candidate. Keep it simple, generic and warm — the kind of message a
-recruiter can send to many suitable candidates for this role.
+You are an experienced agency recruiter writing a PHONE CALL PITCH SCRIPT that a
+recruiter reads out (naturally, not robotically) when cold-calling a candidate
+about a job. Write it in the flowing, spoken, first-person style of the flow below.
 
 You will receive the role details (title, client company, location, CTC band), a
-short job description, and the recruiter's name and company for the sign-off.
+job description, and the recruiter's name and agency name for the introduction.
+
+# HOW TO WRITE IT
+Follow this exact flow and tone (spoken, warm, professional). Keep
+"[Candidate Name]" as a LITERAL placeholder — do NOT invent a candidate name.
+
+1. Opening: "Hi, am I speaking with [Candidate Name]?"
+2. Intro + permission: "Hi [Candidate Name], this is <Recruiter Name> from
+   <Agency Name>. Is this a good time for a quick 2-minute conversation?"
+3. Reason for the call: name the exact role and the CLIENT company, plus ONE
+   short credible line about the client's standing in its industry. Use only
+   well-known, publicly-true facts about recognisable companies; for lesser-known
+   clients keep it neutral (e.g. "a well-regarded company in the <sector> space").
+   NEVER invent ownership, funding, parent companies or awards.
+4. Why this candidate: "I came across your profile on Naukri, and it looks like
+   you have strong experience in <the 1-2 most relevant skills from the JD>,
+   which is why I wanted to connect with you."
+5. Role basics: mention the LOCATION, the experience range they want (from the JD
+   or role seniority), and the core work plus the key technologies/skills from
+   the JD.
+6. Depth: one line that elevates it beyond a typical role — the real ownership,
+   architecture, leadership or impact from the JD ("It's much more than a typical
+   <role> role. You'll be responsible for ...").
+7. Close with discovery: "I'd love to understand your current role, the
+   technologies/tools you're working on, your current CTC, expected CTC, and the
+   kind of exposure you're looking for in your next opportunity."
 
 # RULES
-- Write ONE short pitch, about 90-140 words. NO headings, NO bullet points, NO
-  sections — just clean, natural paragraphs.
-- Keep it GENERIC and reusable: a warm opening, what the role is and where, one
-  or two simple reasons it's a good opportunity, a light mention of the CTC or
-  growth if provided, and a friendly closing line asking if they'd be open to a
-  quick chat.
-- Mention the client company name and location naturally.
-- Simple, human, professional English. No hype words ("rockstar", "dynamic"),
-  no fabricated facts, no over-promising.
-- End with a sign-off using EXACTLY the recruiter name and company provided:
-    Best regards,
-    <Recruiter Name>
-    <Company Name>
-- Output ONLY the pitch text (including the sign-off). Nothing else — no preamble,
-  no notes, no markdown symbols."""
+- Plain spoken text only. NO headings, NO bullets, NO markdown symbols, NO notes
+  — just the script as flowing lines, exactly like the template style.
+- Keep it honest and grounded in the JD. Do not fabricate facts.
+- Adapt EVERY detail (role, client, skills, tech, responsibilities, experience,
+  location) to the ACTUAL inputs — never copy the example's specific values.
+- Output ONLY the call script. Nothing before or after it."""
 
 
 def _recruiter_pitch_input(m, recruiter_name='', company_name=''):
-    """Assemble the role details + JD + sign-off info fed to the pitch model."""
+    """Assemble the role details + JD + intro info fed to the pitch model."""
     jd_text = html_to_text(m['jd']) if m['jd'] else ''
     return ("Role / Job Title: " + str(m['role'] or '') + "\n"
             "Client company: " + str(m['client'] or '') + "\n"
             "Location: " + str(m['location'] or '') + "\n"
             "CTC band: " + str(m['ctc_min'] or '') + "-" + str(m['ctc_max'] or '') + " LPA\n"
-            "Recruiter name (for sign-off): " + (recruiter_name or 'the recruiter') + "\n"
-            "Company (for sign-off): " + (company_name or '') + "\n\n"
+            "Recruiter name (for the intro): " + (recruiter_name or 'the recruiter') + "\n"
+            "Agency name (for the intro): " + (company_name or '') + "\n\n"
             "JOB DESCRIPTION:\n" + (jd_text.strip() if jd_text.strip()
-                else "(No full JD text on file — write a simple generic pitch from the "
-                     "role title, client and location above.)"))
+                else "(No full JD text on file — write the call script from the role "
+                     "title, client and location above.)"))
 
 
 @app.route('/api/mandates/<int:mid>/recruiter-pitch', methods=['GET'])
