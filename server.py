@@ -2130,6 +2130,14 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # already exists
 
+    # Migrate: add recruiter-pitch cache column on mandates (single additive col).
+    # Stores JSON {"md": "<markdown pitch>", "at": "<ts>", "model": "..."} so the
+    # "Recruiter Pitch" mandate sub-tab opens instantly; "Re-run" refreshes it.
+    try:
+        c.execute('ALTER TABLE mandates ADD COLUMN recruiter_pitch TEXT DEFAULT ""')
+    except sqlite3.OperationalError:
+        pass  # already exists
+
     # Migrate: add embedding columns to candidates for semantic search
     for col, typ in [('embedding', 'TEXT'), ('embedding_text', 'TEXT'), ('embedded_at', 'TEXT')]:
         try:
@@ -4686,6 +4694,175 @@ def run_deep_analysis(cid):
             log_candidate_event(cid, 'note', 'AI deep analysis generated')
         except Exception:
             pass
+        return jsonify({'ok': True, 'md': md, 'at': at, 'model': 'deepseek-chat'})
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+# ── Recruiter Pitch (JD → candidate-attraction pitch for recruiters) ─────────
+# Turns a mandate's JD + role details into a ready-to-use recruiter pitch:
+# a hook, real selling points, target profile, objection handling and a full
+# spoken call script. Cached in mandates.recruiter_pitch.
+RECRUITER_PITCH_PROMPT = """# ROLE
+You are an elite recruitment marketer and headhunter who writes irresistible,
+HONEST "recruiter pitches" — the narrative a recruiter uses to attract strong,
+often passive and currently-employed candidates to a role. Your pitch makes a
+busy professional stop and think "I should hear more about this."
+
+You will receive a Job Description plus role details (title, CLIENT company,
+location, CTC band). Craft a recruiter pitch that is accurate to the JD,
+persuasive, and immediately usable.
+
+# RULES
+- The client company name IS provided and SHOULD be used openly as a selling
+  point — lead with the brand when it is recognisable and credible.
+- Sell the OPPORTUNITY, not the task list. Translate responsibilities into
+  growth, impact, scope, ownership, learning and career trajectory.
+- Be specific and credible — reference the ACTUAL domain, technologies, scale
+  and problems from the JD. Ban generic fluff ("great opportunity", "dynamic
+  team", "rockstar") that has nothing concrete behind it.
+- NEVER fabricate benefits, salary, ESOPs, or company facts not supported by
+  the inputs. If CTC is given, frame it attractively; if not, don't invent one.
+- Stay honest — no over-promising. Overselling destroys recruiter credibility.
+- Assume the candidate is passive and employed: lead with why it's worth their
+  time, not "we are hiring".
+- Write all candidate-facing text in clear, professional ENGLISH.
+
+# OUTPUT (markdown, exactly these sections)
+
+## The Hook
+1-2 punchy lines the recruiter can open with — the single most compelling
+reason a strong candidate should care.
+
+## Why This Role
+3-5 crisp bullets: the real selling points from the JD (scope, ownership,
+technology, scale, impact, growth) plus the client brand angle. Concrete, tied
+to the JD — not generic.
+
+## Who They're Looking For
+2-4 plain-language bullets on the ideal candidate (from JD must-haves) — so the
+recruiter can target and quickly qualify.
+
+## Talking Points & Objection Handling
+3-5 points for a live call: likely candidate hesitations (location, CTC, notice
+period, "why should I leave my current job?") and an honest, positive framing
+for each.
+
+## Detailed Call Pitch
+A full spoken script (~150-220 words, ~45-60 seconds) the recruiter delivers on
+a live call — natural opening, who you are, why you're calling THIS person, the
+2-3 strongest hooks about the role and the client, the CTC/growth angle, and a
+warm close that invites a conversation. Written to be SPOKEN, not read aloud
+like a document.
+
+## Compensation & Logistics
+Briefly and honestly frame the CTC band, location / work-model and any other
+logistics — using ONLY what the inputs provide."""
+
+
+def _recruiter_pitch_input(m):
+    """Assemble the JD + role details block fed to the pitch model."""
+    jd_text = html_to_text(m['jd']) if m['jd'] else ''
+    return ("Role / Job Title: " + str(m['role'] or '') + "\n"
+            "Client company: " + str(m['client'] or '') + "\n"
+            "Location: " + str(m['location'] or '') + "\n"
+            "CTC band: " + str(m['ctc_min'] or '') + "-" + str(m['ctc_max'] or '') + " LPA\n\n"
+            "JOB DESCRIPTION:\n" + (jd_text.strip() if jd_text.strip()
+                else "(No full JD text on file — build the pitch from the role title, "
+                     "client and location above.)"))
+
+
+@app.route('/api/mandates/<int:mid>/recruiter-pitch', methods=['GET'])
+@login_required
+def get_recruiter_pitch(mid):
+    """Return the cached recruiter pitch for this mandate (if any)."""
+    conn = get_db()
+    try:
+        m = conn.execute('SELECT recruiter_pitch FROM mandates WHERE id=? AND owner_id=?',
+                         (mid, effective_company_id())).fetchone()
+    except Exception:
+        conn.close()
+        return jsonify({'ok': True, 'cached': False})
+    conn.close()
+    if not m:
+        return jsonify({'error': 'Mandate not found'}), 404
+    raw = (m['recruiter_pitch'] or '').strip()
+    if not raw:
+        return jsonify({'ok': True, 'cached': False})
+    try:
+        data = json.loads(raw)
+        return jsonify({'ok': True, 'cached': True, 'md': data.get('md', ''),
+                        'at': data.get('at', ''), 'model': data.get('model', '')})
+    except Exception:
+        return jsonify({'ok': True, 'cached': False})
+
+
+@app.route('/api/mandates/<int:mid>/recruiter-pitch', methods=['POST'])
+@login_required
+def run_recruiter_pitch(mid):
+    """Generate a recruiter pitch from the mandate's JD + role details using
+    DeepSeek, cache it on the mandate, and return the markdown."""
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
+
+    conn = None
+    try:
+        conn = get_db()
+        # Self-heal: guarantee the cache column exists (idempotent).
+        try:
+            conn.execute('ALTER TABLE mandates ADD COLUMN recruiter_pitch TEXT DEFAULT ""')
+            conn.commit()
+        except Exception:
+            pass
+        m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                         (mid, effective_company_id())).fetchone()
+        if not m:
+            return jsonify({'error': 'Mandate not found'}), 404
+
+        user_msg = _recruiter_pitch_input(m)
+
+        try:
+            rr = call_deepseek(ds_key,
+                {'model': 'deepseek-chat', 'temperature': 0.6, 'max_tokens': 2500,
+                 'messages': [{'role': 'system', 'content': RECRUITER_PITCH_PROMPT},
+                              {'role': 'user', 'content': user_msg}]},
+                timeout=180, endpoint='recruiter-pitch')
+        except TokenCapError:
+            return jsonify({'error': 'Monthly AI token cap reached.'}), 429
+        except requests.exceptions.Timeout:
+            return jsonify({'error': 'DeepSeek timed out (>180s). Try again.'}), 504
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({'error': f'Could not reach DeepSeek — {type(e).__name__}: {e}'}), 502
+
+        if rr.status_code != 200:
+            try:
+                err = rr.json().get('error', {}).get('message', rr.text[:300])
+            except Exception:
+                err = rr.text[:300]
+            return jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502
+
+        try:
+            md = rr.json()['choices'][0]['message']['content'].strip()
+        except Exception as e:
+            return jsonify({'error': f'Unexpected DeepSeek response: {type(e).__name__}: {e}'}), 502
+
+        if not md:
+            return jsonify({'error': 'AI returned an empty response. Please try again.'}), 502
+
+        at = ts()
+        blob = json.dumps({'md': md, 'at': at, 'model': 'deepseek-chat'})
+        conn.execute('UPDATE mandates SET recruiter_pitch=? WHERE id=?', (blob, mid))
+        conn.commit()
         return jsonify({'ok': True, 'md': md, 'at': at, 'model': 'deepseek-chat'})
 
     except Exception as e:
