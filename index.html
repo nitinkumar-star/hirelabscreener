@@ -3415,6 +3415,8 @@ async function renderPipeline(el){
     +'<button class="btn btn-o" style="font-size:11px" onclick="renderPipeline(document.getElementById(\'content\'))">&#8635; Refresh</button>'
     +'<button class="btn btn-o" style="font-size:11px" onclick="openAddCandidateModal()">+ Add Manually</button>'
     +'<button class="btn" style="font-size:11px;background:#1D9E75;color:#fff" onclick="downloadSubmissionExcel()">&#128229; Submission Excel</button>'
+    +'<button class="btn" style="font-size:11px;background:#0F6E56;color:#fff" onclick="openShareToClient()">&#9993; Share to Client</button>'
+    +'<button class="btn btn-o" style="font-size:11px" onclick="openSubmissionDrafts()" title="Saved submission drafts">&#128196; Drafts</button>'
     +(sharedCnt?'<button class="btn" style="font-size:11px;background:#534AB7;color:#fff" onclick="openSubmissionSheet()">&#128203; Client Sheet</button>':'')
     +'</div></div>'
     +'<div class="pl-wrap"><div class="pl-cols" id="pl-cols"></div></div>';
@@ -3530,6 +3532,178 @@ async function openSubmissionSheet(){
   var r = await req('GET','/mandates/'+S.activeMandate.id+'/share-link');
   var url = (r && r.url) ? r.url : (API+'/mandates/'+S.activeMandate.id+'/submission?stage=Shared+with+Client');
   window.open(url,'_blank','width=1100,height=800,scrollbars=yes');
+}
+
+// ── Share to Client (submission email: table + resume attachments) ───────────
+var _shareData = null, _shareDraftId = null;
+function _shareCloseModal(){ var e=document.getElementById('modal-share-client'); if(e) e.remove(); }
+function _shareRowHtml(c){
+  var cvBadge = c.has_cv
+    ? '<span style="font-size:9px;font-weight:600;background:#E8F4EE;color:#127A57;padding:1px 6px;border-radius:6px">CV</span>'
+    : '<span style="font-size:9px;font-weight:600;background:#FDECEA;color:#B42318;padding:1px 6px;border-radius:6px" title="No resume attached">No CV</span>';
+  var meta = [c.company, (c.experience!=null&&c.experience!=='')?(c.experience+'y'):''].filter(Boolean).map(esc).join(' \u00b7 ');
+  return '<label class="share-cand-row" style="display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:7px;cursor:pointer">'
+    +'<input type="checkbox" class="share-cand-cb" data-cid="'+c.id+'" data-stage="'+esc(c.stage)+'">'
+    +'<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;color:#1B1B18">'+esc(c.name||'')+'</div>'
+    +(meta?'<div style="font-size:10.5px;color:#9C988D">'+meta+'</div>':'')+'</div>'+cvBadge+'</label>';
+}
+function _shareModalHtml(m, r, preselectStage, draft){
+  var toVal = draft ? draft.to : (r.to||[]).join(', ');
+  var ccVal = draft ? draft.cc : (r.cc||[]).join(', ');
+  var subjVal = draft ? draft.subject : r.subject;
+  var greetVal = draft ? draft.greeting : r.greeting;
+  var introVal = draft ? draft.intro : r.intro;
+  var preset = preselectStage || 'Shared with Client';
+  var anyPreset = (r.candidates||[]).some(function(c){ return c.stage===preset; });
+  var draftSel = draft ? (draft.candidate_ids||[]) : null;
+  // Group candidates by stage in PIPELINE_STAGES order
+  var groups = {}; (r.candidates||[]).forEach(function(c){ (groups[c.stage]=groups[c.stage]||[]).push(c); });
+  var order = (typeof PIPELINE_STAGES!=='undefined'?PIPELINE_STAGES.map(function(s){return s.id;}):[]);
+  Object.keys(groups).forEach(function(s){ if(order.indexOf(s)<0) order.push(s); });
+  var listHtml='';
+  order.forEach(function(stg){
+    var cs=groups[stg]; if(!cs||!cs.length) return;
+    listHtml += '<div style="margin-top:8px"><label style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;color:#534AB7;padding:2px 4px;cursor:pointer">'
+      +'<input type="checkbox" class="share-stage-cb" data-stage="'+esc(stg)+'"> '+esc(stg)+' <span style="color:#aaa;font-weight:500">('+cs.length+')</span></label>'
+      +cs.map(_shareRowHtml).join('')+'</div>';
+  });
+  var inp='width:100%;padding:7px 9px;border:1px solid #ddd;border-radius:7px;font-size:12.5px;font-family:inherit';
+  return '<div class="modal" style="max-width:720px;width:94%">'
+    +'<div class="modal-head"><span class="modal-title">&#9993; Share Profiles to Client</span>'
+    +'<button class="modal-x" onclick="_shareCloseModal()">&#10005;</button></div>'
+    +'<div class="modal-body" style="max-height:76vh;overflow:auto">'
+    +'<div style="font-size:11px;color:#888;margin-bottom:10px">'+esc(m.role||'')+(m.client?' &middot; '+esc(m.client):'')+'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+      +'<div><label style="font-size:11px;font-weight:600;color:#555">To (client)</label><input id="share-to" style="'+inp+'" value="'+esc(toVal)+'" placeholder="client@company.com, ..."></div>'
+      +'<div><label style="font-size:11px;font-weight:600;color:#555">CC (internal)</label><input id="share-cc" style="'+inp+'" value="'+esc(ccVal)+'"></div>'
+    +'</div>'
+    +'<div style="margin-top:10px"><label style="font-size:11px;font-weight:600;color:#555">Subject</label><input id="share-subject" style="'+inp+'" value="'+esc(subjVal)+'"></div>'
+    +'<div style="margin-top:10px"><label style="font-size:11px;font-weight:600;color:#555">Greeting</label><input id="share-greeting" style="'+inp+'" value="'+esc(greetVal)+'"></div>'
+    +'<div style="margin-top:10px"><label style="font-size:11px;font-weight:600;color:#555">Intro line</label><input id="share-intro" style="'+inp+'" value="'+esc(introVal)+'"></div>'
+    +'<div style="margin-top:14px;display:flex;align-items:center;justify-content:space-between">'
+      +'<label style="font-size:11px;font-weight:700;color:#555">Select candidates to submit</label>'
+      +'<span id="share-count" style="font-size:11px;color:#534AB7;font-weight:600">0 selected</span></div>'
+    +'<div id="share-list" style="border:1px solid #eee;border-radius:9px;padding:6px;margin-top:6px;max-height:260px;overflow:auto">'+(listHtml||'<div style="padding:14px;text-align:center;color:#aaa;font-size:12px">No candidates in pipeline</div>')+'</div>'
+    +'<div style="font-size:10.5px;color:#999;margin-top:6px">&#128206; Candidates with a resume on file get their CV attached automatically. "No CV" ones are still listed in the table.</div>'
+    +'</div>'
+    +'<div class="modal-foot" style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;padding:12px 16px;border-top:1px solid #eee">'
+      +'<button class="btn btn-o" style="font-size:12px" onclick="_shareCloseModal()">Cancel</button>'
+      +'<button class="btn btn-o" style="font-size:12px" onclick="_shareSave()">&#128190; Save as draft</button>'
+      +'<button class="btn" style="font-size:12px;background:#0F6E56;color:#fff" onclick="_shareSend()">&#9993; Send now</button>'
+    +'</div></div>'
+    // stash defaults for post-render checkbox setting
+    +'<span id="share-meta" data-preset="'+(anyPreset?esc(preset):'')+'" data-draftsel="'+(draftSel?esc(JSON.stringify(draftSel)):'')+'" style="display:none"></span>';
+}
+async function openShareToClient(preselectStage, draft){
+  var m = S.activeMandate; if(!m){ toast('Open a mandate first',''); return; }
+  var r;
+  try{ r = await req('GET','/mandates/'+m.id+'/submission-prefill'); }
+  catch(e){ toast('Error','Could not load'); return; }
+  if(!r || r.error){ toast('Error',(r&&r.error)||'Failed'); return; }
+  _shareData = r; _shareDraftId = draft ? draft.id : null;
+  _shareCloseModal();
+  var bg=document.createElement('div'); bg.className='modal-bg'; bg.id='modal-share-client';
+  bg.innerHTML=_shareModalHtml(m, r, preselectStage, draft);
+  document.body.appendChild(bg); bg.classList.add('open');
+  // default checkbox selection
+  var meta=document.getElementById('share-meta');
+  var preset=meta?meta.getAttribute('data-preset'):'';
+  var draftselRaw=meta?meta.getAttribute('data-draftsel'):'';
+  var draftsel=null; if(draftselRaw){ try{ draftsel=JSON.parse(draftselRaw); }catch(e){} }
+  document.querySelectorAll('#modal-share-client .share-cand-cb').forEach(function(cb){
+    var cid=parseInt(cb.getAttribute('data-cid'));
+    if(draftsel){ cb.checked = draftsel.indexOf(cid)>=0; }
+    else if(preset){ cb.checked = cb.getAttribute('data-stage')===preset; }
+    else { cb.checked = true; }
+  });
+  // events
+  var list=document.getElementById('share-list');
+  if(list){ list.addEventListener('change', function(e){
+    var t=e.target;
+    if(t && t.classList.contains('share-stage-cb')){
+      var stg=t.getAttribute('data-stage');
+      document.querySelectorAll('#modal-share-client .share-cand-cb[data-stage="'+stg+'"]').forEach(function(cb){ cb.checked=t.checked; });
+    }
+    _shareSyncCount();
+  }); }
+  _shareSyncCount();
+}
+function _shareSelectedIds(){
+  var ids=[]; document.querySelectorAll('#modal-share-client .share-cand-cb:checked').forEach(function(cb){ ids.push(parseInt(cb.getAttribute('data-cid'))); });
+  return ids;
+}
+function _shareSyncCount(){
+  var n=_shareSelectedIds().length;
+  var cnt=document.getElementById('share-count'); if(cnt) cnt.textContent=n+' selected';
+  var pl=n!==1?'s':'';
+  var intro=document.getElementById('share-intro');
+  if(intro) intro.value=intro.value.replace(/attached\s+\d+\s+profile[s]?/i,'attached '+n+' profile'+pl);
+  var subj=document.getElementById('share-subject');
+  if(subj) subj.value=subj.value.replace(/\u2014\s*\d+\s+profile[s]?/i,'\u2014 '+n+' profile'+pl);
+}
+function _shareGather(){
+  var splitE=function(s){ return (s||'').split(/[,\n;]+/).map(function(x){return x.trim();}).filter(Boolean); };
+  return {
+    to: splitE(document.getElementById('share-to').value),
+    cc: splitE(document.getElementById('share-cc').value),
+    subject: (document.getElementById('share-subject').value||'').trim(),
+    greeting: (document.getElementById('share-greeting').value||'').trim(),
+    intro: (document.getElementById('share-intro').value||'').trim(),
+    candidate_ids: _shareSelectedIds()
+  };
+}
+async function _shareSend(){
+  var m=S.activeMandate; if(!m) return;
+  var p=_shareGather();
+  if(!p.to.length){ toast('Add a recipient','Client email (To) required'); return; }
+  if(!p.candidate_ids.length){ toast('Select candidates',''); return; }
+  p.action='send';
+  var btns=document.querySelectorAll('#modal-share-client .modal-foot .btn'); btns.forEach(function(b){b.disabled=true;});
+  toast('Sending…','');
+  var r;
+  try{ r=await req('POST','/mandates/'+m.id+'/submit-to-client',p); }
+  catch(e){ btns.forEach(function(b){b.disabled=false;}); toast('Error','Send failed'); return; }
+  if(r && r.error){ btns.forEach(function(b){b.disabled=false;}); toast('Error', esc(String(r.error))); return; }
+  _shareCloseModal();
+  toast('Sent \u2705', r.count+' profile(s) shared to client');
+  try{ renderPipeline(document.getElementById('content')); }catch(e){}
+}
+async function _shareSave(){
+  var m=S.activeMandate; if(!m) return;
+  var p=_shareGather(); p.action='draft'; if(_shareDraftId) p.draft_id=_shareDraftId;
+  var r;
+  try{ r=await req('POST','/mandates/'+m.id+'/submit-to-client',p); }
+  catch(e){ toast('Error','Save failed'); return; }
+  if(r && r.error){ toast('Error', esc(String(r.error))); return; }
+  _shareDraftId=r.draft_id;
+  _shareCloseModal();
+  toast('Draft saved','Reopen from the Drafts button');
+}
+async function openSubmissionDrafts(){
+  var m=S.activeMandate; if(!m){ toast('Open a mandate first',''); return; }
+  var r;
+  try{ r=await req('GET','/submission-drafts?mandate_id='+m.id); }catch(e){ toast('Error','Could not load drafts'); return; }
+  var drafts=(r&&r.drafts)||[];
+  window._shareDraftsCache={}; drafts.forEach(function(d){ window._shareDraftsCache[d.id]=d; });
+  _shareCloseModal();
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-share-client';
+  var rows = drafts.length ? drafts.map(function(d){
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 6px;border-bottom:1px solid #f0f0f0">'
+      +'<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;color:#1B1B18;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(d.subject||'(no subject)')+'</div>'
+      +'<div style="font-size:10.5px;color:#9C988D">'+ (d.candidate_ids?d.candidate_ids.length:0) +' candidate(s) &middot; To: '+esc(d.to||'-')+' &middot; '+esc(d.updated_at||'')+'</div></div>'
+      +'<button class="btn btn-o" style="font-size:11px" onclick="_shareOpenDraftById('+d.id+')">Open</button>'
+      +'<button class="btn btn-o" style="font-size:11px;color:#B42318" onclick="_shareDeleteDraft('+d.id+')">Delete</button></div>';
+  }).join('') : '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px">No saved drafts for this mandate.</div>';
+  bg.innerHTML='<div class="modal" style="max-width:560px;width:92%">'
+    +'<div class="modal-head"><span class="modal-title">&#128196; Submission Drafts</span><button class="modal-x" onclick="_shareCloseModal()">&#10005;</button></div>'
+    +'<div class="modal-body" style="max-height:70vh;overflow:auto">'+rows+'</div></div>';
+  document.body.appendChild(bg);
+}
+function _shareOpenDraftById(id){ var d=window._shareDraftsCache&&window._shareDraftsCache[id]; if(d) openShareToClient(null, d); }
+async function _shareDeleteDraft(id){
+  try{ await req('DELETE','/submission-drafts/'+id); }catch(e){}
+  toast('Draft deleted','');
+  openSubmissionDrafts();
 }
 
 // ── CANDIDATE PROFILES ─────────────────────────────────────────────────────
@@ -4578,6 +4752,12 @@ function emailConfigHTML(s){
     + '<div class="fg-row"><label>Gmail Address</label><input class="inp" id="s-smtp_email" value="' + esc(s.smtp_email||'') + '" placeholder="you@gmail.com"></div>'
     + '<div class="fg-row"><label>App Password</label><input class="inp" id="s-smtp_app_password" type="password" value="' + esc(s.smtp_app_password||'') + '" placeholder="xxxx xxxx xxxx xxxx"></div>'
     + '<div class="fg-row"><label>Display Name (optional)</label><input class="inp" id="s-smtp_display_name" value="' + esc(s.smtp_display_name||'') + '" placeholder="e.g. HireLab Talent"></div>'
+    + '<div style="border-top:1px dashed #ddd;margin:14px 0 10px;padding-top:12px"><div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:2px">&#9993; Client Submission (Share to Client)</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Used when you share candidate profiles to a client from the Pipeline.</div>'
+    + '<div class="fg-row"><label>Internal team CC (auto-CC on every submission)</label><input class="inp" id="s-submission_cc_emails" value="' + esc(s.submission_cc_emails||'') + '" placeholder="soni@hirelabtalent.com, shikhar@hirelabtalent.com"></div>'
+    + '<div class="fg-row"><label>Company Website (shown in signature, W:)</label><input class="inp" id="s-company_website" value="' + esc(s.company_website||'') + '" placeholder="www.hirelabtalent.com"></div>'
+    + '<div class="fg-row"><label>Email Signature (optional — leave blank to auto-build)</label><textarea class="inp" id="s-submission_signature" rows="4" placeholder="Nitin Kumar&#10;Practice Lead | HireLab | Talent Acquisition&#10;E: nitin.kumar@hirelabtalent.com  M: 8950122628  W: www.hirelabtalent.com">' + esc(s.submission_signature||'') + '</textarea></div>'
+    + '</div>'
     + '<div style="background:#F3F8FF;border:0.5px solid #C5DEFF;border-radius:8px;padding:12px;margin-top:10px;font-size:11px;color:#1565C0;line-height:1.6">'
     + '<div style="font-weight:700;margin-bottom:4px">&#128273; How to create a Gmail App Password:</div>'
     + '1. Google Account → <b>Security</b> → turn ON <b>2-Step Verification</b><br>'
@@ -4725,7 +4905,7 @@ async function deleteUser(uid, username) {
 }
 async function saveSettings(){
   const wf=(document.querySelector('input[name="wfmode"]:checked')||{}).value||'agency';
-  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template')};
+  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),submission_cc_emails:v('s-submission_cc_emails'),company_website:v('s-company_website'),submission_signature:v('s-submission_signature'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template')};
   const r=await req('POST','/settings',data);
   if(r.ok){S.settings=data;applyPipelineStages();toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }

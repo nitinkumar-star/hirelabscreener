@@ -1904,6 +1904,9 @@ def init_db():
     defaults = [
         ('recruiter_name', 'Nitin Kumar'),
         ('company_name', 'HireLab'),
+        ('submission_cc_emails', ''),   # internal team auto-CC on client submissions
+        ('company_website', ''),        # shown in the submission email signature (W:)
+        ('submission_signature', ''),   # optional: exact signature block (plain text); auto-built if empty
         ('claude_api_key', os.environ.get('CLAUDE_API_KEY', '')),
         ('deepseek_api_key', os.environ.get('DEEPSEEK_API_KEY', '')),
         ('groq_api_key', os.environ.get('GROQ_API_KEY', '')),
@@ -2129,6 +2132,23 @@ def init_db():
         c.execute('ALTER TABLE candidates ADD COLUMN deep_analysis TEXT DEFAULT ""')
     except sqlite3.OperationalError:
         pass  # already exists
+
+    # Client-submission drafts: composed 'Share to Client' emails saved for later.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS submission_drafts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            mandate_id INTEGER,
+            to_emails TEXT DEFAULT '',
+            cc_emails TEXT DEFAULT '',
+            subject TEXT DEFAULT '',
+            greeting TEXT DEFAULT '',
+            intro TEXT DEFAULT '',
+            candidate_ids TEXT DEFAULT '[]',
+            created_at TEXT,
+            updated_at TEXT
+        );
+    """)
 
     # Migrate: add recruiter-pitch cache column on mandates (single additive col).
     # Stores JSON {"md": "<markdown pitch>", "at": "<ts>", "model": "..."} so the
@@ -4079,6 +4099,7 @@ GEMINI_EMBED_URL = ('https://generativelanguage.googleapis.com/v1beta/'
 # (billing config, pricing, central ids, API keys) stays global.
 TENANT_SETTINGS = {
     'recruiter_name', 'company_name',
+    'submission_cc_emails', 'company_website', 'submission_signature',
     'template_msg1', 'template_fu1', 'template_fu2',
     'fu1_hours', 'fu2_hours',
     'workflow_mode',   # 'agency' (default) or 'corporate'
@@ -8322,6 +8343,346 @@ def submission_excel(mid):
     fname = f"Submission_{safe_role}{safe_stage}.xlsx"
     return send_file(bio, as_attachment=True, download_name=fname,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+# ── Share to Client (submission email: table + resume attachments) ───────────
+def _sub_esc(s):
+    return (str(s if s is not None else '')
+            .replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+def _sub_fmt_exp(v):
+    try:
+        v = float(v or 0)
+        if v <= 0: return ''
+        return f"{int(v)} Years" if v == int(v) else f"{v} Years"
+    except Exception:
+        return ''
+
+def _sub_fmt_ctc(v):
+    try:
+        v = float(v or 0)
+        if v <= 0: return ''
+        return f"{int(v)} LPA" if v == int(v) else f"{v} LPA"
+    except Exception:
+        return ''
+
+def _sub_fmt_notice(v):
+    try:
+        v = int(v or 0)
+        return f"{v} Days" if v else ''
+    except Exception:
+        return ''
+
+# Columns for the submission table (matches the standard email format).
+_SUB_COLS = ['Position', 'Position Location', 'Candidate Name', 'Contact Number',
+             'Email ID', 'Educational Qualification', 'Current Company',
+             'Total Experience', 'Current CTC', 'Expected CTC', 'Current Location',
+             'Preferred Location', 'Notice Period']
+
+def _sub_row_values(m, c):
+    d = dict(c)
+    return [
+        m['role'] or '', m['location'] or '',
+        d.get('name', ''), d.get('phone', ''), d.get('email', ''),
+        d.get('qualification', ''), d.get('company', ''),
+        _sub_fmt_exp(d.get('experience')), _sub_fmt_ctc(d.get('ctc_current')),
+        _sub_fmt_ctc(d.get('ctc_expected')), d.get('location', ''),
+        d.get('preferred_location', ''), _sub_fmt_notice(d.get('notice_period')),
+    ]
+
+def _submission_table_html(m, rows):
+    th = ('<th style="background:#FFFF00;border:1px solid #999;padding:6px 8px;'
+          'font-size:12px;font-weight:bold;text-align:left;color:#222">')
+    td = '<td style="border:1px solid #bbb;padding:6px 8px;font-size:12px;color:#222">'
+    head = ''.join(th + _sub_esc(h) + '</th>' for h in _SUB_COLS)
+    body = ''
+    for c in rows:
+        vals = _sub_row_values(m, c)
+        body += '<tr>' + ''.join(td + _sub_esc(v) + '</td>' for v in vals) + '</tr>'
+    return ('<table style="border-collapse:collapse;border:1px solid #999;'
+            'font-family:Calibri,Arial,sans-serif"><thead><tr>' + head
+            + '</tr></thead><tbody>' + body + '</tbody></table>')
+
+def _submission_signature_html():
+    """Signature for the submission email. Uses the exact override setting if
+    provided, else auto-builds from the recruiter's profile + company."""
+    override = (get_setting('submission_signature', '') or '').strip()
+    if override:
+        return '<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#333;white-space:pre-wrap">' \
+               + _sub_esc(override) + '</div>'
+    u = current_user() or {}
+    name = (u.get('display_name') or u.get('username') or get_setting('recruiter_name', '') or '').strip()
+    desig = (u.get('profile_designation') or '').strip()
+    company = (get_setting('company_name', '') or (u.get('company_name') or '')).strip()
+    email = (u.get('profile_email') or get_setting('smtp_email', '') or '').strip()
+    phone = (u.get('profile_phone') or '').strip()
+    web = (get_setting('company_website', '') or '').strip()
+    line2 = ' &nbsp;|&nbsp; '.join([x for x in [desig, company, 'Talent Acquisition'] if x])
+    parts = ['<div style="font-family:Calibri,Arial,sans-serif;font-size:13px;color:#333;line-height:1.5;margin-top:14px">']
+    if name: parts.append('<div style="font-weight:bold;color:#1a2a6c;font-size:14px">' + _sub_esc(name) + '</div>')
+    if line2: parts.append('<div style="color:#666">' + line2 + '</div>')
+    contact = []
+    if email: contact.append('E: <a href="mailto:' + _sub_esc(email) + '">' + _sub_esc(email) + '</a>')
+    if phone: contact.append('M: ' + _sub_esc(phone))
+    if web: contact.append('W: ' + _sub_esc(web))
+    if contact: parts.append('<div style="margin-top:4px;color:#444">' + ' &nbsp; '.join(contact) + '</div>')
+    parts.append('</div>')
+    return ''.join(parts)
+
+def _mandate_client_contacts(conn, company_id, crm_client_id):
+    """Return [{name, email}] for the mandate's linked CRM client (with emails)."""
+    if not crm_client_id:
+        return []
+    try:
+        rows = conn.execute(
+            'SELECT name, email FROM crm_contacts '
+            'WHERE client_id=? AND company_id=? AND is_active=1 AND email != "" '
+            'ORDER BY id ASC', (crm_client_id, company_id)).fetchall()
+        return [{'name': r['name'] or '', 'email': r['email'] or ''} for r in rows if (r['email'] or '').strip()]
+    except Exception:
+        return []
+
+
+@app.route('/api/mandates/<int:mid>/submission-prefill', methods=['GET'])
+@login_required
+def submission_prefill(mid):
+    """Everything the Share-to-Client modal needs: candidate list (grouped by
+    stage), auto-filled To (client contacts) + CC (settings), subject, greeting
+    and intro."""
+    conn = get_db()
+    company_id = effective_company_id()
+    m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, company_id)).fetchone()
+    if not m:
+        conn.close()
+        return jsonify({'error': 'Mandate not found'}), 404
+    rows = conn.execute(
+        'SELECT * FROM candidates WHERE mandate_id=? AND stage != "Screened-Out" '
+        'ORDER BY stage, name', (mid,)).fetchall()
+    contacts = _mandate_client_contacts(conn, company_id, m['crm_client_id'])
+    conn.close()
+
+    cands = []
+    for c in rows:
+        d = dict(c)
+        cands.append({
+            'id': d['id'], 'name': d.get('name', ''), 'stage': d.get('stage', ''),
+            'company': d.get('company', ''), 'experience': d.get('experience'),
+            'has_cv': bool(d.get('cv_path')),
+        })
+    to_list = [c['email'] for c in contacts]
+    primary_name = (contacts[0]['name'].split()[0] if contacts and contacts[0]['name'] else '')
+    cc_raw = get_setting('submission_cc_emails', '') or ''
+    cc_list = [e.strip() for e in re.split(r'[,\n;]+', cc_raw) if e.strip()]
+    n_default = len([c for c in cands if c['stage'] == 'Shared with Client']) or len(cands)
+    subject = f"{m['role']} — {n_default} profile{'s' if n_default != 1 else ''} | {get_setting('company_name','') or 'HireLab'}".strip(' |')
+    greeting = f"Dear {primary_name}," if primary_name else "Dear Team,"
+    intro = f"Please find attached {n_default} profile{'s' if n_default != 1 else ''} for {m['role']}:"
+
+    return jsonify({'ok': True, 'role': m['role'], 'client': m['client'],
+                    'to': to_list, 'cc': cc_list, 'contacts': contacts,
+                    'subject': subject, 'greeting': greeting, 'intro': intro,
+                    'candidates': cands})
+
+
+def _send_submission_email(to_list, cc_list, subject, html_body, attach_cids, conn, company_id):
+    """Build a MIME email (HTML body + resume PDF attachments) and SMTP-send it
+    to To + CC. Returns (ok, error)."""
+    from email.mime.application import MIMEApplication
+    smtp_email = get_setting('smtp_email', '')
+    smtp_pass = get_setting('smtp_app_password', '')
+    smtp_name = get_setting('smtp_display_name', '') or get_setting('company_name', '') or smtp_email
+    if not smtp_email or not smtp_pass:
+        return False, 'Email not configured. Go to Settings → Email Configuration.'
+
+    msg = MIMEMultipart('mixed')
+    msg['From'] = f'{smtp_name} <{smtp_email}>' if smtp_name else smtp_email
+    msg['To'] = ', '.join(to_list)
+    if cc_list:
+        msg['Cc'] = ', '.join(cc_list)
+    msg['Subject'] = subject
+    import email.utils as _eut
+    domain = smtp_email.split('@')[-1] if '@' in smtp_email else 'hirelab.local'
+    msg['Message-ID'] = _eut.make_msgid(domain=domain)
+    msg['Date'] = _eut.formatdate(localtime=True)
+
+    alt = MIMEMultipart('alternative')
+    alt.attach(MIMEText(re.sub('<[^<]+?>', '', html_body), 'plain', 'utf-8'))
+    alt.attach(MIMEText('<div style="font-family:Calibri,Arial,sans-serif;font-size:14px">'
+                        + html_body + '</div>', 'html', 'utf-8'))
+    msg.attach(alt)
+
+    # Attach each candidate's CV file
+    for cid in attach_cids:
+        try:
+            c = conn.execute('SELECT name, cv_path, cv_original_name FROM candidates '
+                             'WHERE id=? AND owner_id=?', (cid, company_id)).fetchone()
+            if not c or not c['cv_path']:
+                continue
+            fp = os.path.join(CV_DIR, str(c['cv_path']))
+            if not os.path.exists(fp):
+                continue
+            with open(fp, 'rb') as fh:
+                data = fh.read()
+            fname = (c['cv_original_name'] or '').strip() or (re.sub(r'[^A-Za-z0-9_-]+', '_', c['name'] or 'CV') + '.pdf')
+            part = MIMEApplication(data, Name=fname)
+            part['Content-Disposition'] = f'attachment; filename="{fname}"'
+            msg.attach(part)
+        except Exception:
+            continue
+
+    if '@gmail' in smtp_email.lower() or '@googlemail' in smtp_email.lower():
+        smtp_host, smtp_port = 'smtp.gmail.com', 587
+    elif '@outlook' in smtp_email.lower() or '@hotmail' in smtp_email.lower() or '@live' in smtp_email.lower():
+        smtp_host, smtp_port = 'smtp-mail.outlook.com', 587
+    elif '@yahoo' in smtp_email.lower():
+        smtp_host, smtp_port = 'smtp.mail.yahoo.com', 587
+    else:
+        smtp_host, smtp_port = 'smtp.gmail.com', 587
+
+    all_rcpts = list(dict.fromkeys([e for e in (to_list + cc_list) if e]))
+    try:
+        server = smtplib.SMTP(smtp_host, smtp_port, timeout=30)
+        server.starttls()
+        server.login(smtp_email, smtp_pass)
+        server.sendmail(smtp_email, all_rcpts, msg.as_string())
+        server.quit()
+        return True, ''
+    except smtplib.SMTPAuthenticationError:
+        return False, 'Email authentication failed. Check email + app password in Settings.'
+    except Exception as e:
+        return False, f'Failed to send: {e}'
+
+
+@app.route('/api/mandates/<int:mid>/submit-to-client', methods=['POST'])
+@login_required
+def submit_to_client(mid):
+    """Send (or save as draft) a client-submission email: greeting + intro +
+    candidate table + signature, with the selected candidates' resumes attached."""
+    d = request.json or {}
+    action = (d.get('action') or 'send').strip()
+    to_list = [e.strip() for e in (d.get('to') or []) if e and e.strip()]
+    cc_list = [e.strip() for e in (d.get('cc') or []) if e and e.strip()]
+    subject = (d.get('subject') or '').strip()
+    greeting = (d.get('greeting') or '').strip()
+    intro = (d.get('intro') or '').strip()
+    cand_ids = [int(x) for x in (d.get('candidate_ids') or []) if str(x).isdigit()]
+
+    conn = None
+    try:
+        conn = get_db()
+        company_id = effective_company_id()
+        m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                         (mid, company_id)).fetchone()
+        if not m:
+            return jsonify({'error': 'Mandate not found'}), 404
+
+        # Save-as-draft: persist and return (no validation of recipients needed).
+        if action == 'draft':
+            now = ts()
+            existing = d.get('draft_id')
+            if existing:
+                conn.execute(
+                    'UPDATE submission_drafts SET to_emails=?, cc_emails=?, subject=?, '
+                    'greeting=?, intro=?, candidate_ids=?, updated_at=? WHERE id=? AND owner_id=?',
+                    (', '.join(to_list), ', '.join(cc_list), subject, greeting, intro,
+                     json.dumps(cand_ids), now, int(existing), company_id))
+                did = int(existing)
+            else:
+                cur = conn.execute(
+                    'INSERT INTO submission_drafts (owner_id, mandate_id, to_emails, cc_emails, '
+                    'subject, greeting, intro, candidate_ids, created_at, updated_at) '
+                    'VALUES (?,?,?,?,?,?,?,?,?,?)',
+                    (company_id, mid, ', '.join(to_list), ', '.join(cc_list), subject,
+                     greeting, intro, json.dumps(cand_ids), now, now))
+                did = cur.lastrowid
+            conn.commit()
+            return jsonify({'ok': True, 'draft_id': did, 'saved': True})
+
+        # Send: validate + build + SMTP send.
+        if not to_list:
+            return jsonify({'error': 'Add at least one recipient (To).'}), 400
+        if not cand_ids:
+            return jsonify({'error': 'Select at least one candidate.'}), 400
+        if not subject:
+            return jsonify({'error': 'Subject is required.'}), 400
+
+        rows = conn.execute(
+            'SELECT * FROM candidates WHERE mandate_id=? AND owner_id=? AND id IN (%s) '
+            'ORDER BY name' % ','.join('?' * len(cand_ids)),
+            tuple([mid, company_id] + cand_ids)).fetchall()
+        if not rows:
+            return jsonify({'error': 'Selected candidates not found.'}), 404
+
+        table = _submission_table_html(m, rows)
+        sig = _submission_signature_html()
+        html_body = (
+            '<p style="font-family:Calibri,Arial,sans-serif;font-size:14px">' + _sub_esc(greeting) + '</p>'
+            + '<p style="font-family:Calibri,Arial,sans-serif;font-size:14px">' + _sub_esc(intro) + '</p>'
+            + table + '<br>' + sig)
+
+        ok, err = _send_submission_email(to_list, cc_list, subject, html_body,
+                                         [c['id'] for c in rows], conn, company_id)
+        if not ok:
+            return jsonify({'error': err}), 502
+
+        # Log to each candidate's journey.
+        for c in rows:
+            try:
+                log_candidate_event(c['id'], 'note',
+                                    'Profile shared with client: ' + ', '.join(to_list))
+            except Exception:
+                pass
+        return jsonify({'ok': True, 'sent': True, 'count': len(rows),
+                        'to': to_list, 'cc': cc_list})
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@app.route('/api/submission-drafts', methods=['GET'])
+@login_required
+def list_submission_drafts():
+    conn = get_db()
+    company_id = effective_company_id()
+    mid = request.args.get('mandate_id', type=int)
+    try:
+        if mid:
+            rows = conn.execute('SELECT * FROM submission_drafts WHERE owner_id=? AND mandate_id=? '
+                                'ORDER BY updated_at DESC', (company_id, mid)).fetchall()
+        else:
+            rows = conn.execute('SELECT * FROM submission_drafts WHERE owner_id=? '
+                                'ORDER BY updated_at DESC', (company_id,)).fetchall()
+    except Exception:
+        conn.close(); return jsonify({'ok': True, 'drafts': []})
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try: cids = json.loads(d.get('candidate_ids') or '[]')
+        except Exception: cids = []
+        out.append({'id': d['id'], 'mandate_id': d['mandate_id'], 'subject': d.get('subject', ''),
+                    'to': d.get('to_emails', ''), 'cc': d.get('cc_emails', ''),
+                    'greeting': d.get('greeting', ''), 'intro': d.get('intro', ''),
+                    'candidate_ids': cids, 'updated_at': d.get('updated_at', '')})
+    return jsonify({'ok': True, 'drafts': out})
+
+
+@app.route('/api/submission-drafts/<int:did>', methods=['DELETE'])
+@login_required
+def delete_submission_draft(did):
+    conn = get_db()
+    conn.execute('DELETE FROM submission_drafts WHERE id=? AND owner_id=?',
+                 (did, effective_company_id()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
 
 
 @app.route('/api/mandates/<int:mid>/email-templates', methods=['GET'])
