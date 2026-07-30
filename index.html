@@ -1474,7 +1474,7 @@ function applyPipelineStages(){
   }
   PIPELINE_STAGES = base.concat(FIXED_STAGES.map(function(f){ return {id:f.id, color:f.color, fixed:true}; }));
 }
-const TABS = ['Mandate Setup','Pipeline','Candidate Profiles'];
+const TABS = ['Mandate Setup','Pipeline','Candidate Profiles','Recruiter Pitch'];
 let S = {
   currentUser:null, viewingAs:null,
   mandates:[],activeMandate:null,activeTab:'Mandate Setup',settingsOpen:false,settings:{},collapsedStages:{},
@@ -1594,6 +1594,7 @@ function writeHash() {
     var tab = S.activeTab || '';
     if (tab === 'Pipeline') h += '/pipeline';
     else if (tab === 'Candidate Profiles') h += '/profiles';
+    else if (tab === 'Recruiter Pitch') h += '/pitch';
     else h += '/setup';
     if (S.activeTab === 'Candidate Profiles' && S.selectedCandidateId) {
       h += '/' + S.selectedCandidateId;
@@ -1653,6 +1654,7 @@ async function readHash() {
       var sub = parts[2] || 'setup';
       S.activeTab = sub === 'pipeline' ? 'Pipeline'
                   : sub === 'profiles' ? 'Candidate Profiles'
+                  : sub === 'pitch' ? 'Recruiter Pitch'
                   : 'Mandate Setup';
       renderTabs();
       await renderContent();
@@ -1698,6 +1700,7 @@ async function restoreFromHash() {
       var tabPart = parts[2] || 'setup';
       if (tabPart === 'pipeline') { S.activeTab = 'Pipeline'; }
       else if (tabPart === 'profiles') { S.activeTab = 'Candidate Profiles'; }
+      else if (tabPart === 'pitch') { S.activeTab = 'Recruiter Pitch'; }
       else { S.activeTab = 'Mandate Setup'; }
       renderTabs();
       await renderContent();
@@ -2821,7 +2824,7 @@ function updateTopbar(){
 function renderTabs(){
   const bar=document.getElementById('tabs');
   var mid = S.activeMandate ? S.activeMandate.id : '';
-  var subOf = function(t){ return t==='Pipeline'?'pipeline':t==='Candidate Profiles'?'profiles':'setup'; };
+  var subOf = function(t){ return t==='Pipeline'?'pipeline':t==='Candidate Profiles'?'profiles':t==='Recruiter Pitch'?'pitch':'setup'; };
   bar.innerHTML=TABS.map(function(t){
     var href = mid ? ('#mandate/'+mid+'/'+subOf(t)) : '#';
     return '<a href="'+href+'" class="tab-btn'+(t===S.activeTab?' active':'')
@@ -2852,7 +2855,77 @@ async function renderContent(){
   if(S.activeTab==='Mandate Setup')renderMandateSetup(el);
   else if(S.activeTab==='Pipeline')await renderPipeline(el);
   else if(S.activeTab==='Candidate Profiles')await renderProfiles(el);
+  else if(S.activeTab==='Recruiter Pitch')await renderRecruiterPitch(el);
   writeHash();
+}
+
+// ── Recruiter Pitch tab (per-mandate: JD → recruiter attraction pitch) ───────
+window._pitchCache = window._pitchCache || {};
+function _pitchView(m, md, at, running, err){
+  var when = at ? '<span style="font-size:10.5px;color:var(--muted)">Last generated: '+esc(fmtDateTime?fmtDateTime(at):at)+'</span>' : '';
+  var genLbl = running ? '&#8987; Generating…' : (md ? '&#8635; Re-run' : '&#10024; Generate Pitch');
+  var genBtn = '<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12.5px;padding:7px 16px" onclick="runRecruiterPitch('+m.id+')"'+(running?' disabled':'')+'>'+genLbl+'</button>';
+  var copyBtn = (md && !running) ? '<button class="btn btn-o" style="font-size:12.5px;padding:7px 14px" onclick="_copyPitch()">&#128203; Copy</button>' : '';
+  var sub = esc(m.role||'') + (m.client ? ' &middot; ' + esc(m.client) : '');
+  var head = '<div class="cp-card2" style="margin-bottom:14px"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+    +'<div><div style="font-size:16px;font-weight:700;color:var(--navy)">&#10024; Recruiter Pitch</div>'
+    +'<div style="font-size:12px;color:var(--muted);margin-top:2px">'+sub+' — AI-crafted pitch to attract candidates to this role.</div></div>'
+    +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+when+copyBtn+genBtn+'</div></div></div>';
+  var body;
+  if(err){
+    body='<div class="cp-card2"><div style="background:#FDECEA;border:1px solid #F5C2C0;border-radius:10px;padding:12px 14px">'
+      +'<div style="font-size:12.5px;font-weight:700;color:#B42318;margin-bottom:4px">&#9888; Pitch generation failed</div>'
+      +'<div style="font-size:12px;color:#7A271A;line-height:1.5;word-break:break-word">'+esc(String(err))+'</div>'
+      +'<div style="font-size:10.5px;color:#98564F;margin-top:8px">Yeh exact message mujhe bhej do — main fix kar doonga.</div></div></div>';
+  } else if(running){
+    body='<div class="cp-card2"><div class="loading" style="padding:28px"><div class="spinner"></div>DeepSeek is crafting the pitch from the JD… (~15-30s)</div></div>';
+  } else if(md){
+    window._pitchCache[m.id]=md;
+    body='<div class="cp-card2" style="line-height:1.6">'+_mdToHtml(md)+'</div>';
+  } else {
+    body='<div class="cp-card2"><div style="text-align:center;padding:34px 16px;color:var(--muted)">'
+      +'<div style="font-size:32px;margin-bottom:8px">&#10024;</div>'
+      +'<div style="font-size:14px;color:var(--ink);font-weight:600;margin-bottom:4px">No pitch generated yet</div>'
+      +'<div style="font-size:12.5px;max-width:400px;margin:0 auto 16px">Generate a ready-to-use recruiter pitch — the hook, real selling points, target profile, objection handling and a full spoken call script — straight from this role&#39;s JD.</div>'
+      +'<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:13px" onclick="runRecruiterPitch('+m.id+')">&#10024; Generate Pitch</button></div></div>';
+  }
+  return head+body;
+}
+async function renderRecruiterPitch(el){
+  var m = S.activeMandate;
+  if(!m){ el.innerHTML='<div style="padding:40px;text-align:center;color:#888">Select a mandate first.</div>'; return; }
+  el.innerHTML='<div id="pitch-wrap" style="max-width:920px;margin:0 auto;padding:18px 20px"><div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div></div>';
+  var r=null;
+  try{ r=await req('GET','/mandates/'+m.id+'/recruiter-pitch'); }catch(e){ r=null; }
+  var wrap=document.getElementById('pitch-wrap'); if(!wrap) return;
+  var md = (r && r.cached && r.md) ? r.md : '';
+  wrap.innerHTML = _pitchView(m, md, (r&&r.at)||'', false, '');
+}
+async function runRecruiterPitch(mid){
+  var wrap=document.getElementById('pitch-wrap'); var m=S.activeMandate;
+  if(!wrap || !m) return;
+  wrap.innerHTML=_pitchView(m, '', '', true, '');
+  var r=null;
+  try{ r=await req('POST','/mandates/'+mid+'/recruiter-pitch',{}); }
+  catch(e){ wrap.innerHTML=_pitchView(m,'','',false,(e&&e.message)?e.message:e); toast('Error','Pitch failed'); return; }
+  if(r && r.error){ wrap.innerHTML=_pitchView(m,'','',false,r.error); toast('Error','Pitch failed'); return; }
+  if(!r || !r.md){ wrap.innerHTML=_pitchView(m,'','',false,'Server returned an empty response.'); return; }
+  wrap.innerHTML=_pitchView(m, r.md, r.at||'', false, '');
+  toast('OK','Pitch ready');
+}
+function _copyPitch(){
+  var mid = S.activeMandate ? S.activeMandate.id : null;
+  var md = (mid!=null && window._pitchCache[mid]) ? window._pitchCache[mid] : '';
+  if(!md){ toast('Nothing to copy',''); return; }
+  var plain = md.replace(/^#{1,6}\s*/gm,'').replace(/\*\*/g,'').replace(/\*/g,'').replace(/^\s*[-•]\s+/gm,'• ').trim();
+  function done(){ toast('OK','Pitch copied'); }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(plain).then(done).catch(function(){ _copyFallback(plain,done); });
+  } else { _copyFallback(plain,done); }
+}
+function _copyFallback(text,cb){
+  try{ var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); cb&&cb(); }
+  catch(e){ toast('Copy failed',''); }
 }
 
 // ── DASHBOARD ──────────────────────────────────────────────────────────────
