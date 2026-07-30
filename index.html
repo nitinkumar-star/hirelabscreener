@@ -2881,7 +2881,7 @@ function _pitchView(m, md, at, running, err){
     body='<div class="cp-card2"><div class="loading" style="padding:28px"><div class="spinner"></div>DeepSeek is crafting the pitch from the JD… (~15-30s)</div></div>';
   } else if(md){
     window._pitchCache[m.id]=md;
-    body='<div class="cp-card2" style="line-height:1.6">'+_mdToHtml(md)+'</div>';
+    body='<div class="cp-card2"><div style="white-space:pre-wrap;font-size:13.5px;line-height:1.7;color:#2b2b2b;max-width:640px">'+esc(md)+'</div></div>';
   } else {
     body='<div class="cp-card2"><div style="text-align:center;padding:34px 16px;color:var(--muted)">'
       +'<div style="font-size:32px;margin-bottom:8px">&#10024;</div>'

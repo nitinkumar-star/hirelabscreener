@@ -4712,72 +4712,43 @@ def run_deep_analysis(cid):
 # a hook, real selling points, target profile, objection handling and a full
 # spoken call script. Cached in mandates.recruiter_pitch.
 RECRUITER_PITCH_PROMPT = """# ROLE
-You are an elite recruitment marketer and headhunter who writes irresistible,
-HONEST "recruiter pitches" — the narrative a recruiter uses to attract strong,
-often passive and currently-employed candidates to a role. Your pitch makes a
-busy professional stop and think "I should hear more about this."
+You are a professional recruiter writing a SHORT, friendly job-opportunity pitch
+to send to a candidate. Keep it simple, generic and warm — the kind of message a
+recruiter can send to many suitable candidates for this role.
 
-You will receive a Job Description plus role details (title, CLIENT company,
-location, CTC band). Craft a recruiter pitch that is accurate to the JD,
-persuasive, and immediately usable.
+You will receive the role details (title, client company, location, CTC band), a
+short job description, and the recruiter's name and company for the sign-off.
 
 # RULES
-- The client company name IS provided and SHOULD be used openly as a selling
-  point — lead with the brand when it is recognisable and credible.
-- Sell the OPPORTUNITY, not the task list. Translate responsibilities into
-  growth, impact, scope, ownership, learning and career trajectory.
-- Be specific and credible — reference the ACTUAL domain, technologies, scale
-  and problems from the JD. Ban generic fluff ("great opportunity", "dynamic
-  team", "rockstar") that has nothing concrete behind it.
-- NEVER fabricate benefits, salary, ESOPs, or company facts not supported by
-  the inputs. If CTC is given, frame it attractively; if not, don't invent one.
-- Stay honest — no over-promising. Overselling destroys recruiter credibility.
-- Assume the candidate is passive and employed: lead with why it's worth their
-  time, not "we are hiring".
-- Write all candidate-facing text in clear, professional ENGLISH.
-
-# OUTPUT (markdown, exactly these sections)
-
-## The Hook
-1-2 punchy lines the recruiter can open with — the single most compelling
-reason a strong candidate should care.
-
-## Why This Role
-3-5 crisp bullets: the real selling points from the JD (scope, ownership,
-technology, scale, impact, growth) plus the client brand angle. Concrete, tied
-to the JD — not generic.
-
-## Who They're Looking For
-2-4 plain-language bullets on the ideal candidate (from JD must-haves) — so the
-recruiter can target and quickly qualify.
-
-## Talking Points & Objection Handling
-3-5 points for a live call: likely candidate hesitations (location, CTC, notice
-period, "why should I leave my current job?") and an honest, positive framing
-for each.
-
-## Detailed Call Pitch
-A full spoken script (~150-220 words, ~45-60 seconds) the recruiter delivers on
-a live call — natural opening, who you are, why you're calling THIS person, the
-2-3 strongest hooks about the role and the client, the CTC/growth angle, and a
-warm close that invites a conversation. Written to be SPOKEN, not read aloud
-like a document.
-
-## Compensation & Logistics
-Briefly and honestly frame the CTC band, location / work-model and any other
-logistics — using ONLY what the inputs provide."""
+- Write ONE short pitch, about 90-140 words. NO headings, NO bullet points, NO
+  sections — just clean, natural paragraphs.
+- Keep it GENERIC and reusable: a warm opening, what the role is and where, one
+  or two simple reasons it's a good opportunity, a light mention of the CTC or
+  growth if provided, and a friendly closing line asking if they'd be open to a
+  quick chat.
+- Mention the client company name and location naturally.
+- Simple, human, professional English. No hype words ("rockstar", "dynamic"),
+  no fabricated facts, no over-promising.
+- End with a sign-off using EXACTLY the recruiter name and company provided:
+    Best regards,
+    <Recruiter Name>
+    <Company Name>
+- Output ONLY the pitch text (including the sign-off). Nothing else — no preamble,
+  no notes, no markdown symbols."""
 
 
-def _recruiter_pitch_input(m):
-    """Assemble the JD + role details block fed to the pitch model."""
+def _recruiter_pitch_input(m, recruiter_name='', company_name=''):
+    """Assemble the role details + JD + sign-off info fed to the pitch model."""
     jd_text = html_to_text(m['jd']) if m['jd'] else ''
     return ("Role / Job Title: " + str(m['role'] or '') + "\n"
             "Client company: " + str(m['client'] or '') + "\n"
             "Location: " + str(m['location'] or '') + "\n"
-            "CTC band: " + str(m['ctc_min'] or '') + "-" + str(m['ctc_max'] or '') + " LPA\n\n"
+            "CTC band: " + str(m['ctc_min'] or '') + "-" + str(m['ctc_max'] or '') + " LPA\n"
+            "Recruiter name (for sign-off): " + (recruiter_name or 'the recruiter') + "\n"
+            "Company (for sign-off): " + (company_name or '') + "\n\n"
             "JOB DESCRIPTION:\n" + (jd_text.strip() if jd_text.strip()
-                else "(No full JD text on file — build the pitch from the role title, "
-                     "client and location above.)"))
+                else "(No full JD text on file — write a simple generic pitch from the "
+                     "role title, client and location above.)"))
 
 
 @app.route('/api/mandates/<int:mid>/recruiter-pitch', methods=['GET'])
@@ -4828,11 +4799,17 @@ def run_recruiter_pitch(mid):
         if not m:
             return jsonify({'error': 'Mandate not found'}), 404
 
-        user_msg = _recruiter_pitch_input(m)
+        # Pull the recruiter's name + company from their signature/profile.
+        u = current_user()
+        recruiter_name = ((u.get('display_name') or u.get('username') or '') if u else '') \
+                         or get_setting('recruiter_name', '') or ''
+        company_name = get_setting('company_name', '') \
+                       or ((u.get('company_name') or '') if u else '') or ''
+        user_msg = _recruiter_pitch_input(m, recruiter_name, company_name)
 
         try:
             rr = call_deepseek(ds_key,
-                {'model': 'deepseek-chat', 'temperature': 0.6, 'max_tokens': 2500,
+                {'model': 'deepseek-chat', 'temperature': 0.6, 'max_tokens': 700,
                  'messages': [{'role': 'system', 'content': RECRUITER_PITCH_PROMPT},
                               {'role': 'user', 'content': user_msg}]},
                 timeout=180, endpoint='recruiter-pitch')
