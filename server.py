@@ -4526,11 +4526,16 @@ High | Medium | Low  — explain why.
 List the areas that require validation during interview.
 
 ## Suggested Interview Questions
-Generate 8-12 highly targeted interview questions based ONLY on missing evidence or weak areas. Every question must validate a specific skill; avoid generic HR questions; prefer scenario-based, troubleshooting, architecture/design, hands-on and decision-making questions; progressively increase difficulty. Format each as:
 
-Question N
-Purpose:
-Expected Strong Answer Should Demonstrate:
+Generate 8-12 highly targeted interview questions based ONLY on the missing evidence or weak areas identified above. Every question must validate a specific skill; avoid generic HR questions; prefer scenario-based, troubleshooting, architecture/design, hands-on and decision-making questions; progressively increase in difficulty.
+
+For EACH question output EXACTLY this three-line format (nothing else):
+
+**Q1. <the exact interview question, phrased so the recruiter can read it out verbatim to the candidate>**
+*Skill tested:* <the one specific skill or gap this question validates — one line>
+**Indicative Best Answer:** <Write the ACTUAL model answer a strong candidate would give — concrete and technical, 3-6 lines. Name the real tools, steps, trade-offs and numbers expected (specific commands, config values, design choices, metrics). This is the benchmark the recruiter compares the candidate's live answer against. Do NOT write "the answer should demonstrate..." — write the answer itself.>
+
+(Then Q2, Q3, ... in the same format.)
 
 ## Final Hiring Verdict
 Summarize in 5-8 lines: Can the candidate do the job? Why? What evidence supports this? What remains unverified? Should the recruiter move forward? Base the verdict ONLY on demonstrated capability. Never use years, salary, location, company reputation, or education as deciding factors.
