@@ -3081,6 +3081,9 @@ function renderMandateSetup(el){
     +'</div>'
     +'</div></div>'
     + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
+    + '<span style="font-weight:500">&#128100; Client SPOC <span style="font-size:10.5px;color:var(--muted);font-weight:400">(auto-fills the "To" when you share profiles)</span></span></div>'
+    + '<div class="card-body"><div id="ms-spoc-wrap"><div style="font-size:12px;color:var(--muted)">Loading contacts…</div></div></div></div>'
+    + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
     + '<span style="font-weight:500">&#128273; Client Notes <span style="font-size:10.5px;color:var(--muted);font-weight:400">(private &mdash; used by AI rating, never shared with candidates)</span></span></div>'
     + '<div class="card-body">'
     + '<div style="display:flex;gap:8px;margin-bottom:12px">'
@@ -3091,9 +3094,45 @@ function renderMandateSetup(el){
     + adminCard;
   attachJDToolbar();
   loadClientNotes();
+  loadSpocOptions();
   if (S.currentUser && S.currentUser.is_company_admin) loadTeamForAssign(m.assigned_user_id);
 }
 
+async function loadSpocOptions(){
+  if(!S.activeMandate) return;
+  var wrap=document.getElementById('ms-spoc-wrap'); if(!wrap) return;
+  var r;
+  try{ r=await req('GET','/mandates/'+S.activeMandate.id+'/spoc-options'); }
+  catch(e){ wrap.innerHTML='<div style="font-size:12px;color:#C0522B">Could not load SPOC options</div>'; return; }
+  if(!r || r.error){ wrap.innerHTML='<div style="font-size:12px;color:#C0522B">'+esc((r&&r.error)||'Failed')+'</div>'; return; }
+  if(!r.crm_linked){
+    wrap.innerHTML='<div style="font-size:12px;color:#8a6d3b;background:#FCF6E6;border:1px solid #F0E2B8;border-radius:8px;padding:11px 13px;line-height:1.55">'
+      +'&#9888; Yeh mandate abhi kisi CRM client se linked nahi hai (client naam "<b>'+esc(r.client||'')+'</b>" CRM se match nahi hua).<br>'
+      +'Pehle <b>CRM</b> mein is client ko banao aur uske andar SPOC contact add karo, phir yeh dropdown apne aap aa jayega.</div>';
+    return;
+  }
+  if(!r.contacts || !r.contacts.length){
+    wrap.innerHTML='<div style="font-size:12px;color:#8a6d3b;background:#FCF6E6;border:1px solid #F0E2B8;border-radius:8px;padding:11px 13px;line-height:1.55">'
+      +'&#9888; Client CRM mein koi contact nahi hai. <b>SPOC ko pehle Client CRM mein create karo</b> (email ke saath), phir yahan select kar paoge.</div>';
+    return;
+  }
+  var opts='<option value="0">— None —</option>';
+  r.contacts.forEach(function(c){
+    var lbl=c.name+(c.designation?' ('+c.designation+')':'')+(c.email?' — '+c.email:'');
+    opts+='<option value="'+c.id+'"'+(c.id===r.spoc_contact_id?' selected':'')+'>'+esc(lbl)+'</option>';
+  });
+  wrap.innerHTML='<div class="fg-row"><label>Select SPOC (from this client\'s CRM contacts)</label>'
+    +'<select id="ms-spoc" class="inp" style="width:100%">'+opts+'</select></div>'
+    +'<button class="btn btn-g" style="margin-top:8px" onclick="saveSpoc()">Save SPOC</button>'
+    +'<div style="font-size:10.5px;color:var(--muted);margin-top:7px">Contact CRM se aata hai. Naya SPOC chahiye toh CRM &rarr; is client &rarr; Add Contact.</div>';
+}
+async function saveSpoc(){
+  if(!S.activeMandate) return;
+  var sel=document.getElementById('ms-spoc'); if(!sel) return;
+  var r=await req('POST','/mandates/'+S.activeMandate.id+'/spoc',{spoc_contact_id:parseInt(sel.value)||0});
+  if(r && r.ok){ toast('OK','SPOC saved'); }
+  else toast('ERR',(r&&r.error)||'Failed');
+}
 async function loadClientNotes(){
   if(!S.activeMandate) return;
   var el=document.getElementById('cn-list');
@@ -3585,6 +3624,8 @@ function _shareModalHtml(m, r, preselectStage, draft){
       +'<span id="share-count" style="font-size:11px;color:#534AB7;font-weight:600">0 selected</span></div>'
     +'<div id="share-list" style="border:1px solid #eee;border-radius:9px;padding:6px;margin-top:6px;max-height:260px;overflow:auto">'+(listHtml||'<div style="padding:14px;text-align:center;color:#aaa;font-size:12px">No candidates in pipeline</div>')+'</div>'
     +'<div style="font-size:10.5px;color:#999;margin-top:6px">&#128206; Candidates with a resume on file get their CV attached automatically. "No CV" ones are still listed in the table.</div>'
+    +'<div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between"><label style="font-size:11px;font-weight:700;color:#555">&#128065; Email preview (exactly what the client receives)</label></div>'
+    +'<div id="share-preview" style="border:1px solid #e2e2e2;border-radius:9px;padding:16px;margin-top:6px;background:#fff;max-height:360px;overflow:auto">Loading preview…</div>'
     +'</div>'
     +'<div class="modal-foot" style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;padding:12px 16px;border-top:1px solid #eee">'
       +'<button class="btn btn-o" style="font-size:12px" onclick="_shareCloseModal()">Cancel</button>'
@@ -3624,9 +3665,24 @@ async function openShareToClient(preselectStage, draft){
       var stg=t.getAttribute('data-stage');
       document.querySelectorAll('#modal-share-client .share-cand-cb[data-stage="'+stg+'"]').forEach(function(cb){ cb.checked=t.checked; });
     }
-    _shareSyncCount();
+    _shareSyncCount(); _sharePreviewDebounced();
   }); }
+  ['share-greeting','share-intro'].forEach(function(id){
+    var elm=document.getElementById(id); if(elm) elm.addEventListener('input', _sharePreviewDebounced);
+  });
   _shareSyncCount();
+  _sharePreview();
+}
+var _sharePreviewTimer=null;
+function _sharePreviewDebounced(){ clearTimeout(_sharePreviewTimer); _sharePreviewTimer=setTimeout(_sharePreview, 400); }
+async function _sharePreview(){
+  var m=S.activeMandate; if(!m) return;
+  var box=document.getElementById('share-preview'); if(!box) return;
+  var g=document.getElementById('share-greeting'), i=document.getElementById('share-intro');
+  var p={ greeting:g?g.value:'', intro:i?i.value:'', candidate_ids:_shareSelectedIds() };
+  var r;
+  try{ r=await req('POST','/mandates/'+m.id+'/submission-preview',p); }catch(e){ return; }
+  if(r && r.html){ box.innerHTML=r.html; }
 }
 function _shareSelectedIds(){
   var ids=[]; document.querySelectorAll('#modal-share-client .share-cand-cb:checked').forEach(function(cb){ ids.push(parseInt(cb.getAttribute('data-cid'))); });

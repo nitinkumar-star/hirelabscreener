@@ -2150,6 +2150,12 @@ def init_db():
         );
     """)
 
+    # Migrate: SPOC (single point of contact) on a mandate → a CRM contact id.
+    try:
+        c.execute('ALTER TABLE mandates ADD COLUMN spoc_contact_id INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass  # already exists
+
     # Migrate: add recruiter-pitch cache column on mandates (single additive col).
     # Stores JSON {"md": "<markdown pitch>", "at": "<ts>", "model": "..."} so the
     # "Recruiter Pitch" mandate sub-tab opens instantly; "Re-run" refreshes it.
@@ -8443,6 +8449,77 @@ def _mandate_client_contacts(conn, company_id, crm_client_id):
         return []
 
 
+@app.route('/api/mandates/<int:mid>/spoc-options', methods=['GET'])
+@login_required
+def mandate_spoc_options(mid):
+    """Contacts of the mandate's linked CRM client (for choosing a SPOC), plus
+    the currently selected SPOC and whether the client is CRM-linked."""
+    conn = get_db()
+    company_id = effective_company_id()
+    m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, company_id)).fetchone()
+    if not m:
+        conn.close()
+        return jsonify({'error': 'Mandate not found'}), 404
+    crm_id = m['crm_client_id'] or 0
+    contacts = []
+    if crm_id:
+        try:
+            rows = conn.execute(
+                'SELECT id, name, designation, email FROM crm_contacts '
+                'WHERE client_id=? AND company_id=? AND is_active=1 ORDER BY id ASC',
+                (crm_id, company_id)).fetchall()
+            contacts = [{'id': r['id'], 'name': r['name'] or '',
+                         'designation': r['designation'] or '', 'email': r['email'] or ''}
+                        for r in rows]
+        except Exception:
+            contacts = []
+    try:
+        spoc_id = m['spoc_contact_id'] or 0
+    except Exception:
+        spoc_id = 0
+    conn.close()
+    return jsonify({'ok': True, 'crm_linked': bool(crm_id), 'crm_client_id': crm_id,
+                    'client': m['client'], 'spoc_contact_id': spoc_id, 'contacts': contacts})
+
+
+@app.route('/api/mandates/<int:mid>/spoc', methods=['POST'])
+@login_required
+def set_mandate_spoc(mid):
+    """Set the mandate's SPOC to a contact that belongs to its linked CRM client."""
+    d = request.json or {}
+    spoc_id = int(d.get('spoc_contact_id') or 0)
+    conn = None
+    try:
+        conn = get_db()
+        company_id = effective_company_id()
+        try:
+            conn.execute('ALTER TABLE mandates ADD COLUMN spoc_contact_id INTEGER DEFAULT 0')
+            conn.commit()
+        except Exception:
+            pass
+        m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                         (mid, company_id)).fetchone()
+        if not m:
+            return jsonify({'error': 'Mandate not found'}), 404
+        if spoc_id:
+            ok = conn.execute(
+                'SELECT id FROM crm_contacts WHERE id=? AND client_id=? AND company_id=? AND is_active=1',
+                (spoc_id, m['crm_client_id'] or 0, company_id)).fetchone()
+            if not ok:
+                return jsonify({'error': 'SPOC must be a contact created under this client in CRM.'}), 400
+        conn.execute('UPDATE mandates SET spoc_contact_id=? WHERE id=?', (spoc_id, mid))
+        conn.commit()
+        return jsonify({'ok': True, 'spoc_contact_id': spoc_id})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    finally:
+        if conn is not None:
+            try: conn.close()
+            except Exception: pass
+
+
 @app.route('/api/mandates/<int:mid>/submission-prefill', methods=['GET'])
 @login_required
 def submission_prefill(mid):
@@ -8460,6 +8537,21 @@ def submission_prefill(mid):
         'SELECT * FROM candidates WHERE mandate_id=? AND stage != "Screened-Out" '
         'ORDER BY stage, name', (mid,)).fetchall()
     contacts = _mandate_client_contacts(conn, company_id, m['crm_client_id'])
+    # If a SPOC is set on the mandate, put them first (primary To + greeting).
+    spoc = None
+    try:
+        sid = m['spoc_contact_id'] or 0
+    except Exception:
+        sid = 0
+    if sid:
+        try:
+            sc = conn.execute('SELECT id, name, email FROM crm_contacts WHERE id=? AND company_id=? AND is_active=1',
+                              (sid, company_id)).fetchone()
+            if sc and (sc['email'] or '').strip():
+                spoc = {'name': sc['name'] or '', 'email': sc['email'] or ''}
+                contacts = [spoc] + [c for c in contacts if c['email'] != spoc['email']]
+        except Exception:
+            spoc = None
     conn.close()
 
     cands = []
@@ -8483,6 +8575,39 @@ def submission_prefill(mid):
                     'to': to_list, 'cc': cc_list, 'contacts': contacts,
                     'subject': subject, 'greeting': greeting, 'intro': intro,
                     'candidates': cands})
+
+
+@app.route('/api/mandates/<int:mid>/submission-preview', methods=['POST'])
+@login_required
+def submission_preview(mid):
+    """Return the exact HTML email body (greeting + intro + table + signature)
+    for the given greeting/intro/candidate selection — for live preview."""
+    d = request.json or {}
+    greeting = (d.get('greeting') or '').strip()
+    intro = (d.get('intro') or '').strip()
+    cand_ids = [int(x) for x in (d.get('candidate_ids') or []) if str(x).isdigit()]
+    conn = get_db()
+    company_id = effective_company_id()
+    m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, company_id)).fetchone()
+    if not m:
+        conn.close()
+        return jsonify({'error': 'Mandate not found'}), 404
+    rows = []
+    if cand_ids:
+        rows = conn.execute(
+            'SELECT * FROM candidates WHERE mandate_id=? AND owner_id=? AND id IN (%s) '
+            'ORDER BY name' % ','.join('?' * len(cand_ids)),
+            tuple([mid, company_id] + cand_ids)).fetchall()
+    table = _submission_table_html(m, rows) if rows else \
+        '<div style="color:#999;font-size:12px;padding:8px 0">(No candidates selected yet)</div>'
+    sig = _submission_signature_html()
+    conn.close()
+    html_body = (
+        '<p style="font-family:Calibri,Arial,sans-serif;font-size:14px">' + _sub_esc(greeting) + '</p>'
+        + '<p style="font-family:Calibri,Arial,sans-serif;font-size:14px">' + _sub_esc(intro) + '</p>'
+        + table + '<br>' + sig)
+    return jsonify({'ok': True, 'html': html_body, 'count': len(rows)})
 
 
 def _send_submission_email(to_list, cc_list, subject, html_body, attach_cids, conn, company_id):
