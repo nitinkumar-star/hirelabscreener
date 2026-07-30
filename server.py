@@ -3684,11 +3684,18 @@ def get_tasks():
     #     want that pool flooding the stale-follow-up list.
     central_mid = get_or_create_central_mandate()
     cand_rows = conn.execute(
-        "SELECT c.id, c.name, c.phone, c.mandate_id, c.updated_at, c.task_snoozed_until, "
+        "SELECT c.id, c.name, c.phone, c.mandate_id, c.updated_at, c.task_snoozed_until, c.stage, "
         "m.role, m.client FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
         "WHERE c.owner_id=? AND m.status='active' AND m.id != ?", (uid, central_mid)
     ).fetchall()
 
+    # Stale follow-up only applies to candidates still in an active, meaningful
+    # stage — dead/terminal-negative stages are not worth chasing.
+    STALE_FOLLOWUP_STAGES = {
+        'Screening', 'Follow Up 1', 'Follow Up 2', 'Not Contacted', 'Called',
+        'Interested', 'Updated CV awaited', 'Shared with Client',
+        'Interview Inprocess', 'Placed', 'Joined',
+    }
     for c in cand_rows:
         snoozed = c['task_snoozed_until']
         if snoozed:
@@ -3738,7 +3745,10 @@ def get_tasks():
                 is_promise = True
 
         # ── 3. Stale candidate: no activity at all for stale_days ────────
-        if not is_promise:
+        #     Only surface candidates still in an ACTIVE, worth-following-up stage.
+        #     Dead/terminal-negative stages (Not Interested, Not Suitable, Client
+        #     Rejected, Screened-Out, etc.) are excluded — no point chasing them.
+        if not is_promise and (c['stage'] in STALE_FOLLOWUP_STAGES):
             days_since = (now - last_activity).total_seconds() / 86400
             if days_since >= stale_days:
                 tasks.append({
