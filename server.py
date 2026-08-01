@@ -12077,3 +12077,100 @@ if __name__ == '__main__':
     check_timers()
     print('Local server: http://localhost:' + str(os.environ.get('PORT', 5000)))
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  RecruitOS Mobile — backend auth add-on
+#  PASTE THIS INTO server.py  (anywhere AFTER `app`, `verify_password`,
+#  `get_db`, and `ts` are already defined — e.g. right after the login routes).
+#
+#  What it does:
+#   • Adds POST /api/mobile/login  → returns a signed token for the app.
+#   • A before_request hook lets ANY existing /api endpoint accept that token
+#     via the "Authorization: Bearer <token>" header — so you do NOT have to
+#     touch login_required or any of your routes.
+#
+#  Why: a native app can't rely on browser session cookies across origins.
+#  A bearer token is the clean, standard way to keep the app logged in.
+#
+#  Additive only. No schema change. Reuses your users table, SECRET_KEY and
+#  the PyJWT package that's already in requirements.txt.
+# ═══════════════════════════════════════════════════════════════════════════
+import jwt as _jwt
+import datetime as _dt
+
+_MOBILE_TOKEN_DAYS = 30   # how long a phone stays signed in
+
+
+def _mobile_make_token(user_id):
+    payload = {
+        'uid': int(user_id),
+        'exp': _dt.datetime.utcnow() + _dt.timedelta(days=_MOBILE_TOKEN_DAYS),
+        'iat': _dt.datetime.utcnow(),
+        'scope': 'mobile',
+    }
+    return _jwt.encode(payload, app.secret_key, algorithm='HS256')
+
+
+def _mobile_read_token(token):
+    try:
+        data = _jwt.decode(token, app.secret_key, algorithms=['HS256'])
+        return int(data.get('uid')) if data.get('uid') else None
+    except Exception:
+        return None
+
+
+@app.before_request
+def _mobile_bearer_auth():
+    """If a valid bearer token is present and there's no web session yet,
+    authenticate the request as that user. Every existing endpoint reads
+    session['user_id'] (via real_user_id / effective_company_id), so this
+    transparently logs the app in for all of them."""
+    try:
+        if session.get('user_id'):
+            return  # already authenticated via cookie
+        auth = request.headers.get('Authorization', '')
+        if not auth.startswith('Bearer '):
+            return
+        uid = _mobile_read_token(auth[7:].strip())
+        if uid:
+            session['user_id'] = uid
+    except Exception:
+        pass
+@app.route('/api/mobile/login', methods=['POST'])
+def mobile_login():
+    d = request.json or {}
+    username = (d.get('username') or '').strip()
+    password = d.get('password') or ''
+    conn = get_db()
+    u = conn.execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
+    if not u or not verify_password(password, u['password_hash']):
+        conn.close()
+        return jsonify({'error': 'Invalid username or password'}), 401
+    if u['status'] == 'pending':
+        conn.close()
+        return jsonify({'error': 'Your account is awaiting admin approval.'}), 403
+    if u['status'] == 'rejected':
+        conn.close()
+        return jsonify({'error': 'This account request was declined.'}), 403
+    # Respect suspended tenants, same as the web login.
+    if u['role'] != 'admin' and u['company_id']:
+        comp = conn.execute('SELECT status FROM companies WHERE id=?', (u['company_id'],)).fetchone()
+        if comp and comp['status'] == 'suspended':
+            conn.close()
+            return jsonify({'error': 'Your agency account is currently suspended.'}), 403
+    try:
+        conn.execute('UPDATE users SET last_login=? WHERE id=?', (ts(), u['id']))
+        conn.commit()
+    except Exception:
+        pass
+    conn.close()
+    token = _mobile_make_token(u['id'])
+    return jsonify({
+        'ok': True,
+        'token': token,
+        'user': {
+            'username': u['username'],
+            'name': (u['name'] if 'name' in u.keys() else '') or u['username'],
+            'role': u['role'],
+        },
+    })
