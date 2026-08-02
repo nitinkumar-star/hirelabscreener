@@ -161,7 +161,17 @@ input:focus,textarea:focus{outline:none;border-color:#1D9E75!important}
 .fg-row{margin-bottom:10px}.fg-row label{display:block;font-size:11px;color:#666;margin-bottom:4px;font-weight:500}
 #toast{position:fixed;bottom:20px;right:20px;background:#0a2540;color:#fff;padding:10px 16px;border-radius:8px;font-size:12px;z-index:200;display:none;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:320px}
 #toast.show{display:flex}
-.settings-body{padding:18px;overflow-y:auto;flex:1}
+.settings-body{padding:0;overflow-y:auto;flex:1;background:var(--paper)}
+.set-shell{max-width:720px;margin:0 auto;width:100%;padding:14px 18px 0;box-sizing:border-box}
+.set-tabs{display:flex;gap:5px;flex-wrap:wrap;position:sticky;top:0;background:var(--paper);padding:10px 0 12px;z-index:8;margin:0 0 16px;border-bottom:0.5px solid var(--line)}
+.set-tab{border:0.5px solid var(--line);background:#fff;color:var(--muted);padding:8px 13px;border-radius:9px;font-size:11.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all .15s;line-height:1;white-space:nowrap}
+.set-tab:hover{border-color:var(--teal);color:var(--teal-deep)}
+.set-tab.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+.set-tab span{font-size:13px;line-height:1}
+.set-panel{display:none}
+.set-panel.active{display:block;animation:setFade .18s ease}
+@keyframes setFade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.set-footer{position:sticky;bottom:0;background:linear-gradient(to top,var(--paper),var(--paper) 62%,transparent);padding:14px 0 18px;margin-top:10px;display:flex;align-items:center;gap:10px;z-index:6}
 .var-pill{font-size:10px;padding:2px 7px;border-radius:5px;background:#EEEDFE;color:#534AB7;font-family:monospace;margin:2px}
 /* Dashboard */
 .db-mandate-card{background:#fff;border:0.5px solid #e8e8e8;border-radius:10px;overflow:hidden;cursor:pointer;transition:box-shadow .15s,transform .15s}
@@ -4513,9 +4523,18 @@ function renderSettings(){
   const body=document.getElementById('settings-body');if(!body)return;
   _pipeEdit=null;
   const s=S.settings;
-  body.innerHTML='<div style="max-width:680px">'
+  var isAdmin = S.currentUser && S.currentUser.role==='admin';
+  var _setTabs = [['profile','\uD83D\uDC64','Profile'],['general','\u2699\uFE0F','General']];
+  if(isAdmin) _setTabs.push(['pipeline','\uD83D\uDCCB','Pipeline']);
+  _setTabs.push(['messaging','\uD83D\uDCAC','Templates & Messaging']);
+  _setTabs.push(['followups','\u2705','Follow-ups']);
+  if(isAdmin) _setTabs.push(['admin','\uD83D\uDEE1\uFE0F','Admin']);
+  var _setTabsHTML = _setTabs.map(function(t,i){ return '<button class="set-tab'+(i===0?' active':'')+'" data-stab="'+t[0]+'" onclick="switchSettingsTab(\''+t[0]+'\')"><span>'+t[1]+'</span>'+t[2]+'</button>'; }).join('');
+  body.innerHTML='<div class="set-shell">'
+    + '<div class="set-tabs">'+_setTabsHTML+'</div>'
+    // ===== TAB: Profile =====
+    + '<div class="set-panel active" data-spanel="profile">'
     +'<div id="my-billing-card"></div>'
-    +'<div id="pipeline-editor"></div>'
     // ── My Profile (every user) ──
     +'<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head"><span style="font-weight:500">&#128100; My Profile &amp; Email Signature</span></div><div class="card-body">'
     +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">These details are used automatically in your email signature and AI-composed emails.</div>'
@@ -4528,6 +4547,9 @@ function renderSettings(){
     +'<button class="btn btn-g" style="margin-top:8px" onclick="saveMyProfile()">Save My Profile</button>'
     +'<span id="mp-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
     +'</div></div>'
+    + '</div>'
+    // ===== TAB: General =====
+    + '<div class="set-panel" data-spanel="general">'
     // ── Workspace Type ──
     +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Workspace Type</span></div><div class="card-body">'
     +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Choose how this workspace works. <b>Agency</b> = you recruit for client companies. <b>Corporate</b> = you hire for your own company.</div>'
@@ -4553,6 +4575,11 @@ function renderSettings(){
     +'<div style="display:flex;gap:8px"><input class="inp" id="s-gemini" type="password" value="'+esc(s.gemini_api_key||'')+'" placeholder="AIza..." style="flex:1">'
     +'<span style="font-size:10px;color:#1D9E75;align-self:center;white-space:nowrap">Free tier</span></div></div>'
     +'</div></div>'
+    + '</div>'
+    // ===== TAB: Pipeline (admin) =====
+    + (isAdmin ? '<div class="set-panel" data-spanel="pipeline"><div id="pipeline-editor"></div></div>' : '')
+    // ===== TAB: Templates & Messaging =====
+    + '<div class="set-panel" data-spanel="messaging">'
     +'<div style="font-size:11px;color:#666;margin-bottom:10px;padding:9px 12px;background:#EEEDFE;border-radius:6px;border:0.5px solid #AFA9EC">Template variables: <span class="var-pill">{Name}</span> <span class="var-pill">{Position}</span> <span class="var-pill">{Location}</span> <span class="var-pill">{Company}</span> <span class="var-pill">{RecruiterName}</span></div>'
     +[{n:'msg1',label:'First Outreach',color:'#1D9E75',timing:null,key:'template_msg1'},
       {n:'fu1',label:'Follow Up 1',color:'#378ADD',timing:'fu1_hours',from:'Message 1',key:'template_fu1'},
@@ -4565,15 +4592,30 @@ function renderSettings(){
     ).join('')
     + emailConfigHTML(s)
     + waConfigHTML(s)
+    + '</div>'
+    // ===== TAB: Follow-ups =====
+    + '<div class="set-panel" data-spanel="followups">'
     + followUpConfigHTML(s)
+    + '</div>'
+    // ===== TAB: Admin (admin) =====
+    + (isAdmin ? ('<div class="set-panel" data-spanel="admin">'
+        + billingConfigHTML(s)
+        + adminUserMgmtHTML()
+        + '</div>') : '')
+    // ===== Sticky footer save bar =====
+    + '<div class="set-footer">'
     +'<button class="btn btn-g" onclick="saveSettings()">Save All Settings</button>'
     +'<span id="s-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
-    + (S.currentUser && S.currentUser.role==='admin' ? billingConfigHTML(s) : '')
-    + (S.currentUser && S.currentUser.role==='admin' ? adminUserMgmtHTML() : '')
+    + '</div>'
     +'</div>';
   if (S.currentUser && S.currentUser.role==='admin') loadUsersList();
   loadMyProfile();
   renderWaSettings();
+}
+function switchSettingsTab(id){
+  document.querySelectorAll('#settings-body .set-tab').forEach(function(b){ b.classList.toggle('active', b.dataset.stab===id); });
+  document.querySelectorAll('#settings-body .set-panel').forEach(function(p){ p.classList.toggle('active', p.dataset.spanel===id); });
+  var sb=document.getElementById('settings-body'); if(sb) sb.scrollTop=0;
 }
 
 async function loadMyProfile(){
@@ -4963,7 +5005,7 @@ async function saveSettings(){
   const wf=(document.querySelector('input[name="wfmode"]:checked')||{}).value||'agency';
   const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),submission_cc_emails:v('s-submission_cc_emails'),company_website:v('s-company_website'),submission_signature:v('s-submission_signature'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template')};
   const r=await req('POST','/settings',data);
-  if(r.ok){S.settings=data;applyPipelineStages();toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
+  if(r.ok){Object.assign(S.settings,data);applyPipelineStages();toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }
 function toggleSettings(){
   closeSidebarOnMobile();
