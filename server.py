@@ -2152,16 +2152,29 @@ def init_db():
             greeting TEXT DEFAULT '',
             intro TEXT DEFAULT '',
             candidate_ids TEXT DEFAULT '[]',
+            body_html TEXT DEFAULT '',
             created_at TEXT,
             updated_at TEXT
         );
     """)
+    try:
+        c.execute("ALTER TABLE submission_drafts ADD COLUMN body_html TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
 
     # Migrate: SPOC (single point of contact) on a mandate → a CRM contact id.
     try:
         c.execute('ALTER TABLE mandates ADD COLUMN spoc_contact_id INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
         pass  # already exists
+    # Migrate: mandate required experience + per-mandate submission CC lists.
+    for col, typ in [('experience', 'TEXT DEFAULT ""'),
+                     ('cc_external_ids', "TEXT DEFAULT '[]'"),
+                     ('cc_internal_emails', "TEXT DEFAULT '[]'")]:
+        try:
+            c.execute(f'ALTER TABLE mandates ADD COLUMN {col} {typ}')
+        except sqlite3.OperationalError:
+            pass  # already exists
 
     # Migrate: add recruiter-pitch cache column on mandates (single additive col).
     # Stores JSON {"md": "<markdown pitch>", "at": "<ts>", "model": "..."} so the
@@ -8046,9 +8059,9 @@ def update_mandate(mid):
     own = conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
     if not own or own['owner_id'] != effective_user_id():
         conn.close(); return jsonify({'error': 'Not found'}), 404
-    conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,jd=?,status=? WHERE id=?',
+    conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,experience=?,jd=?,status=? WHERE id=?',
                  (d.get('client',''), d.get('role',''), d.get('location',''), d.get('division',''),
-                  float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('jd',''), d.get('status','active'), mid))
+                  float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('experience',''), d.get('jd',''), d.get('status','active'), mid))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
@@ -8537,6 +8550,88 @@ def set_mandate_spoc(mid):
             except Exception: pass
 
 
+@app.route('/api/mandates/<int:mid>/cc-options', methods=['GET'])
+@login_required
+def mandate_cc_options(mid):
+    """External CC candidates (client's CRM contacts, minus SPOC) + Internal CC
+    candidates (team members with an email), plus the current selections."""
+    conn = get_db()
+    company_id = effective_company_id()
+    m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, company_id)).fetchone()
+    if not m:
+        conn.close()
+        return jsonify({'error': 'Mandate not found'}), 404
+    crm_id = m['crm_client_id'] or 0
+    try: spoc_id = m['spoc_contact_id'] or 0
+    except Exception: spoc_id = 0
+    external = []
+    if crm_id:
+        try:
+            rows = conn.execute(
+                'SELECT id, name, designation, email FROM crm_contacts '
+                'WHERE client_id=? AND company_id=? AND is_active=1 AND email != "" ORDER BY id',
+                (crm_id, company_id)).fetchall()
+            external = [{'id': r['id'], 'name': r['name'] or '', 'designation': r['designation'] or '',
+                         'email': r['email'] or ''} for r in rows if r['id'] != spoc_id]
+        except Exception:
+            external = []
+    internal = []
+    try:
+        urows = conn.execute(
+            "SELECT id, username, display_name, profile_email FROM users "
+            "WHERE company_id=? AND status='approved' ORDER BY id", (company_id,)).fetchall()
+        for u in urows:
+            d = dict(u)
+            em = (d.get('profile_email') or '').strip()
+            if not em and '@' in (d.get('username') or ''):
+                em = d['username'].strip()
+            if em:
+                internal.append({'name': d.get('display_name') or d.get('username') or em, 'email': em})
+    except Exception:
+        internal = []
+    try: sel_ext = json.loads(m['cc_external_ids'] or '[]')
+    except Exception: sel_ext = []
+    try: sel_int = json.loads(m['cc_internal_emails'] or '[]')
+    except Exception: sel_int = []
+    conn.close()
+    return jsonify({'ok': True, 'crm_linked': bool(crm_id), 'external': external,
+                    'internal': internal, 'selected_external_ids': sel_ext,
+                    'selected_internal_emails': sel_int})
+
+
+@app.route('/api/mandates/<int:mid>/cc-config', methods=['POST'])
+@login_required
+def set_mandate_cc(mid):
+    """Save the mandate's External (CRM contact ids) + Internal (emails) CC lists."""
+    d = request.json or {}
+    ext_ids = [int(x) for x in (d.get('external_ids') or []) if str(x).isdigit()]
+    int_emails = [e.strip() for e in (d.get('internal_emails') or []) if e and e.strip()]
+    conn = None
+    try:
+        conn = get_db()
+        company_id = effective_company_id()
+        for col, typ in [('cc_external_ids', "TEXT DEFAULT '[]'"), ('cc_internal_emails', "TEXT DEFAULT '[]'")]:
+            try:
+                conn.execute(f'ALTER TABLE mandates ADD COLUMN {col} {typ}'); conn.commit()
+            except Exception:
+                pass
+        m = conn.execute('SELECT id FROM mandates WHERE id=? AND owner_id=?', (mid, company_id)).fetchone()
+        if not m:
+            return jsonify({'error': 'Mandate not found'}), 404
+        conn.execute('UPDATE mandates SET cc_external_ids=?, cc_internal_emails=? WHERE id=?',
+                     (json.dumps(ext_ids), json.dumps(int_emails), mid))
+        conn.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    finally:
+        if conn is not None:
+            try: conn.close()
+            except Exception: pass
+
+
 @app.route('/api/mandates/<int:mid>/submission-prefill', methods=['GET'])
 @login_required
 def submission_prefill(mid):
@@ -8569,7 +8664,36 @@ def submission_prefill(mid):
                 contacts = [spoc] + [c for c in contacts if c['email'] != spoc['email']]
         except Exception:
             spoc = None
+
+    # CC: per-mandate External (CRM contact ids) + Internal (emails); if none
+    # configured, fall back to the global submission_cc_emails setting.
+    cc_list = []
+    try:
+        ext_ids = json.loads(m['cc_external_ids'] or '[]')
+    except Exception:
+        ext_ids = []
+    try:
+        int_emails = json.loads(m['cc_internal_emails'] or '[]')
+    except Exception:
+        int_emails = []
+    if ext_ids:
+        try:
+            q = 'SELECT email FROM crm_contacts WHERE company_id=? AND id IN (%s)' % ','.join('?' * len(ext_ids))
+            for r in conn.execute(q, tuple([company_id] + ext_ids)).fetchall():
+                if (r['email'] or '').strip():
+                    cc_list.append(r['email'].strip())
+        except Exception:
+            pass
+    for e in int_emails:
+        if e and e.strip():
+            cc_list.append(e.strip())
     conn.close()
+    if not cc_list:
+        cc_raw = get_setting('submission_cc_emails', '') or ''
+        cc_list = [e.strip() for e in re.split(r'[,\n;]+', cc_raw) if e.strip()]
+    # de-dup, drop any that equal a To recipient
+    _seen = set()
+    cc_list = [e for e in cc_list if not (e in _seen or _seen.add(e))]
 
     cands = []
     for c in rows:
@@ -8581,8 +8705,7 @@ def submission_prefill(mid):
         })
     to_list = [c['email'] for c in contacts]
     primary_name = (contacts[0]['name'].split()[0] if contacts and contacts[0]['name'] else '')
-    cc_raw = get_setting('submission_cc_emails', '') or ''
-    cc_list = [e.strip() for e in re.split(r'[,\n;]+', cc_raw) if e.strip()]
+    cc_list = [e for e in cc_list if e not in to_list]
     n_default = len([c for c in cands if c['stage'] == 'Shared with Client']) or len(cands)
     subject = f"{m['role']} — {n_default} profile{'s' if n_default != 1 else ''} | {get_setting('company_name','') or 'HireLab'}".strip(' |')
     greeting = f"Dear {primary_name}," if primary_name else "Dear Team,"
@@ -8666,7 +8789,10 @@ def _send_submission_email(to_list, cc_list, subject, html_body, attach_cids, co
                 continue
             with open(fp, 'rb') as fh:
                 data = fh.read()
-            fname = (c['cv_original_name'] or '').strip() or (re.sub(r'[^A-Za-z0-9_-]+', '_', c['name'] or 'CV') + '.pdf')
+            # Attachment name is ALWAYS the candidate's name (keep original extension).
+            ext = os.path.splitext(c['cv_original_name'] or c['cv_path'] or '')[1] or '.pdf'
+            safe_name = re.sub(r'[^A-Za-z0-9 _.-]+', '', (c['name'] or 'Candidate')).strip() or 'Candidate'
+            fname = safe_name + ext
             part = MIMEApplication(data, Name=fname)
             part['Content-Disposition'] = f'attachment; filename="{fname}"'
             msg.attach(part)
@@ -8708,6 +8834,7 @@ def submit_to_client(mid):
     subject = (d.get('subject') or '').strip()
     greeting = (d.get('greeting') or '').strip()
     intro = (d.get('intro') or '').strip()
+    body_html = (d.get('body_html') or '').strip()
     cand_ids = [int(x) for x in (d.get('candidate_ids') or []) if str(x).isdigit()]
 
     conn = None
@@ -8726,17 +8853,17 @@ def submit_to_client(mid):
             if existing:
                 conn.execute(
                     'UPDATE submission_drafts SET to_emails=?, cc_emails=?, subject=?, '
-                    'greeting=?, intro=?, candidate_ids=?, updated_at=? WHERE id=? AND owner_id=?',
+                    'greeting=?, intro=?, candidate_ids=?, body_html=?, updated_at=? WHERE id=? AND owner_id=?',
                     (', '.join(to_list), ', '.join(cc_list), subject, greeting, intro,
-                     json.dumps(cand_ids), now, int(existing), company_id))
+                     json.dumps(cand_ids), body_html, now, int(existing), company_id))
                 did = int(existing)
             else:
                 cur = conn.execute(
                     'INSERT INTO submission_drafts (owner_id, mandate_id, to_emails, cc_emails, '
-                    'subject, greeting, intro, candidate_ids, created_at, updated_at) '
-                    'VALUES (?,?,?,?,?,?,?,?,?,?)',
+                    'subject, greeting, intro, candidate_ids, body_html, created_at, updated_at) '
+                    'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
                     (company_id, mid, ', '.join(to_list), ', '.join(cc_list), subject,
-                     greeting, intro, json.dumps(cand_ids), now, now))
+                     greeting, intro, json.dumps(cand_ids), body_html, now, now))
                 did = cur.lastrowid
             conn.commit()
             return jsonify({'ok': True, 'draft_id': did, 'saved': True})
@@ -8756,14 +8883,18 @@ def submit_to_client(mid):
         if not rows:
             return jsonify({'error': 'Selected candidates not found.'}), 404
 
-        table = _submission_table_html(m, rows)
-        sig = _submission_signature_html()
-        html_body = (
-            '<p style="font-family:Calibri,Arial,sans-serif;font-size:14px">' + _sub_esc(greeting) + '</p>'
-            + '<p style="font-family:Calibri,Arial,sans-serif;font-size:14px">' + _sub_esc(intro) + '</p>'
-            + table + '<br>' + sig)
+        # Use the recruiter's edited body if provided, else build the standard one.
+        if body_html:
+            final_html = body_html
+        else:
+            table = _submission_table_html(m, rows)
+            sig = _submission_signature_html()
+            final_html = (
+                '<p style="font-family:Calibri,Arial,sans-serif;font-size:14px">' + _sub_esc(greeting) + '</p>'
+                + '<p style="font-family:Calibri,Arial,sans-serif;font-size:14px">' + _sub_esc(intro) + '</p>'
+                + table + '<br>' + sig)
 
-        ok, err = _send_submission_email(to_list, cc_list, subject, html_body,
+        ok, err = _send_submission_email(to_list, cc_list, subject, final_html,
                                          [c['id'] for c in rows], conn, company_id)
         if not ok:
             return jsonify({'error': err}), 502
@@ -8813,6 +8944,7 @@ def list_submission_drafts():
         out.append({'id': d['id'], 'mandate_id': d['mandate_id'], 'subject': d.get('subject', ''),
                     'to': d.get('to_emails', ''), 'cc': d.get('cc_emails', ''),
                     'greeting': d.get('greeting', ''), 'intro': d.get('intro', ''),
+                    'body_html': d.get('body_html', ''),
                     'candidate_ids': cids, 'updated_at': d.get('updated_at', '')})
     return jsonify({'ok': True, 'drafts': out})
 
@@ -12077,100 +12209,3 @@ if __name__ == '__main__':
     check_timers()
     print('Local server: http://localhost:' + str(os.environ.get('PORT', 5000)))
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  RecruitOS Mobile — backend auth add-on
-#  PASTE THIS INTO server.py  (anywhere AFTER `app`, `verify_password`,
-#  `get_db`, and `ts` are already defined — e.g. right after the login routes).
-#
-#  What it does:
-#   • Adds POST /api/mobile/login  → returns a signed token for the app.
-#   • A before_request hook lets ANY existing /api endpoint accept that token
-#     via the "Authorization: Bearer <token>" header — so you do NOT have to
-#     touch login_required or any of your routes.
-#
-#  Why: a native app can't rely on browser session cookies across origins.
-#  A bearer token is the clean, standard way to keep the app logged in.
-#
-#  Additive only. No schema change. Reuses your users table, SECRET_KEY and
-#  the PyJWT package that's already in requirements.txt.
-# ═══════════════════════════════════════════════════════════════════════════
-import jwt as _jwt
-import datetime as _dt
-
-_MOBILE_TOKEN_DAYS = 30   # how long a phone stays signed in
-
-
-def _mobile_make_token(user_id):
-    payload = {
-        'uid': int(user_id),
-        'exp': _dt.datetime.utcnow() + _dt.timedelta(days=_MOBILE_TOKEN_DAYS),
-        'iat': _dt.datetime.utcnow(),
-        'scope': 'mobile',
-    }
-    return _jwt.encode(payload, app.secret_key, algorithm='HS256')
-
-
-def _mobile_read_token(token):
-    try:
-        data = _jwt.decode(token, app.secret_key, algorithms=['HS256'])
-        return int(data.get('uid')) if data.get('uid') else None
-    except Exception:
-        return None
-
-
-@app.before_request
-def _mobile_bearer_auth():
-    """If a valid bearer token is present and there's no web session yet,
-    authenticate the request as that user. Every existing endpoint reads
-    session['user_id'] (via real_user_id / effective_company_id), so this
-    transparently logs the app in for all of them."""
-    try:
-        if session.get('user_id'):
-            return  # already authenticated via cookie
-        auth = request.headers.get('Authorization', '')
-        if not auth.startswith('Bearer '):
-            return
-        uid = _mobile_read_token(auth[7:].strip())
-        if uid:
-            session['user_id'] = uid
-    except Exception:
-        pass
-@app.route('/api/mobile/login', methods=['POST'])
-def mobile_login():
-    d = request.json or {}
-    username = (d.get('username') or '').strip()
-    password = d.get('password') or ''
-    conn = get_db()
-    u = conn.execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
-    if not u or not verify_password(password, u['password_hash']):
-        conn.close()
-        return jsonify({'error': 'Invalid username or password'}), 401
-    if u['status'] == 'pending':
-        conn.close()
-        return jsonify({'error': 'Your account is awaiting admin approval.'}), 403
-    if u['status'] == 'rejected':
-        conn.close()
-        return jsonify({'error': 'This account request was declined.'}), 403
-    # Respect suspended tenants, same as the web login.
-    if u['role'] != 'admin' and u['company_id']:
-        comp = conn.execute('SELECT status FROM companies WHERE id=?', (u['company_id'],)).fetchone()
-        if comp and comp['status'] == 'suspended':
-            conn.close()
-            return jsonify({'error': 'Your agency account is currently suspended.'}), 403
-    try:
-        conn.execute('UPDATE users SET last_login=? WHERE id=?', (ts(), u['id']))
-        conn.commit()
-    except Exception:
-        pass
-    conn.close()
-    token = _mobile_make_token(u['id'])
-    return jsonify({
-        'ok': True,
-        'token': token,
-        'user': {
-            'username': u['username'],
-            'name': (u['name'] if 'name' in u.keys() else '') or u['username'],
-            'role': u['role'],
-        },
-    })

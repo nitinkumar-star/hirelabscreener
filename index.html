@@ -161,17 +161,7 @@ input:focus,textarea:focus{outline:none;border-color:#1D9E75!important}
 .fg-row{margin-bottom:10px}.fg-row label{display:block;font-size:11px;color:#666;margin-bottom:4px;font-weight:500}
 #toast{position:fixed;bottom:20px;right:20px;background:#0a2540;color:#fff;padding:10px 16px;border-radius:8px;font-size:12px;z-index:200;display:none;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:320px}
 #toast.show{display:flex}
-.settings-body{padding:0;overflow-y:auto;flex:1;background:var(--paper)}
-.set-shell{max-width:720px;margin:0 auto;width:100%;padding:14px 18px 0;box-sizing:border-box}
-.set-tabs{display:flex;gap:5px;flex-wrap:wrap;position:sticky;top:0;background:var(--paper);padding:10px 0 12px;z-index:8;margin:0 0 16px;border-bottom:0.5px solid var(--line)}
-.set-tab{border:0.5px solid var(--line);background:#fff;color:var(--muted);padding:8px 13px;border-radius:9px;font-size:11.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all .15s;line-height:1;white-space:nowrap}
-.set-tab:hover{border-color:var(--teal);color:var(--teal-deep)}
-.set-tab.active{background:var(--navy);color:#fff;border-color:var(--navy)}
-.set-tab span{font-size:13px;line-height:1}
-.set-panel{display:none}
-.set-panel.active{display:block;animation:setFade .18s ease}
-@keyframes setFade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
-.set-footer{position:sticky;bottom:0;background:linear-gradient(to top,var(--paper),var(--paper) 62%,transparent);padding:14px 0 18px;margin-top:10px;display:flex;align-items:center;gap:10px;z-index:6}
+.settings-body{padding:18px;overflow-y:auto;flex:1}
 .var-pill{font-size:10px;padding:2px 7px;border-radius:5px;background:#EEEDFE;color:#534AB7;font-family:monospace;margin:2px}
 /* Dashboard */
 .db-mandate-card{background:#fff;border:0.5px solid #e8e8e8;border-radius:10px;overflow:hidden;cursor:pointer;transition:box-shadow .15s,transform .15s}
@@ -3086,6 +3076,7 @@ function renderMandateSetup(el){
     +field('ms-client',wfL().client,m.client||'')+field('ms-role','Role',m.role||'')
     +field('ms-loc','Location',m.location||'')+field('ms-div','Division',m.division||'')
     +numfield('ms-cmin','CTC Min (LPA)',m.ctc_min||'')+numfield('ms-cmax','CTC Max (LPA)',m.ctc_max||'')
+    +field('ms-experience','Experience (e.g. 8-12 years)',m.experience||'')
     +'</div><div class="fg-row"><label>Job Description</label>'
     + buildJDEditor('ms-jd', m.jd||'')
     +'</div>'
@@ -3093,6 +3084,10 @@ function renderMandateSetup(el){
     + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
     + '<span style="font-weight:500">&#128100; Client SPOC <span style="font-size:10.5px;color:var(--muted);font-weight:400">(auto-fills the "To" when you share profiles)</span></span></div>'
     + '<div class="card-body"><div id="ms-spoc-wrap"><div style="font-size:12px;color:var(--muted)">Loading contacts…</div></div></div></div>'
+    + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
+    + '<span style="font-weight:500">&#128231; Submission CC <span style="font-size:10.5px;color:var(--muted);font-weight:400">(auto-CC these when you share profiles)</span></span>'
+    + '<button class="btn btn-g" onclick="saveCcConfig()">Save CC</button></div>'
+    + '<div class="card-body"><div id="ms-cc-wrap"><div style="font-size:12px;color:var(--muted)">Loading…</div></div></div></div>'
     + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
     + '<span style="font-weight:500">&#128273; Client Notes <span style="font-size:10.5px;color:var(--muted);font-weight:400">(private &mdash; used by AI rating, never shared with candidates)</span></span></div>'
     + '<div class="card-body">'
@@ -3105,6 +3100,7 @@ function renderMandateSetup(el){
   attachJDToolbar();
   loadClientNotes();
   loadSpocOptions();
+  loadCcOptions();
   if (S.currentUser && S.currentUser.is_company_admin) loadTeamForAssign(m.assigned_user_id);
 }
 
@@ -3142,6 +3138,44 @@ async function saveSpoc(){
   var r=await req('POST','/mandates/'+S.activeMandate.id+'/spoc',{spoc_contact_id:parseInt(sel.value)||0});
   if(r && r.ok){ toast('OK','SPOC saved'); }
   else toast('ERR',(r&&r.error)||'Failed');
+}
+async function loadCcOptions(){
+  if(!S.activeMandate) return;
+  var wrap=document.getElementById('ms-cc-wrap'); if(!wrap) return;
+  var r;
+  try{ r=await req('GET','/mandates/'+S.activeMandate.id+'/cc-options'); }
+  catch(e){ wrap.innerHTML='<div style="font-size:12px;color:#C0522B">Could not load CC options</div>'; return; }
+  if(!r || r.error){ wrap.innerHTML='<div style="font-size:12px;color:#C0522B">'+esc((r&&r.error)||'Failed')+'</div>'; return; }
+  var selExt=r.selected_external_ids||[], selInt=r.selected_internal_emails||[];
+  var extHtml;
+  if(!r.crm_linked){
+    extHtml='<div style="font-size:11.5px;color:#8a6d3b">Client CRM se linked nahi — external CC ke liye pehle CRM mein client + contacts banao.</div>';
+  } else if(!r.external || !r.external.length){
+    extHtml='<div style="font-size:11.5px;color:#8a6d3b">Is client ke CRM mein koi aur contact nahi (SPOC ke alawa).</div>';
+  } else {
+    extHtml=r.external.map(function(c){
+      var lbl=esc(c.name)+(c.designation?' <span style="color:#aaa">('+esc(c.designation)+')</span>':'')+' <span style="color:#888">'+esc(c.email)+'</span>';
+      return '<label style="display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;cursor:pointer"><input type="checkbox" class="cc-ext-cb" value="'+c.id+'"'+(selExt.indexOf(c.id)>=0?' checked':'')+'> '+lbl+'</label>';
+    }).join('');
+  }
+  var intHtml;
+  if(!r.internal || !r.internal.length){
+    intHtml='<div style="font-size:11.5px;color:#8a6d3b">Koi team member (email ke saath) nahi mila. Team members ko Settings/profile mein email add karo.</div>';
+  } else {
+    intHtml=r.internal.map(function(u){
+      return '<label style="display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;cursor:pointer"><input type="checkbox" class="cc-int-cb" value="'+esc(u.email)+'"'+(selInt.indexOf(u.email)>=0?' checked':'')+'> '+esc(u.name)+' <span style="color:#888">'+esc(u.email)+'</span></label>';
+    }).join('');
+  }
+  wrap.innerHTML='<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:4px">External (client side — from CRM)</div>'+extHtml
+    +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin:12px 0 4px">Internal (your team)</div>'+intHtml;
+}
+async function saveCcConfig(){
+  if(!S.activeMandate) return;
+  var ext=[], intl=[];
+  document.querySelectorAll('.cc-ext-cb:checked').forEach(function(cb){ ext.push(parseInt(cb.value)); });
+  document.querySelectorAll('.cc-int-cb:checked').forEach(function(cb){ intl.push(cb.value); });
+  var r=await req('POST','/mandates/'+S.activeMandate.id+'/cc-config',{external_ids:ext,internal_emails:intl});
+  if(r && r.ok){ toast('OK','CC list saved'); } else toast('ERR',(r&&r.error)||'Failed');
 }
 async function loadClientNotes(){
   if(!S.activeMandate) return;
@@ -3433,7 +3467,7 @@ function closeSidebarOnMobile() {
 
 async function saveMandateSetup(){
   const m=S.activeMandate;
-  await req('PUT','/mandates/'+m.id,{client:v('ms-client'),role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,jd:vHtml('ms-jd'),status:m.status});
+  await req('PUT','/mandates/'+m.id,{client:v('ms-client'),role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,experience:v('ms-experience'),jd:vHtml('ms-jd'),status:m.status});
   S.activeMandate=await req('GET','/mandates/'+m.id);
   S.mandates=S.mandates.map(x=>x.id===m.id?S.activeMandate:x);
   renderSidebar();updateTopbar();toast('✅','Mandate saved');
@@ -3634,8 +3668,10 @@ function _shareModalHtml(m, r, preselectStage, draft){
       +'<span id="share-count" style="font-size:11px;color:#534AB7;font-weight:600">0 selected</span></div>'
     +'<div id="share-list" style="border:1px solid #eee;border-radius:9px;padding:6px;margin-top:6px;max-height:260px;overflow:auto">'+(listHtml||'<div style="padding:14px;text-align:center;color:#aaa;font-size:12px">No candidates in pipeline</div>')+'</div>'
     +'<div style="font-size:10.5px;color:#999;margin-top:6px">&#128206; Candidates with a resume on file get their CV attached automatically. "No CV" ones are still listed in the table.</div>'
-    +'<div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between"><label style="font-size:11px;font-weight:700;color:#555">&#128065; Email preview (exactly what the client receives)</label></div>'
-    +'<div id="share-preview" style="border:1px solid #e2e2e2;border-radius:9px;padding:16px;margin-top:6px;background:#fff;max-height:360px;overflow:auto">Loading preview…</div>'
+    +'<div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><label style="font-size:11px;font-weight:700;color:#555">&#9998; Email body — editable (type directly; edit the table too)</label>'
+    +'<button type="button" class="btn btn-o" style="font-size:10.5px;padding:4px 10px" onclick="_shareRefreshPreview()">&#8635; Rebuild from fields</button></div>'
+    +'<div id="share-preview" contenteditable="true" style="border:1px solid #cfc9f0;border-radius:9px;padding:16px;margin-top:6px;background:#fff;max-height:380px;overflow:auto;outline:none">Loading preview…</div>'
+    +'<div style="font-size:10px;color:#b0a; margin-top:4px">Jo yahan dikh raha hai wahi as-is jayega. "Rebuild from fields" upar ke greeting/intro/selection se dobara banata hai (edits overwrite ho jayenge).</div>'
     +'</div>'
     +'<div class="modal-foot" style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;padding:12px 16px;border-top:1px solid #eee">'
       +'<button class="btn btn-o" style="font-size:12px" onclick="_shareCloseModal()">Cancel</button>'
@@ -3680,19 +3716,26 @@ async function openShareToClient(preselectStage, draft){
   ['share-greeting','share-intro'].forEach(function(id){
     var elm=document.getElementById(id); if(elm) elm.addEventListener('input', _sharePreviewDebounced);
   });
+  // editable body: mark dirty on manual edit so auto-refresh won't wipe edits
+  window._shareBodyDirty=false;
+  var pv=document.getElementById('share-preview');
+  if(pv) pv.addEventListener('input', function(){ window._shareBodyDirty=true; });
   _shareSyncCount();
-  _sharePreview();
+  if(draft && draft.body_html){ if(pv){ pv.innerHTML=draft.body_html; } window._shareBodyDirty=true; }
+  else { _sharePreview(true); }
 }
 var _sharePreviewTimer=null;
-function _sharePreviewDebounced(){ clearTimeout(_sharePreviewTimer); _sharePreviewTimer=setTimeout(_sharePreview, 400); }
-async function _sharePreview(){
+function _sharePreviewDebounced(){ clearTimeout(_sharePreviewTimer); _sharePreviewTimer=setTimeout(function(){ _sharePreview(false); }, 400); }
+function _shareRefreshPreview(){ window._shareBodyDirty=false; _sharePreview(true); }
+async function _sharePreview(force){
   var m=S.activeMandate; if(!m) return;
   var box=document.getElementById('share-preview'); if(!box) return;
+  if(window._shareBodyDirty && !force) return; // don't clobber manual edits
   var g=document.getElementById('share-greeting'), i=document.getElementById('share-intro');
   var p={ greeting:g?g.value:'', intro:i?i.value:'', candidate_ids:_shareSelectedIds() };
   var r;
   try{ r=await req('POST','/mandates/'+m.id+'/submission-preview',p); }catch(e){ return; }
-  if(r && r.html){ box.innerHTML=r.html; }
+  if(r && r.html){ box.innerHTML=r.html; window._shareBodyDirty=false; }
 }
 function _shareSelectedIds(){
   var ids=[]; document.querySelectorAll('#modal-share-client .share-cand-cb:checked').forEach(function(cb){ ids.push(parseInt(cb.getAttribute('data-cid'))); });
@@ -3709,12 +3752,14 @@ function _shareSyncCount(){
 }
 function _shareGather(){
   var splitE=function(s){ return (s||'').split(/[,\n;]+/).map(function(x){return x.trim();}).filter(Boolean); };
+  var pv=document.getElementById('share-preview');
   return {
     to: splitE(document.getElementById('share-to').value),
     cc: splitE(document.getElementById('share-cc').value),
     subject: (document.getElementById('share-subject').value||'').trim(),
     greeting: (document.getElementById('share-greeting').value||'').trim(),
     intro: (document.getElementById('share-intro').value||'').trim(),
+    body_html: pv ? pv.innerHTML : '',
     candidate_ids: _shareSelectedIds()
   };
 }
@@ -4523,18 +4568,9 @@ function renderSettings(){
   const body=document.getElementById('settings-body');if(!body)return;
   _pipeEdit=null;
   const s=S.settings;
-  var isAdmin = S.currentUser && S.currentUser.role==='admin';
-  var _setTabs = [['profile','\uD83D\uDC64','Profile'],['general','\u2699\uFE0F','General']];
-  if(isAdmin) _setTabs.push(['pipeline','\uD83D\uDCCB','Pipeline']);
-  _setTabs.push(['messaging','\uD83D\uDCAC','Templates & Messaging']);
-  _setTabs.push(['followups','\u2705','Follow-ups']);
-  if(isAdmin) _setTabs.push(['admin','\uD83D\uDEE1\uFE0F','Admin']);
-  var _setTabsHTML = _setTabs.map(function(t,i){ return '<button class="set-tab'+(i===0?' active':'')+'" data-stab="'+t[0]+'" onclick="switchSettingsTab(\''+t[0]+'\')"><span>'+t[1]+'</span>'+t[2]+'</button>'; }).join('');
-  body.innerHTML='<div class="set-shell">'
-    + '<div class="set-tabs">'+_setTabsHTML+'</div>'
-    // ===== TAB: Profile =====
-    + '<div class="set-panel active" data-spanel="profile">'
+  body.innerHTML='<div style="max-width:680px">'
     +'<div id="my-billing-card"></div>'
+    +'<div id="pipeline-editor"></div>'
     // ── My Profile (every user) ──
     +'<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head"><span style="font-weight:500">&#128100; My Profile &amp; Email Signature</span></div><div class="card-body">'
     +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">These details are used automatically in your email signature and AI-composed emails.</div>'
@@ -4547,9 +4583,6 @@ function renderSettings(){
     +'<button class="btn btn-g" style="margin-top:8px" onclick="saveMyProfile()">Save My Profile</button>'
     +'<span id="mp-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
     +'</div></div>'
-    + '</div>'
-    // ===== TAB: General =====
-    + '<div class="set-panel" data-spanel="general">'
     // ── Workspace Type ──
     +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Workspace Type</span></div><div class="card-body">'
     +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Choose how this workspace works. <b>Agency</b> = you recruit for client companies. <b>Corporate</b> = you hire for your own company.</div>'
@@ -4575,11 +4608,6 @@ function renderSettings(){
     +'<div style="display:flex;gap:8px"><input class="inp" id="s-gemini" type="password" value="'+esc(s.gemini_api_key||'')+'" placeholder="AIza..." style="flex:1">'
     +'<span style="font-size:10px;color:#1D9E75;align-self:center;white-space:nowrap">Free tier</span></div></div>'
     +'</div></div>'
-    + '</div>'
-    // ===== TAB: Pipeline (admin) =====
-    + (isAdmin ? '<div class="set-panel" data-spanel="pipeline"><div id="pipeline-editor"></div></div>' : '')
-    // ===== TAB: Templates & Messaging =====
-    + '<div class="set-panel" data-spanel="messaging">'
     +'<div style="font-size:11px;color:#666;margin-bottom:10px;padding:9px 12px;background:#EEEDFE;border-radius:6px;border:0.5px solid #AFA9EC">Template variables: <span class="var-pill">{Name}</span> <span class="var-pill">{Position}</span> <span class="var-pill">{Location}</span> <span class="var-pill">{Company}</span> <span class="var-pill">{RecruiterName}</span></div>'
     +[{n:'msg1',label:'First Outreach',color:'#1D9E75',timing:null,key:'template_msg1'},
       {n:'fu1',label:'Follow Up 1',color:'#378ADD',timing:'fu1_hours',from:'Message 1',key:'template_fu1'},
@@ -4592,30 +4620,15 @@ function renderSettings(){
     ).join('')
     + emailConfigHTML(s)
     + waConfigHTML(s)
-    + '</div>'
-    // ===== TAB: Follow-ups =====
-    + '<div class="set-panel" data-spanel="followups">'
     + followUpConfigHTML(s)
-    + '</div>'
-    // ===== TAB: Admin (admin) =====
-    + (isAdmin ? ('<div class="set-panel" data-spanel="admin">'
-        + billingConfigHTML(s)
-        + adminUserMgmtHTML()
-        + '</div>') : '')
-    // ===== Sticky footer save bar =====
-    + '<div class="set-footer">'
     +'<button class="btn btn-g" onclick="saveSettings()">Save All Settings</button>'
     +'<span id="s-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
-    + '</div>'
+    + (S.currentUser && S.currentUser.role==='admin' ? billingConfigHTML(s) : '')
+    + (S.currentUser && S.currentUser.role==='admin' ? adminUserMgmtHTML() : '')
     +'</div>';
   if (S.currentUser && S.currentUser.role==='admin') loadUsersList();
   loadMyProfile();
   renderWaSettings();
-}
-function switchSettingsTab(id){
-  document.querySelectorAll('#settings-body .set-tab').forEach(function(b){ b.classList.toggle('active', b.dataset.stab===id); });
-  document.querySelectorAll('#settings-body .set-panel').forEach(function(p){ p.classList.toggle('active', p.dataset.spanel===id); });
-  var sb=document.getElementById('settings-body'); if(sb) sb.scrollTop=0;
 }
 
 async function loadMyProfile(){
@@ -5005,7 +5018,7 @@ async function saveSettings(){
   const wf=(document.querySelector('input[name="wfmode"]:checked')||{}).value||'agency';
   const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),submission_cc_emails:v('s-submission_cc_emails'),company_website:v('s-company_website'),submission_signature:v('s-submission_signature'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template')};
   const r=await req('POST','/settings',data);
-  if(r.ok){Object.assign(S.settings,data);applyPipelineStages();toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
+  if(r.ok){S.settings=data;applyPipelineStages();toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }
 function toggleSettings(){
   closeSidebarOnMobile();
