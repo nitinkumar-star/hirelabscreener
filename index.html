@@ -3158,16 +3158,41 @@ async function loadCcOptions(){
       return '<label style="display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;cursor:pointer"><input type="checkbox" class="cc-ext-cb" value="'+c.id+'"'+(selExt.indexOf(c.id)>=0?' checked':'')+'> '+lbl+'</label>';
     }).join('');
   }
-  var intHtml;
-  if(!r.internal || !r.internal.length){
-    intHtml='<div style="font-size:11.5px;color:#8a6d3b">Koi team member (email ke saath) nahi mila. Team members ko Settings/profile mein email add karo.</div>';
-  } else {
-    intHtml=r.internal.map(function(u){
+  var teamEmails={};
+  (r.internal||[]).forEach(function(u){ teamEmails[(u.email||'').toLowerCase()]=1; });
+  var intRows='';
+  if(r.internal && r.internal.length){
+    intRows+=r.internal.map(function(u){
       return '<label style="display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;cursor:pointer"><input type="checkbox" class="cc-int-cb" value="'+esc(u.email)+'"'+(selInt.indexOf(u.email)>=0?' checked':'')+'> '+esc(u.name)+' <span style="color:#888">'+esc(u.email)+'</span></label>';
     }).join('');
   }
+  // Previously-added custom emails (not in team list) — keep them, checked.
+  (selInt||[]).forEach(function(em){
+    if(em && !teamEmails[em.toLowerCase()]){
+      intRows+='<label style="display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;cursor:pointer"><input type="checkbox" class="cc-int-cb" value="'+esc(em)+'" checked> <span style="color:#333">'+esc(em)+'</span> <span style="color:#aaa;font-size:10px">(added)</span></label>';
+    }
+  });
+  if(!intRows) intRows='<div style="font-size:11.5px;color:#8a6d3b">Koi team member (email ke saath) nahi mila — neeche naya email add kar lo.</div>';
+  var intHtml='<div id="ms-cc-int-list">'+intRows+'</div>'
+    +'<div style="display:flex;gap:6px;margin-top:8px">'
+    +'<input id="ms-cc-int-add" class="inp" style="flex:1;font-size:12px" placeholder="Add another email…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_ccAddInternalEmail();}">'
+    +'<button class="btn btn-o" style="font-size:11px" onclick="_ccAddInternalEmail()">Add</button></div>';
   wrap.innerHTML='<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:4px">External (client side — from CRM)</div>'+extHtml
     +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin:12px 0 4px">Internal (your team)</div>'+intHtml;
+}
+function _ccAddInternalEmail(){
+  var inp=document.getElementById('ms-cc-int-add'); if(!inp) return;
+  var em=(inp.value||'').trim();
+  if(!em || em.indexOf('@')<1 || em.indexOf('.')<0){ toast('Enter a valid email',''); return; }
+  var dup=false; document.querySelectorAll('.cc-int-cb').forEach(function(cb){ if(cb.value.toLowerCase()===em.toLowerCase()) dup=true; });
+  if(dup){ toast('Already added',''); inp.value=''; return; }
+  var list=document.getElementById('ms-cc-int-list'); if(!list) return;
+  var row=document.createElement('label');
+  row.style.cssText='display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;cursor:pointer';
+  row.innerHTML='<input type="checkbox" class="cc-int-cb" value="'+esc(em)+'" checked> <span style="color:#333">'+esc(em)+'</span> <span style="color:#aaa;font-size:10px">(added)</span>';
+  list.appendChild(row);
+  inp.value='';
+  toast('Added','Ab "Save CC" dabao');
 }
 async function saveCcConfig(){
   if(!S.activeMandate) return;
