@@ -8703,7 +8703,9 @@ def submission_prefill(mid):
             'company': d.get('company', ''), 'experience': d.get('experience'),
             'has_cv': bool(d.get('cv_path')),
         })
-    to_list = [c['email'] for c in contacts]
+    # To = the SPOC only (when set). Other client contacts must NOT auto-fill
+    # To — the ones chosen as external CC belong in CC, not To.
+    to_list = [spoc['email']] if spoc else [c['email'] for c in contacts]
     primary_name = (contacts[0]['name'].split()[0] if contacts and contacts[0]['name'] else '')
     cc_list = [e for e in cc_list if e not in to_list]
     n_default = len([c for c in cands if c['stage'] == 'Shared with Client']) or len(cands)
