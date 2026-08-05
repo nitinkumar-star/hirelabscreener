@@ -8361,12 +8361,12 @@ Do not include additional text outside JSON."""
     try:
         resp = call_deepseek(key, {
             'model': 'deepseek-chat',
-            'max_tokens': 1500,
+            'max_tokens': 2400,
             'messages': [
                 {'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': command}
             ]
-        }, endpoint='ai-compose')
+        }, timeout=150, endpoint='ai-compose')
         try:
             data = resp.json()
         except Exception:
@@ -8378,14 +8378,27 @@ Do not include additional text outside JSON."""
         if not choices:
             return jsonify({'error': 'AI did not return any content. Please try again.'}), 502
         text = (choices[0].get('message', {}).get('content', '') or '').strip()
-        # Strip markdown fences if present
         text = text.replace('```json', '').replace('```', '').strip()
+        subject = ''; body = ''; parsed = None
         try:
-            result = json.loads(text)
-            return jsonify({'ok': True, 'subject': result.get('subject', ''), 'body': result.get('body', '')})
-        except json.JSONDecodeError:
-            # Not JSON — treat the whole thing as the email body
-            return jsonify({'ok': True, 'subject': '', 'body': text})
+            parsed = json.loads(text)
+        except Exception:
+            try:
+                s = text.find('{'); e = text.rfind('}')
+                if s >= 0 and e > s:
+                    parsed = json.loads(text[s:e+1])
+            except Exception:
+                parsed = None
+        if isinstance(parsed, dict) and (parsed.get('body') or parsed.get('subject')):
+            subject = parsed.get('subject', '') or ''
+            body = parsed.get('body', '') or ''
+        else:
+            body = text  # not usable JSON — use whole text as body
+        if not (body or '').strip():
+            return jsonify({'error': 'AI returned an empty email. Please rephrase your command and try again.'}), 502
+        return jsonify({'ok': True, 'subject': subject, 'body': body})
+    except TokenCapError:
+        return jsonify({'error': 'Monthly AI token cap reached.'}), 429
     except Exception as e:
         return jsonify({'error': f'AI compose failed: {str(e)}'}), 500
 
@@ -9833,6 +9846,60 @@ def set_candidate_billing(cid):
     res = _candidate_billing(conn, oid, cid)
     conn.close()
     return jsonify({'ok': True, 'billing': res})
+
+
+JD_WRITER_PROMPT = """You are an expert recruitment consultant writing a professional Job Description for an Indian hiring mandate (sectors often: Solar, Electrical, Automation, Renewable Energy, Power). Write a clear, realistic, well-structured JD.
+
+Output ONLY clean HTML (no markdown, no code fences, no <html>/<body> wrapper). Use this structure:
+<h3>About the Role</h3><p>...</p>
+<h3>Key Responsibilities</h3><ul><li>...</li>...</ul>
+<h3>Required Skills &amp; Experience</h3><ul><li>...</li>...</ul>
+<h3>Qualifications</h3><ul><li>...</li></ul>
+<h3>What We Offer</h3><ul><li>...</li></ul>
+
+Rules: Be specific to the role and sector. 5-8 responsibilities, 5-8 skills. Reflect the given experience range and location. Do not invent a fake company description if the client isn't given. Keep it concise and recruiter-ready. Indian context (CTC in LPA, notice period norms)."""
+
+
+@app.route('/api/generate-jd', methods=['POST'])
+@login_required
+def generate_jd():
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
+    d = request.json or {}
+    role = (d.get('role') or '').strip()
+    if not role:
+        return jsonify({'error': 'Role is required to write a JD. Pehle Role field bharo.'}), 400
+    parts = [f"Role / Designation: {role}"]
+    if d.get('client'): parts.append(f"Client / Company: {d['client']}")
+    if d.get('location'): parts.append(f"Location: {d['location']}")
+    if d.get('experience'): parts.append(f"Experience required: {d['experience']}")
+    if d.get('ctc_min') or d.get('ctc_max'):
+        parts.append(f"CTC range: {d.get('ctc_min','')}-{d.get('ctc_max','')} LPA")
+    if d.get('division'): parts.append(f"Division/Department: {d['division']}")
+    if d.get('notes'): parts.append(f"Extra instructions from recruiter: {d['notes']}")
+    user_msg = "Write the Job Description for:\n" + "\n".join(parts)
+    try:
+        rr = call_deepseek(ds_key,
+            {'model': 'deepseek-chat', 'temperature': 0.6, 'max_tokens': 1400,
+             'messages': [{'role': 'system', 'content': JD_WRITER_PROMPT},
+                          {'role': 'user', 'content': user_msg}]},
+            timeout=150, endpoint='jd-writer')
+    except TokenCapError:
+        return jsonify({'error': 'Monthly AI token cap reached.'}), 429
+    except Exception as e:
+        return jsonify({'error': f'Could not reach DeepSeek — {type(e).__name__}: {e}'}), 502
+    if rr.status_code != 200:
+        try: err = rr.json().get('error', {}).get('message', rr.text[:300])
+        except Exception: err = rr.text[:300]
+        return jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502
+    try:
+        html = rr.json()['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        return jsonify({'error': f'Unexpected DeepSeek response: {e}'}), 502
+    # strip accidental code fences
+    html = re.sub(r'^```[a-zA-Z]*\n?|```$', '', html).strip()
+    return jsonify({'ok': True, 'html': html})
 
 
 @app.route('/api/mandates/<int:mid>/email-templates', methods=['GET'])

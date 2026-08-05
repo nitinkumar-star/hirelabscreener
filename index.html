@@ -3320,6 +3320,7 @@ function buildJDEditor(id, value) {
       toolbarHtml += '<button type="button" class="jd-tb-btn" data-cmd="' + b.cmd + '" title="' + b.title + '">' + b.icon + '</button>';
     }
   });
+  toolbarHtml += '<span class="jd-sep"></span><button type="button" class="jd-tb-btn" style="width:auto;padding:0 10px;background:#534AB7;color:#fff;font-weight:600" title="AI se JD likhwao" onclick="generateJDForEditor(\'' + id + '\')">&#10024; AI Write JD</button>';
   toolbarHtml += '</div>';
 
   // value may be plain text (legacy) or HTML — detect and wrap plain text in <p>
@@ -3333,6 +3334,25 @@ function buildJDEditor(id, value) {
 
   return toolbarHtml
     + '<div class="jd-editor" id="' + id + '" contenteditable="true" data-placeholder="Paste or type the job description...">' + initialHtml + '</div>';
+}
+
+async function generateJDForEditor(targetId){
+  var ed=document.getElementById(targetId); if(!ed) return;
+  var g=function(ids){ for(var i=0;i<ids.length;i++){ var e=document.getElementById(ids[i]); if(e&&(e.value||'').trim()) return e.value.trim(); } return ''; };
+  var role=g(['ms-role','m-role']);
+  if(!role){ toast('Role chahiye','Pehle Role field bharo, phir AI Write JD'); return; }
+  var notes=prompt('Koi extra detail JD ke liye? (optional — jaise specific skills, shift, projects)\n\nBlank chhod sakte ho.','')||'';
+  var payload={ role:role, client:g(['ms-client','m-client']), location:g(['ms-loc','m-location']),
+    experience:g(['ms-experience']), ctc_min:g(['ms-cmin','m-ctcmin']), ctc_max:g(['ms-cmax','m-ctcmax']),
+    division:g(['ms-div','m-division']), notes:notes };
+  var prev=ed.innerHTML;
+  ed.innerHTML='<p style="color:#888">&#10024; AI JD likh raha hai… (~15-30s)</p>';
+  var r;
+  try{ r=await req('POST','/generate-jd',payload); }
+  catch(e){ ed.innerHTML=prev; toast('Error','JD generate fail'); return; }
+  if(!r||r.error||!r.html){ ed.innerHTML=prev; toast('Error',esc((r&&r.error)||'No JD returned')); return; }
+  ed.innerHTML=r.html;
+  toast('OK','JD ready — edit karke Save karo');
 }
 
 function attachJDToolbar() {
@@ -4626,7 +4646,7 @@ function renderProfileDetail(c){
 }
 
 function cpTab(name){
-  ['overview','ai','resume','comms','call','history'].forEach(function(t){
+  ['overview','ai','billing','resume','comms','call','history'].forEach(function(t){
     var p=document.getElementById('cp-pane-'+t); if(p) p.style.display=(t===name)?'block':'none';
     var b=document.getElementById('cp-tab-'+t); if(b) b.classList.toggle('active', t===name);
   });
@@ -4636,6 +4656,7 @@ function cpTab(name){
   else { stopWaPoll(); }
   if(name==='history'){ cpLoadHistory(cid); }
   if(name==='ai'){ cpLoadDeepAnalysis(cid); }
+  if(name==='billing'){ try{ cpLoadBilling(cid); }catch(e){} }
 }
 
 // ── AI Analysis tab: deep capability-first hiring evaluation ────────────────
@@ -6098,10 +6119,11 @@ async function aiComposeEmail(){
   var cmd = (document.getElementById('ai-compose-cmd') || {}).value || '';
   if(!cmd.trim()){ toast('ERR','Enter a command, e.g. "Write follow up email"'); return; }
   var cid = S._emailCid;
+  var status = document.getElementById('ai-compose-status');
+  if(!cid){ if(status){status.textContent='Pehle candidate ka Email panel kholo, phir AI compose.';status.style.color='#E24B4A';} else toast('ERR','Open a candidate email panel first'); return; }
   var currentDraft = _getEmailBody();
   var currentSubject = (document.getElementById('email-subject') || {}).value || '';
-  var status = document.getElementById('ai-compose-status');
-  if(status){ status.textContent = '🤖 AI is writing...'; status.style.color = '#534AB7'; }
+  if(status){ status.textContent = '\uD83E\uDD16 AI is writing... (~15-30s)'; status.style.color = '#534AB7'; }
 
   var r = await req('POST', '/candidates/' + cid + '/ai-compose', {
     command: cmd.trim(),
@@ -6109,13 +6131,18 @@ async function aiComposeEmail(){
     context: ''
   });
 
-  if(r.ok){
+  if(r && r.ok){
     if(r.subject){ var subj = document.getElementById('email-subject'); if(subj) subj.value = r.subject; }
-    if(r.body){ var be=document.getElementById('email-body'); if(be) be.innerHTML = r.body; }
-    if(status){ status.textContent = '✅ Draft ready — review and send!'; status.style.color = '#1D9E75'; }
-    document.getElementById('ai-compose-cmd').value = '';
+    var be=document.getElementById('email-body');
+    if(be && (r.body||'').trim()){
+      be.innerHTML = r.body;
+      if(status){ status.textContent = '\u2705 Draft ready — review and send!'; status.style.color = '#1D9E75'; }
+      var ce=document.getElementById('ai-compose-cmd'); if(ce) ce.value='';
+    } else {
+      if(status){ status.textContent = 'AI ne khaali jawab diya — command thoda detail me likho (jaise "write intro email with JD summary") aur dobara try karo.'; status.style.color='#E24B4A'; }
+    }
   } else {
-    if(status){ status.textContent = r.error || 'Failed'; status.style.color = '#E24B4A'; }
+    if(status){ status.textContent = (r && r.error) || 'Failed — try again'; status.style.color = '#E24B4A'; }
   }
 }
 
