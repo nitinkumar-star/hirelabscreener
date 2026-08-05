@@ -735,6 +735,7 @@ body{font-size:14px !important; line-height:1.5}
     <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.5 8.5 0 01-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1121 11.5z"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Communications</span><span class="sb-nav-sub">WhatsApp AI &middot; escalations</span></span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
     <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M4 21V8l8-5 8 5v13M9 21v-6h6v6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Clients (CRM)</span><span class="sb-nav-sub">Companies &middot; contacts &middot; org chart</span></span></a>
     <a href="#invoicing" class="sb-gear" id="sb-invoicing" onclick="return navClick(event,openInvoicing)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Invoicing</span><span class="sb-nav-sub">GST invoices &middot; billing</span></span></a>
+    <a href="#email" class="sb-gear" id="sb-email" onclick="return navClick(event,openEmailBox)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Email Box</span><span class="sb-nav-sub">Inbox &middot; sent &middot; signal feed</span></span><span class="sb-nav-badge" id="nav-email-badge" style="display:none"></span></a>
     <a href="#freelancers" class="sb-gear" id="sb-freelancers" style="display:none" onclick="return navClick(event,openFreelancerAdmin)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21a9 9 0 100-18 9 9 0 000 18z"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Freelancers</span><span class="sb-nav-sub">Sourcers &middot; assignments</span></span></a>
     <a href="#bd" class="sb-gear" id="sb-bd" style="display:none" onclick="return navClick(event,openBd)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">BD Command Center</span><span class="sb-nav-sub">Follow-ups &middot; meetings</span></span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
     <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Talent</span><span class="sb-nav-sub">Search all candidates &middot; add new</span></span></a><a href="/schedule" class="sb-gear" id="sb-schedule"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Scheduler</span><span class="sb-nav-sub">Availability &middot; bookings</span></span></a><a href="/orgmap" class="sb-gear" id="sb-orgmap"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/><path d="M12 7v4M5 16v-2h14v2M12 11v3"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Org Map</span><span class="sb-nav-sub">Talent mapping &middot; reporting lines</span></span></a>
@@ -908,6 +909,9 @@ body{font-size:14px !important; line-height:1.5}
   <!-- Tasks View -->
   <div id="invoicing-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div id="invoicing-body" style="flex:1;overflow:auto;padding:20px"></div>
+  </div>
+  <div id="email-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+    <div id="email-body" style="flex:1;overflow:auto;padding:20px"></div>
   </div>
   <div id="tasks-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
@@ -3853,6 +3857,62 @@ function openInvoicing(){
   var sb=document.getElementById('sb-invoicing'); if(sb) sb.classList.add('active');
   try{ location.hash='#invoicing'; }catch(e){}
   renderInvoicing();
+}
+function openEmailBox(){
+  closeSidebarOnMobile(); _hideAllViews();
+  var v=document.getElementById('email-view'); if(v) v.style.display='flex';
+  var sb=document.getElementById('sb-email'); if(sb) sb.classList.add('active');
+  try{ location.hash='#email'; }catch(e){}
+  renderEmailBox();
+}
+window._emailFolder='';
+async function renderEmailBox(){
+  var el=document.getElementById('email-body'); if(!el) return;
+  el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
+  var r={};
+  try{ r=await req('GET','/emailbox/list'+(window._emailFolder?('?folder='+window._emailFolder):'')); }catch(e){}
+  var emails=(r&&r.emails)||[];
+  function tab(id,label){ var on=window._emailFolder===id; return '<button class="btn'+(on?'':' btn-o')+'" style="font-size:12px'+(on?';background:#534AB7;color:#fff;border:none':'')+'" onclick="window._emailFolder=\''+id+'\';renderEmailBox()">'+label+'</button>'; }
+  var rows=emails.map(function(e){
+    var d=e.date_ts?new Date(e.date_ts*1000).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}):'';
+    var who=e.folder==='Sent'?('To: '+esc(e.to_addr||'')):esc(e.from_name||e.from_addr||'');
+    var fb=e.folder==='Sent'?'<span style="font-size:9px;background:#EAF3FF;color:#2456A6;padding:1px 6px;border-radius:6px">Sent</span>':'<span style="font-size:9px;background:#EAF7F0;color:#127A57;padding:1px 6px;border-radius:6px">Inbox</span>';
+    return '<div onclick="openEmail('+e.id+')" style="padding:10px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer" onmouseover="this.style.background=\'#faf9ff\'" onmouseout="this.style.background=\'\'">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:'+(e.is_read?'500':'700')+';font-size:12.5px;color:#1B1B18">'+who+'</div><div style="font-size:10.5px;color:#999;white-space:nowrap">'+fb+' '+d+'</div></div>'
+      +'<div style="font-size:12.5px;color:#333;margin-top:2px;font-weight:'+(e.is_read?'400':'600')+'">'+esc(e.subject||'(no subject)')+'</div>'
+      +'<div style="font-size:11px;color:#999;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.snippet||'')+'</div></div>';
+  }).join('');
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
+    +'<div style="display:flex;gap:6px">'+tab('','All')+tab('Inbox','Inbox')+tab('Sent','Sent')+'</div>'
+    +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync (last 30 days)</button></div>'
+    +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden">'
+    +(rows||'<div style="padding:30px;text-align:center;color:#aaa">No emails yet. Click <b>Sync</b> to pull your inbox + sent (last 30 days).</div>')+'</div>';
+}
+async function syncEmail(btn){
+  if(btn){ btn.disabled=true; btn.innerHTML='&#8987; Syncing…'; }
+  var r;
+  try{ r=await req('POST','/emailbox/sync',{}); }
+  catch(e){ if(btn){btn.disabled=false;btn.innerHTML='&#8635; Sync (last 30 days)';} toast('Error','Sync failed'); return; }
+  if(r&&r.error){ if(btn){btn.disabled=false;btn.innerHTML='&#8635; Sync (last 30 days)';} toast('Error', esc(String(r.error))); return; }
+  toast('OK',(r.added||0)+' new email(s) synced');
+  renderEmailBox();
+}
+async function openEmail(id){
+  var r;
+  try{ r=await req('GET','/emailbox/'+id); }catch(e){ return; }
+  var e=(r&&r.email)||{};
+  var d=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB'):(e.date_str||'');
+  var ex=document.getElementById('modal-email'); if(ex) ex.remove();
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-email';
+  bg.innerHTML='<div class="modal" style="max-width:720px;width:95%"><div class="modal-head"><span class="modal-title" style="font-size:15px">'+esc(e.subject||'(no subject)')+'</span><button class="modal-x" onclick="document.getElementById(\'modal-email\').remove()">&#10005;</button></div>'
+    +'<div class="modal-body" style="max-height:78vh;overflow:auto">'
+    +'<div style="font-size:12px;color:#555;border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:10px">'
+      +'<div><b>From:</b> '+esc(e.from_name||'')+' &lt;'+esc(e.from_addr||'')+'&gt;</div>'
+      +'<div><b>To:</b> '+esc(e.to_addr||'')+'</div>'
+      +'<div style="color:#999">'+esc(d)+' &middot; '+esc(e.folder||'')+'</div></div>'
+    +'<div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#222">'+esc(e.body||e.snippet||'')+'</div>'
+    +'</div></div>';
+  document.body.appendChild(bg);
 }
 function _invRup(n){ return '\u20B9'+Number(Math.round(n||0)).toLocaleString('en-IN'); }
 function _invCard(label,val,col){
@@ -8630,9 +8690,9 @@ var aiActiveTab = 'search';
 // Every open* function calls this first so views can never overlap.
 var _ALL_VIEWS = ['mandate-view','settings-view','central-view','cdb-view',
   'responses-view','tasks-view','admin-view','ai-view','analytics-view',
-  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view','jobs-view','invoicing-view'];
+  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view','jobs-view','invoicing-view','email-view'];
 var _ALL_SB = ['sb-tasks','sb-responses','sb-central','sb-admin','sb-ai',
-  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers','sb-jobs','sb-invoicing'];
+  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers','sb-jobs','sb-invoicing','sb-email'];
 function _hideAllViews(){
   _ALL_VIEWS.forEach(function(id){
     var v=document.getElementById(id); if(v) v.style.display='none';

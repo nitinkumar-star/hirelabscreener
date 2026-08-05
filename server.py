@@ -1921,6 +1921,7 @@ def init_db():
         ('invoice_signatory', 'Pavitra'),
         ('invoice_hsn', '998512'),
         ('invoice_fy', '2026-27'),
+        ('imap_host', 'imap.gmail.com'),
         ('seller_name', 'HireLab Talent Resource'),
         ('seller_gstin', '09ECWPP1647A1Z9'),
         ('seller_address', 'Office no: GF064, B-128, First Floor, Sector-2, Gautam Buddha Nagar, Noida, Uttar Pradesh 201301.'),
@@ -2196,6 +2197,18 @@ def init_db():
             date TEXT DEFAULT '', category TEXT DEFAULT '',
             payee TEXT DEFAULT '', amount REAL DEFAULT 0, note TEXT DEFAULT '',
             invoice_id INTEGER DEFAULT 0, created_at TEXT
+        );
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            msg_id TEXT DEFAULT '', folder TEXT DEFAULT '',
+            from_addr TEXT DEFAULT '', from_name TEXT DEFAULT '', to_addr TEXT DEFAULT '',
+            subject TEXT DEFAULT '', date_str TEXT DEFAULT '', date_ts REAL DEFAULT 0,
+            snippet TEXT DEFAULT '', body TEXT DEFAULT '', is_read INTEGER DEFAULT 0,
+            created_at TEXT
         );
     """)
 
@@ -4196,7 +4209,7 @@ TENANT_SETTINGS = {
     'recruiter_name', 'company_name',
     'submission_cc_emails', 'company_website', 'submission_signature',
     'seller_gstin', 'seller_address', 'seller_udyam', 'seller_state', 'seller_state_code',
-    'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_fy',
+    'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_fy', 'imap_host',
     'seller_gstin', 'seller_address', 'seller_udyam', 'seller_state', 'seller_state_code',
     'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_prefix', 'seller_name',
     'template_msg1', 'template_fu1', 'template_fu2',
@@ -9274,6 +9287,148 @@ def invoicing_summary():
                     'outstanding': round(outstanding), 'count': len(invs), 'n_paid': n_paid,
                     'total_expenses': round(total_exp), 'expenses_by_category': exp_by_cat,
                     'net_profit': round(received - total_exp)})
+
+
+# ── Email Box (IMAP inbox + sent, for Command Center signal) ─────────────────
+def _email_decode(s):
+    if not s:
+        return ''
+    try:
+        import email.header
+        out = ''
+        for txt, enc in email.header.decode_header(s):
+            if isinstance(txt, bytes):
+                try: out += txt.decode(enc or 'utf-8', 'ignore')
+                except Exception: out += txt.decode('utf-8', 'ignore')
+            else:
+                out += txt
+        return out
+    except Exception:
+        return str(s)
+
+def _email_body(msg):
+    text = ''
+    try:
+        if msg.is_multipart():
+            for part in msg.walk():
+                if part.get_content_type() == 'text/plain' and 'attachment' not in str(part.get('Content-Disposition') or ''):
+                    p = part.get_payload(decode=True)
+                    if p:
+                        text = p.decode(part.get_content_charset() or 'utf-8', 'ignore'); break
+            if not text:
+                for part in msg.walk():
+                    if part.get_content_type() == 'text/html':
+                        p = part.get_payload(decode=True)
+                        if p:
+                            text = re.sub('<[^<]+?>', ' ', p.decode(part.get_content_charset() or 'utf-8', 'ignore')); break
+        else:
+            p = msg.get_payload(decode=True)
+            if p:
+                text = p.decode(msg.get_content_charset() or 'utf-8', 'ignore')
+                if msg.get_content_type() == 'text/html':
+                    text = re.sub('<[^<]+?>', ' ', text)
+    except Exception:
+        pass
+    return (text or '').strip()
+
+def _find_sent_folder(M):
+    try:
+        typ, data = M.list()
+        if typ == 'OK':
+            for line in data:
+                s = line.decode('utf-8', 'ignore') if isinstance(line, bytes) else str(line)
+                if '\\Sent' in s or 'Sent Mail' in s:
+                    m = re.search(r'"([^"]+)"\s*$', s)
+                    if m: return m.group(1)
+    except Exception:
+        pass
+    return '[Gmail]/Sent Mail'
+
+
+@app.route('/api/emailbox/sync', methods=['POST'])
+@login_required
+def emailbox_sync():
+    import imaplib, email as emaillib, email.utils, datetime as _dt
+    host = get_setting('imap_host', 'imap.gmail.com') or 'imap.gmail.com'
+    user = get_setting('smtp_email', ''); pw = get_setting('smtp_app_password', '')
+    if not user or not pw:
+        return jsonify({'error': 'Email not configured. Settings → Email Configuration.'}), 400
+    oid = effective_company_id()
+    since = (_dt.date.today() - _dt.timedelta(days=30)).strftime('%d-%b-%Y')
+    try:
+        M = imaplib.IMAP4_SSL(host)
+        M.login(user, pw)
+    except imaplib.IMAP4.error as e:
+        return jsonify({'error': f'IMAP login failed: {e}. Gmail mein IMAP enable karo aur app password check karo.'}), 502
+    except Exception as e:
+        return jsonify({'error': f'Could not connect ({host}): {e}'}), 502
+
+    folders = [('INBOX', 'Inbox'), ('"' + _find_sent_folder(M) + '"', 'Sent')]
+    added = 0
+    conn = get_db()
+    try:
+        for fexpr, fname in folders:
+            try:
+                typ, _ = M.select(fexpr, readonly=True)
+                if typ != 'OK': continue
+                typ, data = M.search(None, f'(SINCE {since})')
+                if typ != 'OK' or not data or not data[0]: continue
+                ids = data[0].split()[-400:]
+                for num in ids:
+                    try:
+                        typ, md = M.fetch(num, '(RFC822)')
+                        if typ != 'OK' or not md or not md[0]: continue
+                        msg = emaillib.message_from_bytes(md[0][1])
+                        mid = (msg.get('Message-ID') or '').strip() or (fname + ':' + num.decode())
+                        if conn.execute('SELECT id FROM emails WHERE owner_id=? AND msg_id=?', (oid, mid)).fetchone():
+                            continue
+                        nm, addr = email.utils.parseaddr(_email_decode(msg.get('From')))
+                        dt = msg.get('Date') or ''
+                        try: dts = email.utils.parsedate_to_datetime(dt).timestamp()
+                        except Exception: dts = 0
+                        body = _email_body(msg)[:20000]
+                        snip = re.sub(r'\s+', ' ', body)[:220]
+                        conn.execute('INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,subject,date_str,date_ts,snippet,body,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                            (oid, mid, fname, addr, nm or addr, _email_decode(msg.get('To')),
+                             _email_decode(msg.get('Subject')), dt, dts, snip, body, ts()))
+                        added += 1
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        conn.commit()
+    finally:
+        conn.close()
+        try: M.logout()
+        except Exception: pass
+    return jsonify({'ok': True, 'added': added})
+
+
+@app.route('/api/emailbox/list', methods=['GET'])
+@login_required
+def emailbox_list():
+    conn = get_db(); folder = request.args.get('folder', '')
+    q = 'SELECT id,folder,from_addr,from_name,to_addr,subject,date_str,date_ts,snippet,is_read FROM emails WHERE owner_id=?'
+    params = [effective_company_id()]
+    if folder in ('Inbox', 'Sent'):
+        q += ' AND folder=?'; params.append(folder)
+    q += ' ORDER BY date_ts DESC LIMIT 500'
+    rows = conn.execute(q, tuple(params)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'emails': [dict(r) for r in rows]})
+
+
+@app.route('/api/emailbox/<int:eid>', methods=['GET'])
+@login_required
+def emailbox_get(eid):
+    conn = get_db()
+    r = conn.execute('SELECT * FROM emails WHERE id=? AND owner_id=?', (eid, effective_company_id())).fetchone()
+    if r:
+        conn.execute('UPDATE emails SET is_read=1 WHERE id=?', (eid,)); conn.commit()
+    conn.close()
+    if not r:
+        return jsonify({'error': 'Not found'}), 404
+    return jsonify({'ok': True, 'email': dict(r)})
 
 
 @app.route('/api/mandates/<int:mid>/email-templates', methods=['GET'])
