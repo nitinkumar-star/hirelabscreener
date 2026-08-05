@@ -734,6 +734,7 @@ body{font-size:14px !important; line-height:1.5}
     <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Analytics</span><span class="sb-nav-sub">Insights &middot; funnel &middot; sources</span></span></a>
     <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.5 8.5 0 01-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1121 11.5z"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Communications</span><span class="sb-nav-sub">WhatsApp AI &middot; escalations</span></span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
     <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M4 21V8l8-5 8 5v13M9 21v-6h6v6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Clients (CRM)</span><span class="sb-nav-sub">Companies &middot; contacts &middot; org chart</span></span></a>
+    <a href="#invoicing" class="sb-gear" id="sb-invoicing" onclick="return navClick(event,openInvoicing)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Invoicing</span><span class="sb-nav-sub">GST invoices &middot; billing</span></span></a>
     <a href="#freelancers" class="sb-gear" id="sb-freelancers" style="display:none" onclick="return navClick(event,openFreelancerAdmin)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21a9 9 0 100-18 9 9 0 000 18z"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Freelancers</span><span class="sb-nav-sub">Sourcers &middot; assignments</span></span></a>
     <a href="#bd" class="sb-gear" id="sb-bd" style="display:none" onclick="return navClick(event,openBd)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">BD Command Center</span><span class="sb-nav-sub">Follow-ups &middot; meetings</span></span><span class="sb-nav-badge" id="nav-bd-badge" style="display:none"></span></a>
     <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Talent</span><span class="sb-nav-sub">Search all candidates &middot; add new</span></span></a><a href="/schedule" class="sb-gear" id="sb-schedule"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Scheduler</span><span class="sb-nav-sub">Availability &middot; bookings</span></span></a><a href="/orgmap" class="sb-gear" id="sb-orgmap"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/><path d="M12 7v4M5 16v-2h14v2M12 11v3"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Org Map</span><span class="sb-nav-sub">Talent mapping &middot; reporting lines</span></span></a>
@@ -905,6 +906,9 @@ body{font-size:14px !important; line-height:1.5}
   </div>
 
   <!-- Tasks View -->
+  <div id="invoicing-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+    <div id="invoicing-body" style="flex:1;overflow:auto;padding:20px"></div>
+  </div>
   <div id="tasks-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
@@ -3840,6 +3844,154 @@ async function _shareDeleteDraft(id){
   try{ await req('DELETE','/submission-drafts/'+id); }catch(e){}
   toast('Draft deleted','');
   openSubmissionDrafts();
+}
+
+// ── Invoicing ────────────────────────────────────────────────────────────────
+function openInvoicing(){
+  closeSidebarOnMobile(); _hideAllViews();
+  var v=document.getElementById('invoicing-view'); if(v) v.style.display='flex';
+  var sb=document.getElementById('sb-invoicing'); if(sb) sb.classList.add('active');
+  try{ location.hash='#invoicing'; }catch(e){}
+  renderInvoicing();
+}
+function _invRup(n){ return '\u20B9'+Number(Math.round(n||0)).toLocaleString('en-IN'); }
+function _invCard(label,val,col){
+  return '<div style="flex:1;min-width:150px;background:#fff;border:1px solid #eee;border-left:3px solid '+col+';border-radius:9px;padding:12px 14px"><div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.4px">'+label+'</div><div style="font-size:20px;font-weight:700;color:'+col+';margin-top:3px">'+val+'</div></div>';
+}
+async function renderInvoicing(){
+  var el=document.getElementById('invoicing-body'); if(!el) return;
+  el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
+  var sum={}, list={};
+  try{ sum=await req('GET','/invoices/summary'); }catch(e){}
+  try{ list=await req('GET','/invoices'); }catch(e){}
+  var invs=(list&&list.invoices)||[];
+  var cards='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
+    +_invCard('Total Invoiced',_invRup(sum.invoiced),'#534AB7')
+    +_invCard('Received',_invRup(sum.received),'#0F7A52')
+    +_invCard('Outstanding',_invRup(sum.outstanding),'#B4690E')
+    +_invCard('Invoices',(sum.count||0),'#555')+'</div>';
+  var rows=invs.map(function(v){
+    var gross=Math.round((v.amount||0)*(1+(v.gst_rate||18)/100));
+    var stCol={'Paid':'#0F7A52','Overdue':'#C0392B','Sent':'#B4690E','Draft':'#888'}[v.status]||'#888';
+    return '<tr style="border-top:1px solid #f0f0f0">'
+      +'<td style="padding:8px;font-weight:600">'+esc(v.invoice_no||'')+'</td>'
+      +'<td style="padding:8px">'+esc(v.invoice_date||'')+'</td>'
+      +'<td style="padding:8px">'+esc(v.buyer_name||'')+(v.candidate_name?'<div style="font-size:10.5px;color:#999">'+esc(v.candidate_name)+'</div>':'')+'</td>'
+      +'<td style="padding:8px;text-align:right">'+_invRup(gross)+'</td>'
+      +'<td style="padding:8px"><span style="font-size:10.5px;font-weight:700;color:'+stCol+'">'+esc(v.status||'Draft')+'</span></td>'
+      +'<td style="padding:8px;text-align:right;white-space:nowrap">'
+        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="printInvoice('+v.id+')">&#128424; Print</button> '
+        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="openInvoiceForm('+v.id+')">Edit</button> '
+        +(v.status!=='Paid'?'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#0F7A52" onclick="markInvoicePaid('+v.id+')">Paid</button> ':'')
+        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#C0392B" onclick="deleteInvoice('+v.id+')">&#10005;</button>'
+      +'</td></tr>';
+  }).join('');
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
+    +'<h2 style="margin:0;font-size:20px">Invoicing</h2>'
+    +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="openInvoiceForm(0)">+ New Invoice</button></div>'
+    +cards
+    +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
+    +'<thead><tr style="background:#F6F5FB;text-align:left"><th style="padding:8px">Invoice No</th><th style="padding:8px">Date</th><th style="padding:8px">Client</th><th style="padding:8px;text-align:right">Amount (incl GST)</th><th style="padding:8px">Status</th><th style="padding:8px;text-align:right">Actions</th></tr></thead>'
+    +'<tbody>'+(rows||'<tr><td colspan="6" style="padding:20px;text-align:center;color:#aaa">No invoices yet — click "New Invoice".</td></tr>')+'</tbody></table></div>';
+}
+function printInvoice(id){ window.open(API+'/invoices/'+id+'/print?auto=1','_blank'); }
+async function markInvoicePaid(id){
+  var amt=prompt('Received amount (\u20B9) — blank = full amount:');
+  var body={status:'Paid',received_date:new Date().toISOString().slice(0,10)};
+  if(amt && !isNaN(parseFloat(amt))) body.received_amount=parseFloat(amt);
+  await req('PUT','/invoices/'+id,body); toast('OK','Marked paid'); renderInvoicing();
+}
+async function deleteInvoice(id){
+  if(!confirm('Delete this invoice?')) return;
+  await req('DELETE','/invoices/'+id); toast('Deleted',''); renderInvoicing();
+}
+function _invClose(){ var e=document.getElementById('modal-invoice'); if(e) e.remove(); }
+function _invF(id,label,val,ph,w){ return '<div style="'+(w?'grid-column:span 2;':'')+'"><label style="font-size:11px;font-weight:600;color:#555">'+label+'</label><input id="'+id+'" class="inp" style="width:100%;font-size:12.5px" value="'+esc(val||'')+'" placeholder="'+(ph||'')+'"></div>'; }
+async function openInvoiceForm(id){
+  var inv={};
+  if(id){ var r=await req('GET','/invoices/'+id); inv=(r&&r.invoice)||{}; }
+  else { try{ var nn=await req('GET','/invoices/next-number'); inv.invoice_no=nn.invoice_no; }catch(e){} inv.description='Charge Towards Recruitment Services'; inv.per='CTC'; inv.rate='.1'; inv.gst_rate=18; inv.invoice_date=new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).replace(/ /g,'-'); }
+  _invClose();
+  var extra=(inv.extra_lines&&inv.extra_lines.join)?inv.extra_lines.join('\n'):'';
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-invoice';
+  bg.innerHTML='<div class="modal" style="max-width:760px;width:95%"><div class="modal-head"><span class="modal-title">'+(id?'Edit':'New')+' Invoice</span><button class="modal-x" onclick="_invClose()">&#10005;</button></div>'
+    +'<div class="modal-body" style="max-height:78vh;overflow:auto">'
+    +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:6px">Invoice</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+      +_invF('inv-no','Invoice No',inv.invoice_no)+_invF('inv-date','Invoice Date',inv.invoice_date,'29-Jul-26')
+      +_invF('inv-ref','Reference No. & Date',inv.ref_no)+_invF('inv-order','Buyer Order No',inv.order_no)
+      +_invF('inv-orderdate','Order Dated',inv.order_date)+_invF('inv-due','Due Date',inv.due_date,'optional')
+    +'</div>'
+    +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin:12px 0 6px">Client (Buyer / Bill to)</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+      +_invF('inv-bname','Client Name',inv.buyer_name,'',true)
+      +_invF('inv-baddr','Address',inv.buyer_address,'',true)
+      +_invF('inv-bgstin','GSTIN/UIN',inv.buyer_gstin)+_invF('inv-bstate','State',inv.buyer_state,'Haryana')
+      +_invF('inv-bcode','State Code',inv.buyer_state_code,'06')+_invF('inv-pos','Place of Supply',inv.place_of_supply,'Haryana')
+    +'</div>'
+    +'<div style="font-size:10.5px;color:#999;margin-top:4px">Consignee (Ship to) same as buyer rakha jaayega (blank chhodo).</div>'
+    +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin:12px 0 6px">Line Item</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+      +_invF('inv-cand','Candidate Name (Format 2 — blank = no name)',inv.candidate_name)+_invF('inv-role','Role',inv.role)
+      +_invF('inv-desc','Description',inv.description||'Charge Towards Recruitment Services',true)
+    +'</div>'
+    +'<div style="margin-top:8px"><label style="font-size:11px;font-weight:600;color:#555">Extra lines (one per line — optional)</label><textarea id="inv-extra" class="inp" rows="2" style="width:100%;font-size:12.5px" placeholder="Position: ...\nDate of Joining: ...">'+esc(extra)+'</textarea></div>'
+    +'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:8px">'
+      +_invF('inv-qty','Quantity (CTC)',inv.quantity,'3913044')+_invF('inv-rate','Rate',inv.rate,'.1')
+      +_invF('inv-per','per',inv.per||'CTC')+_invF('inv-hsn','HSN/SAC',inv.hsn||'998512')
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:8px">'
+      +_invF('inv-amount','Taxable Amount (\u20B9)',inv.amount,'auto = Qty\u00d7Rate')
+      +_invF('inv-gst','GST %',inv.gst_rate||18)
+      +_invF('inv-totqty','Total Qty label',inv.total_qty,'39,13,044 CTC')
+    +'</div>'
+    +'<div id="inv-calc" style="margin-top:10px;background:#F6F5FB;border-radius:8px;padding:10px 12px;font-size:12.5px"></div>'
+    +'</div>'
+    +'<div class="modal-foot" style="display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid #eee">'
+      +'<button class="btn btn-o" onclick="_invClose()">Cancel</button>'
+      +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="saveInvoice('+(id||0)+')">Save</button></div></div>';
+  document.body.appendChild(bg);
+  ['inv-qty','inv-rate','inv-amount','inv-gst','inv-bcode'].forEach(function(k){ var e=document.getElementById(k); if(e) e.addEventListener('input',_invCalc); });
+  _invCalc();
+}
+function _invCalc(){
+  var qty=parseFloat((document.getElementById('inv-qty')||{}).value)||0;
+  var rate=parseFloat((document.getElementById('inv-rate')||{}).value)||0;
+  var amtEl=document.getElementById('inv-amount');
+  var amt=parseFloat(amtEl.value);
+  if((!amt || isNaN(amt)) && qty && rate){ amt=Math.round(qty*rate*100)/100; }
+  if(qty&&rate){ amtEl.placeholder=(Math.round(qty*rate*100)/100)+' (Qty\u00d7Rate)'; }
+  var gst=parseFloat((document.getElementById('inv-gst')||{}).value)||18;
+  var sellerCode='09'; // HireLab UP
+  var buyerCode=((document.getElementById('inv-bcode')||{}).value||'').trim();
+  var inter=buyerCode && buyerCode!==sellerCode;
+  var tax=Math.round((amt||0)*gst)/100;
+  var total=Math.round((amt||0)+tax);
+  var box=document.getElementById('inv-calc'); if(!box) return;
+  box.innerHTML='<b>Taxable:</b> '+_invRup(amt||0)+' &nbsp; <b>'+(inter?'IGST':'CGST+SGST')+' '+gst+'%:</b> '+_invRup(tax)+' &nbsp; <b>Total:</b> '+_invRup(total)
+    +' <span style="color:#999">('+(inter?'inter-state':'same-state, code '+sellerCode)+')</span>';
+}
+async function saveInvoice(id){
+  var v=function(x){ var e=document.getElementById(x); return e?e.value.trim():''; };
+  var qty=parseFloat(v('inv-qty'))||0, rate=parseFloat(v('inv-rate'))||0;
+  var amt=parseFloat(v('inv-amount')); if((!amt||isNaN(amt))&&qty&&rate) amt=Math.round(qty*rate*100)/100;
+  var totq=v('inv-totqty'); if(!totq && qty) totq=Number(qty).toLocaleString('en-IN')+'\n'+(v('inv-per')||'CTC');
+  var body={
+    invoice_no:v('inv-no'), invoice_date:v('inv-date'), ref_no:v('inv-ref'),
+    order_no:v('inv-order'), order_date:v('inv-orderdate'), due_date:v('inv-due'),
+    buyer_name:v('inv-bname'), buyer_address:v('inv-baddr'), buyer_gstin:v('inv-bgstin'),
+    buyer_state:v('inv-bstate'), buyer_state_code:v('inv-bcode'), place_of_supply:v('inv-pos'),
+    candidate_name:v('inv-cand'), role:v('inv-role'), description:v('inv-desc'),
+    extra_lines:v('inv-extra').split('\n').map(function(x){return x.trim();}).filter(Boolean),
+    quantity:v('inv-qty'), rate:v('inv-rate'), per:v('inv-per'), hsn:v('inv-hsn'),
+    total_qty:totq, amount:amt||0, gst_rate:parseFloat(v('inv-gst'))||18
+  };
+  if(!body.buyer_name){ toast('Client name required',''); return; }
+  var r;
+  if(id){ r=await req('PUT','/invoices/'+id,body); }
+  else { r=await req('POST','/invoices',body); }
+  if(r&&(r.ok||r.id)){ _invClose(); toast('OK','Invoice saved'); renderInvoicing(); }
+  else toast('Error',(r&&r.error)||'Save failed');
 }
 
 // ── CANDIDATE PROFILES ─────────────────────────────────────────────────────
@@ -8409,9 +8561,9 @@ var aiActiveTab = 'search';
 // Every open* function calls this first so views can never overlap.
 var _ALL_VIEWS = ['mandate-view','settings-view','central-view','cdb-view',
   'responses-view','tasks-view','admin-view','ai-view','analytics-view',
-  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view','jobs-view'];
+  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view','jobs-view','invoicing-view'];
 var _ALL_SB = ['sb-tasks','sb-responses','sb-central','sb-admin','sb-ai',
-  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers','sb-jobs'];
+  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers','sb-jobs','sb-invoicing'];
 function _hideAllViews(){
   _ALL_VIEWS.forEach(function(id){
     var v=document.getElementById(id); if(v) v.style.display='none';

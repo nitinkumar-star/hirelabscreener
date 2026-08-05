@@ -10,6 +10,11 @@ try:
 except ImportError:
     HAS_PDF = False
 try:
+    import invoice_engine
+    HAS_INVOICE = True
+except Exception:
+    HAS_INVOICE = False
+try:
     from docx import Document as DocxDocument
     HAS_DOCX = True
 except ImportError:
@@ -1907,6 +1912,25 @@ def init_db():
         ('submission_cc_emails', ''),   # internal team auto-CC on client submissions
         ('company_website', ''),        # shown in the submission email signature (W:)
         ('submission_signature', ''),   # optional: exact signature block (plain text); auto-built if empty
+        ('seller_gstin', '09ECWPP1647A1Z9'),
+        ('seller_address', 'Office no: GF064, B-128, First Floor, Sector-2, Gautam Buddha Nagar, Noida, Uttar Pradesh 201301.'),
+        ('seller_udyam', 'UDYAM : UDYAM-UP-29-0178859 (Micro/Services)'),
+        ('seller_state', 'Uttar Pradesh'),
+        ('seller_state_code', '09'),
+        ('seller_reg_office', 'Building No.36, Tronica City, Ghaziabad, Uttar Pradesh-201102'),
+        ('invoice_signatory', 'Pavitra'),
+        ('invoice_hsn', '998512'),
+        ('invoice_fy', '2026-27'),
+        ('seller_name', 'HireLab Talent Resource'),
+        ('seller_gstin', '09ECWPP1647A1Z9'),
+        ('seller_address', 'Office no: GF064, B-128, First Floor, Sector-2, Gautam Buddha Nagar, Noida, Uttar Pradesh 201301.'),
+        ('seller_udyam', 'UDYAM : UDYAM-UP-29-0178859 (Micro/Services)'),
+        ('seller_state', 'Uttar Pradesh'),
+        ('seller_state_code', '09'),
+        ('seller_reg_office', 'Building No.36, Tronica City, Ghaziabad, Uttar Pradesh-201102'),
+        ('invoice_signatory', 'Pavitra'),
+        ('invoice_hsn', '998512'),
+        ('invoice_prefix', ''),   # optional prefix like "2026-27/"; auto-computed from FY if blank
         ('claude_api_key', os.environ.get('CLAUDE_API_KEY', '')),
         ('deepseek_api_key', os.environ.get('DEEPSEEK_API_KEY', '')),
         ('groq_api_key', os.environ.get('GROQ_API_KEY', '')),
@@ -2139,6 +2163,41 @@ def init_db():
         c.execute('ALTER TABLE candidates ADD COLUMN deep_analysis TEXT DEFAULT ""')
     except sqlite3.OperationalError:
         pass  # already exists
+
+    # Invoicing: GST tax invoices (perm) + business expenses.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS invoices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            invoice_no TEXT DEFAULT '', invoice_date TEXT DEFAULT '',
+            fy TEXT DEFAULT '', seq INTEGER DEFAULT 0,
+            buyer_name TEXT DEFAULT '', buyer_address TEXT DEFAULT '',
+            buyer_gstin TEXT DEFAULT '', buyer_state TEXT DEFAULT '', buyer_state_code TEXT DEFAULT '',
+            consignee_same INTEGER DEFAULT 1,
+            con_name TEXT DEFAULT '', con_address TEXT DEFAULT '',
+            con_gstin TEXT DEFAULT '', con_state TEXT DEFAULT '', con_state_code TEXT DEFAULT '',
+            candidate_name TEXT DEFAULT '', role TEXT DEFAULT '',
+            description TEXT DEFAULT '', extra_lines TEXT DEFAULT '[]',
+            hsn TEXT DEFAULT '998512', quantity TEXT DEFAULT '', rate TEXT DEFAULT '',
+            per TEXT DEFAULT 'CTC', total_qty TEXT DEFAULT '',
+            amount REAL DEFAULT 0, gst_rate REAL DEFAULT 18,
+            place_of_supply TEXT DEFAULT '', ref_no TEXT DEFAULT '', other_ref TEXT DEFAULT '',
+            order_no TEXT DEFAULT '', order_date TEXT DEFAULT '',
+            status TEXT DEFAULT 'sent', due_date TEXT DEFAULT '',
+            received_date TEXT DEFAULT '', received_amount REAL DEFAULT 0,
+            client_id INTEGER DEFAULT 0, candidate_id INTEGER DEFAULT 0, mandate_id INTEGER DEFAULT 0,
+            created_at TEXT, updated_at TEXT
+        );
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            date TEXT DEFAULT '', category TEXT DEFAULT '',
+            payee TEXT DEFAULT '', amount REAL DEFAULT 0, note TEXT DEFAULT '',
+            invoice_id INTEGER DEFAULT 0, created_at TEXT
+        );
+    """)
 
     # Client-submission drafts: composed 'Share to Client' emails saved for later.
     c.execute("""
@@ -4136,6 +4195,10 @@ GEMINI_EMBED_URL = ('https://generativelanguage.googleapis.com/v1beta/'
 TENANT_SETTINGS = {
     'recruiter_name', 'company_name',
     'submission_cc_emails', 'company_website', 'submission_signature',
+    'seller_gstin', 'seller_address', 'seller_udyam', 'seller_state', 'seller_state_code',
+    'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_fy',
+    'seller_gstin', 'seller_address', 'seller_udyam', 'seller_state', 'seller_state_code',
+    'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_prefix', 'seller_name',
     'template_msg1', 'template_fu1', 'template_fu2',
     'fu1_hours', 'fu2_hours',
     'workflow_mode',   # 'agency' (default) or 'corporate'
@@ -8959,6 +9022,258 @@ def delete_submission_draft(did):
                  (did, effective_company_id()))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
+
+
+# ── Invoicing (GST tax invoices + expenses) ──────────────────────────────────
+def _seller_dict():
+    return {
+        'name': get_setting('company_name', '') or 'HireLab Talent Resource',
+        'address': get_setting('seller_address', ''),
+        'udyam': get_setting('seller_udyam', ''),
+        'gstin': get_setting('seller_gstin', ''),
+        'state': get_setting('seller_state', ''),
+        'state_code': get_setting('seller_state_code', ''),
+        'reg_office': get_setting('seller_reg_office', ''),
+    }
+
+def _invoice_engine_dict(r):
+    d = dict(r)
+    try: extra = json.loads(d.get('extra_lines') or '[]')
+    except Exception: extra = []
+    buyer = {'name': d['buyer_name'], 'address': d['buyer_address'], 'gstin': d['buyer_gstin'],
+             'state': d['buyer_state'], 'state_code': d['buyer_state_code']}
+    if d.get('consignee_same'):
+        con = buyer
+    else:
+        con = {'name': d['con_name'] or d['buyer_name'], 'address': d['con_address'],
+               'gstin': d['con_gstin'], 'state': d['con_state'], 'state_code': d['con_state_code']}
+    return {
+        'seller': _seller_dict(), 'buyer': buyer, 'consignee': con,
+        'invoice_no': d['invoice_no'], 'invoice_date': d['invoice_date'],
+        'ref_no': d['ref_no'], 'other_ref': d['other_ref'],
+        'order_no': d['order_no'], 'order_date': d['order_date'],
+        'place_of_supply': d['place_of_supply'] or d['buyer_state'],
+        'description': d['description'] or 'Charge Towards Recruitment Services',
+        'candidate_name': d['candidate_name'], 'role': d['role'], 'extra_lines': extra,
+        'hsn': d['hsn'], 'quantity': d['quantity'], 'rate': d['rate'], 'per': d['per'],
+        'total_qty': d['total_qty'], 'amount': d['amount'], 'gst_rate': d['gst_rate'],
+        'signatory_name': get_setting('invoice_signatory', ''),
+    }
+
+def _next_gst_invoice_no(conn, owner_id):
+    fy = get_setting('invoice_fy', '') or '2026-27'
+    row = conn.execute('SELECT MAX(seq) AS m FROM invoices WHERE owner_id=? AND fy=?',
+                       (owner_id, fy)).fetchone()
+    seq = (row['m'] or 0) + 1
+    return fy, seq, f"{fy}/{seq:04d}"
+
+
+@app.route('/api/invoices', methods=['POST'])
+@login_required
+def create_invoice():
+    d = request.json or {}
+    conn = None
+    try:
+        conn = get_db(); oid = effective_company_id(); now = ts()
+        fy, seq, inv_no = _next_gst_invoice_no(conn, oid)
+        if (d.get('invoice_no') or '').strip():
+            inv_no = d['invoice_no'].strip()
+        cur = conn.execute("""INSERT INTO invoices
+            (owner_id, invoice_no, invoice_date, fy, seq, buyer_name, buyer_address, buyer_gstin,
+             buyer_state, buyer_state_code, consignee_same, con_name, con_address, con_gstin,
+             con_state, con_state_code, candidate_name, role, description, extra_lines, hsn, quantity,
+             rate, per, total_qty, amount, gst_rate, place_of_supply, ref_no, other_ref, order_no,
+             order_date, status, due_date, client_id, candidate_id, mandate_id, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (oid, inv_no, d.get('invoice_date',''), fy, seq, d.get('buyer_name',''), d.get('buyer_address',''),
+             d.get('buyer_gstin',''), d.get('buyer_state',''), d.get('buyer_state_code',''),
+             1 if d.get('consignee_same', True) else 0, d.get('con_name',''), d.get('con_address',''),
+             d.get('con_gstin',''), d.get('con_state',''), d.get('con_state_code',''),
+             d.get('candidate_name',''), d.get('role',''),
+             d.get('description','') or 'Charge Towards Recruitment Services',
+             json.dumps(d.get('extra_lines') or []), d.get('hsn','') or get_setting('invoice_hsn','998512'),
+             str(d.get('quantity','')), str(d.get('rate','')), d.get('per','CTC') or 'CTC',
+             d.get('total_qty',''), float(d.get('amount',0) or 0), float(d.get('gst_rate',18) or 18),
+             d.get('place_of_supply',''), d.get('ref_no',''), d.get('other_ref',''), d.get('order_no',''),
+             d.get('order_date',''), d.get('status','Sent') or 'Sent', d.get('due_date',''),
+             int(d.get('client_id',0) or 0), int(d.get('candidate_id',0) or 0), int(d.get('mandate_id',0) or 0),
+             now, now))
+        conn.commit()
+        return jsonify({'ok': True, 'id': cur.lastrowid, 'invoice_no': inv_no})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    finally:
+        if conn is not None:
+            try: conn.close()
+            except Exception: pass
+
+
+@app.route('/api/invoices/<int:iid>', methods=['PUT'])
+@login_required
+def update_invoice(iid):
+    d = request.json or {}
+    conn = get_db(); oid = effective_company_id()
+    cols = ['invoice_date','buyer_name','buyer_address','buyer_gstin','buyer_state','buyer_state_code',
+            'con_name','con_address','con_gstin','con_state','con_state_code','candidate_name','role',
+            'description','hsn','quantity','rate','per','total_qty','place_of_supply','ref_no','other_ref',
+            'order_no','order_date','status','due_date','received_date']
+    sets, vals = [], []
+    for k in cols:
+        if k in d:
+            sets.append(f'{k}=?'); vals.append(str(d[k]) if d[k] is not None else '')
+    if 'received_amount' in d:
+        sets.append('received_amount=?'); vals.append(float(d['received_amount'] or 0))
+    if 'consignee_same' in d:
+        sets.append('consignee_same=?'); vals.append(1 if d['consignee_same'] else 0)
+    if 'amount' in d:
+        sets.append('amount=?'); vals.append(float(d['amount'] or 0))
+    if 'gst_rate' in d:
+        sets.append('gst_rate=?'); vals.append(float(d['gst_rate'] or 18))
+    if 'extra_lines' in d:
+        sets.append('extra_lines=?'); vals.append(json.dumps(d['extra_lines'] or []))
+    sets.append('updated_at=?'); vals.append(ts())
+    vals += [iid, oid]
+    conn.execute(f'UPDATE invoices SET {",".join(sets)} WHERE id=? AND owner_id=?', tuple(vals))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/invoices', methods=['GET'])
+@login_required
+def list_invoices():
+    conn = get_db(); oid = effective_company_id()
+    rows = conn.execute('SELECT * FROM invoices WHERE owner_id=? ORDER BY id DESC', (oid,)).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        taxable = d['amount'] or 0
+        gross = round(taxable * (1 + (d['gst_rate'] or 18)/100))
+        out.append({'id': d['id'], 'invoice_no': d['invoice_no'], 'invoice_date': d['invoice_date'],
+                    'buyer_name': d['buyer_name'], 'candidate_name': d['candidate_name'],
+                    'amount': taxable, 'total': gross, 'gst_rate': d['gst_rate'],
+                    'status': d['status'], 'due_date': d['due_date'],
+                    'received_amount': d['received_amount'], 'received_date': d['received_date']})
+    return jsonify({'ok': True, 'invoices': out})
+
+
+@app.route('/api/invoices/<int:iid>', methods=['GET'])
+@login_required
+def get_invoice(iid):
+    conn = get_db()
+    r = conn.execute('SELECT * FROM invoices WHERE id=? AND owner_id=?', (iid, effective_company_id())).fetchone()
+    conn.close()
+    if not r:
+        return jsonify({'error': 'Invoice not found'}), 404
+    d = dict(r)
+    try: d['extra_lines'] = json.loads(d.get('extra_lines') or '[]')
+    except Exception: d['extra_lines'] = []
+    return jsonify({'ok': True, 'invoice': d})
+
+
+@app.route('/api/invoices/<int:iid>/mark-paid', methods=['POST'])
+@login_required
+def mark_invoice_paid(iid):
+    d = request.json or {}
+    conn = get_db()
+    conn.execute('UPDATE invoices SET status=?, received_date=?, received_amount=?, updated_at=? WHERE id=? AND owner_id=?',
+                 ('paid', d.get('received_date', '') or ts()[:10], float(d.get('received_amount', 0) or 0),
+                  ts(), iid, effective_company_id()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/invoices/<int:iid>', methods=['DELETE'])
+@login_required
+def delete_invoice(iid):
+    conn = get_db()
+    conn.execute('DELETE FROM invoices WHERE id=? AND owner_id=?', (iid, effective_company_id()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/invoices/<int:iid>/print', methods=['GET'])
+@login_required
+def print_invoice(iid):
+    if not HAS_INVOICE:
+        return Response('Invoice engine not deployed (invoice_engine.py missing).', mimetype='text/plain')
+    conn = get_db()
+    r = conn.execute('SELECT * FROM invoices WHERE id=? AND owner_id=?', (iid, effective_company_id())).fetchone()
+    conn.close()
+    if not r:
+        return Response('Invoice not found', status=404, mimetype='text/plain')
+    html = invoice_engine.build_invoice_html(_invoice_engine_dict(r), for_print=True)
+    if request.args.get('auto') == '1':
+        html = html.replace('</body>', '<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},350);});</script></body>')
+    return Response(html, mimetype='text/html')
+
+
+# Expenses
+@app.route('/api/expenses', methods=['POST'])
+@login_required
+def create_expense():
+    d = request.json or {}
+    conn = get_db()
+    conn.execute('INSERT INTO expenses (owner_id, date, category, payee, amount, note, invoice_id, created_at) VALUES (?,?,?,?,?,?,?,?)',
+                 (effective_company_id(), d.get('date','') or ts()[:10], d.get('category',''), d.get('payee',''),
+                  float(d.get('amount',0) or 0), d.get('note',''), int(d.get('invoice_id',0) or 0), ts()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/expenses', methods=['GET'])
+@login_required
+def list_expenses():
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM expenses WHERE owner_id=? ORDER BY date DESC, id DESC',
+                        (effective_company_id(),)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'expenses': [dict(r) for r in rows]})
+
+
+@app.route('/api/expenses/<int:eid>', methods=['DELETE'])
+@login_required
+def delete_expense(eid):
+    conn = get_db()
+    conn.execute('DELETE FROM expenses WHERE id=? AND owner_id=?', (eid, effective_company_id()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/invoices/next-number', methods=['GET'])
+@login_required
+def invoice_next_number():
+    conn = get_db()
+    _, _, inv_no = _next_gst_invoice_no(conn, effective_company_id())
+    conn.close()
+    return jsonify({'ok': True, 'invoice_no': inv_no})
+
+
+@app.route('/api/invoices/summary', methods=['GET'])
+@login_required
+def invoicing_summary():
+    conn = get_db(); oid = effective_company_id()
+    invs = conn.execute('SELECT amount, gst_rate, status, received_amount FROM invoices WHERE owner_id=?', (oid,)).fetchall()
+    exps = conn.execute('SELECT category, amount FROM expenses WHERE owner_id=?', (oid,)).fetchall()
+    conn.close()
+    invoiced = received = outstanding = 0.0
+    n_paid = 0
+    for r in invs:
+        gross = round((r['amount'] or 0) * (1 + (r['gst_rate'] or 18)/100))
+        invoiced += gross
+        if (r['status'] or '').lower() == 'paid':
+            received += (r['received_amount'] or gross); n_paid += 1
+        else:
+            outstanding += gross
+    exp_by_cat = {}; total_exp = 0.0
+    for e in exps:
+        exp_by_cat[e['category']] = exp_by_cat.get(e['category'], 0) + (e['amount'] or 0)
+        total_exp += (e['amount'] or 0)
+    return jsonify({'ok': True, 'invoiced': round(invoiced), 'received': round(received),
+                    'outstanding': round(outstanding), 'count': len(invs), 'n_paid': n_paid,
+                    'total_expenses': round(total_exp), 'expenses_by_category': exp_by_cat,
+                    'net_profit': round(received - total_exp)})
 
 
 @app.route('/api/mandates/<int:mid>/email-templates', methods=['GET'])
