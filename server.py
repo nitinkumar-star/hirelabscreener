@@ -2211,7 +2211,7 @@ def init_db():
             msg_id TEXT DEFAULT '', folder TEXT DEFAULT '',
             from_addr TEXT DEFAULT '', from_name TEXT DEFAULT '', to_addr TEXT DEFAULT '',
             subject TEXT DEFAULT '', date_str TEXT DEFAULT '', date_ts REAL DEFAULT 0,
-            snippet TEXT DEFAULT '', body TEXT DEFAULT '', is_read INTEGER DEFAULT 0,
+            snippet TEXT DEFAULT '', body TEXT DEFAULT '', body_html TEXT DEFAULT '', is_read INTEGER DEFAULT 0,
             created_at TEXT
         );
     """)
@@ -9312,30 +9312,43 @@ def _email_decode(s):
     except Exception:
         return str(s)
 
-def _email_body(msg):
-    text = ''
+def _email_bodies(msg):
+    """Return (clean_text, html) — original HTML preserved for proper display."""
+    import html as _htmllib
+    plain = ''; htmlbody = ''
     try:
         if msg.is_multipart():
             for part in msg.walk():
-                if part.get_content_type() == 'text/plain' and 'attachment' not in str(part.get('Content-Disposition') or ''):
+                ct = part.get_content_type(); cd = str(part.get('Content-Disposition') or '')
+                if 'attachment' in cd:
+                    continue
+                if ct == 'text/plain' and not plain:
                     p = part.get_payload(decode=True)
-                    if p:
-                        text = p.decode(part.get_content_charset() or 'utf-8', 'ignore'); break
-            if not text:
-                for part in msg.walk():
-                    if part.get_content_type() == 'text/html':
-                        p = part.get_payload(decode=True)
-                        if p:
-                            text = re.sub('<[^<]+?>', ' ', p.decode(part.get_content_charset() or 'utf-8', 'ignore')); break
+                    if p: plain = p.decode(part.get_content_charset() or 'utf-8', 'ignore')
+                elif ct == 'text/html' and not htmlbody:
+                    p = part.get_payload(decode=True)
+                    if p: htmlbody = p.decode(part.get_content_charset() or 'utf-8', 'ignore')
         else:
             p = msg.get_payload(decode=True)
             if p:
-                text = p.decode(msg.get_content_charset() or 'utf-8', 'ignore')
+                txt = p.decode(msg.get_content_charset() or 'utf-8', 'ignore')
                 if msg.get_content_type() == 'text/html':
-                    text = re.sub('<[^<]+?>', ' ', text)
+                    htmlbody = txt
+                else:
+                    plain = txt
     except Exception:
         pass
-    return (text or '').strip()
+    text = plain
+    if not text and htmlbody:
+        t = re.sub(r'(?is)<(script|style)[^>]*>.*?</\1>', ' ', htmlbody)
+        t = re.sub(r'(?i)<br\s*/?>', '\n', t)
+        t = re.sub(r'(?i)</(p|div|tr|li|h[1-6])>', '\n', t)
+        t = re.sub(r'<[^>]+>', ' ', t)
+        t = _htmllib.unescape(t)
+        t = re.sub(r'[ \t\r\f]+', ' ', t)
+        t = re.sub(r'\n[ \t]*\n[ \t]*\n+', '\n\n', t)
+        text = t.strip()
+    return (text or '').strip(), (htmlbody or '')
 
 def _find_sent_folder(M):
     try:
@@ -9373,6 +9386,10 @@ def emailbox_sync():
     added = 0
     conn = get_db()
     try:
+        try:
+            conn.execute("ALTER TABLE emails ADD COLUMN body_html TEXT DEFAULT ''"); conn.commit()
+        except Exception:
+            pass
         for fexpr, fname in folders:
             try:
                 typ, _ = M.select(fexpr, readonly=True)
@@ -9386,17 +9403,22 @@ def emailbox_sync():
                         if typ != 'OK' or not md or not md[0]: continue
                         msg = emaillib.message_from_bytes(md[0][1])
                         mid = (msg.get('Message-ID') or '').strip() or (fname + ':' + num.decode())
-                        if conn.execute('SELECT id FROM emails WHERE owner_id=? AND msg_id=?', (oid, mid)).fetchone():
-                            continue
                         nm, addr = email.utils.parseaddr(_email_decode(msg.get('From')))
                         dt = msg.get('Date') or ''
                         try: dts = email.utils.parsedate_to_datetime(dt).timestamp()
                         except Exception: dts = 0
-                        body = _email_body(msg)[:20000]
-                        snip = re.sub(r'\s+', ' ', body)[:220]
-                        conn.execute('INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,subject,date_str,date_ts,snippet,body,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                        text, htmlbody = _email_bodies(msg)
+                        text = text[:20000]; htmlbody = (htmlbody or '')[:400000]
+                        snip = re.sub(r'\s+', ' ', text)[:220]
+                        ex = conn.execute('SELECT id FROM emails WHERE owner_id=? AND msg_id=?', (oid, mid)).fetchone()
+                        if ex:
+                            # backfill/refresh body so previously-synced emails display correctly
+                            conn.execute('UPDATE emails SET body=?, body_html=?, snippet=? WHERE id=?',
+                                         (text, htmlbody, snip, ex['id']))
+                            continue
+                        conn.execute('INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,subject,date_str,date_ts,snippet,body,body_html,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                             (oid, mid, fname, addr, nm or addr, _email_decode(msg.get('To')),
-                             _email_decode(msg.get('Subject')), dt, dts, snip, body, ts()))
+                             _email_decode(msg.get('Subject')), dt, dts, snip, text, htmlbody, ts()))
                         added += 1
                     except Exception:
                         continue

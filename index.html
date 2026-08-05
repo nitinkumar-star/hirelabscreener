@@ -3986,19 +3986,27 @@ async function syncEmail(btn){
 }
 async function openEmail(id){
   var r;
-  try{ r=await req('GET','/emailbox/'+id); }catch(e){ return; }
-  var e=(r&&r.email)||{};
+  try{ r=await req('GET','/emailbox/'+id); }
+  catch(e){ toast('Error','Email load failed'); return; }
+  if(!r || r.error || !r.email){ toast('Error',(r&&r.error)||'Could not open email'); return; }
+  var e=r.email;
   var d=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB'):(e.date_str||'');
   var ex=document.getElementById('modal-email'); if(ex) ex.remove();
+  var content;
+  if(e.body_html && e.body_html.length>15){
+    var safe=e.body_html.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+    content='<iframe sandbox="" referrerpolicy="no-referrer" srcdoc="'+safe+'" style="width:100%;height:62vh;border:none;background:#fff"></iframe>';
+  } else {
+    content='<div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#222;max-height:62vh;overflow:auto">'+esc(e.body||e.snippet||'(empty email)')+'</div>';
+  }
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-email';
-  bg.innerHTML='<div class="modal" style="max-width:720px;width:95%"><div class="modal-head"><span class="modal-title" style="font-size:15px">'+esc(e.subject||'(no subject)')+'</span><button class="modal-x" onclick="document.getElementById(\'modal-email\').remove()">&#10005;</button></div>'
-    +'<div class="modal-body" style="max-height:78vh;overflow:auto">'
+  bg.innerHTML='<div class="modal" style="max-width:760px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">'+esc(e.subject||'(no subject)')+'</span><button class="modal-x" onclick="document.getElementById(\'modal-email\').remove()">&#10005;</button></div>'
+    +'<div class="modal-body" style="max-height:82vh;overflow:auto">'
     +'<div style="font-size:12px;color:#555;border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:10px">'
       +'<div><b>From:</b> '+esc(e.from_name||'')+' &lt;'+esc(e.from_addr||'')+'&gt;</div>'
       +'<div><b>To:</b> '+esc(e.to_addr||'')+'</div>'
       +'<div style="color:#999">'+esc(d)+' &middot; '+esc(e.folder||'')+'</div></div>'
-    +'<div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#222">'+esc(e.body||e.snippet||'')+'</div>'
-    +'</div></div>';
+    +content+'</div></div>';
   document.body.appendChild(bg);
 }
 function _invRup(n){ return '\u20B9'+Number(Math.round(n||0)).toLocaleString('en-IN'); }
