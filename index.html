@@ -4183,6 +4183,8 @@ async function openInvoiceForm(id){
   var inv={};
   if(id){ var r=await req('GET','/invoices/'+id); inv=(r&&r.invoice)||{}; }
   else { try{ var nn=await req('GET','/invoices/next-number'); inv.invoice_no=nn.invoice_no; }catch(e){} inv.description='Charge Towards Recruitment Services'; inv.per='CTC'; inv.rate='.1'; inv.gst_rate=18; inv.invoice_date=new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).replace(/ /g,'-'); }
+  if(!id && window._invPrefill){ inv.candidate_name=window._invPrefill.candidate_name||''; inv.role=window._invPrefill.role||''; if(window._invPrefill.amount) inv.amount=window._invPrefill.amount; window._invCandId=window._invPrefill.candidate_id||0; window._invPrefill=null; }
+  else if(!id){ window._invCandId=0; }
   _invClose();
   var extra=(inv.extra_lines&&inv.extra_lines.join)?inv.extra_lines.join('\n'):'';
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-invoice';
@@ -4256,13 +4258,14 @@ async function saveInvoice(id){
     candidate_name:v('inv-cand'), role:v('inv-role'), description:v('inv-desc'),
     extra_lines:v('inv-extra').split('\n').map(function(x){return x.trim();}).filter(Boolean),
     quantity:v('inv-qty'), rate:v('inv-rate'), per:v('inv-per'), hsn:v('inv-hsn'),
-    total_qty:totq, amount:amt||0, gst_rate:parseFloat(v('inv-gst'))||18
+    total_qty:totq, amount:amt||0, gst_rate:parseFloat(v('inv-gst'))||18,
+    candidate_id: window._invCandId||0
   };
   if(!body.buyer_name){ toast('Client name required',''); return; }
   var r;
   if(id){ r=await req('PUT','/invoices/'+id,body); }
   else { r=await req('POST','/invoices',body); }
-  if(r&&(r.ok||r.id)){ _invClose(); toast('OK','Invoice saved'); renderInvoicing(); }
+  if(r&&(r.ok||r.id)){ _invClose(); toast('OK','Invoice saved'); var cc=window._invCandId; window._invCandId=0; if(cc){ try{ cpLoadBilling(cc); }catch(e){} } renderInvoicing(); }
   else toast('Error',(r&&r.error)||'Save failed');
 }
 
@@ -4584,13 +4587,15 @@ function renderProfileDetail(c){
 
   // Reminder popup hidden holder is not needed; reminders are inline.
   // Tab bar
-  var tabs=[['overview','Overview'],['ai','&#10024; AI Analysis'],['resume','Resume'],['comms','Communications'],['call','Call Analysis'],['history','History']];
+  var tabs=[['overview','Overview'],['ai','&#10024; AI Analysis'],['billing','&#128176; Placement &amp; Billing'],['resume','Resume'],['comms','Communications'],['call','Call Analysis'],['history','History']];
   html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
   html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+'</div><div>'+keyFacts+reminders+workCard+_cpOrgShell(c.id)+'</div></div></div>';
   // AI Analysis (capability-first hiring-manager evaluation)
   html+='<div class="cp-pane" id="cp-pane-ai" style="display:none"><div id="cp-ai-'+c.id+'"></div></div>';
+  // Placement & Billing (closes the lifecycle: Joined -> Invoiced -> Paid)
+  html+='<div class="cp-pane" id="cp-pane-billing" style="display:none"><div id="cp-billing-'+c.id+'"><div class="loading" style="padding:12px"><div class="spinner"></div>Loading…</div></div></div>';
   // Resume
   html+='<div class="cp-pane" id="cp-pane-resume" style="display:none">'+cvCard+'</div>';
   // Communications
@@ -4617,6 +4622,7 @@ function renderProfileDetail(c){
   try{ cpLoadWaThread(c.id); }catch(e){}
   try{ cpLoadHistory(c.id); }catch(e){}
   try{ cpLoadOrg(c.id); }catch(e){}
+  try{ cpLoadBilling(c.id); }catch(e){}
 }
 
 function cpTab(name){
@@ -4772,6 +4778,75 @@ async function runDeepAnalysis(cid){
   toast('OK','Analysis ready');
 }
 
+function _billStatusStyle(s){
+  s=s||'';
+  if(s.indexOf('Paid')>=0) return 'background:#0F7A52;color:#fff';
+  if(s.indexOf('Overdue')>=0) return 'background:#C0392B;color:#fff';
+  if(s.indexOf('Awaiting Payment')>=0) return 'background:#B4690E;color:#fff';
+  if(s.indexOf('Awaiting Invoice')>=0) return 'background:#534AB7;color:#fff';
+  if(s.indexOf('Replacement')>=0) return 'background:#8E24AA;color:#fff';
+  return 'background:#EDEDED;color:#555';
+}
+async function cpLoadBilling(cid){
+  var box=document.getElementById('cp-billing-'+cid); if(!box) return;
+  var r;
+  try{ r=await req('GET','/candidates/'+cid+'/billing'); }
+  catch(e){ box.innerHTML='<div style="color:#B42318;padding:12px">Could not load billing.</div>'; return; }
+  if(!r||r.error||!r.billing){ box.innerHTML='<div style="color:#B42318;padding:12px">'+esc((r&&r.error)||'Error')+'</div>'; return; }
+  var b=r.billing;
+  window._cpBillName=b.name||'';
+  var g=b.guarantee;
+  var gTxt = g ? (g.cleared ? ('Guarantee cleared ('+esc(g.end)+') \u2713') : (g.days_left+' days left (till '+esc(g.end)+')')) : 'Set joining date to track';
+  var gCol = g ? (g.cleared?'#0F7A52':(g.days_left<15?'#C0392B':'#B4690E')) : '#999';
+  var invHtml;
+  if(b.invoices && b.invoices.length){
+    invHtml=b.invoices.map(function(iv){
+      var stCol=(iv.status||'').toLowerCase()==='paid'?'#0F7A52':'#B4690E';
+      var due=iv.due_date?('Due: '+esc(iv.due_date.slice(0,10))):'';
+      var rec=iv.received_date?(' &middot; Received '+esc(iv.received_date.slice(0,10))):'';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border:1px solid #eee;border-radius:8px;margin-bottom:6px">'
+        +'<div><div style="font-weight:600">'+esc(iv.invoice_no||'')+' &middot; \u20B9'+(iv.total||0).toLocaleString('en-IN')+'</div>'
+        +'<div style="font-size:11px;color:#999">'+due+rec+'</div></div>'
+        +'<div style="display:flex;gap:6px;align-items:center"><span style="font-size:11px;font-weight:600;color:'+stCol+'">'+esc(iv.status||'')+'</span>'
+        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="printInvoice('+iv.id+')">Print</button></div></div>';
+    }).join('');
+  } else {
+    invHtml='<div style="padding:12px;background:#FAF9FF;border:1px dashed #D5D0F0;border-radius:8px;text-align:center;color:#777">Koi invoice link nahi. Neeche se banao \u2014 candidate + fee auto-fill ho jayega.</div>';
+  }
+  box.innerHTML=''
+    +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
+      +'<div style="font-size:13px;color:#888">Lifecycle status</div>'
+      +'<div style="font-size:15px;font-weight:700;padding:6px 16px;border-radius:20px;'+_billStatusStyle(b.billing_status)+'">'+esc(b.billing_status)+'</div>'
+    +'</div>'
+    +'<div class="cp-card2" style="margin-bottom:14px"><div class="cp-lbl2">Placement details</div>'
+      +'<div style="display:flex;gap:10px;flex-wrap:wrap">'
+      +_ccInp('bill-fee-'+cid,'Placement fee (\u20B9)',b.placement_fee)
+      +'<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">Joining date</label><input id="bill-join-'+cid+'" class="inp" type="date" value="'+(b.joining_date?b.joining_date.slice(0,10):'')+'" style="width:100%"></div>'
+      +_ccInp('bill-gd-'+cid,'Guarantee days',b.guarantee_days||90)
+      +'</div>'
+      +'<div style="margin-top:10px;font-size:12px;color:'+gCol+';font-weight:600">\uD83D\uDEE1 Guarantee: '+gTxt+'</div>'
+      +'<label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;cursor:pointer"><input type="checkbox" id="bill-repl-'+cid+'"'+(b.replacement_flag?' checked':'')+'> Candidate chhod gaya / replacement needed (invoice at risk)</label>'
+      +'<div class="fg-row" style="margin-top:8px"><label>Notes</label><input id="bill-notes-'+cid+'" class="inp" style="width:100%" value="'+esc(b.billing_notes||'')+'" placeholder="e.g. client ne 15 Aug tak pay karne bola"></div>'
+      +'<button class="btn" style="background:#0F6E56;color:#fff;border:none;margin-top:10px" onclick="cpSaveBilling('+cid+')">Save</button>'
+    +'</div>'
+    +'<div class="cp-card2"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">Linked invoice(s)</div>'
+      +'<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="cpCreateInvoiceFromCandidate('+cid+')">+ Create Invoice for this candidate</button></div>'
+      +invHtml+'</div>';
+}
+async function cpSaveBilling(cid){
+  var v=function(x){var e=document.getElementById(x);return e?e.value:'';};
+  var chk=document.getElementById('bill-repl-'+cid);
+  var r=await req('POST','/candidates/'+cid+'/billing',{
+    placement_fee:parseFloat(v('bill-fee-'+cid))||0, joining_date:v('bill-join-'+cid),
+    guarantee_days:parseInt(v('bill-gd-'+cid))||90, replacement_flag:chk&&chk.checked?1:0,
+    billing_notes:v('bill-notes-'+cid)});
+  if(r&&r.ok){ toast('OK','Billing saved'); cpLoadBilling(cid); } else toast('Error','Save failed');
+}
+async function cpCreateInvoiceFromCandidate(cid){
+  var fee=parseFloat((document.getElementById('bill-fee-'+cid)||{}).value)||0;
+  window._invPrefill={ candidate_id:cid, candidate_name:window._cpBillName||'', role:(S.activeMandate&&S.activeMandate.role)||'', amount:fee };
+  openInvoiceForm(0);
+}
 async function cpLoadHistory(cid){
   var box=document.getElementById('cp-hist-'+cid); if(!box) return;
   var r;

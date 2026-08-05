@@ -2154,6 +2154,15 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Migrate: placement & billing lifecycle fields (close the loop after Joined).
+    for col, typ in [('placement_fee', 'REAL DEFAULT 0'), ('joining_date', 'TEXT DEFAULT ""'),
+                     ('guarantee_days', 'INTEGER DEFAULT 90'), ('replacement_flag', 'INTEGER DEFAULT 0'),
+                     ('billing_notes', 'TEXT DEFAULT ""')]:
+        try:
+            c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {typ}')
+        except sqlite3.OperationalError:
+            pass
+
     # Migrate: candidate specialization (branch/stream, e.g. "Electronics") —
     # separate from the degree stored in qualification.
     try:
@@ -9105,6 +9114,10 @@ def create_invoice():
         fy, seq, inv_no = _next_gst_invoice_no(conn, oid)
         if (d.get('invoice_no') or '').strip():
             inv_no = d['invoice_no'].strip()
+        due = (d.get('due_date') or '').strip()
+        if not due:
+            import datetime as _dt
+            due = (_dt.date.today() + _dt.timedelta(days=45)).isoformat()
         cur = conn.execute("""INSERT INTO invoices
             (owner_id, invoice_no, invoice_date, fy, seq, buyer_name, buyer_address, buyer_gstin,
              buyer_state, buyer_state_code, consignee_same, con_name, con_address, con_gstin,
@@ -9122,7 +9135,7 @@ def create_invoice():
              str(d.get('quantity','')), str(d.get('rate','')), d.get('per','CTC') or 'CTC',
              d.get('total_qty',''), float(d.get('amount',0) or 0), float(d.get('gst_rate',18) or 18),
              d.get('place_of_supply',''), d.get('ref_no',''), d.get('other_ref',''), d.get('order_no',''),
-             d.get('order_date',''), d.get('status','Sent') or 'Sent', d.get('due_date',''),
+             d.get('order_date',''), d.get('status','Sent') or 'Sent', due,
              int(d.get('client_id',0) or 0), int(d.get('candidate_id',0) or 0), int(d.get('mandate_id',0) or 0),
              now, now))
         conn.commit()
@@ -9739,6 +9752,87 @@ Now produce the strategic brief."""
     at = ts()
     set_setting('cc_last_plan', json.dumps({'md': md, 'at': at}))
     return jsonify({'ok': True, 'md': md, 'at': at})
+
+
+def _candidate_billing(conn, oid, cid):
+    import datetime as _dt
+    c = conn.execute('SELECT id,name,stage,placement_fee,joining_date,guarantee_days,replacement_flag,billing_notes FROM candidates WHERE id=? AND owner_id=?', (cid, oid)).fetchone()
+    if not c:
+        return None
+    d = dict(c)
+    invs = conn.execute('SELECT id,invoice_no,invoice_date,amount,gst_rate,status,due_date,received_date,received_amount FROM invoices WHERE owner_id=? AND candidate_id=? ORDER BY id DESC', (oid, cid)).fetchall()
+    today = _dt.date.today().isoformat()
+    inv_list = []; paid = invoiced = overdue = False
+    for iv in invs:
+        ivd = dict(iv)
+        ivd['total'] = round((ivd['amount'] or 0) * (1 + (ivd['gst_rate'] or 18) / 100))
+        if (ivd['status'] or '').lower() == 'paid':
+            paid = True
+        else:
+            invoiced = True
+            if ivd['due_date'] and ivd['due_date'][:10] < today:
+                overdue = True
+        inv_list.append(ivd)
+    guarantee = None
+    if d['joining_date']:
+        try:
+            jd = _dt.date.fromisoformat(d['joining_date'][:10])
+            gend = jd + _dt.timedelta(days=int(d['guarantee_days'] or 90))
+            left = (gend - _dt.date.today()).days
+            guarantee = {'end': gend.isoformat(), 'days_left': left, 'cleared': left <= 0}
+        except Exception:
+            guarantee = None
+    joined = (d['stage'] == 'Joined') or bool(d['joining_date'])
+    if d['replacement_flag']:
+        status = 'Replacement Needed'
+    elif paid:
+        status = 'Paid \u2014 Closed-Won'
+    elif invoiced:
+        status = 'Overdue \u2014 Awaiting Payment' if overdue else 'Awaiting Payment'
+    elif joined:
+        status = 'Awaiting Invoice'
+    elif d['stage'] == 'Placed':
+        status = 'Placed \u2014 set joining date'
+    else:
+        status = 'Not placed yet'
+    d['invoices'] = inv_list
+    d['guarantee'] = guarantee
+    d['billing_status'] = status
+    return d
+
+
+@app.route('/api/candidates/<int:cid>/billing', methods=['GET'])
+@login_required
+def get_candidate_billing(cid):
+    conn = get_db()
+    try:
+        d = _candidate_billing(conn, effective_company_id(), cid)
+    finally:
+        conn.close()
+    if not d:
+        return jsonify({'error': 'Candidate not found'}), 404
+    return jsonify({'ok': True, 'billing': d})
+
+
+@app.route('/api/candidates/<int:cid>/billing', methods=['POST'])
+@login_required
+def set_candidate_billing(cid):
+    d = request.json or {}
+    conn = get_db(); oid = effective_company_id()
+    # self-heal columns
+    for col, typ in [('placement_fee', 'REAL DEFAULT 0'), ('joining_date', 'TEXT DEFAULT ""'),
+                     ('guarantee_days', 'INTEGER DEFAULT 90'), ('replacement_flag', 'INTEGER DEFAULT 0'),
+                     ('billing_notes', 'TEXT DEFAULT ""')]:
+        try: conn.execute(f'ALTER TABLE candidates ADD COLUMN {col} {typ}'); conn.commit()
+        except Exception: pass
+    conn.execute('UPDATE candidates SET placement_fee=?, joining_date=?, guarantee_days=?, replacement_flag=?, billing_notes=? WHERE id=? AND owner_id=?',
+                 (float(d.get('placement_fee', 0) or 0), d.get('joining_date', ''),
+                  int(d.get('guarantee_days', 90) or 90), 1 if d.get('replacement_flag') else 0,
+                  d.get('billing_notes', ''), cid, oid))
+    conn.commit()
+    res = _candidate_billing(conn, oid, cid)
+    conn.close()
+    return jsonify({'ok': True, 'billing': res})
 
 
 @app.route('/api/mandates/<int:mid>/email-templates', methods=['GET'])
