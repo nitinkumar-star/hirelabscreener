@@ -3860,6 +3860,7 @@ function _invCard(label,val,col){
 }
 async function renderInvoicing(){
   var el=document.getElementById('invoicing-body'); if(!el) return;
+  if(window._invTab==='expenses'){ return renderExpenses(el); }
   el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
   var sum={}, list={};
   try{ sum=await req('GET','/invoices/summary'); }catch(e){}
@@ -3887,7 +3888,9 @@ async function renderInvoicing(){
       +'</td></tr>';
   }).join('');
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
-    +'<h2 style="margin:0;font-size:20px">Invoicing</h2>'
+    +'<div style="display:flex;gap:6px">'
+      +'<button class="btn" style="font-size:12.5px;background:#534AB7;color:#fff;border:none" onclick="_invSwitch(\'invoices\')">Invoices</button>'
+      +'<button class="btn btn-o" style="font-size:12.5px" onclick="_invSwitch(\'expenses\')">Expenses &amp; Profit</button></div>'
     +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="openInvoiceForm(0)">+ New Invoice</button></div>'
     +cards
     +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
@@ -3895,6 +3898,72 @@ async function renderInvoicing(){
     +'<tbody>'+(rows||'<tr><td colspan="6" style="padding:20px;text-align:center;color:#aaa">No invoices yet — click "New Invoice".</td></tr>')+'</tbody></table></div>';
 }
 function printInvoice(id){ window.open(API+'/invoices/'+id+'/print?auto=1','_blank'); }
+function _invSwitch(t){ window._invTab=t; renderInvoicing(); }
+var _expCats=['Freelancer Salary','Freelancer Commission','Owner Salary','Tools & Subscriptions','Marketing','Office & Admin','Travel','Other'];
+async function renderExpenses(el){
+  el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
+  var sum={}, list={};
+  try{ sum=await req('GET','/invoices/summary'); }catch(e){}
+  try{ list=await req('GET','/expenses'); }catch(e){}
+  var exps=(list&&list.expenses)||[];
+  var net=(sum.net_profit!=null)?sum.net_profit:((sum.received||0)-(sum.total_expenses||0));
+  var netCol=net>=0?'#0F7A52':'#C0392B';
+  var cards='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
+    +_invCard('Received',_invRup(sum.received),'#0F7A52')
+    +_invCard('Total Expenses',_invRup(sum.total_expenses),'#C0392B')
+    +_invCard('Net Profit',_invRup(net),netCol)+'</div>';
+  var byCat=sum.expenses_by_category||{};
+  var catChips=Object.keys(byCat).map(function(k){return '<span style="font-size:10.5px;background:#F4F3FB;border:1px solid #E3E0F3;border-radius:20px;padding:3px 10px;margin:2px;display:inline-block">'+esc(k)+': '+_invRup(byCat[k])+'</span>';}).join(' ');
+  var rows=exps.map(function(e){
+    return '<tr style="border-top:1px solid #f0f0f0">'
+      +'<td style="padding:8px">'+esc(e.date||'')+'</td>'
+      +'<td style="padding:8px">'+esc(e.category||'')+'</td>'
+      +'<td style="padding:8px">'+esc(e.payee||'')+(e.note?'<div style="font-size:10.5px;color:#999">'+esc(e.note)+'</div>':'')+'</td>'
+      +'<td style="padding:8px;text-align:right;font-weight:600;color:#C0392B">'+_invRup(e.amount)+'</td>'
+      +'<td style="padding:8px;text-align:right"><button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#C0392B" onclick="deleteExpense('+e.id+')">&#10005;</button></td></tr>';
+  }).join('');
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
+    +'<div style="display:flex;gap:6px">'
+      +'<button class="btn btn-o" style="font-size:12.5px" onclick="_invSwitch(\'invoices\')">Invoices</button>'
+      +'<button class="btn" style="font-size:12.5px;background:#534AB7;color:#fff;border:none" onclick="_invSwitch(\'expenses\')">Expenses &amp; Profit</button></div>'
+    +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="openExpenseForm()">+ Add Expense</button></div>'
+    +cards
+    +(catChips?'<div style="margin-bottom:14px">'+catChips+'</div>':'')
+    +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
+    +'<thead><tr style="background:#F6F5FB;text-align:left"><th style="padding:8px">Date</th><th style="padding:8px">Category</th><th style="padding:8px">Paid To / Note</th><th style="padding:8px;text-align:right">Amount</th><th style="padding:8px"></th></tr></thead>'
+    +'<tbody>'+(rows||'<tr><td colspan="5" style="padding:20px;text-align:center;color:#aaa">No expenses yet — click "Add Expense".</td></tr>')+'</tbody></table></div>'
+    +'<div style="font-size:10.5px;color:#999;margin-top:8px">Net Profit = Received (paid invoices) &minus; Total Expenses. Yeh Command Center ko feed karega.</div>';
+}
+function _expClose(){ var e=document.getElementById('modal-expense'); if(e) e.remove(); }
+function openExpenseForm(){
+  _expClose();
+  var opts=_expCats.map(function(c){return '<option value="'+esc(c)+'">'+esc(c)+'</option>';}).join('');
+  var today=new Date().toISOString().slice(0,10);
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-expense';
+  bg.innerHTML='<div class="modal" style="max-width:460px;width:94%"><div class="modal-head"><span class="modal-title">Add Expense</span><button class="modal-x" onclick="_expClose()">&#10005;</button></div>'
+    +'<div class="modal-body">'
+    +'<div class="fg-row"><label>Date</label><input id="exp-date" class="inp" type="date" value="'+today+'" style="width:100%"></div>'
+    +'<div class="fg-row"><label>Category</label><select id="exp-cat" class="inp" style="width:100%">'+opts+'</select></div>'
+    +'<div class="fg-row"><label>Paid To (freelancer / person / vendor)</label><input id="exp-payee" class="inp" style="width:100%" placeholder="e.g. Ramesh (sourcer)"></div>'
+    +'<div class="fg-row"><label>Amount (\u20B9)</label><input id="exp-amt" class="inp" type="number" style="width:100%" placeholder="0"></div>'
+    +'<div class="fg-row"><label>Note (optional)</label><input id="exp-note" class="inp" style="width:100%" placeholder="e.g. commission for Nanj Solar placement"></div>'
+    +'</div><div class="modal-foot" style="display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid #eee">'
+    +'<button class="btn btn-o" onclick="_expClose()">Cancel</button>'
+    +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="saveExpense()">Save</button></div></div>';
+  document.body.appendChild(bg);
+}
+async function saveExpense(){
+  var v=function(x){var e=document.getElementById(x);return e?e.value.trim():'';};
+  var amt=parseFloat(v('exp-amt'))||0;
+  if(!amt){ toast('Amount required',''); return; }
+  var r=await req('POST','/expenses',{date:v('exp-date'),category:v('exp-cat'),payee:v('exp-payee'),amount:amt,note:v('exp-note')});
+  if(r&&r.ok){ _expClose(); toast('OK','Expense added'); renderExpenses(document.getElementById('invoicing-body')); }
+  else toast('Error',(r&&r.error)||'Save failed');
+}
+async function deleteExpense(id){
+  if(!confirm('Delete this expense?')) return;
+  await req('DELETE','/expenses/'+id); toast('Deleted',''); renderExpenses(document.getElementById('invoicing-body'));
+}
 async function markInvoicePaid(id){
   var amt=prompt('Received amount (\u20B9) — blank = full amount:');
   var body={status:'Paid',received_date:new Date().toISOString().slice(0,10)};

@@ -167,7 +167,7 @@ def build_invoice_html(d, for_print=True):
         '<div class="sm">We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</div></td></tr>'
         '<tr><td style="width:55%;height:70px;vertical-align:top">Customer&#39;s Seal and Signature</td>'
         '<td style="vertical-align:top;text-align:right"><div class="b">for ' + _esc(seller['name']) + '</div>'
-        '<div style="height:44px;text-align:right;color:#1a3a6b;font-style:italic;font-size:13pt;padding-top:6px">' + _esc(d.get('signatory_name','')) + '</div>'
+        '<div style="height:50px"></div>'
         '<div class="b">Authorised Signatory</div></td></tr></table>'
       '<div class="foot">Registered Office: ' + _esc(seller.get('reg_office','')) + '</div>'
       '<div class="foot">This is a Computer Generated Invoice</div>'
