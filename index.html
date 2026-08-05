@@ -729,6 +729,7 @@ body{font-size:14px !important; line-height:1.5}
 
   <div style="padding:6px 0 2px">
     <a href="#" class="sb-gear" id="sb-home" onclick="return navClick(event,goHome)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Home</span><span class="sb-nav-sub">Dashboard &middot; today&#39;s focus</span></span></a>
+    <a href="#command" class="sb-gear" id="sb-command" onclick="return navClick(event,openCommandCenter)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Command Center</span><span class="sb-nav-sub">₹100 Cr brain &middot; strategy</span></span></a>
     <a href="#jobs" class="sb-gear" id="sb-jobs" onclick="return navClick(event,openJobs)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Jobs</span><span class="sb-nav-sub">All mandates &middot; pipeline</span></span></a>
     <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12l3 3 5-6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Tasks</span><span class="sb-nav-sub">Reminders &middot; interviews &middot; follow-ups</span></span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
     <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Analytics</span><span class="sb-nav-sub">Insights &middot; funnel &middot; sources</span></span></a>
@@ -912,6 +913,9 @@ body{font-size:14px !important; line-height:1.5}
   </div>
   <div id="email-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div id="email-body" style="flex:1;overflow:auto;padding:20px"></div>
+  </div>
+  <div id="command-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+    <div id="command-body" style="flex:1;overflow:auto;padding:20px"></div>
   </div>
   <div id="tasks-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
@@ -3864,6 +3868,89 @@ function openEmailBox(){
   var sb=document.getElementById('sb-email'); if(sb) sb.classList.add('active');
   try{ location.hash='#email'; }catch(e){}
   renderEmailBox();
+}
+function openCommandCenter(){
+  closeSidebarOnMobile(); _hideAllViews();
+  var v=document.getElementById('command-view'); if(v) v.style.display='flex';
+  var sb=document.getElementById('sb-command'); if(sb) sb.classList.add('active');
+  try{ location.hash='#command'; }catch(e){}
+  renderCommandCenter();
+}
+function _ccR(n){ n=Math.round(n||0); return '\u20B9'+n.toLocaleString('en-IN'); }
+function _ccCr(n){ return '\u20B9'+(( (n||0)/10000000).toFixed(2))+' Cr'; }
+async function renderCommandCenter(){
+  var el=document.getElementById('command-body'); if(!el) return;
+  el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
+  var r={};
+  try{ r=await req('GET','/command/overview'); }catch(e){}
+  var o=(r&&r.overview)||{};
+  var lp=''; try{ lp=r.last_plan?JSON.parse(r.last_plan):''; }catch(e){ lp=''; }
+  var tgtTotal=o.target_total||1000000000, tgtYears=o.target_years||3;
+  var yrTarget=o.year_target||0, received=o.received||0;
+  var pct=yrTarget?Math.min(100,Math.round(received/yrTarget*100)):0;
+  var card=function(lbl,val,col,sub){ return '<div style="flex:1;min-width:150px;background:#fff;border:1px solid #eee;border-radius:12px;padding:14px 16px">'
+    +'<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.4px">'+lbl+'</div>'
+    +'<div style="font-size:20px;font-weight:700;color:'+(col||'#1B1B18')+';margin-top:4px">'+val+'</div>'
+    +(sub?'<div style="font-size:10.5px;color:#aaa;margin-top:2px">'+sub+'</div>':'')+'</div>'; };
+  // North-star header
+  var northStar='<div style="background:linear-gradient(135deg,#2B2A6B,#534AB7);color:#fff;border-radius:16px;padding:20px 22px;margin-bottom:16px">'
+    +'<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;align-items:flex-end">'
+    +'<div><div style="font-size:12px;opacity:.8;text-transform:uppercase;letter-spacing:1px">North Star &middot; '+tgtYears+'-year mission</div>'
+    +'<div style="font-size:30px;font-weight:800;margin-top:2px">'+_ccCr(tgtTotal)+' revenue company</div></div>'
+    +'<div style="text-align:right"><div style="font-size:11px;opacity:.8">This year target</div><div style="font-size:20px;font-weight:700">'+(yrTarget?_ccCr(yrTarget):'— set it below')+'</div></div></div>'
+    +(yrTarget?('<div style="margin-top:14px"><div style="display:flex;justify-content:space-between;font-size:11px;opacity:.9"><span>Received '+_ccR(received)+'</span><span>'+pct+'% of year target</span></div>'
+      +'<div style="height:8px;background:rgba(255,255,255,.2);border-radius:6px;margin-top:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:#7CF0C0"></div></div></div>'):'')
+    +'</div>';
+  // metric cards
+  var netCol=(o.net_profit||0)>=0?'#0F7A52':'#C0392B';
+  var runwayCol=(o.runway_months||0)>=6?'#0F7A52':((o.runway_months||0)>=3?'#B4690E':'#C0392B');
+  var cards='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
+    +card('Received (paid)',_ccR(o.received),'#0F7A52')
+    +card('Outstanding',_ccR(o.outstanding),'#B4690E')
+    +card('Net Profit',_ccR(o.net_profit),netCol)
+    +card('Runway',(o.runway_months||0)+' mo',runwayCol,'cash \u00F7 fixed cost')
+    +'</div>'
+    +'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
+    +card('Open Mandates',o.open_mandates||0,'#534AB7')
+    +card('Candidates',o.total_candidates||0,'#555')
+    +card('Shared w/ Client',o.shared_with_client||0,'#2456A6')
+    +card('Placed / Joined',o.placed||0,'#0F7A52')
+    +'</div>';
+  // snapshot form
+  var snap='<div style="background:#fff;border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:16px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-weight:600">Business Snapshot <span style="font-size:10.5px;color:#999;font-weight:400">(brain ko yeh numbers chahiye — jo kisi table mein nahi)</span></div>'
+    +'<button class="btn" style="background:#0F6E56;color:#fff;border:none;font-size:12px" onclick="saveSnapshot()">Save</button></div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap">'
+    +_ccInp('cc-bank','Bank cash (\u20B9)',o.bank_cash)
+    +_ccInp('cc-fixed','Monthly fixed cost (\u20B9)',o.monthly_fixed)
+    +_ccInp('cc-team','Team size',o.team_size)
+    +_ccInp('cc-ytarget','This year target (\u20B9)',o.year_target)
+    +_ccInp('cc-funding','Funding / discounting available (\u20B9)',o.funding_available)
+    +'</div></div>';
+  // plan section
+  var planHtml='';
+  if(lp&&lp.md){ planHtml='<div style="font-size:10.5px;color:#999;margin-bottom:6px">Last generated: '+esc(lp.at||'')+'</div>'
+    +'<div style="background:#fff;border:1px solid #eee;border-radius:12px;padding:18px 20px">'+_mdToHtml(lp.md)+'</div>'; }
+  else { planHtml='<div style="background:#FAF9FF;border:1px dashed #D5D0F0;border-radius:12px;padding:24px;text-align:center;color:#777">Business Snapshot bharo, phir <b>Generate Strategic Plan</b> dabao — brain tumhare live data pe ₹100 Cr ka honest weekly plan dega.</div>'; }
+  el.innerHTML=northStar+cards+snap
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-weight:700;font-size:16px">\uD83E\uDDE0 Strategic Brain</div>'
+    +'<button class="btn" style="background:#534AB7;color:#fff;border:none" onclick="generatePlan(this)">\u2728 Generate Strategic Plan</button></div>'
+    +planHtml;
+}
+function _ccInp(id,lbl,val){ return '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">'+lbl+'</label>'
+  +'<input id="'+id+'" class="inp" type="number" value="'+(val!=null&&val!==''?val:'')+'" style="width:100%"></div>'; }
+async function saveSnapshot(){
+  var v=function(x){var e=document.getElementById(x);return e?e.value:'';};
+  var r=await req('POST','/command/snapshot',{cc_bank_cash:v('cc-bank'),cc_monthly_fixed:v('cc-fixed'),cc_team_size:v('cc-team'),cc_year_target:v('cc-ytarget'),cc_funding_available:v('cc-funding')});
+  if(r&&r.ok){ toast('OK','Snapshot saved'); renderCommandCenter(); } else toast('Error','Save failed');
+}
+async function generatePlan(btn){
+  if(btn){ btn.disabled=true; btn.innerHTML='\uD83E\uDDE0 Thinking… (10-20s)'; }
+  var r;
+  try{ r=await req('POST','/command/plan',{}); }
+  catch(e){ if(btn){btn.disabled=false;btn.innerHTML='\u2728 Generate Strategic Plan';} toast('Error','Plan failed'); return; }
+  if(r&&r.error){ if(btn){btn.disabled=false;btn.innerHTML='\u2728 Generate Strategic Plan';} toast('Error',esc(String(r.error))); return; }
+  renderCommandCenter();
 }
 window._emailFolder='';
 async function renderEmailBox(){
@@ -8690,9 +8777,9 @@ var aiActiveTab = 'search';
 // Every open* function calls this first so views can never overlap.
 var _ALL_VIEWS = ['mandate-view','settings-view','central-view','cdb-view',
   'responses-view','tasks-view','admin-view','ai-view','analytics-view',
-  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view','jobs-view','invoicing-view','email-view'];
+  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view','jobs-view','invoicing-view','email-view','command-view'];
 var _ALL_SB = ['sb-tasks','sb-responses','sb-central','sb-admin','sb-ai',
-  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers','sb-jobs','sb-invoicing','sb-email'];
+  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers','sb-jobs','sb-invoicing','sb-email','sb-command'];
 function _hideAllViews(){
   _ALL_VIEWS.forEach(function(id){
     var v=document.getElementById(id); if(v) v.style.display='none';

@@ -1922,6 +1922,10 @@ def init_db():
         ('invoice_hsn', '998512'),
         ('invoice_fy', '2026-27'),
         ('imap_host', 'imap.gmail.com'),
+        ('cc_bank_cash', ''), ('cc_monthly_fixed', ''), ('cc_team_size', '1'),
+        ('cc_year_target', ''), ('cc_funding_available', ''),
+        ('cc_target_total', '1000000000'), ('cc_target_years', '3'),
+        ('cc_notes', ''), ('cc_last_plan', ''),
         ('seller_name', 'HireLab Talent Resource'),
         ('seller_gstin', '09ECWPP1647A1Z9'),
         ('seller_address', 'Office no: GF064, B-128, First Floor, Sector-2, Gautam Buddha Nagar, Noida, Uttar Pradesh 201301.'),
@@ -4210,6 +4214,8 @@ TENANT_SETTINGS = {
     'submission_cc_emails', 'company_website', 'submission_signature',
     'seller_gstin', 'seller_address', 'seller_udyam', 'seller_state', 'seller_state_code',
     'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_fy', 'imap_host',
+    'cc_bank_cash', 'cc_monthly_fixed', 'cc_team_size', 'cc_year_target',
+    'cc_funding_available', 'cc_target_total', 'cc_target_years', 'cc_notes', 'cc_last_plan',
     'seller_gstin', 'seller_address', 'seller_udyam', 'seller_state', 'seller_state_code',
     'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_prefix', 'seller_name',
     'template_msg1', 'template_fu1', 'template_fu2',
@@ -9429,6 +9435,191 @@ def emailbox_get(eid):
     if not r:
         return jsonify({'error': 'Not found'}), 404
     return jsonify({'ok': True, 'email': dict(r)})
+
+
+# ── CEO Command Center (strategic brain toward the ₹100 Cr goal) ─────────────
+CEO_BRAIN_PROMPT = """You are the CEO Command Center — the strategic brain of HireLab Talent Resource, a solo-founder recruitment consultancy in NCR India (Solar, Electrical, Automation, Renewable Energy). The founder is Nitin Kumar. His 3-year mission: build this into a ₹100 Crore revenue company.
+
+Ground truth you must respect (do NOT flatter, be brutally honest and useful):
+- ₹100 Cr/year from permanent placement fees alone is NOT achievable for a small team — it would need ~5,000 placements/year. Perm is the cash-and-credibility engine, not the path to ₹100 Cr on its own.
+- The realistic path to ₹100 Cr is CONTRACT STAFFING & PAYROLL (recurring per-head monthly margin) layered on top of perm. ~1,650 deployed contractors at ~₹50k/head/month ≈ ₹100 Cr/year.
+- The #1 killer of staffing scale is WORKING CAPITAL (pay contractors before clients pay you). The founder's own idea — INVOICE DISCOUNTING — is the key lever to fund growth without his own cash. Always weigh discounting fee vs growth benefit.
+- Cheapest growth = ACCOUNT EXPANSION of existing clients (more roles, more SPOCs, cross-sell), not chasing new logos.
+- Do NOT push him to over-hire or over-spend. Hiring should be demand-led and tied to revenue milestones, not the calendar.
+- Product/ATS selling is a LATER bet (years 4-6), not part of the ₹100 Cr/3yr plan. His ATS is being battle-tested by his own use meanwhile.
+
+Given the live business data provided, produce a SHORT, sharp, honest strategic brief in markdown with these sections:
+## Where you stand
+2-3 blunt sentences on the real situation (run-rate vs target, cash/runway, what the numbers say).
+## This week's 3 highest-leverage moves
+Exactly 3, each one concrete and doable this week, tied to the actual data (name the client/mandate/candidate where possible). Each: **the move** — why it's the highest leverage right now.
+## Cash & capital
+Runway, working-capital risk, and whether/when to use invoice discounting or start contract staffing. Concrete numbers.
+## The one thing to change
+The single biggest thing holding him back from the ₹100 Cr trajectory, stated honestly.
+
+Rules: Be specific and numeric. No generic startup advice. No flattery. If data is missing, say what he must track. Keep it under ~450 words. Write to Nitin directly ("you")."""
+
+
+def _command_overview(conn, oid):
+    d = {}
+    # Revenue from invoices
+    invs = conn.execute('SELECT amount, gst_rate, status, received_amount, invoice_date FROM invoices WHERE owner_id=?', (oid,)).fetchall()
+    invoiced = received = outstanding = 0.0
+    for r in invs:
+        gross = round((r['amount'] or 0) * (1 + (r['gst_rate'] or 18)/100))
+        invoiced += gross
+        if (r['status'] or '').lower() == 'paid':
+            received += (r['received_amount'] or gross)
+        else:
+            outstanding += gross
+    # Expenses
+    exps = conn.execute('SELECT category, amount FROM expenses WHERE owner_id=?', (oid,)).fetchall()
+    total_exp = sum((e['amount'] or 0) for e in exps)
+    exp_by_cat = {}
+    for e in exps:
+        exp_by_cat[e['category']] = exp_by_cat.get(e['category'], 0) + (e['amount'] or 0)
+    # Pipeline
+    try:
+        mand_rows = conn.execute('SELECT id, status FROM mandates WHERE owner_id=?', (oid,)).fetchall()
+        open_mandates = sum(1 for m in mand_rows if (m['status'] or 'active').lower() in ('active', 'open', ''))
+    except Exception:
+        open_mandates = 0
+    try:
+        cand_rows = conn.execute('SELECT stage FROM candidates WHERE owner_id=?', (oid,)).fetchall()
+        total_cand = len(cand_rows)
+        by_stage = {}
+        for c in cand_rows:
+            s = c['stage'] or 'Unknown'; by_stage[s] = by_stage.get(s, 0) + 1
+        placed = by_stage.get('Placed', 0) + by_stage.get('Joined', 0)
+        shared = by_stage.get('Shared with Client', 0)
+    except Exception:
+        total_cand = placed = shared = 0; by_stage = {}
+    # Snapshot inputs
+    def _num(k):
+        try: return float(get_setting(k, '') or 0)
+        except Exception: return 0.0
+    bank_cash = _num('cc_bank_cash'); monthly_fixed = _num('cc_monthly_fixed')
+    year_target = _num('cc_year_target'); funding = _num('cc_funding_available')
+    target_total = _num('cc_target_total') or 1000000000
+    target_years = _num('cc_target_years') or 3
+    runway = round(bank_cash / monthly_fixed, 1) if monthly_fixed else 0
+    d.update({
+        'invoiced': round(invoiced), 'received': round(received), 'outstanding': round(outstanding),
+        'total_expenses': round(total_exp), 'net_profit': round(received - total_exp),
+        'expenses_by_category': exp_by_cat,
+        'open_mandates': open_mandates, 'total_candidates': total_cand, 'placed': placed,
+        'shared_with_client': shared, 'by_stage': by_stage,
+        'bank_cash': bank_cash, 'monthly_fixed': monthly_fixed, 'runway_months': runway,
+        'year_target': year_target, 'funding_available': funding,
+        'target_total': target_total, 'target_years': target_years, 'team_size': get_setting('cc_team_size', '1'),
+    })
+    return d
+
+
+@app.route('/api/command/snapshot', methods=['GET', 'POST'])
+@login_required
+def command_snapshot():
+    keys = ['cc_bank_cash', 'cc_monthly_fixed', 'cc_team_size', 'cc_year_target',
+            'cc_funding_available', 'cc_target_total', 'cc_target_years', 'cc_notes']
+    if request.method == 'POST':
+        d = request.json or {}
+        for k in keys:
+            if k in d:
+                set_setting(k, str(d[k]))
+        return jsonify({'ok': True})
+    return jsonify({'ok': True, 'snapshot': {k: get_setting(k, '') for k in keys}})
+
+
+@app.route('/api/command/overview', methods=['GET'])
+@login_required
+def command_overview():
+    conn = get_db()
+    try:
+        data = _command_overview(conn, effective_company_id())
+    finally:
+        conn.close()
+    return jsonify({'ok': True, 'overview': data, 'last_plan': get_setting('cc_last_plan', '')})
+
+
+@app.route('/api/command/plan', methods=['POST'])
+@login_required
+def command_plan():
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
+    conn = get_db()
+    try:
+        oid = effective_company_id()
+        o = _command_overview(conn, oid)
+        # top clients by CRM value / invoice
+        try:
+            top_clients = conn.execute(
+                'SELECT buyer_name, COUNT(*) n, SUM(amount) amt FROM invoices WHERE owner_id=? GROUP BY buyer_name ORDER BY amt DESC LIMIT 6',
+                (oid,)).fetchall()
+            clients_str = '; '.join(f"{r['buyer_name']} (₹{int(r['amt'] or 0):,}, {r['n']} inv)" for r in top_clients) or 'none yet'
+        except Exception:
+            clients_str = 'n/a'
+        # recent email subjects (signal)
+        try:
+            em = conn.execute('SELECT folder, from_name, subject FROM emails WHERE owner_id=? ORDER BY date_ts DESC LIMIT 15', (oid,)).fetchall()
+            email_str = ' | '.join(f"[{e['folder']}] {e['from_name']}: {e['subject']}" for e in em) or 'no emails synced'
+        except Exception:
+            email_str = 'n/a'
+        # open mandates detail
+        try:
+            mand = conn.execute('SELECT role, client, location FROM mandates WHERE owner_id=? LIMIT 15', (oid,)).fetchall()
+            mand_str = '; '.join(f"{m['role']} @ {m['client']} ({m['location']})" for m in mand) or 'none'
+        except Exception:
+            mand_str = 'n/a'
+    finally:
+        conn.close()
+
+    def r(n): return f"₹{int(n or 0):,}"
+    ctx = f"""LIVE BUSINESS DATA (as of {ts()[:10]}):
+
+MONEY:
+- Total invoiced (incl GST): {r(o['invoiced'])} | Received: {r(o['received'])} | Outstanding: {r(o['outstanding'])}
+- Total expenses: {r(o['total_expenses'])} | Net profit: {r(o['net_profit'])}
+- Expense breakdown: {o['expenses_by_category']}
+
+FOUNDER SNAPSHOT (self-reported):
+- Bank cash: {r(o['bank_cash'])} | Monthly fixed cost: {r(o['monthly_fixed'])} | Runway: {o['runway_months']} months
+- Team size: {o['team_size']} | This-year target: {r(o['year_target'])} | Funding/discounting available: {r(o['funding_available'])}
+- Mission: {r(o['target_total'])} in {int(o['target_years'])} years
+
+PIPELINE:
+- Open mandates: {o['open_mandates']} | Total candidates: {o['total_candidates']} | Shared with client: {o['shared_with_client']} | Placed/Joined: {o['placed']}
+- Candidate stages: {o['by_stage']}
+- Open mandates detail: {mand_str}
+
+TOP CLIENTS (by billing): {clients_str}
+
+RECENT EMAIL SIGNAL (last 15): {email_str}
+
+Now produce the strategic brief."""
+
+    try:
+        rr = call_deepseek(ds_key,
+            {'model': 'deepseek-chat', 'temperature': 0.4, 'max_tokens': 1600,
+             'messages': [{'role': 'system', 'content': CEO_BRAIN_PROMPT},
+                          {'role': 'user', 'content': ctx}]},
+            timeout=180, endpoint='command-center')
+    except TokenCapError:
+        return jsonify({'error': 'Monthly AI token cap reached.'}), 429
+    except Exception as e:
+        return jsonify({'error': f'Could not reach DeepSeek — {type(e).__name__}: {e}'}), 502
+    if rr.status_code != 200:
+        try: err = rr.json().get('error', {}).get('message', rr.text[:300])
+        except Exception: err = rr.text[:300]
+        return jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502
+    try:
+        md = rr.json()['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        return jsonify({'error': f'Unexpected DeepSeek response: {e}'}), 502
+    at = ts()
+    set_setting('cc_last_plan', json.dumps({'md': md, 'at': at}))
+    return jsonify({'ok': True, 'md': md, 'at': at})
 
 
 @app.route('/api/mandates/<int:mid>/email-templates', methods=['GET'])
