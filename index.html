@@ -3935,7 +3935,55 @@ async function renderCommandCenter(){
   el.innerHTML=northStar+cards+snap
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-weight:700;font-size:16px">\uD83E\uDDE0 Strategic Brain</div>'
     +'<button class="btn" style="background:#534AB7;color:#fff;border:none" onclick="generatePlan(this)">\u2728 Generate Strategic Plan</button></div>'
-    +planHtml;
+    +planHtml
+    +'<div style="margin-top:22px;background:#fff;border:1px solid #eee;border-radius:14px;overflow:hidden">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #f0f0f0;background:#FAF9FF">'
+      +'<div style="font-weight:700">\uD83D\uDCAC Talk to your brain <span style="font-size:10.5px;color:#999;font-weight:400">— jo baatein kisi field mein nahi (jaise "is week invoice clear ho rahi hai"), yahan batao; brain yaad rakhega</span></div>'
+      +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="clearCommandChat()">Clear</button></div>'
+    +'<div id="cc-chat-msgs" style="max-height:44vh;overflow:auto;padding:14px 16px;font-size:13px">Loading…</div>'
+    +'<div style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid #f0f0f0">'
+      +'<textarea id="cc-chat-input" rows="1" class="inp" style="flex:1;resize:none" placeholder="Brain se baat karo… (e.g. Nanj Solar ki invoice is week clear ho rahi hai)" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();sendCommandChat();}"></textarea>'
+      +'<button class="btn" style="background:#534AB7;color:#fff;border:none" onclick="sendCommandChat()" id="cc-chat-send">Send</button></div></div>';
+  loadCommandChat();
+}
+function _ccBubble(role,content){
+  var mine=role==='user';
+  return '<div style="display:flex;justify-content:'+(mine?'flex-end':'flex-start')+';margin-bottom:10px">'
+    +'<div style="max-width:82%;padding:9px 13px;border-radius:12px;'
+    +(mine?'background:#534AB7;color:#fff;border-bottom-right-radius:3px':'background:#F4F3FB;color:#1B1B18;border-bottom-left-radius:3px')
+    +'">'+(mine?esc(content):_mdToHtml(content))+'</div></div>';
+}
+async function loadCommandChat(){
+  var box=document.getElementById('cc-chat-msgs'); if(!box) return;
+  var r={};
+  try{ r=await req('GET','/command/chat'); }catch(e){}
+  var msgs=(r&&r.messages)||[];
+  if(!msgs.length){ box.innerHTML='<div style="color:#aaa;text-align:center;padding:16px">Brain se baat shuru karo — koi bhi update, sawaal, ya soch. Jo yahan batao ge woh planning mein use hoga.</div>'; return; }
+  box.innerHTML=msgs.map(function(m){return _ccBubble(m.role,m.content);}).join('');
+  box.scrollTop=box.scrollHeight;
+}
+async function sendCommandChat(){
+  var inp=document.getElementById('cc-chat-input'); var box=document.getElementById('cc-chat-msgs'); var btn=document.getElementById('cc-chat-send');
+  if(!inp||!box) return;
+  var msg=(inp.value||'').trim(); if(!msg) return;
+  inp.value='';
+  if(box.querySelector('div[style*="text-align:center"]')) box.innerHTML='';
+  box.insertAdjacentHTML('beforeend',_ccBubble('user',msg));
+  box.insertAdjacentHTML('beforeend','<div id="cc-typing" style="color:#999;font-size:12px;padding:4px 6px">\uD83E\uDDE0 soch raha hoon…</div>');
+  box.scrollTop=box.scrollHeight;
+  if(btn) btn.disabled=true;
+  var r;
+  try{ r=await req('POST','/command/chat',{message:msg}); }
+  catch(e){ var t=document.getElementById('cc-typing'); if(t)t.remove(); if(btn)btn.disabled=false; toast('Error','Chat failed'); return; }
+  var t=document.getElementById('cc-typing'); if(t) t.remove();
+  if(btn) btn.disabled=false;
+  if(r&&r.error){ toast('Error',esc(String(r.error))); return; }
+  box.insertAdjacentHTML('beforeend',_ccBubble('assistant',(r&&r.reply)||'(no reply)'));
+  box.scrollTop=box.scrollHeight;
+}
+async function clearCommandChat(){
+  if(!confirm('Clear the whole chat? Brain is conversation ko bhool jayega.')) return;
+  await req('DELETE','/command/chat'); loadCommandChat();
 }
 function _ccInp(id,lbl,val){ return '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">'+lbl+'</label>'
   +'<input id="'+id+'" class="inp" type="number" value="'+(val!=null&&val!==''?val:'')+'" style="width:100%"></div>'; }

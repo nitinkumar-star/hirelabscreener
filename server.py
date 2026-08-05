@@ -2205,6 +2205,14 @@ def init_db():
     """)
 
     c.execute("""
+        CREATE TABLE IF NOT EXISTS command_chat (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            role TEXT DEFAULT 'user', content TEXT DEFAULT '', created_at TEXT
+        );
+    """)
+
+    c.execute("""
         CREATE TABLE IF NOT EXISTS emails (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             owner_id INTEGER DEFAULT 0,
@@ -9539,6 +9547,87 @@ def _command_overview(conn, oid):
     return d
 
 
+CEO_CHAT_PROMPT = """You are the CEO Command Center chat — the strategic co-pilot of HireLab Talent Resource, talking directly with founder Nitin Kumar. Same ground truth as always: ₹100 Cr in 3 years comes mainly from CONTRACT STAFFING & PAYROLL (recurring per-head margin) layered on the perm cash engine; working capital is the #1 risk and INVOICE DISCOUNTING is the key lever; account expansion of existing clients is the cheapest growth; hire demand-led not calendar-led; product/ATS selling is a later bet.
+
+You are conversational, sharp, and honest — never flattering. Nitin will tell you things that aren't in any data field (e.g. "an invoice is clearing this week", "met a new client", "planning to hire"). Take these as real updates, remember them within this conversation, and factor them into your advice. When he asks for a view or number, use the live data provided. Keep replies tight and practical (usually a short paragraph or a few bullets), in the same Hinglish/English mix he uses. If he tells you a fact, acknowledge it briefly and say how it changes the picture (e.g. cash/runway). Don't repeat long analyses he didn't ask for."""
+
+
+def _command_chat_history(conn, oid, limit=24):
+    rows = conn.execute('SELECT role, content FROM command_chat WHERE owner_id=? ORDER BY id DESC LIMIT ?',
+                        (oid, limit)).fetchall()
+    return [{'role': r['role'], 'content': r['content']} for r in reversed(rows)]
+
+
+@app.route('/api/command/chat', methods=['GET'])
+@login_required
+def command_chat_history():
+    conn = get_db()
+    try:
+        hist = _command_chat_history(conn, effective_company_id(), 60)
+    finally:
+        conn.close()
+    return jsonify({'ok': True, 'messages': hist})
+
+
+@app.route('/api/command/chat', methods=['DELETE'])
+@login_required
+def command_chat_clear():
+    conn = get_db()
+    conn.execute('DELETE FROM command_chat WHERE owner_id=?', (effective_company_id(),))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/command/chat', methods=['POST'])
+@login_required
+def command_chat():
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
+    msg = ((request.json or {}).get('message') or '').strip()
+    if not msg:
+        return jsonify({'error': 'Empty message'}), 400
+    conn = get_db()
+    try:
+        oid = effective_company_id()
+        o = _command_overview(conn, oid)
+        hist = _command_chat_history(conn, oid, 24)
+
+        def r(n): return f"₹{int(n or 0):,}"
+        live = (f"LIVE DATA — received {r(o['received'])}, outstanding {r(o['outstanding'])}, "
+                f"net profit {r(o['net_profit'])}, bank cash {r(o['bank_cash'])}, monthly fixed {r(o['monthly_fixed'])}, "
+                f"runway {o['runway_months']} months, this-year target {r(o['year_target'])}, "
+                f"open mandates {o['open_mandates']}, candidates {o['total_candidates']}, placed {o['placed']}.")
+        messages = [{'role': 'system', 'content': CEO_CHAT_PROMPT + "\n\n" + live}]
+        messages += hist
+        messages.append({'role': 'user', 'content': msg})
+
+        try:
+            rr = call_deepseek(ds_key,
+                {'model': 'deepseek-chat', 'temperature': 0.5, 'max_tokens': 900, 'messages': messages},
+                timeout=120, endpoint='command-chat')
+        except TokenCapError:
+            return jsonify({'error': 'Monthly AI token cap reached.'}), 429
+        except Exception as e:
+            return jsonify({'error': f'Could not reach DeepSeek — {type(e).__name__}: {e}'}), 502
+        if rr.status_code != 200:
+            try: err = rr.json().get('error', {}).get('message', rr.text[:300])
+            except Exception: err = rr.text[:300]
+            return jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502
+        try:
+            reply = rr.json()['choices'][0]['message']['content'].strip()
+        except Exception as e:
+            return jsonify({'error': f'Unexpected DeepSeek response: {e}'}), 502
+
+        now = ts()
+        conn.execute('INSERT INTO command_chat (owner_id, role, content, created_at) VALUES (?,?,?,?)', (oid, 'user', msg, now))
+        conn.execute('INSERT INTO command_chat (owner_id, role, content, created_at) VALUES (?,?,?,?)', (oid, 'assistant', reply, now))
+        conn.commit()
+        return jsonify({'ok': True, 'reply': reply})
+    finally:
+        conn.close()
+
+
 @app.route('/api/command/snapshot', methods=['GET', 'POST'])
 @login_required
 def command_snapshot():
@@ -9594,6 +9683,12 @@ def command_plan():
             mand_str = '; '.join(f"{m['role']} @ {m['client']} ({m['location']})" for m in mand) or 'none'
         except Exception:
             mand_str = 'n/a'
+        # founder's recent chat notes (context he told the brain that isn't in any field)
+        try:
+            ch = _command_chat_history(conn, oid, 12)
+            notes = ' | '.join((m['content'][:200]) for m in ch if m['role'] == 'user') or 'none'
+        except Exception:
+            notes = 'none'
     finally:
         conn.close()
 
@@ -9618,6 +9713,8 @@ PIPELINE:
 TOP CLIENTS (by billing): {clients_str}
 
 RECENT EMAIL SIGNAL (last 15): {email_str}
+
+FOUNDER'S RECENT NOTES (things Nitin told the brain in chat — treat as real, current facts): {notes}
 
 Now produce the strategic brief."""
 
