@@ -1925,7 +1925,7 @@ def init_db():
         ('cc_bank_cash', ''), ('cc_monthly_fixed', ''), ('cc_team_size', '1'),
         ('cc_year_target', ''), ('cc_funding_available', ''),
         ('cc_target_total', '1000000000'), ('cc_target_years', '3'),
-        ('cc_notes', ''), ('cc_last_plan', ''),
+        ('cc_notes', ''), ('cc_last_plan', ''), ('cc_task_prefs', ''), ('cc_last_review', ''),
         ('seller_name', 'HireLab Talent Resource'),
         ('seller_gstin', '09ECWPP1647A1Z9'),
         ('seller_address', 'Office no: GF064, B-128, First Floor, Sector-2, Gautam Buddha Nagar, Noida, Uttar Pradesh 201301.'),
@@ -2226,9 +2226,15 @@ def init_db():
             owner_id INTEGER DEFAULT 0,
             text TEXT DEFAULT '', category TEXT DEFAULT '', priority TEXT DEFAULT 'medium',
             done INTEGER DEFAULT 0, source TEXT DEFAULT 'ai',
+            reason TEXT DEFAULT '', ref TEXT DEFAULT '', snooze_until TEXT DEFAULT '',
             task_date TEXT DEFAULT '', created_at TEXT
         );
     """)
+    for col in ['reason', 'ref', 'snooze_until']:
+        try:
+            c.execute(f'ALTER TABLE command_tasks ADD COLUMN {col} TEXT DEFAULT ""')
+        except sqlite3.OperationalError:
+            pass
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS command_chat (
@@ -4249,7 +4255,7 @@ TENANT_SETTINGS = {
     'seller_gstin', 'seller_address', 'seller_udyam', 'seller_state', 'seller_state_code',
     'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_fy', 'imap_host',
     'cc_bank_cash', 'cc_monthly_fixed', 'cc_team_size', 'cc_year_target',
-    'cc_funding_available', 'cc_target_total', 'cc_target_years', 'cc_notes', 'cc_last_plan',
+    'cc_funding_available', 'cc_target_total', 'cc_target_years', 'cc_notes', 'cc_last_plan', 'cc_task_prefs', 'cc_last_review',
     'seller_gstin', 'seller_address', 'seller_udyam', 'seller_state', 'seller_state_code',
     'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_prefix', 'seller_name',
     'template_msg1', 'template_fu1', 'template_fu2',
@@ -9711,43 +9717,51 @@ def _work_status_brief(conn, oid):
             lines.append("UNPAID (not yet due): " + '; '.join(f"{r['invoice_no']} {r['buyer_name']}" for r in pend[:6]))
     except Exception:
         pass
-    # 3) Candidate lifecycle — invoicing, guarantees, stage buckets, stale, uncontacted
+    # 3) Candidate lifecycle — invoicing, guarantees, then PIPELINE BY POSITION
     try:
-        cands = conn.execute("SELECT id,name,stage,joining_date,guarantee_days,updated_at,phone,email FROM candidates WHERE owner_id=?", (oid,)).fetchall()
+        cands = conn.execute("SELECT id,name,stage,joining_date,guarantee_days,updated_at,phone,email,mandate_id FROM candidates WHERE owner_id=?", (oid,)).fetchall()
         inv_cids = set(r['candidate_id'] for r in conn.execute("SELECT candidate_id FROM invoices WHERE owner_id=? AND candidate_id>0", (oid,)).fetchall())
         awaiting_inv = [c for c in cands if (c['stage'] == 'Joined' or c['joining_date']) and c['id'] not in inv_cids]
         if awaiting_inv:
-            lines.append("JOINED, NO INVOICE YET (raise invoice): " + '; '.join((c['name'] or '') for c in awaiting_inv[:8]))
+            lines.append("JOINED, NO INVOICE YET (raise invoice): " + '; '.join(f"{c['name']} [ref cand:{c['mandate_id']}:{c['id']}]" for c in awaiting_inv[:8]))
         guar = []
         for c in cands:
             if c['joining_date']:
                 try:
                     gend = (_dt.date.fromisoformat(c['joining_date'][:10]) + _dt.timedelta(days=int(c['guarantee_days'] or 90))).isoformat()
                     if today <= gend <= soon:
-                        guar.append(f"{c['name']} (ends {gend})")
+                        guar.append(f"{c['name']} (ends {gend}) [ref cand:{c['mandate_id']}:{c['id']}]")
                 except Exception:
                     pass
         if guar:
             lines.append("GUARANTEE ENDING SOON (confirm still on job): " + '; '.join(guar[:6]))
-        by_stage = {}
+        # Map mandate id -> role @ client
+        mroles = {}
+        for m in conn.execute("SELECT id,role,client FROM mandates WHERE owner_id=?", (oid,)).fetchall():
+            mroles[m['id']] = f"{m['role']} @ {m['client']}"
+        ACTIVE_STAGES = ['Not Contacted', 'Called', 'Screening', 'Interested', 'Follow Up 1',
+                         'Follow Up 2', 'Updated CV awaited', 'Shared with Client', 'Interview Inprocess']
+        by_pos = {}
         for c in cands:
-            by_stage.setdefault(c['stage'] or '?', []).append(c)
-        for st, label in [('Shared with Client', 'awaiting client feedback'),
-                          ('Interview Inprocess', 'interview follow-up'),
-                          ('Interested', 'push to next step'),
-                          ('Updated CV awaited', 'chase updated CV'),
-                          ('Not Contacted', 'first outreach pending')]:
-            grp = by_stage.get(st)
-            if grp:
-                lines.append(f"{st.upper()} ({len(grp)}, {label}): " + '; '.join((c['name'] or '') for c in grp[:6]))
-        # stale: in an active stage but not touched in 4+ days
-        stale = [c for c in cands if (c['stage'] in ACTIVE) and (not c['updated_at'] or c['updated_at'][:10] < stale_cut)]
+            if c['stage'] in ACTIVE_STAGES:
+                by_pos.setdefault(c['mandate_id'], []).append(c)
+        if by_pos:
+            lines.append("PIPELINE BY POSITION (make SEPARATE tasks per position — never mix candidates of different positions in one task):")
+            for mid, cl in by_pos.items():
+                pos = mroles.get(mid, f"Mandate#{mid}")
+                # group this position's candidates by stage
+                sg = {}
+                for c in cl:
+                    sg.setdefault(c['stage'], []).append(c)
+                parts = []
+                for st in ACTIVE_STAGES:
+                    if sg.get(st):
+                        parts.append(f"{st}: " + ', '.join(f"{c['name']} [ref cand:{mid}:{c['id']}]" for c in sg[st][:6]))
+                lines.append(f"  • {pos} [ref mandate:{mid}] — " + ' | '.join(parts))
+        # stale: active stage, not touched 4+ days
+        stale = [c for c in cands if (c['stage'] in ACTIVE_STAGES) and (not c['updated_at'] or c['updated_at'][:10] < stale_cut)]
         if stale:
-            lines.append(f"STALE FOLLOW-UPS ({len(stale)}, no activity 4+ days): " + '; '.join(f"{c['name']}[{c['stage']}]" for c in stale[:8]))
-        # missing contact info
-        nomob = [c for c in cands if (c['stage'] in ACTIVE) and not (c['phone'] or '').strip()]
-        if nomob:
-            lines.append(f"MISSING PHONE ({len(nomob)}): " + '; '.join((c['name'] or '') for c in nomob[:5]))
+            lines.append(f"STALE FOLLOW-UPS ({len(stale)}, no activity 4+ days): " + '; '.join(f"{c['name']}[{c['stage']}, {mroles.get(c['mandate_id'],'?')}] [ref cand:{c['mandate_id']}:{c['id']}]" for c in stale[:8]))
     except Exception:
         pass
     # 4) Mandates — sourcing gaps
@@ -9757,10 +9771,9 @@ def _work_status_brief(conn, oid):
         for r in conn.execute("SELECT mandate_id, COUNT(*) n FROM candidates WHERE owner_id=? GROUP BY mandate_id", (oid,)).fetchall():
             counts[r['mandate_id']] = r['n']
         if mand:
-            lines.append("OPEN MANDATES (role @ client, #candidates): " + '; '.join(f"{m['role']} @ {m['client']} ({counts.get(m['id'],0)})" for m in mand[:10]))
             thin = [m for m in mand if counts.get(m['id'], 0) < 3]
             if thin:
-                lines.append("NEEDS SOURCING (thin pipeline <3): " + '; '.join(f"{m['role']} @ {m['client']}" for m in thin[:6]))
+                lines.append("NEEDS SOURCING (thin pipeline <3 candidates): " + '; '.join(f"{m['role']} @ {m['client']} [ref mandate:{m['id']}]" for m in thin[:6]))
     except Exception:
         pass
     # 5) Email signal — unread inbox
@@ -9780,32 +9793,51 @@ def _work_status_brief(conn, oid):
     return '\n'.join(lines) or 'No active pipeline/billing data yet.'
 
 
-TASK_GEN_PROMPT = """You are the daily operating brain for solo recruitment founder Nitin Kumar (HireLab, India — Solar/Electrical/Automation/Renewable). You are given a FULL scan of his ATS: money, invoices, candidate lifecycle, guarantees, pipeline stages, stale follow-ups, sourcing gaps, unread emails, and his own notes. From ALL of it, produce his prioritized task list for TODAY.
+TASK_GEN_PROMPT = """You are the daily operating brain for solo recruitment founder Nitin Kumar (HireLab, India — Solar/Electrical/Automation/Renewable). You are given a FULL scan of his ATS: money, invoices, candidate lifecycle, guarantees, pipeline-by-position, stale follow-ups, sourcing gaps, unread emails, and his own notes. From ALL of it, produce his prioritized task list for TODAY.
 
-Think across the whole business, then prioritize in this order:
+Priority order:
 1. MONEY IN — chase overdue payments, raise invoices for joined candidates.
 2. PROTECT PLACEMENTS — guarantee check-ins, interview follow-ups, chase client feedback for shared candidates.
 3. MOVE PIPELINE — revive stale follow-ups, first outreach to not-contacted, chase updated CVs.
 4. FILL GAPS — source for thin/empty mandates.
-5. ADMIN — reply to important unread emails, fix missing candidate data.
+5. ADMIN — reply to important unread emails.
 Honor the founder's notes as current facts.
 
+CRITICAL — POSITION-WISE TASKS:
+- Every pipeline/follow-up task MUST be for ONE position (role @ client) only. NEVER put candidates from different positions in the same task.
+- Each such task must name the POSITION (role @ client) and the specific candidate name(s) for that position.
+- Example GOOD: "Chase client feedback from Lauritz & Knudsen for Sr Manager Retail Sales — Suhani Sharma, Priya Gupta". Example BAD: "Check feedback for Suhani and Naveen" (mixes positions, no position named).
+
+For EACH task output:
+- text: one imperative line, naming the position (role @ client) and specific candidate(s)/invoice.
+- category: Payment|Invoice|Placement|Follow-up|Sourcing|Client|Email|Admin
+- priority: high|medium|low
+- reason: ONE short line — why it matters / what's at stake (for the founder + his advisor).
+- ref: the entity to open, copied EXACTLY from the [ref ...] tag in the data (e.g. "cand:40:786", "mandate:40", or "invoice"). Use "" if none. If a task covers multiple candidates of one position, use that position's "mandate:<id>" ref.
+
 Rules:
-- 6 to 10 tasks. Each MUST name the specific client/candidate/invoice/mandate from the data — never generic advice.
-- Each task = one imperative line he can DO and tick off today.
-- Don't invent items not supported by the data. If money items exist, they come first.
+- 6 to 12 tasks. Never invent items not in the data. Money items first.
 - Output ONLY a JSON array, no prose, no markdown:
-[{"text":"...","category":"Payment|Invoice|Placement|Follow-up|Sourcing|Client|Email|Admin","priority":"high|medium|low"}]"""
+[{"text":"...","category":"...","priority":"...","reason":"...","ref":"..."}]"""
 
 
 @app.route('/api/command/tasks', methods=['GET'])
 @login_required
 def command_tasks_list():
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
     conn = get_db()
-    rows = conn.execute("SELECT id,text,category,priority,done,source,task_date FROM command_tasks WHERE owner_id=? ORDER BY done ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id DESC",
+    rows = conn.execute("SELECT id,text,category,priority,done,source,reason,ref,snooze_until,task_date FROM command_tasks WHERE owner_id=? ORDER BY done ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id DESC",
                         (effective_company_id(),)).fetchall()
     conn.close()
-    return jsonify({'ok': True, 'tasks': [dict(r) for r in rows]})
+    active, snoozed = [], 0
+    for r in rows:
+        d = dict(r)
+        if d.get('snooze_until') and d['snooze_until'][:10] > today and not d['done']:
+            snoozed += 1
+            continue
+        active.append(d)
+    return jsonify({'ok': True, 'tasks': active, 'snoozed_count': snoozed})
 
 
 @app.route('/api/command/tasks', methods=['POST'])
@@ -9831,6 +9863,7 @@ def command_tasks_update(tid):
     if 'done' in d: sets.append('done=?'); vals.append(1 if d['done'] else 0)
     if 'text' in d: sets.append('text=?'); vals.append((d['text'] or '').strip())
     if 'priority' in d: sets.append('priority=?'); vals.append(d['priority'])
+    if 'snooze_until' in d: sets.append('snooze_until=?'); vals.append((d['snooze_until'] or '')[:10])
     if sets:
         vals += [tid, oid]
         conn.execute(f'UPDATE command_tasks SET {",".join(sets)} WHERE id=? AND owner_id=?', tuple(vals))
@@ -9848,22 +9881,138 @@ def command_tasks_delete(tid):
     return jsonify({'ok': True})
 
 
+def _run_task_generation(conn, oid, refine_instruction='', current_tasks=None):
+    """Generate (or revise) the daily AI task list. Honors persisted task prefs.
+    Returns (tasks_list, error_json_tuple_or_None)."""
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return None, (jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400)
+    brief = _work_status_brief(conn, oid)
+    prefs = (get_setting('cc_task_prefs', '') or '').strip()
+    sys = TASK_GEN_PROMPT
+    if prefs:
+        sys += "\n\nSTANDING PREFERENCES from the founder (always follow these): " + prefs
+    user = 'FULL ATS WORK STATUS:\n' + brief
+    if current_tasks:
+        user += '\n\nCURRENT TASK LIST:\n' + '\n'.join('- ' + t for t in current_tasks)
+    if refine_instruction:
+        user += ('\n\nThe founder wants you to REVISE the task list with this instruction: "'
+                 + refine_instruction + '"\nReturn the FULL revised task list (not just the changes), as a JSON array.')
+    else:
+        user += "\n\nGive today's task list as a JSON array."
+    try:
+        rr = call_deepseek(ds_key,
+            {'model': 'deepseek-chat', 'temperature': 0.4, 'max_tokens': 1600,
+             'messages': [{'role': 'system', 'content': sys}, {'role': 'user', 'content': user}]},
+            timeout=150, endpoint='task-gen')
+    except TokenCapError:
+        return None, (jsonify({'error': 'Monthly AI token cap reached.'}), 429)
+    except Exception as e:
+        return None, (jsonify({'error': f'Could not reach DeepSeek — {type(e).__name__}: {e}'}), 502)
+    if rr.status_code != 200:
+        try: err = rr.json().get('error', {}).get('message', rr.text[:200])
+        except Exception: err = rr.text[:200]
+        return None, (jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502)
+    text = rr.json()['choices'][0]['message']['content'].strip()
+    text = re.sub(r'^```[a-zA-Z]*\n?|```$', '', text).strip()
+    tasks = None
+    try:
+        tasks = json.loads(text)
+    except Exception:
+        s = text.find('['); e = text.rfind(']')
+        if s >= 0 and e > s:
+            try: tasks = json.loads(text[s:e+1])
+            except Exception: tasks = None
+    if not isinstance(tasks, list) or not tasks:
+        return None, (jsonify({'error': 'AI could not produce a task list. Try again.'}), 502)
+    conn.execute("DELETE FROM command_tasks WHERE owner_id=? AND source='ai' AND done=0", (oid,))
+    now = ts(); td = now[:10]
+    for t in tasks[:12]:
+        if isinstance(t, dict) and (t.get('text') or '').strip():
+            conn.execute("INSERT INTO command_tasks (owner_id,text,category,priority,done,source,reason,ref,task_date,created_at) VALUES (?,?,?,?,0,'ai',?,?,?,?)",
+                         (oid, t['text'].strip()[:400], (t.get('category') or '')[:40], (t.get('priority') or 'medium')[:10],
+                          (t.get('reason') or '')[:300], (t.get('ref') or '')[:40], td, now))
+    conn.commit()
+    rows = conn.execute("SELECT id,text,category,priority,done,source,reason,ref,snooze_until,task_date FROM command_tasks WHERE owner_id=? ORDER BY done ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id DESC", (oid,)).fetchall()
+    return [dict(r) for r in rows], None
+
+
 @app.route('/api/command/tasks/generate', methods=['POST'])
 @login_required
 def command_tasks_generate():
+    conn = get_db()
+    try:
+        tasks, err = _run_task_generation(conn, effective_company_id())
+        if err:
+            return err
+        return jsonify({'ok': True, 'tasks': tasks})
+    finally:
+        conn.close()
+
+
+WEEKLY_REVIEW_PROMPT = """You are preparing a WEEKLY BUSINESS REVIEW for solo recruitment founder Nitin Kumar (HireLab, India — Solar/Electrical/Automation/Renewable). This report will be sent to his external ADVISOR, so it must be COMPREHENSIVE and leave nothing important out — money, placements, pipeline health, risks, and next-week priorities. Be honest and specific; no flattery, no fluff.
+
+Ground truth: The 3-year mission is a ₹100 Cr revenue company, driven mainly by contract staffing & payroll (recurring) on top of perm placement; working capital is the #1 risk and invoice discounting is the key lever; account expansion of existing clients is the cheapest growth.
+
+Using the data provided, write a clear markdown report with these sections (include every section, even if you must say "nothing this week"):
+## Executive Summary
+3-4 sentences an advisor can read in 20 seconds.
+## Money
+Invoiced, received, outstanding, overdue (name them), expenses, net profit, runway. Flag cash risks.
+## Placements & Delivery
+Joined this week, guarantees in progress / ending, candidates shared / in interview — by position.
+## Pipeline Health (by position)
+For each open mandate: role @ client, candidate count, stage spread, and whether it's healthy or thin/stalling.
+## Risks & What Slipped
+Stale follow-ups, overdue payments, thin pipelines, anything neglected. Be blunt.
+## Tasks: Done vs Pending
+Summarize execution this week.
+## Next Week — Top Priorities
+5-7 concrete priorities for the coming week, money and placements first.
+
+Write to the advisor in third person about Nitin's business, or neutrally. Keep it tight but complete."""
+
+
+@app.route('/api/command/weekly-review', methods=['POST'])
+@login_required
+def command_weekly_review():
     ds_key = get_setting('deepseek_api_key')
     if not ds_key:
         return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
+    import datetime as _dt
     conn = get_db()
     try:
         oid = effective_company_id()
+        wk_ago = (_dt.date.today() - _dt.timedelta(days=7)).isoformat()
         brief = _work_status_brief(conn, oid)
+        extra = []
+        try:
+            inv_new = conn.execute("SELECT invoice_no, buyer_name, amount, gst_rate, status, created_at FROM invoices WHERE owner_id=? AND substr(created_at,1,10)>=?", (oid, wk_ago)).fetchall()
+            if inv_new:
+                extra.append("INVOICES RAISED THIS WEEK: " + '; '.join(f"{r['invoice_no']} {r['buyer_name']} ₹{int((r['amount'] or 0)*(1+(r['gst_rate'] or 18)/100)):,} ({r['status']})" for r in inv_new))
+            paid_new = conn.execute("SELECT invoice_no, buyer_name, received_amount, received_date FROM invoices WHERE owner_id=? AND lower(status)='paid' AND substr(received_date,1,10)>=?", (oid, wk_ago)).fetchall()
+            if paid_new:
+                extra.append("PAYMENTS RECEIVED THIS WEEK: " + '; '.join(f"{r['buyer_name']} ₹{int(r['received_amount'] or 0):,}" for r in paid_new))
+        except Exception:
+            pass
+        try:
+            joined = conn.execute("SELECT name, joining_date FROM candidates WHERE owner_id=? AND substr(joining_date,1,10)>=?", (oid, wk_ago)).fetchall()
+            if joined:
+                extra.append("JOINED THIS WEEK: " + '; '.join(f"{r['name']} ({r['joining_date'][:10]})" for r in joined))
+        except Exception:
+            pass
+        try:
+            td = conn.execute("SELECT COUNT(*) n FROM command_tasks WHERE owner_id=? AND done=1", (oid,)).fetchone()['n']
+            tp = conn.execute("SELECT COUNT(*) n FROM command_tasks WHERE owner_id=? AND done=0", (oid,)).fetchone()['n']
+            extra.append(f"TASKS: {td} done, {tp} pending.")
+        except Exception:
+            pass
+        ctx = "FULL CURRENT ATS STATUS:\n" + brief + "\n\nTHIS WEEK'S ACTIVITY:\n" + ('\n'.join(extra) or 'No recorded activity this week.') + "\n\nWrite the weekly review."
         try:
             rr = call_deepseek(ds_key,
-                {'model': 'deepseek-chat', 'temperature': 0.4, 'max_tokens': 1500,
-                 'messages': [{'role': 'system', 'content': TASK_GEN_PROMPT},
-                              {'role': 'user', 'content': 'FULL ATS WORK STATUS:\n' + brief + '\n\nGive today\'s task list as a JSON array.'}]},
-                timeout=150, endpoint='task-gen')
+                {'model': 'deepseek-chat', 'temperature': 0.35, 'max_tokens': 2600,
+                 'messages': [{'role': 'system', 'content': WEEKLY_REVIEW_PROMPT}, {'role': 'user', 'content': ctx}]},
+                timeout=200, endpoint='weekly-review')
         except TokenCapError:
             return jsonify({'error': 'Monthly AI token cap reached.'}), 429
         except Exception as e:
@@ -9872,30 +10021,43 @@ def command_tasks_generate():
             try: err = rr.json().get('error', {}).get('message', rr.text[:200])
             except Exception: err = rr.text[:200]
             return jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502
-        text = rr.json()['choices'][0]['message']['content'].strip()
-        text = re.sub(r'^```[a-zA-Z]*\n?|```$', '', text).strip()
-        tasks = None
-        try:
-            tasks = json.loads(text)
-        except Exception:
-            s = text.find('['); e = text.rfind(']')
-            if s >= 0 and e > s:
-                try: tasks = json.loads(text[s:e+1])
-                except Exception: tasks = None
-        if not isinstance(tasks, list) or not tasks:
-            return jsonify({'error': 'AI could not produce a task list. Try again.'}), 502
-        # Replace previous undone AI tasks; keep manual + done tasks.
-        conn.execute("DELETE FROM command_tasks WHERE owner_id=? AND source='ai' AND done=0", (oid,))
-        now = ts(); td = now[:10]
-        for t in tasks[:12]:
-            if isinstance(t, dict) and (t.get('text') or '').strip():
-                conn.execute("INSERT INTO command_tasks (owner_id,text,category,priority,done,source,task_date,created_at) VALUES (?,?,?,?,0,'ai',?,?)",
-                             (oid, t['text'].strip()[:400], (t.get('category') or '')[:40], (t.get('priority') or 'medium')[:10], td, now))
-        conn.commit()
-        rows = conn.execute("SELECT id,text,category,priority,done,source,task_date FROM command_tasks WHERE owner_id=? ORDER BY done ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id DESC", (oid,)).fetchall()
-        return jsonify({'ok': True, 'tasks': [dict(r) for r in rows]})
+        md = rr.json()['choices'][0]['message']['content'].strip()
+        at = ts()
+        set_setting('cc_last_review', json.dumps({'md': md, 'at': at}))
+        return jsonify({'ok': True, 'md': md, 'at': at})
     finally:
         conn.close()
+
+
+@app.route('/api/command/tasks/refine', methods=['POST'])
+@login_required
+def command_tasks_refine():
+    instr = ((request.json or {}).get('instruction') or '').strip()
+    if not instr:
+        return jsonify({'error': 'Kya refine karna hai? Instruction likho.'}), 400
+    conn = get_db()
+    try:
+        oid = effective_company_id()
+        cur = [r['text'] for r in conn.execute("SELECT text FROM command_tasks WHERE owner_id=? AND source='ai' ORDER BY id DESC", (oid,)).fetchall()]
+        tasks, err = _run_task_generation(conn, oid, refine_instruction=instr, current_tasks=cur)
+        if err:
+            return err
+        # remember this instruction as a standing preference (accumulate, capped)
+        prefs = (get_setting('cc_task_prefs', '') or '').strip()
+        combined = (prefs + ' | ' + instr) if prefs else instr
+        set_setting('cc_task_prefs', combined[-800:])
+        return jsonify({'ok': True, 'tasks': tasks, 'prefs': get_setting('cc_task_prefs', '')})
+    finally:
+        conn.close()
+
+
+@app.route('/api/command/tasks/prefs', methods=['GET', 'POST'])
+@login_required
+def command_tasks_prefs():
+    if request.method == 'POST':
+        set_setting('cc_task_prefs', ((request.json or {}).get('prefs') or '').strip()[:800])
+        return jsonify({'ok': True})
+    return jsonify({'ok': True, 'prefs': get_setting('cc_task_prefs', '')})
 
 
 @app.route('/api/command/snapshot', methods=['GET', 'POST'])
@@ -9920,7 +10082,7 @@ def command_overview():
         data = _command_overview(conn, effective_company_id())
     finally:
         conn.close()
-    return jsonify({'ok': True, 'overview': data, 'last_plan': get_setting('cc_last_plan', '')})
+    return jsonify({'ok': True, 'overview': data, 'last_plan': get_setting('cc_last_plan', ''), 'last_review': get_setting('cc_last_review', '')})
 
 
 @app.route('/api/command/plan', methods=['POST'])

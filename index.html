@@ -3905,6 +3905,7 @@ async function renderCommandCenter(){
   try{ r=await req('GET','/command/overview'); }catch(e){}
   var o=(r&&r.overview)||{};
   var lp=''; try{ lp=r.last_plan?JSON.parse(r.last_plan):''; }catch(e){ lp=''; }
+  var lr=''; try{ lr=r.last_review?JSON.parse(r.last_review):''; }catch(e){ lr=''; }
   var tgtTotal=o.target_total||1000000000, tgtYears=o.target_years||3;
   var yrTarget=o.year_target||0, received=o.received||0;
   var pct=yrTarget?Math.min(100,Math.round(received/yrTarget*100)):0;
@@ -3958,11 +3959,17 @@ async function renderCommandCenter(){
       +'<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12.5px" onclick="generateTasks(this)">\u2728 Generate Today\u2019s Tasks</button></div>'
       +'<div id="cc-tasks-list">Loading…</div>'
       +'<div style="display:flex;gap:8px;margin-top:10px"><input id="cc-task-add" class="inp" style="flex:1;font-size:12.5px" placeholder="Apna task add karo…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addCommandTask();}"><button class="btn btn-o" style="font-size:12px" onclick="addCommandTask()">Add</button></div>'
+      +'<div style="margin-top:8px;padding-top:10px;border-top:1px dashed #eee"><div style="font-size:10.5px;color:#888;margin-bottom:4px">&#128172; Refine the list \u2014 brain se bolo kaise badalna hai (jaise "har task mein client aur position ka naam daalo", "sirf payments pe focus", "aur detail do")</div>'
+      +'<div style="display:flex;gap:8px"><input id="cc-task-refine" class="inp" style="flex:1;font-size:12.5px" placeholder="e.g. har task mein client aur position naam bhi batao" onkeydown="if(event.key===\'Enter\'){event.preventDefault();refineTasks(this);}"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="refineTasks(this)">Refine</button></div>'
+      +'<div id="cc-task-prefs" style="font-size:10px;color:#aaa;margin-top:5px"></div></div>'
     +'</div>'
     +cards+snap
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-weight:700;font-size:16px">\uD83E\uDDE0 Strategic Brain</div>'
     +'<button class="btn" style="background:#534AB7;color:#fff;border:none" onclick="generatePlan(this)">\u2728 Generate Strategic Plan</button></div>'
     +planHtml
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 10px"><div style="font-weight:700;font-size:16px">\uD83D\uDCC4 Weekly Review <span style="font-size:10.5px;color:#999;font-weight:400">\u2014 advisor ko bhejने ke liye, poora business</span></div>'
+    +'<button class="btn" style="background:#2B2A6B;color:#fff;border:none" onclick="generateWeeklyReview(this)">\uD83D\uDCC4 Generate Weekly Review</button></div>'
+    +(lr&&lr.md?('<div style="font-size:10.5px;color:#999;margin-bottom:6px">Generated: '+esc(lr.at||'')+' &nbsp;<a href="#" onclick="_ccCopyReview();return false;" style="color:#534AB7">copy</a></div><div id="cc-review-md" style="background:#fff;border:1px solid #eee;border-radius:12px;padding:18px 20px">'+_mdToHtml(lr.md)+'</div>'):'<div id="cc-review-md" style="background:#FAF9FF;border:1px dashed #D5D0F0;border-radius:12px;padding:20px;text-align:center;color:#777">Hafte ke end mein <b>Generate Weekly Review</b> dabao \u2014 money, placements, pipeline, risks aur next-week priorities ka poora report banega jo advisor ko bhej sako.</div>')
     +'<div style="margin-top:22px;background:#fff;border:1px solid #eee;border-radius:14px;overflow:hidden">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #f0f0f0;background:#FAF9FF">'
       +'<div style="font-weight:700">\uD83D\uDCAC Talk to your brain <span style="font-size:10.5px;color:#999;font-weight:400">— jo baatein kisi field mein nahi (jaise "is week invoice clear ho rahi hai"), yahan batao; brain yaad rakhega</span></div>'
@@ -3972,23 +3979,48 @@ async function renderCommandCenter(){
       +'<textarea id="cc-chat-input" rows="1" class="inp" style="flex:1;resize:none" placeholder="Brain se baat karo… (e.g. Nanj Solar ki invoice is week clear ho rahi hai)" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();sendCommandChat();}"></textarea>'
       +'<button class="btn" style="background:#534AB7;color:#fff;border:none" onclick="sendCommandChat()" id="cc-chat-send">Send</button></div></div>';
   loadCommandChat();
-  loadCommandTasks();
+  loadCommandTasks(true);
 }
 var _ccTaskPrioCol={high:'#C0392B',medium:'#B4690E',low:'#888'};
-async function loadCommandTasks(){
+async function loadCommandTasks(autogen){
   var box=document.getElementById('cc-tasks-list'); if(!box) return;
   var r={};
   try{ r=await req('GET','/command/tasks'); }catch(e){}
   var tasks=(r&&r.tasks)||[];
-  if(!tasks.length){ box.innerHTML='<div style="color:#aaa;padding:12px;text-align:center">Abhi koi task nahi. <b>Generate Today\u2019s Tasks</b> dabao \u2014 brain tumhare pipeline, payments aur placements dekh ke aaj ka plan dega.</div>'; return; }
+  var todayStr=new Date().toISOString().slice(0,10);
+  var hasTodayAI=tasks.some(function(t){return t.source==='ai' && t.task_date===todayStr;});
+  // Auto morning generate: agar aaj ke AI tasks nahi hain to ek baar bana do
+  if(autogen && !hasTodayAI && !window._ccAutoGenTried){
+    window._ccAutoGenTried=true;
+    box.innerHTML='<div style="color:#888;padding:12px;text-align:center">\uD83E\uDDE0 Aaj ke tasks bana raha hoon…</div>';
+    try{ var g=await req('POST','/command/tasks/generate',{}); if(g&&g.ok){ return loadCommandTasks(false); } }catch(e){}
+  }
+  if(!tasks.length){ box.innerHTML='<div style="color:#aaa;padding:12px;text-align:center">Abhi koi task nahi. <b>Generate Today\u2019s Tasks</b> dabao \u2014 brain tumhare pipeline, payments aur placements dekh ke aaj ka plan dega.</div>'; try{ var pr=await req('GET','/command/tasks/prefs'); _renderTaskPrefs(pr&&pr.prefs); }catch(e){} return; }
   box.innerHTML=tasks.map(function(t){
     var pc=_ccTaskPrioCol[t.priority]||'#888';
-    return '<div style="display:flex;align-items:flex-start;gap:9px;padding:8px 6px;border-bottom:1px solid #f4f4f4">'
+    var link=t.ref?('<a href="#" onclick="_ccOpenRef(\''+esc(t.ref)+'\');return false;" style="font-size:10.5px;color:#534AB7;white-space:nowrap">Open &rarr;</a>'):'';
+    return '<div style="display:flex;align-items:flex-start;gap:9px;padding:9px 6px;border-bottom:1px solid #f4f4f4">'
       +'<input type="checkbox" '+(t.done?'checked':'')+' onchange="toggleCommandTask('+t.id+',this.checked)" style="margin-top:3px;cursor:pointer">'
       +'<div style="flex:1"><div style="font-size:13px;'+(t.done?'text-decoration:line-through;color:#aaa':'color:#1B1B18')+'">'+esc(t.text)+'</div>'
-      +'<div style="font-size:10px;color:#aaa;margin-top:1px">'+(t.category?('<span style="color:'+pc+';font-weight:600">'+esc(t.priority)+'</span> &middot; '+esc(t.category)):('<span style="color:'+pc+';font-weight:600">'+esc(t.priority)+'</span>'))+(t.source==='manual'?' &middot; added':'')+'</div></div>'
-      +'<button class="btn btn-o" style="font-size:10px;padding:2px 7px;color:#C0392B" onclick="deleteCommandTask('+t.id+')">&#10005;</button></div>';
-  }).join('');
+      +(t.reason&&!t.done?'<div style="font-size:11px;color:#7a7a7a;margin-top:2px;font-style:italic">\uD83D\uDCA1 '+esc(t.reason)+'</div>':'')
+      +'<div style="font-size:10px;color:#aaa;margin-top:2px"><span style="color:'+pc+';font-weight:600">'+esc(t.priority)+'</span>'+(t.category?(' &middot; '+esc(t.category)):'')+(t.source==='manual'?' &middot; added':'')+'</div></div>'
+      +'<div style="display:flex;flex-direction:column;gap:3px;align-items:flex-end">'+link
+      +(!t.done?'<button class="btn btn-o" style="font-size:9.5px;padding:2px 6px" title="Kal ke liye tal do" onclick="snoozeTask('+t.id+')">\u21B7 Snooze</button>':'')
+      +'<button class="btn btn-o" style="font-size:9.5px;padding:2px 6px;color:#C0392B" onclick="deleteCommandTask('+t.id+')">&#10005;</button></div></div>';
+  }).join('')
+    +((r.snoozed_count>0)?('<div style="font-size:10.5px;color:#aaa;padding:8px 4px 0">\u21B7 '+r.snoozed_count+' task(s) snoozed for later</div>'):'');
+  try{ var pr=await req('GET','/command/tasks/prefs'); _renderTaskPrefs(pr&&pr.prefs); }catch(e){}
+}
+function _ccOpenRef(ref){
+  if(!ref) return;
+  var p=ref.split(':');
+  if(p[0]==='cand' && p.length>=3){ location.hash='#mandate/'+p[1]+'/profiles/'+p[2]; }
+  else if(p[0]==='mandate' && p.length>=2){ location.hash='#mandate/'+p[1]; }
+  else if(p[0]==='invoice'){ try{ openInvoicing(); }catch(e){} }
+}
+async function snoozeTask(id){
+  var tm=new Date(Date.now()+86400000).toISOString().slice(0,10);
+  await req('PUT','/command/tasks/'+id,{snooze_until:tm}); toast('Snoozed','Kal dikhega'); loadCommandTasks();
 }
 async function generateTasks(btn){
   if(btn){ btn.disabled=true; btn.innerHTML='\uD83E\uDDE0 Planning… (10-20s)'; }
@@ -4006,6 +4038,29 @@ async function addCommandTask(){
   var t=(inp.value||'').trim(); if(!t) return;
   inp.value='';
   await req('POST','/command/tasks',{text:t,priority:'medium'}); loadCommandTasks();
+}
+async function refineTasks(btn){
+  var inp=document.getElementById('cc-task-refine'); if(!inp) return;
+  var instr=(inp.value||'').trim(); if(!instr){ toast('Kya refine karna hai?',''); return; }
+  if(btn){ btn.disabled=true; btn.textContent='Revising…'; }
+  var r;
+  try{ r=await req('POST','/command/tasks/refine',{instruction:instr}); }
+  catch(e){ if(btn){btn.disabled=false;btn.textContent='Refine';} toast('Error','Refine failed'); return; }
+  if(btn){ btn.disabled=false; btn.textContent='Refine'; }
+  if(r&&r.error){ toast('Error',esc(String(r.error))); return; }
+  inp.value='';
+  toast('OK','Task list revised');
+  loadCommandTasks();
+}
+function _renderTaskPrefs(prefs){
+  var el=document.getElementById('cc-task-prefs'); if(!el) return;
+  if(prefs && prefs.trim()){ el.innerHTML='Standing preferences (har generate mein lagti hain): '+esc(prefs)+' &nbsp;<a href="#" onclick="clearTaskPrefs();return false;" style="color:#C0392B">clear</a>'; }
+  else { el.innerHTML=''; }
+}
+async function clearTaskPrefs(){
+  await req('POST','/command/tasks/prefs',{prefs:''});
+  _renderTaskPrefs('');
+  toast('Cleared','Preferences hata di');
 }
 function _ccBubble(role,content){
   var mine=role==='user';
@@ -4052,6 +4107,24 @@ async function saveSnapshot(){
   var v=function(x){var e=document.getElementById(x);return e?e.value:'';};
   var r=await req('POST','/command/snapshot',{cc_bank_cash:v('cc-bank'),cc_monthly_fixed:v('cc-fixed'),cc_team_size:v('cc-team'),cc_year_target:v('cc-ytarget'),cc_funding_available:v('cc-funding')});
   if(r&&r.ok){ toast('OK','Snapshot saved'); renderCommandCenter(); } else toast('Error','Save failed');
+}
+async function generateWeeklyReview(btn){
+  if(btn){ btn.disabled=true; btn.innerHTML='\uD83D\uDCC4 Compiling… (15-30s)'; }
+  var r;
+  try{ r=await req('POST','/command/weekly-review',{}); }
+  catch(e){ if(btn){btn.disabled=false;btn.innerHTML='\uD83D\uDCC4 Generate Weekly Review';} toast('Error','Review failed'); return; }
+  if(btn){ btn.disabled=false; btn.innerHTML='\uD83D\uDCC4 Generate Weekly Review'; }
+  if(r&&r.error){ toast('Error',esc(String(r.error))); return; }
+  window._ccReviewMd=(r&&r.md)||'';
+  var box=document.getElementById('cc-review-md');
+  if(box){ box.innerHTML=_mdToHtml(window._ccReviewMd); box.style.background='#fff'; box.style.border='1px solid #eee'; }
+  toast('OK','Weekly review ready');
+}
+function _ccCopyReview(){
+  var md=window._ccReviewMd||'';
+  if(!md){ var box=document.getElementById('cc-review-md'); md=box?box.innerText:''; }
+  if(!md){ toast('Nothing to copy',''); return; }
+  try{ navigator.clipboard.writeText(md); toast('Copied','Advisor ko paste kar do'); }catch(e){ toast('Copy failed',''); }
 }
 async function generatePlan(btn){
   if(btn){ btn.disabled=true; btn.innerHTML='\uD83E\uDDE0 Thinking… (10-20s)'; }
