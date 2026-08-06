@@ -3989,19 +3989,22 @@ async function loadCommandTasks(autogen){
   var tasks=(r&&r.tasks)||[];
   var todayStr=new Date().toISOString().slice(0,10);
   var hasTodayAI=tasks.some(function(t){return t.source==='ai' && t.task_date===todayStr;});
-  // Auto morning generate: agar aaj ke AI tasks nahi hain to ek baar bana do
-  if(autogen && !hasTodayAI && !window._ccAutoGenTried){
+  var hasRefs=tasks.some(function(t){return t.source==='ai' && (t.ref||'').trim();});
+  // Auto: agar aaj ke AI tasks nahi hain, YA hain par purane (bina deep-link) hain to ek baar bana do
+  if(autogen && (!hasTodayAI || (hasTodayAI && !hasRefs)) && !window._ccAutoGenTried){
     window._ccAutoGenTried=true;
-    box.innerHTML='<div style="color:#888;padding:12px;text-align:center">\uD83E\uDDE0 Aaj ke tasks bana raha hoon…</div>';
+    box.innerHTML='<div style="color:#888;padding:12px;text-align:center">\uD83E\uDDE0 Aaj ke tasks bana raha hoon (clickable)…</div>';
     try{ var g=await req('POST','/command/tasks/generate',{}); if(g&&g.ok){ return loadCommandTasks(false); } }catch(e){}
   }
   if(!tasks.length){ box.innerHTML='<div style="color:#aaa;padding:12px;text-align:center">Abhi koi task nahi. <b>Generate Today\u2019s Tasks</b> dabao \u2014 brain tumhare pipeline, payments aur placements dekh ke aaj ka plan dega.</div>'; try{ var pr=await req('GET','/command/tasks/prefs'); _renderTaskPrefs(pr&&pr.prefs); }catch(e){} return; }
   box.innerHTML=tasks.map(function(t){
     var pc=_ccTaskPrioCol[t.priority]||'#888';
-    var link=t.ref?('<a href="#" onclick="_ccOpenRef(\''+esc(t.ref)+'\');return false;" style="font-size:10.5px;color:#534AB7;white-space:nowrap">Open &rarr;</a>'):'';
+    var clickable=(t.ref||'').trim() && !t.done;
+    var onclk=clickable?(' onclick="_ccOpenRef(\''+esc(t.ref)+'\')" style="cursor:pointer" title="Kholने ke liye click karo"'):'';
+    var link=clickable?('<a href="#" onclick="_ccOpenRef(\''+esc(t.ref)+'\');return false;" style="font-size:10.5px;color:#534AB7;white-space:nowrap;font-weight:600">Open &rarr;</a>'):'';
     return '<div style="display:flex;align-items:flex-start;gap:9px;padding:9px 6px;border-bottom:1px solid #f4f4f4">'
       +'<input type="checkbox" '+(t.done?'checked':'')+' onchange="toggleCommandTask('+t.id+',this.checked)" style="margin-top:3px;cursor:pointer">'
-      +'<div style="flex:1"><div style="font-size:13px;'+(t.done?'text-decoration:line-through;color:#aaa':'color:#1B1B18')+'">'+esc(t.text)+'</div>'
+      +'<div style="flex:1"><div'+onclk+' style="font-size:13px;'+(clickable?'color:#2B2A6B;cursor:pointer':(t.done?'text-decoration:line-through;color:#aaa':'color:#1B1B18'))+'">'+esc(t.text)+(clickable?' <span style="font-size:10px;color:#534AB7">&#128279;</span>':'')+'</div>'
       +(t.reason&&!t.done?'<div style="font-size:11px;color:#7a7a7a;margin-top:2px;font-style:italic">\uD83D\uDCA1 '+esc(t.reason)+'</div>':'')
       +'<div style="font-size:10px;color:#aaa;margin-top:2px"><span style="color:'+pc+';font-weight:600">'+esc(t.priority)+'</span>'+(t.category?(' &middot; '+esc(t.category)):'')+(t.source==='manual'?' &middot; added':'')+'</div></div>'
       +'<div style="display:flex;flex-direction:column;gap:3px;align-items:flex-end">'+link
@@ -4014,9 +4017,12 @@ async function loadCommandTasks(autogen){
 function _ccOpenRef(ref){
   if(!ref) return;
   var p=ref.split(':');
-  if(p[0]==='cand' && p.length>=3){ location.hash='#mandate/'+p[1]+'/profiles/'+p[2]; }
-  else if(p[0]==='mandate' && p.length>=2){ location.hash='#mandate/'+p[1]; }
-  else if(p[0]==='invoice'){ try{ openInvoicing(); }catch(e){} }
+  if(p[0]==='cand' && p.length>=3){
+    var mid=parseInt(p[1]); var cid=parseInt(p[2]);
+    if(cid){ try{ openProfileById(cid, isNaN(mid)?null:mid); return; }catch(e){} }
+  }
+  if((p[0]==='cand'||p[0]==='mandate') && p[1]){ try{ location.hash='mandate/'+parseInt(p[1]); return; }catch(e){} }
+  if(p[0]==='invoice'){ try{ openInvoicing(); }catch(e){} }
 }
 async function snoozeTask(id){
   var tm=new Date(Date.now()+86400000).toISOString().slice(0,10);
