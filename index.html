@@ -912,7 +912,7 @@ body{font-size:14px !important; line-height:1.5}
     <div id="invoicing-body" style="flex:1;overflow:auto;padding:20px"></div>
   </div>
   <div id="email-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
-    <div id="email-body" style="flex:1;overflow:auto;padding:20px"></div>
+    <div id="emailbox-body" style="flex:1;overflow:auto;padding:20px"></div>
   </div>
   <div id="command-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div id="command-body" style="flex:1;overflow:auto;padding:20px"></div>
@@ -4063,7 +4063,7 @@ async function generatePlan(btn){
 }
 window._emailFolder='';
 async function renderEmailBox(){
-  var el=document.getElementById('email-body'); if(!el) return;
+  var el=document.getElementById('emailbox-body'); if(!el) return;
   el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
   var r={};
   try{ r=await req('GET','/emailbox/list'+(window._emailFolder?('?folder='+window._emailFolder):'')); }catch(e){}
