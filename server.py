@@ -9881,6 +9881,38 @@ def command_tasks_delete(tid):
     return jsonify({'ok': True})
 
 
+def _attach_task_refs(conn, oid, tasks):
+    """Reliably attach deep-link refs by matching candidate/mandate names in each task text
+    (don't depend on the AI echoing the [ref ...] tags)."""
+    try:
+        cands = conn.execute("SELECT id,name,mandate_id FROM candidates WHERE owner_id=? AND name!=''", (oid,)).fetchall()
+        mands = conn.execute("SELECT id,role,client FROM mandates WHERE owner_id=?", (oid,)).fetchall()
+    except Exception:
+        return tasks
+    cand_list = sorted([(c['name'].strip(), c['id'], c['mandate_id']) for c in cands if len((c['name'] or '').strip()) >= 4],
+                       key=lambda x: -len(x[0]))
+    mand_list = [(m['id'], (m['role'] or '').strip(), (m['client'] or '').strip()) for m in mands]
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        ref = (t.get('ref') or '').strip()
+        if ref.startswith('cand:') or ref.startswith('mandate:') or ref == 'invoice':
+            continue
+        txt = (t.get('text') or '').lower()
+        found = ''
+        for nm, cid, mid in cand_list:
+            if nm.lower() in txt:
+                found = f"cand:{mid}:{cid}"; break
+        if not found:
+            for mid, role, client in mand_list:
+                if (role and role.lower() in txt) or (client and len(client) >= 4 and client.lower() in txt):
+                    found = f"mandate:{mid}"; break
+        if not found and any(w in txt for w in ('invoice', 'payment', 'overdue', 'gst')):
+            found = 'invoice'
+        t['ref'] = found
+    return tasks
+
+
 def _run_task_generation(conn, oid, refine_instruction='', current_tasks=None):
     """Generate (or revise) the daily AI task list. Honors persisted task prefs.
     Returns (tasks_list, error_json_tuple_or_None)."""
@@ -9925,6 +9957,7 @@ def _run_task_generation(conn, oid, refine_instruction='', current_tasks=None):
             except Exception: tasks = None
     if not isinstance(tasks, list) or not tasks:
         return None, (jsonify({'error': 'AI could not produce a task list. Try again.'}), 502)
+    tasks = _attach_task_refs(conn, oid, tasks)
     conn.execute("DELETE FROM command_tasks WHERE owner_id=? AND source='ai' AND done=0", (oid,))
     now = ts(); td = now[:10]
     for t in tasks[:12]:
