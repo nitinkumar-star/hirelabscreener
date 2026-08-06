@@ -2221,6 +2221,16 @@ def init_db():
     """)
 
     c.execute("""
+        CREATE TABLE IF NOT EXISTS command_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            text TEXT DEFAULT '', category TEXT DEFAULT '', priority TEXT DEFAULT 'medium',
+            done INTEGER DEFAULT 0, source TEXT DEFAULT 'ai',
+            task_date TEXT DEFAULT '', created_at TEXT
+        );
+    """)
+
+    c.execute("""
         CREATE TABLE IF NOT EXISTS command_chat (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             owner_id INTEGER DEFAULT 0,
@@ -9667,6 +9677,179 @@ def command_chat():
         conn.execute('INSERT INTO command_chat (owner_id, role, content, created_at) VALUES (?,?,?,?)', (oid, 'assistant', reply, now))
         conn.commit()
         return jsonify({'ok': True, 'reply': reply})
+    finally:
+        conn.close()
+
+
+def _work_status_brief(conn, oid):
+    """Compact summary of what's actionable right now — feeds daily task generation."""
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    soon = (_dt.date.today() + _dt.timedelta(days=15)).isoformat()
+    lines = []
+    # Overdue / unpaid invoices
+    try:
+        rows = conn.execute("SELECT invoice_no, buyer_name, due_date, amount, gst_rate FROM invoices WHERE owner_id=? AND lower(status)!='paid'", (oid,)).fetchall()
+        overdue = [r for r in rows if r['due_date'] and r['due_date'][:10] < today]
+        if overdue:
+            lines.append("OVERDUE PAYMENTS: " + '; '.join(f"{r['invoice_no']} {r['buyer_name']} (due {r['due_date'][:10]})" for r in overdue[:8]))
+        pend = [r for r in rows if not (r['due_date'] and r['due_date'][:10] < today)]
+        if pend:
+            lines.append(f"UNPAID (not yet due): {len(pend)} invoice(s)")
+    except Exception:
+        pass
+    # Candidate lifecycle
+    try:
+        cands = conn.execute("SELECT id,name,stage,joining_date,guarantee_days,updated_at FROM candidates WHERE owner_id=?", (oid,)).fetchall()
+        inv_cids = set(r['candidate_id'] for r in conn.execute("SELECT candidate_id FROM invoices WHERE owner_id=? AND candidate_id>0", (oid,)).fetchall())
+        awaiting_inv = [c for c in cands if (c['stage'] == 'Joined' or c['joining_date']) and c['id'] not in inv_cids]
+        if awaiting_inv:
+            lines.append("JOINED, NO INVOICE YET (raise invoice): " + '; '.join((c['name'] or '') for c in awaiting_inv[:8]))
+        guar = []
+        for c in cands:
+            if c['joining_date']:
+                try:
+                    gend = (_dt.date.fromisoformat(c['joining_date'][:10]) + _dt.timedelta(days=int(c['guarantee_days'] or 90))).isoformat()
+                    if today <= gend <= soon:
+                        guar.append(f"{c['name']} (guarantee ends {gend})")
+                except Exception:
+                    pass
+        if guar:
+            lines.append("GUARANTEE ENDING SOON (confirm candidate still there): " + '; '.join(guar[:6]))
+        by_stage = {}
+        for c in cands:
+            by_stage.setdefault(c['stage'] or '?', []).append(c['name'])
+        for st in ('Shared with Client', 'Interview Inprocess', 'Interested', 'Updated CV awaited'):
+            if by_stage.get(st):
+                lines.append(f"{st.upper()} ({len(by_stage[st])}): " + '; '.join(x for x in by_stage[st][:6] if x))
+    except Exception:
+        pass
+    # Open mandates needing pipeline
+    try:
+        mand = conn.execute("SELECT id,role,client FROM mandates WHERE owner_id=? AND lower(coalesce(status,'active')) IN ('active','open','')", (oid,)).fetchall()
+        if mand:
+            counts = {}
+            for r in conn.execute("SELECT mandate_id, COUNT(*) n FROM candidates WHERE owner_id=? GROUP BY mandate_id", (oid,)).fetchall():
+                counts[r['mandate_id']] = r['n']
+            lines.append("OPEN MANDATES: " + '; '.join(f"{m['role']} @ {m['client']} ({counts.get(m['id'],0)} candidates)" for m in mand[:8]))
+    except Exception:
+        pass
+    # Founder notes from chat
+    try:
+        notes = [m['content'][:160] for m in _command_chat_history(conn, oid, 8) if m['role'] == 'user']
+        if notes:
+            lines.append("FOUNDER NOTES: " + ' | '.join(notes[:5]))
+    except Exception:
+        pass
+    return '\n'.join(lines) or 'No active pipeline/billing data yet.'
+
+
+TASK_GEN_PROMPT = """You are the daily operating brain for solo recruitment founder Nitin Kumar (HireLab, India). From his current work status, produce a PRIORITIZED daily task list — the concrete things he should do TODAY to move money and placements forward.
+
+Rules:
+- 5 to 9 tasks. Each task must be specific and reference the actual client/candidate/invoice from the data (not generic advice).
+- Prioritize: money first (chase overdue payments, raise pending invoices), then near-term placements (interview follow-ups, client feedback, guarantee check-ins), then pipeline (source/share for open mandates).
+- Each task: an imperative one-liner a person can DO and tick off.
+- Output ONLY a JSON array, no prose, no markdown fences:
+[{"text":"...","category":"Payment|Invoice|Placement|Follow-up|Sourcing|Client|Other","priority":"high|medium|low"}]"""
+
+
+@app.route('/api/command/tasks', methods=['GET'])
+@login_required
+def command_tasks_list():
+    conn = get_db()
+    rows = conn.execute("SELECT id,text,category,priority,done,source,task_date FROM command_tasks WHERE owner_id=? ORDER BY done ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id DESC",
+                        (effective_company_id(),)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'tasks': [dict(r) for r in rows]})
+
+
+@app.route('/api/command/tasks', methods=['POST'])
+@login_required
+def command_tasks_add():
+    d = request.json or {}
+    txt = (d.get('text') or '').strip()
+    if not txt:
+        return jsonify({'error': 'Empty task'}), 400
+    conn = get_db()
+    conn.execute("INSERT INTO command_tasks (owner_id,text,category,priority,done,source,task_date,created_at) VALUES (?,?,?,?,0,'manual',?,?)",
+                 (effective_company_id(), txt, d.get('category', ''), d.get('priority', 'medium'), ts()[:10], ts()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/command/tasks/<int:tid>', methods=['PUT'])
+@login_required
+def command_tasks_update(tid):
+    d = request.json or {}
+    conn = get_db(); oid = effective_company_id()
+    sets, vals = [], []
+    if 'done' in d: sets.append('done=?'); vals.append(1 if d['done'] else 0)
+    if 'text' in d: sets.append('text=?'); vals.append((d['text'] or '').strip())
+    if 'priority' in d: sets.append('priority=?'); vals.append(d['priority'])
+    if sets:
+        vals += [tid, oid]
+        conn.execute(f'UPDATE command_tasks SET {",".join(sets)} WHERE id=? AND owner_id=?', tuple(vals))
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/command/tasks/<int:tid>', methods=['DELETE'])
+@login_required
+def command_tasks_delete(tid):
+    conn = get_db()
+    conn.execute('DELETE FROM command_tasks WHERE id=? AND owner_id=?', (tid, effective_company_id()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/command/tasks/generate', methods=['POST'])
+@login_required
+def command_tasks_generate():
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
+    conn = get_db()
+    try:
+        oid = effective_company_id()
+        brief = _work_status_brief(conn, oid)
+        try:
+            rr = call_deepseek(ds_key,
+                {'model': 'deepseek-chat', 'temperature': 0.4, 'max_tokens': 1100,
+                 'messages': [{'role': 'system', 'content': TASK_GEN_PROMPT},
+                              {'role': 'user', 'content': 'CURRENT WORK STATUS:\n' + brief + '\n\nGive today\'s task list as JSON.'}]},
+                timeout=150, endpoint='task-gen')
+        except TokenCapError:
+            return jsonify({'error': 'Monthly AI token cap reached.'}), 429
+        except Exception as e:
+            return jsonify({'error': f'Could not reach DeepSeek — {type(e).__name__}: {e}'}), 502
+        if rr.status_code != 200:
+            try: err = rr.json().get('error', {}).get('message', rr.text[:200])
+            except Exception: err = rr.text[:200]
+            return jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502
+        text = rr.json()['choices'][0]['message']['content'].strip()
+        text = re.sub(r'^```[a-zA-Z]*\n?|```$', '', text).strip()
+        tasks = None
+        try:
+            tasks = json.loads(text)
+        except Exception:
+            s = text.find('['); e = text.rfind(']')
+            if s >= 0 and e > s:
+                try: tasks = json.loads(text[s:e+1])
+                except Exception: tasks = None
+        if not isinstance(tasks, list) or not tasks:
+            return jsonify({'error': 'AI could not produce a task list. Try again.'}), 502
+        # Replace previous undone AI tasks; keep manual + done tasks.
+        conn.execute("DELETE FROM command_tasks WHERE owner_id=? AND source='ai' AND done=0", (oid,))
+        now = ts(); td = now[:10]
+        for t in tasks[:12]:
+            if isinstance(t, dict) and (t.get('text') or '').strip():
+                conn.execute("INSERT INTO command_tasks (owner_id,text,category,priority,done,source,task_date,created_at) VALUES (?,?,?,?,0,'ai',?,?)",
+                             (oid, t['text'].strip()[:400], (t.get('category') or '')[:40], (t.get('priority') or 'medium')[:10], td, now))
+        conn.commit()
+        rows = conn.execute("SELECT id,text,category,priority,done,source,task_date FROM command_tasks WHERE owner_id=? ORDER BY done ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id DESC", (oid,)).fetchall()
+        return jsonify({'ok': True, 'tasks': [dict(r) for r in rows]})
     finally:
         conn.close()
 

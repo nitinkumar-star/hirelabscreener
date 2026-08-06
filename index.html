@@ -3952,7 +3952,14 @@ async function renderCommandCenter(){
   if(lp&&lp.md){ planHtml='<div style="font-size:10.5px;color:#999;margin-bottom:6px">Last generated: '+esc(lp.at||'')+'</div>'
     +'<div style="background:#fff;border:1px solid #eee;border-radius:12px;padding:18px 20px">'+_mdToHtml(lp.md)+'</div>'; }
   else { planHtml='<div style="background:#FAF9FF;border:1px dashed #D5D0F0;border-radius:12px;padding:24px;text-align:center;color:#777">Business Snapshot bharo, phir <b>Generate Strategic Plan</b> dabao — brain tumhare live data pe ₹100 Cr ka honest weekly plan dega.</div>'; }
-  el.innerHTML=northStar+cards+snap
+  el.innerHTML=northStar
+    +'<div id="cc-tasks-card" style="background:#fff;border:1px solid #eee;border-radius:14px;padding:16px;margin-bottom:16px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-weight:700;font-size:16px">\uD83D\uDCCB Today\u2019s Tasks <span style="font-size:10.5px;color:#999;font-weight:400">\u2014 tumhare work status se, refine kar sakte ho</span></div>'
+      +'<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12.5px" onclick="generateTasks(this)">\u2728 Generate Today\u2019s Tasks</button></div>'
+      +'<div id="cc-tasks-list">Loading…</div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px"><input id="cc-task-add" class="inp" style="flex:1;font-size:12.5px" placeholder="Apna task add karo…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addCommandTask();}"><button class="btn btn-o" style="font-size:12px" onclick="addCommandTask()">Add</button></div>'
+    +'</div>'
+    +cards+snap
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-weight:700;font-size:16px">\uD83E\uDDE0 Strategic Brain</div>'
     +'<button class="btn" style="background:#534AB7;color:#fff;border:none" onclick="generatePlan(this)">\u2728 Generate Strategic Plan</button></div>'
     +planHtml
@@ -3965,6 +3972,40 @@ async function renderCommandCenter(){
       +'<textarea id="cc-chat-input" rows="1" class="inp" style="flex:1;resize:none" placeholder="Brain se baat karo… (e.g. Nanj Solar ki invoice is week clear ho rahi hai)" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();sendCommandChat();}"></textarea>'
       +'<button class="btn" style="background:#534AB7;color:#fff;border:none" onclick="sendCommandChat()" id="cc-chat-send">Send</button></div></div>';
   loadCommandChat();
+  loadCommandTasks();
+}
+var _ccTaskPrioCol={high:'#C0392B',medium:'#B4690E',low:'#888'};
+async function loadCommandTasks(){
+  var box=document.getElementById('cc-tasks-list'); if(!box) return;
+  var r={};
+  try{ r=await req('GET','/command/tasks'); }catch(e){}
+  var tasks=(r&&r.tasks)||[];
+  if(!tasks.length){ box.innerHTML='<div style="color:#aaa;padding:12px;text-align:center">Abhi koi task nahi. <b>Generate Today\u2019s Tasks</b> dabao \u2014 brain tumhare pipeline, payments aur placements dekh ke aaj ka plan dega.</div>'; return; }
+  box.innerHTML=tasks.map(function(t){
+    var pc=_ccTaskPrioCol[t.priority]||'#888';
+    return '<div style="display:flex;align-items:flex-start;gap:9px;padding:8px 6px;border-bottom:1px solid #f4f4f4">'
+      +'<input type="checkbox" '+(t.done?'checked':'')+' onchange="toggleCommandTask('+t.id+',this.checked)" style="margin-top:3px;cursor:pointer">'
+      +'<div style="flex:1"><div style="font-size:13px;'+(t.done?'text-decoration:line-through;color:#aaa':'color:#1B1B18')+'">'+esc(t.text)+'</div>'
+      +'<div style="font-size:10px;color:#aaa;margin-top:1px">'+(t.category?('<span style="color:'+pc+';font-weight:600">'+esc(t.priority)+'</span> &middot; '+esc(t.category)):('<span style="color:'+pc+';font-weight:600">'+esc(t.priority)+'</span>'))+(t.source==='manual'?' &middot; added':'')+'</div></div>'
+      +'<button class="btn btn-o" style="font-size:10px;padding:2px 7px;color:#C0392B" onclick="deleteCommandTask('+t.id+')">&#10005;</button></div>';
+  }).join('');
+}
+async function generateTasks(btn){
+  if(btn){ btn.disabled=true; btn.innerHTML='\uD83E\uDDE0 Planning… (10-20s)'; }
+  var r;
+  try{ r=await req('POST','/command/tasks/generate',{}); }
+  catch(e){ if(btn){btn.disabled=false;btn.innerHTML='\u2728 Generate Today\u2019s Tasks';} toast('Error','Failed'); return; }
+  if(btn){ btn.disabled=false; btn.innerHTML='\u2728 Generate Today\u2019s Tasks'; }
+  if(r&&r.error){ toast('Error',esc(String(r.error))); return; }
+  loadCommandTasks();
+}
+async function toggleCommandTask(id,done){ await req('PUT','/command/tasks/'+id,{done:done?1:0}); loadCommandTasks(); }
+async function deleteCommandTask(id){ await req('DELETE','/command/tasks/'+id); loadCommandTasks(); }
+async function addCommandTask(){
+  var inp=document.getElementById('cc-task-add'); if(!inp) return;
+  var t=(inp.value||'').trim(); if(!t) return;
+  inp.value='';
+  await req('POST','/command/tasks',{text:t,priority:'medium'}); loadCommandTasks();
 }
 function _ccBubble(role,content){
   var mine=role==='user';
