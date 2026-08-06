@@ -9682,25 +9682,38 @@ def command_chat():
 
 
 def _work_status_brief(conn, oid):
-    """Compact summary of what's actionable right now — feeds daily task generation."""
+    """Full-ATS snapshot of what's actionable right now — feeds daily task generation."""
     import datetime as _dt
     today = _dt.date.today().isoformat()
     soon = (_dt.date.today() + _dt.timedelta(days=15)).isoformat()
+    stale_cut = (_dt.date.today() - _dt.timedelta(days=4)).isoformat()
+    ACTIVE = {'Screening', 'Follow Up 1', 'Follow Up 2', 'Not Contacted', 'Called',
+              'Interested', 'Updated CV awaited', 'Shared with Client', 'Interview Inprocess'}
     lines = []
-    # Overdue / unpaid invoices
+
+    # 1) MONEY position
     try:
-        rows = conn.execute("SELECT invoice_no, buyer_name, due_date, amount, gst_rate FROM invoices WHERE owner_id=? AND lower(status)!='paid'", (oid,)).fetchall()
-        overdue = [r for r in rows if r['due_date'] and r['due_date'][:10] < today]
-        if overdue:
-            lines.append("OVERDUE PAYMENTS: " + '; '.join(f"{r['invoice_no']} {r['buyer_name']} (due {r['due_date'][:10]})" for r in overdue[:8]))
-        pend = [r for r in rows if not (r['due_date'] and r['due_date'][:10] < today)]
-        if pend:
-            lines.append(f"UNPAID (not yet due): {len(pend)} invoice(s)")
+        o = _command_overview(conn, oid)
+        def _r(n): return f"₹{int(n or 0):,}"
+        lines.append(f"MONEY: received {_r(o['received'])}, outstanding {_r(o['outstanding'])}, "
+                     f"net profit {_r(o['net_profit'])}, runway {o['runway_months']} months, "
+                     f"this-year target {_r(o['year_target'])} (received is progress).")
     except Exception:
         pass
-    # Candidate lifecycle
+    # 2) Invoices — overdue + unpaid
     try:
-        cands = conn.execute("SELECT id,name,stage,joining_date,guarantee_days,updated_at FROM candidates WHERE owner_id=?", (oid,)).fetchall()
+        rows = conn.execute("SELECT invoice_no, buyer_name, due_date FROM invoices WHERE owner_id=? AND lower(status)!='paid'", (oid,)).fetchall()
+        overdue = [r for r in rows if r['due_date'] and r['due_date'][:10] < today]
+        if overdue:
+            lines.append("OVERDUE PAYMENTS (chase today): " + '; '.join(f"{r['invoice_no']} {r['buyer_name']} (due {r['due_date'][:10]})" for r in overdue[:8]))
+        pend = [r for r in rows if not (r['due_date'] and r['due_date'][:10] < today)]
+        if pend:
+            lines.append("UNPAID (not yet due): " + '; '.join(f"{r['invoice_no']} {r['buyer_name']}" for r in pend[:6]))
+    except Exception:
+        pass
+    # 3) Candidate lifecycle — invoicing, guarantees, stage buckets, stale, uncontacted
+    try:
+        cands = conn.execute("SELECT id,name,stage,joining_date,guarantee_days,updated_at,phone,email FROM candidates WHERE owner_id=?", (oid,)).fetchall()
         inv_cids = set(r['candidate_id'] for r in conn.execute("SELECT candidate_id FROM invoices WHERE owner_id=? AND candidate_id>0", (oid,)).fetchall())
         awaiting_inv = [c for c in cands if (c['stage'] == 'Joined' or c['joining_date']) and c['id'] not in inv_cids]
         if awaiting_inv:
@@ -9711,47 +9724,78 @@ def _work_status_brief(conn, oid):
                 try:
                     gend = (_dt.date.fromisoformat(c['joining_date'][:10]) + _dt.timedelta(days=int(c['guarantee_days'] or 90))).isoformat()
                     if today <= gend <= soon:
-                        guar.append(f"{c['name']} (guarantee ends {gend})")
+                        guar.append(f"{c['name']} (ends {gend})")
                 except Exception:
                     pass
         if guar:
-            lines.append("GUARANTEE ENDING SOON (confirm candidate still there): " + '; '.join(guar[:6]))
+            lines.append("GUARANTEE ENDING SOON (confirm still on job): " + '; '.join(guar[:6]))
         by_stage = {}
         for c in cands:
-            by_stage.setdefault(c['stage'] or '?', []).append(c['name'])
-        for st in ('Shared with Client', 'Interview Inprocess', 'Interested', 'Updated CV awaited'):
-            if by_stage.get(st):
-                lines.append(f"{st.upper()} ({len(by_stage[st])}): " + '; '.join(x for x in by_stage[st][:6] if x))
+            by_stage.setdefault(c['stage'] or '?', []).append(c)
+        for st, label in [('Shared with Client', 'awaiting client feedback'),
+                          ('Interview Inprocess', 'interview follow-up'),
+                          ('Interested', 'push to next step'),
+                          ('Updated CV awaited', 'chase updated CV'),
+                          ('Not Contacted', 'first outreach pending')]:
+            grp = by_stage.get(st)
+            if grp:
+                lines.append(f"{st.upper()} ({len(grp)}, {label}): " + '; '.join((c['name'] or '') for c in grp[:6]))
+        # stale: in an active stage but not touched in 4+ days
+        stale = [c for c in cands if (c['stage'] in ACTIVE) and (not c['updated_at'] or c['updated_at'][:10] < stale_cut)]
+        if stale:
+            lines.append(f"STALE FOLLOW-UPS ({len(stale)}, no activity 4+ days): " + '; '.join(f"{c['name']}[{c['stage']}]" for c in stale[:8]))
+        # missing contact info
+        nomob = [c for c in cands if (c['stage'] in ACTIVE) and not (c['phone'] or '').strip()]
+        if nomob:
+            lines.append(f"MISSING PHONE ({len(nomob)}): " + '; '.join((c['name'] or '') for c in nomob[:5]))
     except Exception:
         pass
-    # Open mandates needing pipeline
+    # 4) Mandates — sourcing gaps
     try:
         mand = conn.execute("SELECT id,role,client FROM mandates WHERE owner_id=? AND lower(coalesce(status,'active')) IN ('active','open','')", (oid,)).fetchall()
+        counts = {}
+        for r in conn.execute("SELECT mandate_id, COUNT(*) n FROM candidates WHERE owner_id=? GROUP BY mandate_id", (oid,)).fetchall():
+            counts[r['mandate_id']] = r['n']
         if mand:
-            counts = {}
-            for r in conn.execute("SELECT mandate_id, COUNT(*) n FROM candidates WHERE owner_id=? GROUP BY mandate_id", (oid,)).fetchall():
-                counts[r['mandate_id']] = r['n']
-            lines.append("OPEN MANDATES: " + '; '.join(f"{m['role']} @ {m['client']} ({counts.get(m['id'],0)} candidates)" for m in mand[:8]))
+            lines.append("OPEN MANDATES (role @ client, #candidates): " + '; '.join(f"{m['role']} @ {m['client']} ({counts.get(m['id'],0)})" for m in mand[:10]))
+            thin = [m for m in mand if counts.get(m['id'], 0) < 3]
+            if thin:
+                lines.append("NEEDS SOURCING (thin pipeline <3): " + '; '.join(f"{m['role']} @ {m['client']}" for m in thin[:6]))
     except Exception:
         pass
-    # Founder notes from chat
+    # 5) Email signal — unread inbox
+    try:
+        em = conn.execute("SELECT from_name, subject FROM emails WHERE owner_id=? AND folder='Inbox' AND is_read=0 ORDER BY date_ts DESC LIMIT 8", (oid,)).fetchall()
+        if em:
+            lines.append("UNREAD INBOX (may need reply): " + ' | '.join(f"{e['from_name']}: {e['subject']}" for e in em))
+    except Exception:
+        pass
+    # 6) Founder notes from chat
     try:
         notes = [m['content'][:160] for m in _command_chat_history(conn, oid, 8) if m['role'] == 'user']
         if notes:
-            lines.append("FOUNDER NOTES: " + ' | '.join(notes[:5]))
+            lines.append("FOUNDER NOTES (recent, treat as current facts): " + ' | '.join(notes[:5]))
     except Exception:
         pass
     return '\n'.join(lines) or 'No active pipeline/billing data yet.'
 
 
-TASK_GEN_PROMPT = """You are the daily operating brain for solo recruitment founder Nitin Kumar (HireLab, India). From his current work status, produce a PRIORITIZED daily task list — the concrete things he should do TODAY to move money and placements forward.
+TASK_GEN_PROMPT = """You are the daily operating brain for solo recruitment founder Nitin Kumar (HireLab, India — Solar/Electrical/Automation/Renewable). You are given a FULL scan of his ATS: money, invoices, candidate lifecycle, guarantees, pipeline stages, stale follow-ups, sourcing gaps, unread emails, and his own notes. From ALL of it, produce his prioritized task list for TODAY.
+
+Think across the whole business, then prioritize in this order:
+1. MONEY IN — chase overdue payments, raise invoices for joined candidates.
+2. PROTECT PLACEMENTS — guarantee check-ins, interview follow-ups, chase client feedback for shared candidates.
+3. MOVE PIPELINE — revive stale follow-ups, first outreach to not-contacted, chase updated CVs.
+4. FILL GAPS — source for thin/empty mandates.
+5. ADMIN — reply to important unread emails, fix missing candidate data.
+Honor the founder's notes as current facts.
 
 Rules:
-- 5 to 9 tasks. Each task must be specific and reference the actual client/candidate/invoice from the data (not generic advice).
-- Prioritize: money first (chase overdue payments, raise pending invoices), then near-term placements (interview follow-ups, client feedback, guarantee check-ins), then pipeline (source/share for open mandates).
-- Each task: an imperative one-liner a person can DO and tick off.
-- Output ONLY a JSON array, no prose, no markdown fences:
-[{"text":"...","category":"Payment|Invoice|Placement|Follow-up|Sourcing|Client|Other","priority":"high|medium|low"}]"""
+- 6 to 10 tasks. Each MUST name the specific client/candidate/invoice/mandate from the data — never generic advice.
+- Each task = one imperative line he can DO and tick off today.
+- Don't invent items not supported by the data. If money items exist, they come first.
+- Output ONLY a JSON array, no prose, no markdown:
+[{"text":"...","category":"Payment|Invoice|Placement|Follow-up|Sourcing|Client|Email|Admin","priority":"high|medium|low"}]"""
 
 
 @app.route('/api/command/tasks', methods=['GET'])
@@ -9816,9 +9860,9 @@ def command_tasks_generate():
         brief = _work_status_brief(conn, oid)
         try:
             rr = call_deepseek(ds_key,
-                {'model': 'deepseek-chat', 'temperature': 0.4, 'max_tokens': 1100,
+                {'model': 'deepseek-chat', 'temperature': 0.4, 'max_tokens': 1500,
                  'messages': [{'role': 'system', 'content': TASK_GEN_PROMPT},
-                              {'role': 'user', 'content': 'CURRENT WORK STATUS:\n' + brief + '\n\nGive today\'s task list as JSON.'}]},
+                              {'role': 'user', 'content': 'FULL ATS WORK STATUS:\n' + brief + '\n\nGive today\'s task list as a JSON array.'}]},
                 timeout=150, endpoint='task-gen')
         except TokenCapError:
             return jsonify({'error': 'Monthly AI token cap reached.'}), 429
