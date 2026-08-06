@@ -4201,7 +4201,11 @@ function _invClose(){ var e=document.getElementById('modal-invoice'); if(e) e.re
 function _invF(id,label,val,ph,w){ return '<div style="'+(w?'grid-column:span 2;':'')+'"><label style="font-size:11px;font-weight:600;color:#555">'+label+'</label><input id="'+id+'" class="inp" style="width:100%;font-size:12.5px" value="'+esc(val||'')+'" placeholder="'+(ph||'')+'"></div>'; }
 async function openInvoiceForm(id){
   var inv={};
-  if(id){ var r=await req('GET','/invoices/'+id); inv=(r&&r.invoice)||{}; }
+  var crmClients=[];
+  try{ var cr=await req('GET','/crm/clients-billing'); crmClients=(cr&&cr.clients)||[]; }catch(e){}
+  window._invCrmClients=crmClients;
+  window._invClientId=0;
+  if(id){ var r=await req('GET','/invoices/'+id); inv=(r&&r.invoice)||{}; window._invClientId=inv.client_id||0; }
   else { try{ var nn=await req('GET','/invoices/next-number'); inv.invoice_no=nn.invoice_no; }catch(e){} inv.description='Charge Towards Recruitment Services'; inv.per='CTC'; inv.rate='.1'; inv.gst_rate=18; inv.invoice_date=new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).replace(/ /g,'-'); }
   if(!id && window._invPrefill){ inv.candidate_name=window._invPrefill.candidate_name||''; inv.role=window._invPrefill.role||''; if(window._invPrefill.amount) inv.amount=window._invPrefill.amount; window._invCandId=window._invPrefill.candidate_id||0; window._invPrefill=null; }
   else if(!id){ window._invCandId=0; }
@@ -4217,6 +4221,10 @@ async function openInvoiceForm(id){
       +_invF('inv-orderdate','Order Dated',inv.order_date)+_invF('inv-due','Due Date',inv.due_date,'optional')
     +'</div>'
     +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin:12px 0 6px">Client (Buyer / Bill to)</div>'
+    +'<div style="margin-bottom:8px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">&#128193; Pick from CRM (auto-fills details)</label>'
+      +'<select id="inv-crmpick" class="inp" style="width:100%" onchange="_invPickClient()"><option value="">— Select client from CRM —</option>'
+      +crmClients.map(function(cl){return '<option value="'+cl.id+'">'+esc(cl.name)+(cl.gstin?(' &middot; '+esc(cl.gstin)):' (no GSTIN yet)')+'</option>';}).join('')
+      +'</select><div style="font-size:10px;color:#aaa;margin-top:3px">CRM mein client select karo \u2014 details bhar jaayengi. Pehli baar edit karoge toh CRM mein save ho jaayengi (dobara nahi bharni padegi).</div></div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
       +_invF('inv-bname','Client Name',inv.buyer_name,'',true)
       +_invF('inv-baddr','Address',inv.buyer_address,'',true)
@@ -4247,6 +4255,20 @@ async function openInvoiceForm(id){
   document.body.appendChild(bg);
   ['inv-qty','inv-rate','inv-amount','inv-gst','inv-bcode'].forEach(function(k){ var e=document.getElementById(k); if(e) e.addEventListener('input',_invCalc); });
   _invCalc();
+}
+function _invPickClient(){
+  var sel=document.getElementById('inv-crmpick'); if(!sel) return;
+  var cid=parseInt(sel.value)||0; window._invClientId=cid;
+  if(!cid) return;
+  var cl=(window._invCrmClients||[]).find(function(x){return x.id===cid;}); if(!cl) return;
+  var set=function(id,val){ var e=document.getElementById(id); if(e && val!=null) e.value=val; };
+  set('inv-bname',cl.name||'');
+  set('inv-baddr',cl.bill_address||'');
+  set('inv-bgstin',cl.gstin||'');
+  set('inv-bstate',cl.bill_state||'');
+  set('inv-bcode',cl.bill_state_code||'');
+  if(cl.bill_state) set('inv-pos',cl.bill_state);
+  try{ _invCalc(); }catch(e){}
 }
 function _invCalc(){
   var qty=parseFloat((document.getElementById('inv-qty')||{}).value)||0;
@@ -4279,7 +4301,7 @@ async function saveInvoice(id){
     extra_lines:v('inv-extra').split('\n').map(function(x){return x.trim();}).filter(Boolean),
     quantity:v('inv-qty'), rate:v('inv-rate'), per:v('inv-per'), hsn:v('inv-hsn'),
     total_qty:totq, amount:amt||0, gst_rate:parseFloat(v('inv-gst'))||18,
-    candidate_id: window._invCandId||0
+    candidate_id: window._invCandId||0, client_id: window._invClientId||0
   };
   if(!body.buyer_name){ toast('Client name required',''); return; }
   var r;

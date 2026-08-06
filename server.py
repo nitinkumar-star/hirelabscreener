@@ -2154,6 +2154,13 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Migrate: billing details on CRM clients (so invoices auto-fill, fill-once).
+    for col in ['gstin', 'bill_address', 'bill_state', 'bill_state_code']:
+        try:
+            c.execute(f'ALTER TABLE crm_clients ADD COLUMN {col} TEXT DEFAULT ""')
+        except sqlite3.OperationalError:
+            pass
+
     # Migrate: placement & billing lifecycle fields (close the loop after Joined).
     for col, typ in [('placement_fee', 'REAL DEFAULT 0'), ('joining_date', 'TEXT DEFAULT ""'),
                      ('guarantee_days', 'INTEGER DEFAULT 90'), ('replacement_flag', 'INTEGER DEFAULT 0'),
@@ -9152,6 +9159,16 @@ def create_invoice():
              int(d.get('client_id',0) or 0), int(d.get('candidate_id',0) or 0), int(d.get('mandate_id',0) or 0),
              now, now))
         conn.commit()
+        # Remember this client's billing details on the CRM record (fill-once).
+        cli_id = int(d.get('client_id', 0) or 0)
+        if cli_id:
+            try:
+                conn.execute('UPDATE crm_clients SET gstin=?, bill_address=?, bill_state=?, bill_state_code=? WHERE id=? AND company_id=?',
+                             (d.get('buyer_gstin', ''), d.get('buyer_address', ''), d.get('buyer_state', ''),
+                              d.get('buyer_state_code', ''), cli_id, oid))
+                conn.commit()
+            except Exception:
+                pass
         return jsonify({'ok': True, 'id': cur.lastrowid, 'invoice_no': inv_no})
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -9858,6 +9875,23 @@ Output ONLY clean HTML (no markdown, no code fences, no <html>/<body> wrapper). 
 <h3>What We Offer</h3><ul><li>...</li></ul>
 
 Rules: Be specific to the role and sector. 5-8 responsibilities, 5-8 skills. Reflect the given experience range and location. Do not invent a fake company description if the client isn't given. Keep it concise and recruiter-ready. Indian context (CTC in LPA, notice period norms)."""
+
+
+@app.route('/api/crm/clients-billing', methods=['GET'])
+@login_required
+def crm_clients_billing():
+    """List CRM clients with billing details for the invoice client-picker."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            'SELECT id, name, gstin, bill_address, bill_state, bill_state_code '
+            'FROM crm_clients WHERE company_id=? AND is_active=1 ORDER BY name',
+            (effective_company_id(),)).fetchall()
+    except Exception:
+        conn.close()
+        return jsonify({'ok': True, 'clients': []})
+    conn.close()
+    return jsonify({'ok': True, 'clients': [dict(r) for r in rows]})
 
 
 @app.route('/api/generate-jd', methods=['POST'])
