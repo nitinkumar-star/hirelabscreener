@@ -4000,11 +4000,12 @@ async function loadCommandTasks(autogen){
   box.innerHTML=tasks.map(function(t){
     var pc=_ccTaskPrioCol[t.priority]||'#888';
     var clickable=(t.ref||'').trim() && !t.done;
-    var onclk=clickable?(' onclick="_ccOpenRef(\''+esc(t.ref)+'\')" style="cursor:pointer" title="Kholने ke liye click karo"'):'';
+    var onclk=clickable?(' onclick="_ccOpenRef(\''+esc(t.ref)+'\')" title="Click to open"'):'';
+    var textStyle='font-size:13px;'+(clickable?'color:#2B2A6B;cursor:pointer;text-decoration:underline':(t.done?'text-decoration:line-through;color:#aaa':'color:#1B1B18'));
     var link=clickable?('<a href="#" onclick="_ccOpenRef(\''+esc(t.ref)+'\');return false;" style="font-size:10.5px;color:#534AB7;white-space:nowrap;font-weight:600">Open &rarr;</a>'):'';
     return '<div style="display:flex;align-items:flex-start;gap:9px;padding:9px 6px;border-bottom:1px solid #f4f4f4">'
       +'<input type="checkbox" '+(t.done?'checked':'')+' onchange="toggleCommandTask('+t.id+',this.checked)" style="margin-top:3px;cursor:pointer">'
-      +'<div style="flex:1"><div'+onclk+' style="font-size:13px;'+(clickable?'color:#2B2A6B;cursor:pointer':(t.done?'text-decoration:line-through;color:#aaa':'color:#1B1B18'))+'">'+esc(t.text)+(clickable?' <span style="font-size:10px;color:#534AB7">&#128279;</span>':'')+'</div>'
+      +'<div style="flex:1"><div'+onclk+' style="'+textStyle+'">'+esc(t.text)+(clickable?' <span style="font-size:10px;color:#534AB7">&#128279;</span>':'')+'</div>'
       +(t.reason&&!t.done?'<div style="font-size:11px;color:#7a7a7a;margin-top:2px;font-style:italic">\uD83D\uDCA1 '+esc(t.reason)+'</div>':'')
       +'<div style="font-size:10px;color:#aaa;margin-top:2px"><span style="color:'+pc+';font-weight:600">'+esc(t.priority)+'</span>'+(t.category?(' &middot; '+esc(t.category)):'')+(t.source==='manual'?' &middot; added':'')+'</div></div>'
       +'<div style="display:flex;flex-direction:column;gap:3px;align-items:flex-end">'+link
@@ -4016,12 +4017,19 @@ async function loadCommandTasks(autogen){
 }
 function _ccOpenRef(ref){
   if(!ref) return;
+  try{ _hideAllViews(); }catch(e){}
   var p=ref.split(':');
   if(p[0]==='cand' && p.length>=3){
     var mid=parseInt(p[1]); var cid=parseInt(p[2]);
     if(cid){ try{ openProfileById(cid, isNaN(mid)?null:mid); return; }catch(e){} }
   }
-  if((p[0]==='cand'||p[0]==='mandate') && p[1]){ try{ location.hash='mandate/'+parseInt(p[1]); return; }catch(e){} }
+  if((p[0]==='cand'||p[0]==='mandate') && p[1]){
+    var mm=parseInt(p[1]);
+    if(!isNaN(mm)){
+      try{ var mv=document.getElementById('mandate-view'); if(mv) mv.style.display='flex'; selectMandate(mm); return; }
+      catch(e){ location.hash='mandate/'+mm; return; }
+    }
+  }
   if(p[0]==='invoice'){ try{ openInvoicing(); }catch(e){} }
 }
 async function snoozeTask(id){
