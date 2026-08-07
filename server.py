@@ -9697,13 +9697,27 @@ def _work_status_brief(conn, oid):
               'Interested', 'Updated CV awaited', 'Shared with Client', 'Interview Inprocess'}
     lines = []
 
-    # 1) MONEY position
+    # 1) MONEY position + TARGET GAP
     try:
+        import datetime as _dt2
         o = _command_overview(conn, oid)
         def _r(n): return f"₹{int(n or 0):,}"
         lines.append(f"MONEY: received {_r(o['received'])}, outstanding {_r(o['outstanding'])}, "
-                     f"net profit {_r(o['net_profit'])}, runway {o['runway_months']} months, "
-                     f"this-year target {_r(o['year_target'])} (received is progress).")
+                     f"net profit {_r(o['net_profit'])}, runway {o['runway_months']} months.")
+        yt = o.get('year_target') or 0
+        if yt:
+            gap = yt - (o['received'] or 0)
+            # months left in this financial/calendar year
+            months_left = max(1, 12 - _dt2.date.today().month + 1)
+            per_month = gap / months_left if months_left else gap
+            # active clients + open mandates for growth context
+            try:
+                nclients = conn.execute("SELECT COUNT(*) n FROM crm_clients WHERE company_id=? AND is_active=1", (oid,)).fetchone()['n']
+            except Exception:
+                nclients = 0
+            lines.append(f"TARGET & GAP (think strategically about this every day): this-year target {_r(yt)}, "
+                         f"achieved {_r(o['received'])} ({int((o['received'] or 0)/yt*100)}%), GAP REMAINING {_r(gap)} "
+                         f"over ~{months_left} months = {_r(per_month)}/month needed. Active clients: {nclients}, open mandates: {o.get('open_mandates',0)}.")
     except Exception:
         pass
     # 2) Invoices — overdue + unpaid
@@ -9735,21 +9749,30 @@ def _work_status_brief(conn, oid):
                     pass
         if guar:
             lines.append("GUARANTEE ENDING SOON (confirm still on job): " + '; '.join(guar[:6]))
-        # Map mandate id -> role @ client
-        mroles = {}
-        for m in conn.execute("SELECT id,role,client FROM mandates WHERE owner_id=?", (oid,)).fetchall():
+        # Map mandate id -> role @ client  and  id -> status
+        mroles = {}; mstatus = {}
+        for m in conn.execute("SELECT id,role,client,status FROM mandates WHERE owner_id=?", (oid,)).fetchall():
             mroles[m['id']] = f"{m['role']} @ {m['client']}"
+            mstatus[m['id']] = (m['status'] or 'active').lower()
+        active_mids = {mid for mid, st in mstatus.items() if st in ('active', 'open', '')}
+        closed_positions = [f"{mroles[mid]}" for mid, st in mstatus.items() if st == 'closed']
+        hold_positions = [f"{mroles[mid]}" for mid, st in mstatus.items() if st == 'hold']
+        if closed_positions or hold_positions:
+            note = "POSITIONS THAT ARE NOT OPEN — do NOT create sourcing/follow-up/feedback tasks for these: "
+            if closed_positions: note += "CLOSED: " + '; '.join(closed_positions[:10]) + ". "
+            if hold_positions: note += "ON HOLD: " + '; '.join(hold_positions[:10]) + "."
+            lines.append(note)
         ACTIVE_STAGES = ['Not Contacted', 'Called', 'Screening', 'Interested', 'Follow Up 1',
                          'Follow Up 2', 'Updated CV awaited', 'Shared with Client', 'Interview Inprocess']
         by_pos = {}
         for c in cands:
-            if c['stage'] in ACTIVE_STAGES:
+            # ONLY candidates whose position is still OPEN belong in active pipeline tasks
+            if c['stage'] in ACTIVE_STAGES and c['mandate_id'] in active_mids:
                 by_pos.setdefault(c['mandate_id'], []).append(c)
         if by_pos:
-            lines.append("PIPELINE BY POSITION (make SEPARATE tasks per position — never mix candidates of different positions in one task):")
+            lines.append("PIPELINE BY POSITION (only OPEN positions — make SEPARATE tasks per position, never mix candidates of different positions in one task):")
             for mid, cl in by_pos.items():
                 pos = mroles.get(mid, f"Mandate#{mid}")
-                # group this position's candidates by stage
                 sg = {}
                 for c in cl:
                     sg.setdefault(c['stage'], []).append(c)
@@ -9758,10 +9781,10 @@ def _work_status_brief(conn, oid):
                     if sg.get(st):
                         parts.append(f"{st}: " + ', '.join(f"{c['name']} [ref cand:{mid}:{c['id']}]" for c in sg[st][:6]))
                 lines.append(f"  • {pos} [ref mandate:{mid}] — " + ' | '.join(parts))
-        # stale: active stage, not touched 4+ days
-        stale = [c for c in cands if (c['stage'] in ACTIVE_STAGES) and (not c['updated_at'] or c['updated_at'][:10] < stale_cut)]
+        # stale: active stage, OPEN position, not touched 4+ days
+        stale = [c for c in cands if (c['stage'] in ACTIVE_STAGES) and (c['mandate_id'] in active_mids) and (not c['updated_at'] or c['updated_at'][:10] < stale_cut)]
         if stale:
-            lines.append(f"STALE FOLLOW-UPS ({len(stale)}, no activity 4+ days): " + '; '.join(f"{c['name']}[{c['stage']}, {mroles.get(c['mandate_id'],'?')}] [ref cand:{c['mandate_id']}:{c['id']}]" for c in stale[:8]))
+            lines.append(f"STALE FOLLOW-UPS ({len(stale)}, open positions, no activity 4+ days): " + '; '.join(f"{c['name']}[{c['stage']}, {mroles.get(c['mandate_id'],'?')}] [ref cand:{c['mandate_id']}:{c['id']}]" for c in stale[:8]))
     except Exception:
         pass
     # 4) Mandates — sourcing gaps
@@ -9803,6 +9826,16 @@ Priority order:
 5. ADMIN — reply to important unread emails.
 Honor the founder's notes as current facts.
 
+MANDATORY — STRATEGIC / GROWTH (this is what makes you an advisor, not just a to-do list):
+- ALWAYS include 2-3 tasks that move Nitin toward his revenue TARGET, based on the TARGET & GAP data — not just today's firefighting.
+- Draw these from: ACCOUNT EXPANSION (get more roles/SPOCs from existing paying clients — cheapest revenue), NEW BD (reach out to a specific target company for a new mandate), CONVERTING pipeline to revenue faster, or building a specific plan to close the monthly gap.
+- Make them concrete and specific (name a client to expand, a sector to target, a number to hit), tied to the gap. Category = "Growth". Give these real priority — the gap won't close by itself.
+- Example GOOD: "Call L&T to ask for 2 more mandates this quarter — account expansion is the cheapest path to your ₹X/month gap." Example BAD: "Do business development" (too vague).
+
+CRITICAL — RESPECT POSITION STATUS:
+- NEVER create sourcing, follow-up, or client-feedback tasks for any position listed as CLOSED or ON HOLD in the data. Those positions are done/paused — surfacing them wastes the founder's time and destroys trust.
+- The ONLY exception: if a candidate for a closed position still needs INVOICING or PAYMENT collection, that money task is valid.
+
 CRITICAL — POSITION-WISE TASKS:
 - Every pipeline/follow-up task MUST be for ONE position (role @ client) only. NEVER put candidates from different positions in the same task.
 - Each such task must name the POSITION (role @ client) and the specific candidate name(s) for that position.
@@ -9810,7 +9843,7 @@ CRITICAL — POSITION-WISE TASKS:
 
 For EACH task output:
 - text: one imperative line, naming the position (role @ client) and specific candidate(s)/invoice.
-- category: Payment|Invoice|Placement|Follow-up|Sourcing|Client|Email|Admin
+- category: Payment|Invoice|Placement|Follow-up|Sourcing|Client|Email|Admin|Growth
 - priority: high|medium|low
 - reason: ONE short line — why it matters / what's at stake (for the founder + his advisor).
 - ref: the entity to open, copied EXACTLY from the [ref ...] tag in the data (e.g. "cand:40:786", "mandate:40", or "invoice"). Use "" if none. If a task covers multiple candidates of one position, use that position's "mandate:<id>" ref.
