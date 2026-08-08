@@ -1926,6 +1926,8 @@ def init_db():
         ('cc_year_target', ''), ('cc_funding_available', ''),
         ('cc_target_total', '1000000000'), ('cc_target_years', '3'),
         ('cc_notes', ''), ('cc_last_plan', ''), ('cc_task_prefs', ''), ('cc_last_review', ''),
+        ('embedding_api_key', ''), ('embedding_base_url', 'https://api.jina.ai/v1'),
+        ('embedding_model', 'jina-embeddings-v3'), ('rag_enabled', '1'),
         ('seller_name', 'HireLab Talent Resource'),
         ('seller_gstin', '09ECWPP1647A1Z9'),
         ('seller_address', 'Office no: GF064, B-128, First Floor, Sector-2, Gautam Buddha Nagar, Noida, Uttar Pradesh 201301.'),
@@ -2219,6 +2221,20 @@ def init_db():
             invoice_id INTEGER DEFAULT 0, created_at TEXT
         );
     """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS vec_chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            source_type TEXT DEFAULT '', source_id INTEGER DEFAULT 0,
+            chash TEXT DEFAULT '', text TEXT DEFAULT '', embedding TEXT DEFAULT '',
+            updated_at TEXT
+        );
+    """)
+    try:
+        c.execute("CREATE INDEX IF NOT EXISTS idx_vec_owner ON vec_chunks(owner_id, source_type, source_id)")
+    except Exception:
+        pass
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS command_tasks (
@@ -3036,6 +3052,7 @@ _ENV_KEY_MAP = {
     'claude_api_key': 'CLAUDE_API_KEY',
     'deepseek_api_key': 'DEEPSEEK_API_KEY',
     'gemini_api_key': 'GEMINI_API_KEY',
+    'embedding_api_key': 'JINA_API_KEY',
 }
 
 def get_setting(key, default=''):
@@ -4256,6 +4273,7 @@ TENANT_SETTINGS = {
     'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_fy', 'imap_host',
     'cc_bank_cash', 'cc_monthly_fixed', 'cc_team_size', 'cc_year_target',
     'cc_funding_available', 'cc_target_total', 'cc_target_years', 'cc_notes', 'cc_last_plan', 'cc_task_prefs', 'cc_last_review',
+    'embedding_api_key', 'embedding_base_url', 'embedding_model', 'rag_enabled',
     'seller_gstin', 'seller_address', 'seller_udyam', 'seller_state', 'seller_state_code',
     'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_prefix', 'seller_name',
     'template_msg1', 'template_fu1', 'template_fu2',
@@ -9561,6 +9579,217 @@ Output in markdown with these exact sections:
 Be specific and numeric. Explain WHY for every forecast and probability. No flattery."""
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  VECTOR / RAG ENGINE  (pluggable embeddings, vectors stored in SQLite)
+# ══════════════════════════════════════════════════════════════════════════
+def _embed_texts(texts):
+    """Embed a list of texts via an OpenAI-compatible /embeddings endpoint.
+    Provider/key/model are configurable in settings; returns None if not configured
+    so the app gracefully falls back to the structured brief."""
+    key = get_setting('embedding_api_key', '')
+    if not key or not texts:
+        return None
+    base = (get_setting('embedding_base_url', 'https://api.jina.ai/v1') or 'https://api.jina.ai/v1').rstrip('/')
+    model = get_setting('embedding_model', 'jina-embeddings-v3') or 'jina-embeddings-v3'
+    import requests as _rq
+    out = []
+    B = 64
+    for i in range(0, len(texts), B):
+        batch = [ (t or '')[:6000] for t in texts[i:i+B] ]
+        try:
+            r = _rq.post(base + '/embeddings',
+                         headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
+                         json={'model': model, 'input': batch}, timeout=90)
+            if r.status_code != 200:
+                return None
+            data = r.json().get('data', [])
+            out.extend([d.get('embedding') for d in data])
+        except Exception:
+            return None
+    return out
+
+
+def _cosine(a, b):
+    if not a or not b or len(a) != len(b):
+        return -1.0
+    import math
+    dot = s1 = s2 = 0.0
+    for x, y in zip(a, b):
+        dot += x * y; s1 += x * x; s2 += y * y
+    if s1 == 0 or s2 == 0:
+        return -1.0
+    return dot / (math.sqrt(s1) * math.sqrt(s2))
+
+
+def _chash(text):
+    import hashlib
+    return hashlib.md5((text or '').encode('utf-8')).hexdigest()
+
+
+def _cand_chunk_text(d):
+    parts = []
+    def add(label, v):
+        if v and str(v).strip():
+            parts.append(f"{label}: {str(v).strip()}")
+    add("Candidate", d.get('name'))
+    add("Current company", d.get('company'))
+    add("Designation", d.get('designation'))
+    add("Experience", d.get('experience'))
+    add("Location", d.get('location'))
+    add("Qualification", d.get('qualification'))
+    add("Skills", d.get('key_skills'))
+    add("Summary", d.get('career_summary'))
+    add("Industry", d.get('industry_background'))
+    add("Stage", d.get('stage'))
+    add("Recruiter feedback", d.get('recruiter_feedback'))
+    add("Client feedback", d.get('client_feedback'))
+    add("Notes", d.get('general_comments'))
+    return '\n'.join(parts)
+
+
+def _collect_index_items(conn, oid):
+    """Return list of (source_type, source_id, text) for everything worth embedding."""
+    items = []
+    try:
+        for r in conn.execute("SELECT * FROM candidates WHERE owner_id=?", (oid,)).fetchall():
+            d = dict(r); txt = _cand_chunk_text(d)
+            if txt.strip():
+                items.append(('candidate', d['id'], txt))
+    except Exception:
+        pass
+    try:
+        for m in conn.execute("SELECT id,role,client,location,jd,status FROM mandates WHERE owner_id=?", (oid,)).fetchall():
+            d = dict(m)
+            jd = re.sub('<[^>]+>', ' ', d.get('jd') or '')
+            txt = f"Position: {d.get('role','')} @ {d.get('client','')} ({d.get('location','')}) [{d.get('status','active')}]\n{jd[:2500]}"
+            items.append(('mandate', d['id'], txt.strip()))
+    except Exception:
+        pass
+    try:
+        for e in conn.execute("SELECT id,folder,from_name,from_addr,subject,snippet,body FROM emails WHERE owner_id=?", (oid,)).fetchall():
+            d = dict(e)
+            body = (d.get('body') or d.get('snippet') or '')[:2500]
+            txt = f"Email [{d.get('folder','')}] from {d.get('from_name','')} <{d.get('from_addr','')}> — {d.get('subject','')}\n{body}"
+            items.append(('email', d['id'], txt.strip()))
+    except Exception:
+        pass
+    return items
+
+
+def _reindex(conn, oid, force=False):
+    """Incrementally embed changed/new items. Returns {embedded, skipped, total, error}."""
+    if not get_setting('embedding_api_key', ''):
+        return {'error': 'No embedding API key set. Command Center → Knowledge → set key.'}
+    items = _collect_index_items(conn, oid)
+    existing = {}
+    for row in conn.execute("SELECT source_type, source_id, chash FROM vec_chunks WHERE owner_id=?", (oid,)).fetchall():
+        existing[(row['source_type'], row['source_id'])] = row['chash']
+    to_embed = []
+    for st, sid, txt in items:
+        h = _chash(txt)
+        if not force and existing.get((st, sid)) == h:
+            continue
+        to_embed.append((st, sid, txt, h))
+    embedded = 0
+    B = 64
+    for i in range(0, len(to_embed), B):
+        chunk = to_embed[i:i+B]
+        vecs = _embed_texts([c[2] for c in chunk])
+        if not vecs or len(vecs) != len(chunk):
+            return {'error': 'Embedding API call failed. Check key/model/credit.', 'embedded': embedded}
+        for (st, sid, txt, h), v in zip(chunk, vecs):
+            conn.execute("DELETE FROM vec_chunks WHERE owner_id=? AND source_type=? AND source_id=?", (oid, st, sid))
+            conn.execute("INSERT INTO vec_chunks (owner_id,source_type,source_id,chash,text,embedding,updated_at) VALUES (?,?,?,?,?,?,?)",
+                         (oid, st, sid, h, txt, json.dumps(v), ts()))
+            embedded += 1
+        conn.commit()
+    return {'embedded': embedded, 'skipped': len(items) - len(to_embed), 'total': len(items)}
+
+
+def _vector_search(conn, oid, query, k=8):
+    """Semantic search over indexed ATS records. Returns list of text snippets."""
+    try:
+        if get_setting('rag_enabled', '1') != '1' or not get_setting('embedding_api_key', ''):
+            return []
+        qv = _embed_texts([query])
+        if not qv:
+            return []
+        qv = qv[0]
+        rows = conn.execute("SELECT source_type, text, embedding FROM vec_chunks WHERE owner_id=?", (oid,)).fetchall()
+        scored = []
+        for r in rows:
+            try:
+                emb = json.loads(r['embedding'])
+            except Exception:
+                continue
+            scored.append((_cosine(qv, emb), r['source_type'], r['text']))
+        scored.sort(key=lambda x: -x[0])
+        return [f"[{st}] {txt}" for sc, st, txt in scored[:k] if sc > 0.15]
+    except Exception:
+        return []
+
+
+@app.route('/api/vector/status', methods=['GET'])
+@login_required
+def vector_status():
+    conn = get_db(); oid = effective_company_id()
+    try:
+        by = {}
+        for r in conn.execute("SELECT source_type, COUNT(*) n FROM vec_chunks WHERE owner_id=? GROUP BY source_type", (oid,)).fetchall():
+            by[r['source_type']] = r['n']
+        total = sum(by.values())
+    finally:
+        conn.close()
+    return jsonify({'ok': True, 'total': total, 'by_type': by,
+                    'has_key': bool(get_setting('embedding_api_key', '')),
+                    'model': get_setting('embedding_model', ''),
+                    'base_url': get_setting('embedding_base_url', ''),
+                    'rag_enabled': get_setting('rag_enabled', '1') == '1'})
+
+
+@app.route('/api/vector/config', methods=['POST'])
+@login_required
+def vector_config():
+    d = request.json or {}
+    if 'embedding_api_key' in d and (d['embedding_api_key'] or '').strip():
+        set_setting('embedding_api_key', d['embedding_api_key'].strip())
+    if 'embedding_base_url' in d:
+        set_setting('embedding_base_url', (d['embedding_base_url'] or 'https://api.openai.com/v1').strip())
+    if 'embedding_model' in d:
+        set_setting('embedding_model', (d['embedding_model'] or 'text-embedding-3-small').strip())
+    if 'rag_enabled' in d:
+        set_setting('rag_enabled', '1' if d['rag_enabled'] else '0')
+    return jsonify({'ok': True})
+
+
+@app.route('/api/vector/reindex', methods=['POST'])
+@login_required
+def vector_reindex():
+    force = bool((request.json or {}).get('force'))
+    conn = get_db()
+    try:
+        res = _reindex(conn, effective_company_id(), force=force)
+    finally:
+        conn.close()
+    if res.get('error'):
+        return jsonify(res), 400
+    return jsonify({'ok': True, **res})
+
+
+@app.route('/api/vector/search', methods=['POST'])
+@login_required
+def vector_search_ep():
+    q = ((request.json or {}).get('query') or '').strip()
+    if not q:
+        return jsonify({'error': 'Empty query'}), 400
+    conn = get_db()
+    try:
+        hits = _vector_search(conn, effective_company_id(), q, int((request.json or {}).get('k', 8)))
+    finally:
+        conn.close()
+    return jsonify({'ok': True, 'results': hits})
+
+
 def _command_overview(conn, oid):
     d = {}
     # Revenue from invoices
@@ -9684,6 +9913,9 @@ def command_chat():
         live = ("FULL ATS SCAN (use this to answer):\n" + brief +
                 f"\n\nSNAPSHOT: bank cash {r(o['bank_cash'])}, monthly fixed {r(o['monthly_fixed'])}, "
                 f"runway {o['runway_months']} months, this-year target {r(o['year_target'])}.")
+        rag = _vector_search(conn, oid, msg, 8)
+        if rag:
+            live += "\n\nRELEVANT RECORDS (semantic search of candidates/positions/emails for this question):\n" + '\n---\n'.join(rag)
         messages = [{'role': 'system', 'content': CEO_CHAT_PROMPT + "\n\n" + live}]
         messages += hist
         messages.append({'role': 'user', 'content': msg})

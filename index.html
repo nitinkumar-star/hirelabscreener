@@ -3964,6 +3964,21 @@ async function renderCommandCenter(){
       +'<div id="cc-task-prefs" style="font-size:10px;color:#aaa;margin-top:5px"></div></div>'
     +'</div>'
     +cards+snap
+    +'<div id="cc-vector-card" style="background:#fff;border:1px solid #eee;border-radius:14px;padding:16px;margin-bottom:16px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-weight:700;font-size:15px">\uD83D\uDD0E Knowledge Base <span style="font-size:10.5px;color:#999;font-weight:400">\u2014 AI memory (vector): candidates, positions, emails semantic search</span></div>'
+      +'<button class="btn btn-o" style="font-size:11px" onclick="_ccToggleVec()" id="cc-vec-toggle">Setup</button></div>'
+      +'<div id="cc-vector-status" style="font-size:12px;color:#666">Loading…</div>'
+      +'<div id="cc-vector-setup" style="display:none;margin-top:10px;border-top:1px dashed #eee;padding-top:10px">'
+        +'<div style="font-size:10.5px;color:#888;margin-bottom:6px">Embeddings = <b>Jina</b>. API key <b>Render env var <code>JINA_API_KEY</code></b> mein daalo (UI mein nahi). Model/Base already set hain \u2014 bas Reindex dabao.</div>'
+        +'<div class="fg-row"><label>Embedding API Key <span style="color:#aaa">(optional \u2014 Render env preferred)</span></label><input id="vec-key" class="inp" type="password" style="width:100%" placeholder="Render env JINA_API_KEY (recommended) — ya yahan paste"></div>'
+        +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+          +'<div style="flex:1;min-width:160px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">Model</label><input id="vec-model" class="inp" style="width:100%" placeholder="text-embedding-3-small"></div>'
+          +'<div style="flex:1;min-width:160px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">Base URL</label><input id="vec-base" class="inp" style="width:100%" placeholder="https://api.openai.com/v1"></div>'
+        +'</div>'
+        +'<div style="display:flex;gap:8px;margin-top:10px"><button class="btn" style="background:#0F6E56;color:#fff;border:none;font-size:12px" onclick="saveVectorConfig()">Save config</button>'
+        +'<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="reindexVectors(this)">\uD83D\uDD04 Reindex ATS</button></div>'
+      +'</div>'
+    +'</div>'
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-weight:700;font-size:16px">\uD83E\uDDE0 Strategic Brain</div>'
     +'<button class="btn" style="background:#534AB7;color:#fff;border:none" onclick="generatePlan(this)">\u2728 Generate Strategic Plan</button></div>'
     +planHtml
@@ -3980,6 +3995,37 @@ async function renderCommandCenter(){
       +'<button class="btn" style="background:#534AB7;color:#fff;border:none" onclick="sendCommandChat()" id="cc-chat-send">Send</button></div></div>';
   loadCommandChat();
   loadCommandTasks(true);
+  loadVectorStatus();
+}
+function _ccToggleVec(){ var s=document.getElementById('cc-vector-setup'); if(s) s.style.display=(s.style.display==='none')?'block':'none'; }
+async function loadVectorStatus(){
+  var el=document.getElementById('cc-vector-status'); if(!el) return;
+  var r={};
+  try{ r=await req('GET','/vector/status'); }catch(e){}
+  if(!r||!r.ok){ el.innerHTML='<span style="color:#aaa">Status unavailable</span>'; return; }
+  var by=r.by_type||{}; var parts=Object.keys(by).map(function(k){return k+': '+by[k];});
+  var keyBadge=r.has_key?'<span style="color:#0F7A52;font-weight:600">key set \u2713</span>':'<span style="color:#B4690E;font-weight:600">no key yet \u2014 AI structured data pe chal raha hai</span>';
+  el.innerHTML='<b>'+(r.total||0)+'</b> records indexed'+(parts.length?(' ('+parts.join(', ')+')'):'')+' &middot; '+keyBadge+(r.has_key?(' &middot; model: '+esc(r.model||'')):'');
+  var k=document.getElementById('vec-model'); if(k&&!k.value) k.value=r.model||'text-embedding-3-small';
+  var b=document.getElementById('vec-base'); if(b&&!b.value) b.value=r.base_url||'https://api.openai.com/v1';
+}
+async function saveVectorConfig(){
+  var g=function(x){var e=document.getElementById(x);return e?e.value.trim():'';};
+  var body={embedding_model:g('vec-model'),embedding_base_url:g('vec-base')};
+  var key=g('vec-key'); if(key) body.embedding_api_key=key;
+  var r=await req('POST','/vector/config',body);
+  if(r&&r.ok){ toast('OK','Config saved'); var ke=document.getElementById('vec-key'); if(ke) ke.value=''; loadVectorStatus(); }
+  else toast('Error','Save failed');
+}
+async function reindexVectors(btn){
+  if(btn){ btn.disabled=true; btn.innerHTML='\uD83D\uDD04 Indexing… (30-90s)'; }
+  var r;
+  try{ r=await req('POST','/vector/reindex',{}); }
+  catch(e){ if(btn){btn.disabled=false;btn.innerHTML='\uD83D\uDD04 Reindex ATS';} toast('Error','Reindex failed'); return; }
+  if(btn){ btn.disabled=false; btn.innerHTML='\uD83D\uDD04 Reindex ATS'; }
+  if(r&&r.error){ toast('Error',esc(String(r.error))); return; }
+  toast('Done',(r.embedded||0)+' embedded, '+(r.skipped||0)+' unchanged');
+  loadVectorStatus();
 }
 var _ccTaskPrioCol={high:'#C0392B',medium:'#B4690E',low:'#888'};
 async function loadCommandTasks(autogen){
