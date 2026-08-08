@@ -9995,9 +9995,20 @@ def _work_status_brief(conn, oid):
     try:
         cands = conn.execute("SELECT id,name,stage,joining_date,guarantee_days,updated_at,phone,email,mandate_id FROM candidates WHERE owner_id=?", (oid,)).fetchall()
         inv_cids = set(r['candidate_id'] for r in conn.execute("SELECT candidate_id FROM invoices WHERE owner_id=? AND candidate_id>0", (oid,)).fetchall())
-        awaiting_inv = [c for c in cands if (c['stage'] == 'Joined' or c['joining_date']) and c['id'] not in inv_cids]
+        def _joined_date(c):
+            return (c['joining_date'] or '')[:10]
+        # JOINED = joining date has actually arrived (<= today), OR stage 'Joined' with no future date.
+        awaiting_inv = [c for c in cands
+                        if c['id'] not in inv_cids
+                        and ((_joined_date(c) and _joined_date(c) <= today)
+                             or (c['stage'] == 'Joined' and not (_joined_date(c) and _joined_date(c) > today)))]
         if awaiting_inv:
-            lines.append("JOINED, NO INVOICE YET (raise invoice): " + '; '.join(f"{c['name']} [ref cand:{c['mandate_id']}:{c['id']}]" for c in awaiting_inv[:8]))
+            lines.append("JOINED (joining date has passed), NO INVOICE YET — raise invoice now: " + '; '.join(f"{c['name']} [ref cand:{c['mandate_id']}:{c['id']}]" for c in awaiting_inv[:8]))
+        # UPCOMING JOININGS = future joining date. Do NOT invoice yet.
+        upcoming = [c for c in cands if _joined_date(c) and _joined_date(c) > today]
+        if upcoming:
+            lines.append("UPCOMING JOININGS (candidate confirmed but has NOT joined yet — DO NOT create any invoice task for these until their joining date arrives): "
+                         + '; '.join(f"{c['name']} joining {_joined_date(c)} [ref cand:{c['mandate_id']}:{c['id']}]" for c in upcoming[:8]))
         guar = []
         for c in cands:
             if c['joining_date']:
@@ -10081,16 +10092,21 @@ def _work_status_brief(conn, oid):
             lines.append(f"PIPELINE FORECAST: {len(fc)} open mandates, ceiling fee value ~Rs {int(potential):,} if all filled (8.33% of CTC).")
         # Revenue projection from ACTUAL offers (offered_ctc * fee%)
         try:
-            offc = conn.execute("SELECT name,stage,offered_ctc,fee_percent,placement_fee FROM candidates WHERE owner_id=? AND (offered_ctc>0 OR placement_fee>0)", (oid,)).fetchall()
+            offc = conn.execute("SELECT name,stage,offered_ctc,fee_percent,placement_fee,joining_date FROM candidates WHERE owner_id=? AND (offered_ctc>0 OR placement_fee>0)", (oid,)).fetchall()
             def _fee(r):
                 if r['offered_ctc'] and r['offered_ctc'] > 0:
                     return r['offered_ctc'] * (r['fee_percent'] or 8.33) / 100.0
                 return r['placement_fee'] or 0
-            confirmed = sum(_fee(r) for r in offc if r['stage'] == 'Joined')
-            probable = sum(_fee(r) for r in offc if r['stage'] in ('Shared with Client', 'Interview Inprocess'))
-            if confirmed or probable:
-                lines.append(f"REVENUE PROJECTION (from actual offered CTCs): CONFIRMED (joined, fee due) ~Rs {int(confirmed):,}; PROBABLE (in interview/shared) ~Rs {int(probable):,}. "
-                             + '; '.join(f"{r['name']}: offered Rs {int(r['offered_ctc']):,} -> fee Rs {int(_fee(r)):,} [{r['stage']}]" for r in offc if r['offered_ctc'] and r['offered_ctc'] > 0)[:600])
+            def _jd(r):
+                return (r['joining_date'] or '')[:10]
+            confirmed = sum(_fee(r) for r in offc if (_jd(r) and _jd(r) <= today) or (r['stage'] == 'Joined' and not (_jd(r) and _jd(r) > today)))
+            committed = sum(_fee(r) for r in offc if _jd(r) and _jd(r) > today)
+            probable = sum(_fee(r) for r in offc if r['stage'] in ('Shared with Client', 'Interview Inprocess') and not _jd(r))
+            if confirmed or committed or probable:
+                lines.append(f"REVENUE PROJECTION (from actual offered CTCs): "
+                             f"CONFIRMED (already joined, fee due NOW) ~Rs {int(confirmed):,}; "
+                             f"COMMITTED (offer accepted, joining on a future date — fee only AFTER joining, do not invoice yet) ~Rs {int(committed):,}; "
+                             f"PROBABLE (still in interview/shared) ~Rs {int(probable):,}.")
         except Exception:
             pass
     except Exception:
@@ -10580,13 +10596,17 @@ def _candidate_billing(conn, oid, cid):
             guarantee = {'end': gend.isoformat(), 'days_left': left, 'cleared': left <= 0}
         except Exception:
             guarantee = None
-    joined = (d['stage'] == 'Joined') or bool(d['joining_date'])
+    jd10 = (d['joining_date'] or '')[:10]
+    future_join = bool(jd10 and jd10 > today)
+    joined = (jd10 and jd10 <= today) or (d['stage'] == 'Joined' and not future_join)
     if d['replacement_flag']:
         status = 'Replacement Needed'
     elif paid:
         status = 'Paid \u2014 Closed-Won'
     elif invoiced:
         status = 'Overdue \u2014 Awaiting Payment' if overdue else 'Awaiting Payment'
+    elif future_join:
+        status = f'Confirmed \u2014 joining {jd10} (invoice AFTER joining)'
     elif joined:
         status = 'Awaiting Invoice'
     elif d['stage'] == 'Placed':
