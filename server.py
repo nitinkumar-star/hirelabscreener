@@ -2166,7 +2166,8 @@ def init_db():
     # Migrate: placement & billing lifecycle fields (close the loop after Joined).
     for col, typ in [('placement_fee', 'REAL DEFAULT 0'), ('joining_date', 'TEXT DEFAULT ""'),
                      ('guarantee_days', 'INTEGER DEFAULT 90'), ('replacement_flag', 'INTEGER DEFAULT 0'),
-                     ('billing_notes', 'TEXT DEFAULT ""')]:
+                     ('billing_notes', 'TEXT DEFAULT ""'),
+                     ('offered_ctc', 'REAL DEFAULT 0'), ('fee_percent', 'REAL DEFAULT 8.33')]:
         try:
             c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {typ}')
         except sqlite3.OperationalError:
@@ -10078,6 +10079,20 @@ def _work_status_brief(conn, oid):
         potential = sum(((r['ctc_max'] or 0) * 100000 * 0.0833) for r in fc if (r['ctc_max'] or 0) > 0)
         if potential:
             lines.append(f"PIPELINE FORECAST: {len(fc)} open mandates, ceiling fee value ~Rs {int(potential):,} if all filled (8.33% of CTC).")
+        # Revenue projection from ACTUAL offers (offered_ctc * fee%)
+        try:
+            offc = conn.execute("SELECT name,stage,offered_ctc,fee_percent,placement_fee FROM candidates WHERE owner_id=? AND (offered_ctc>0 OR placement_fee>0)", (oid,)).fetchall()
+            def _fee(r):
+                if r['offered_ctc'] and r['offered_ctc'] > 0:
+                    return r['offered_ctc'] * (r['fee_percent'] or 8.33) / 100.0
+                return r['placement_fee'] or 0
+            confirmed = sum(_fee(r) for r in offc if r['stage'] == 'Joined')
+            probable = sum(_fee(r) for r in offc if r['stage'] in ('Shared with Client', 'Interview Inprocess'))
+            if confirmed or probable:
+                lines.append(f"REVENUE PROJECTION (from actual offered CTCs): CONFIRMED (joined, fee due) ~Rs {int(confirmed):,}; PROBABLE (in interview/shared) ~Rs {int(probable):,}. "
+                             + '; '.join(f"{r['name']}: offered Rs {int(r['offered_ctc']):,} -> fee Rs {int(_fee(r)):,} [{r['stage']}]" for r in offc if r['offered_ctc'] and r['offered_ctc'] > 0)[:600])
+        except Exception:
+            pass
     except Exception:
         pass
     # 5) Email signal — unread inbox
@@ -10539,7 +10554,7 @@ Now produce the strategic brief."""
 
 def _candidate_billing(conn, oid, cid):
     import datetime as _dt
-    c = conn.execute('SELECT id,name,stage,placement_fee,joining_date,guarantee_days,replacement_flag,billing_notes FROM candidates WHERE id=? AND owner_id=?', (cid, oid)).fetchone()
+    c = conn.execute('SELECT id,name,stage,placement_fee,joining_date,guarantee_days,replacement_flag,billing_notes,offered_ctc,fee_percent FROM candidates WHERE id=? AND owner_id=?', (cid, oid)).fetchone()
     if not c:
         return None
     d = dict(c)
@@ -10605,13 +10620,15 @@ def set_candidate_billing(cid):
     # self-heal columns
     for col, typ in [('placement_fee', 'REAL DEFAULT 0'), ('joining_date', 'TEXT DEFAULT ""'),
                      ('guarantee_days', 'INTEGER DEFAULT 90'), ('replacement_flag', 'INTEGER DEFAULT 0'),
-                     ('billing_notes', 'TEXT DEFAULT ""')]:
+                     ('billing_notes', 'TEXT DEFAULT ""'),
+                     ('offered_ctc', 'REAL DEFAULT 0'), ('fee_percent', 'REAL DEFAULT 8.33')]:
         try: conn.execute(f'ALTER TABLE candidates ADD COLUMN {col} {typ}'); conn.commit()
         except Exception: pass
-    conn.execute('UPDATE candidates SET placement_fee=?, joining_date=?, guarantee_days=?, replacement_flag=?, billing_notes=? WHERE id=? AND owner_id=?',
+    conn.execute('UPDATE candidates SET placement_fee=?, joining_date=?, guarantee_days=?, replacement_flag=?, billing_notes=?, offered_ctc=?, fee_percent=? WHERE id=? AND owner_id=?',
                  (float(d.get('placement_fee', 0) or 0), d.get('joining_date', ''),
                   int(d.get('guarantee_days', 90) or 90), 1 if d.get('replacement_flag') else 0,
-                  d.get('billing_notes', ''), cid, oid))
+                  d.get('billing_notes', ''), float(d.get('offered_ctc', 0) or 0),
+                  float(d.get('fee_percent', 8.33) or 8.33), cid, oid))
     conn.commit()
     res = _candidate_billing(conn, oid, cid)
     conn.close()

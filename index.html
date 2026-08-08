@@ -5037,7 +5037,12 @@ async function cpLoadBilling(cid){
     +'</div>'
     +'<div class="cp-card2" style="margin-bottom:14px"><div class="cp-lbl2">Placement details</div>'
       +'<div style="display:flex;gap:10px;flex-wrap:wrap">'
+      +'<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">Offered CTC (\u20B9 / year)</label><input id="bill-octc-'+cid+'" class="inp" type="number" value="'+(b.offered_ctc||'')+'" oninput="_cpCalcFee('+cid+')" style="width:100%" placeholder="e.g. 1200000"></div>'
+      +'<div style="flex:1;min-width:100px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">Fee %</label><input id="bill-feep-'+cid+'" class="inp" type="number" step="0.01" value="'+(b.fee_percent||8.33)+'" oninput="_cpCalcFee('+cid+')" style="width:100%"></div>'
       +_ccInp('bill-fee-'+cid,'Placement fee (\u20B9)',b.placement_fee)
+      +'</div>'
+      +'<div id="bill-feecalc-'+cid+'" style="font-size:11px;color:#0F6E56;margin-top:6px"></div>'
+      +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">'
       +'<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">Joining date</label><input id="bill-join-'+cid+'" class="inp" type="date" value="'+(b.joining_date?b.joining_date.slice(0,10):'')+'" style="width:100%"></div>'
       +_ccInp('bill-gd-'+cid,'Guarantee days',b.guarantee_days||90)
       +'</div>'
@@ -5049,6 +5054,18 @@ async function cpLoadBilling(cid){
     +'<div class="cp-card2"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">Linked invoice(s)</div>'
       +'<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="cpCreateInvoiceFromCandidate('+cid+')">+ Create Invoice for this candidate</button></div>'
       +invHtml+'</div>';
+  _cpCalcFee(cid);
+}
+function _cpCalcFee(cid){
+  var octc=parseFloat((document.getElementById('bill-octc-'+cid)||{}).value)||0;
+  var fp=parseFloat((document.getElementById('bill-feep-'+cid)||{}).value)||8.33;
+  var out=document.getElementById('bill-feecalc-'+cid);
+  var feeEl=document.getElementById('bill-fee-'+cid);
+  if(octc>0){
+    var fee=Math.round(octc*fp/100);
+    if(feeEl) feeEl.value=fee;
+    if(out) out.innerHTML='\uD83D\uDCA1 Fee = \u20B9'+octc.toLocaleString('en-IN')+' \u00D7 '+fp+'% = <b>\u20B9'+fee.toLocaleString('en-IN')+'</b> + GST 18% = \u20B9'+Math.round(fee*1.18).toLocaleString('en-IN')+' (invoice total)';
+  } else if(out){ out.innerHTML=''; }
 }
 async function cpSaveBilling(cid){
   var v=function(x){var e=document.getElementById(x);return e?e.value:'';};
@@ -5056,7 +5073,8 @@ async function cpSaveBilling(cid){
   var r=await req('POST','/candidates/'+cid+'/billing',{
     placement_fee:parseFloat(v('bill-fee-'+cid))||0, joining_date:v('bill-join-'+cid),
     guarantee_days:parseInt(v('bill-gd-'+cid))||90, replacement_flag:chk&&chk.checked?1:0,
-    billing_notes:v('bill-notes-'+cid)});
+    billing_notes:v('bill-notes-'+cid),
+    offered_ctc:parseFloat(v('bill-octc-'+cid))||0, fee_percent:parseFloat(v('bill-feep-'+cid))||8.33});
   if(r&&r.ok){ toast('OK','Billing saved'); cpLoadBilling(cid); } else toast('Error','Save failed');
 }
 async function cpCreateInvoiceFromCandidate(cid){
