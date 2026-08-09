@@ -4358,6 +4358,37 @@ async function renderExpenses(el){
     +_invCard('Received',_invRup(sum.received),'#0F7A52')
     +_invCard('Total Expenses',_invRup(sum.total_expenses),'#C0392B')
     +_invCard('Net Profit',_invRup(net),netCol)+'</div>';
+  // ── Agency financial projection ──
+  var proj=sum.projection||{};
+  var recvCard=function(lbl,val,col,sub){ return '<div style="flex:1;min-width:140px;background:#fff;border:1px solid #eee;border-radius:12px;padding:13px 15px">'
+    +'<div style="font-size:10.5px;color:#888;text-transform:uppercase;letter-spacing:.4px">'+lbl+'</div>'
+    +'<div style="font-size:19px;font-weight:700;color:'+(col||'#1B1B18')+';margin-top:3px">'+val+'</div>'
+    +(sub?'<div style="font-size:10.5px;color:#aaa;margin-top:2px">'+sub+'</div>':'')+'</div>'; };
+  var olist=sum.outstanding_list||[];
+  var olrows=olist.map(function(o){
+    var col=o.overdue?'#C0392B':'#B4690E';
+    return '<tr style="border-top:1px solid #f2f2f2"><td style="padding:7px 8px;font-size:12px">'+esc(o.invoice_no||'')+'</td>'
+      +'<td style="padding:7px 8px;font-size:12px">'+esc(o.buyer_name||'')+'</td>'
+      +'<td style="padding:7px 8px;font-size:12px;color:#999">'+esc(o.due_date||'-')+(o.overdue?' <span style="color:#C0392B;font-weight:700">OVERDUE</span>':'')+'</td>'
+      +'<td style="padding:7px 8px;font-size:12px;text-align:right;font-weight:600;color:'+col+'">'+_invRup(o.total)+'</td></tr>';
+  }).join('');
+  var projSection='<div style="background:#fff;border:1px solid #eee;border-radius:14px;padding:16px;margin-bottom:16px">'
+    +'<div style="font-weight:700;font-size:15px;margin-bottom:12px">🏦 Agency Financial Projection</div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'
+      +recvCard('Outstanding (clearance baaki)',_invRup(sum.outstanding),'#B4690E',(sum.unpaid_count||0)+' invoice pending')
+      +recvCard('Overdue (paisa phasa)',_invRup(sum.overdue_amount),'#C0392B',(sum.overdue_count||0)+' invoice overdue')
+      +recvCard('Total Invoiced',_invRup(sum.invoiced),'#534AB7',(sum.count||0)+' invoices')
+    +'</div>'
+    +'<div style="font-size:12px;font-weight:600;color:#555;margin:6px 0 8px">Upcoming Revenue (placements se projection)</div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">'
+      +recvCard('Confirmed (fee due)',_invRup(proj.confirmed),'#0F7A52','joined, invoice ready')
+      +recvCard('Committed (future joining)',_invRup(proj.committed),'#2456A6','offer accept, joining pending')
+      +recvCard('Probable (in interview)',_invRup(proj.probable),'#8E24AA','shared/interview stage')
+    +'</div>'
+    +'<div style="font-size:11px;color:#999;margin-top:6px">Total projected pipeline value: <b style="color:#1B1B18">'+_invRup(proj.total_potential)+'</b> (confirmed + committed + probable)</div>'
+    +(olist.length?('<div style="margin-top:14px"><div style="font-size:12px;font-weight:600;color:#555;margin-bottom:6px">Pending Invoices (clearance ke liye baaki)</div>'
+      +'<div style="background:#fcfbff;border:1px solid #eee;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#F6F5FB;text-align:left"><th style="padding:7px 8px;font-size:10.5px;color:#888">Invoice</th><th style="padding:7px 8px;font-size:10.5px;color:#888">Client</th><th style="padding:7px 8px;font-size:10.5px;color:#888">Due</th><th style="padding:7px 8px;font-size:10.5px;color:#888;text-align:right">Amount</th></tr></thead><tbody>'+olrows+'</tbody></table></div></div>'):'')
+    +'</div>';
   var byCat=sum.expenses_by_category||{};
   var catChips=Object.keys(byCat).map(function(k){return '<span style="font-size:10.5px;background:#F4F3FB;border:1px solid #E3E0F3;border-radius:20px;padding:3px 10px;margin:2px;display:inline-block">'+esc(k)+': '+_invRup(byCat[k])+'</span>';}).join(' ');
   var rows=exps.map(function(e){
@@ -4374,6 +4405,8 @@ async function renderExpenses(el){
       +'<button class="btn" style="font-size:12.5px;background:#534AB7;color:#fff;border:none" onclick="_invSwitch(\'expenses\')">Expenses &amp; Profit</button></div>'
     +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="openExpenseForm()">+ Add Expense</button></div>'
     +cards
+    +projSection
+    +'<div style="font-weight:700;font-size:15px;margin:4px 0 10px">💸 Expenses</div>'
     +(catChips?'<div style="margin-bottom:14px">'+catChips+'</div>':'')
     +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
     +'<thead><tr style="background:#F6F5FB;text-align:left"><th style="padding:8px">Date</th><th style="padding:8px">Category</th><th style="padding:8px">Paid To / Note</th><th style="padding:8px;text-align:right">Amount</th><th style="padding:8px"></th></tr></thead>'

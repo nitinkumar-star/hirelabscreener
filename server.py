@@ -9358,27 +9358,62 @@ def invoice_next_number():
 @app.route('/api/invoices/summary', methods=['GET'])
 @login_required
 def invoicing_summary():
+    import datetime as _dt
     conn = get_db(); oid = effective_company_id()
-    invs = conn.execute('SELECT amount, gst_rate, status, received_amount FROM invoices WHERE owner_id=?', (oid,)).fetchall()
+    today = _dt.date.today().isoformat()
+    invs = conn.execute('SELECT invoice_no, buyer_name, amount, gst_rate, status, received_amount, due_date FROM invoices WHERE owner_id=?', (oid,)).fetchall()
     exps = conn.execute('SELECT category, amount FROM expenses WHERE owner_id=?', (oid,)).fetchall()
-    conn.close()
-    invoiced = received = outstanding = 0.0
-    n_paid = 0
+    invoiced = received = outstanding = overdue_amt = 0.0
+    n_paid = unpaid_count = overdue_count = 0
+    outstanding_list = []
     for r in invs:
-        gross = round((r['amount'] or 0) * (1 + (r['gst_rate'] or 18)/100))
+        gross = round((r['amount'] or 0) * (1 + (r['gst_rate'] or 18) / 100))
         invoiced += gross
         if (r['status'] or '').lower() == 'paid':
             received += (r['received_amount'] or gross); n_paid += 1
         else:
-            outstanding += gross
+            outstanding += gross; unpaid_count += 1
+            due = (r['due_date'] or '')[:10]
+            is_over = bool(due and due < today)
+            if is_over:
+                overdue_amt += gross; overdue_count += 1
+            outstanding_list.append({'invoice_no': r['invoice_no'], 'buyer_name': r['buyer_name'],
+                                     'total': gross, 'due_date': due, 'overdue': is_over})
+    outstanding_list.sort(key=lambda x: (not x['overdue'], x['due_date'] or '9999'))
     exp_by_cat = {}; total_exp = 0.0
     for e in exps:
         exp_by_cat[e['category']] = exp_by_cat.get(e['category'], 0) + (e['amount'] or 0)
         total_exp += (e['amount'] or 0)
+    # Revenue projection from candidates' offered CTC / placement fee
+    confirmed = committed = probable = 0.0
+    try:
+        offc = conn.execute("SELECT stage,offered_ctc,fee_percent,placement_fee,joining_date FROM candidates WHERE owner_id=? AND (offered_ctc>0 OR placement_fee>0)", (oid,)).fetchall()
+        def _fee(r):
+            if r['offered_ctc'] and r['offered_ctc'] > 0:
+                return r['offered_ctc'] * (r['fee_percent'] or 8.33) / 100.0
+            return r['placement_fee'] or 0
+        def _jd(r):
+            return (r['joining_date'] or '')[:10]
+        for r in offc:
+            jd = _jd(r); fee = _fee(r)
+            if (jd and jd <= today) or (r['stage'] == 'Joined' and not (jd and jd > today)):
+                confirmed += fee
+            elif jd and jd > today:
+                committed += fee
+            elif r['stage'] in ('Shared with Client', 'Interview Inprocess'):
+                probable += fee
+    except Exception:
+        pass
+    conn.close()
     return jsonify({'ok': True, 'invoiced': round(invoiced), 'received': round(received),
-                    'outstanding': round(outstanding), 'count': len(invs), 'n_paid': n_paid,
+                    'outstanding': round(outstanding), 'overdue_amount': round(overdue_amt),
+                    'count': len(invs), 'n_paid': n_paid, 'unpaid_count': unpaid_count, 'overdue_count': overdue_count,
+                    'outstanding_list': outstanding_list,
                     'total_expenses': round(total_exp), 'expenses_by_category': exp_by_cat,
-                    'net_profit': round(received - total_exp)})
+                    'net_profit': round(received - total_exp),
+                    'projection': {'confirmed': round(confirmed), 'committed': round(committed),
+                                   'probable': round(probable),
+                                   'total_potential': round(confirmed + committed + probable)}})
 
 
 # ── Email Box (IMAP inbox + sent, for Command Center signal) ─────────────────
