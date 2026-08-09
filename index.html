@@ -1634,6 +1634,12 @@ async function readHash() {
       return;
     }
 
+    // Analytics placed/joined list (opened from the Placements KPI card)
+    if (head === 'analytics' && parts[1] === 'placed') {
+      renderPlacedCandidatesPage();
+      return;
+    }
+
     // CRM contact workspace (full-page) — deep link
     if (head === 'crm' && parts[1] === 'client' && parts[2] && parts[3] === 'contact' && parts[4]) {
       openContactWorkspace(parseInt(parts[2]), parseInt(parts[4]));
@@ -2961,16 +2967,18 @@ async function renderDashboard(el){
   const focus   = allTasks.filter(function(t){return t.section==='overdue'||t.section==='today';});
   const activity= (activityData && activityData.activity) || [];
 
-  function statCard(label,val,sub){
-    return '<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 17px;box-shadow:var(--shadow-sm)">'
-      +'<div style="font-size:11.5px;color:var(--muted);font-weight:500">'+label+'</div>'
+  function statCard(label,val,sub,onclick){
+    var box='background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 17px;box-shadow:var(--shadow-sm)';
+    var attr = onclick ? (' onclick="'+onclick+'" title="Click to see the list" style="'+box+';cursor:pointer"') : (' style="'+box+'"');
+    return '<div'+attr+'>'
+      +'<div style="font-size:11.5px;color:var(--muted);font-weight:500">'+label+(onclick?' <span style="color:#0F6E56">&#8594;</span>':'')+'</div>'
       +'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:26px;font-weight:600;letter-spacing:-1px;margin-top:6px;color:var(--ink)">'+val+'</div>'
       +(sub?'<div style="font-size:10.5px;color:#aaa;margin-top:3px">'+sub+'</div>':'')+'</div>';
   }
   var openM = (kpi.open_mandates!=null)?kpi.open_mandates:S.mandates.filter(function(m){return m.status==='active';}).length;
   var cards='<div style="padding:18px 16px 4px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">'
     +statCard('Open mandates', openM, ((kpi.active!=null?kpi.active:openM)+' active'+(kpi.hold?', '+kpi.hold+' hold':''))+' &middot; now')
-    +statCard('Placements', (kpi.placed_this_month!=null?kpi.placed_this_month:0), 'All time &middot; Placed + Joined')
+    +statCard('Placements', (kpi.placed_this_month!=null?kpi.placed_this_month:0), 'All time &middot; Placed + Joined', "location.hash='analytics/placed'")
     +statCard('Avg time-to-fill', (kpi.avg_time_to_fill!=null?kpi.avg_time_to_fill+'d':'&mdash;'), 'created &rarr; placed')
     +statCard('Candidates in pipeline', (kpi.pipeline_candidates!=null?kpi.pipeline_candidates:'&mdash;'), 'Current snapshot')
     +'</div>';
@@ -9595,7 +9603,7 @@ async function renderAnalytics(){
   html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px">';
   var rangeWord = (r.range_label||'').replace('Last ','').replace(' days',' din');
   html += _kpiCard('Open mandates', k.open_mandates, (k.active)+' active, '+(k.hold)+' hold  \u00b7 now');
-  html += _kpiCard('Placements', k.placed_this_month, 'All time · Placed + Joined');
+  html += _kpiCard('Placements', k.placed_this_month, 'All time · Placed + Joined', "location.hash='analytics/placed'");
   html += _kpiCard('Avg time-to-fill', k.avg_time_to_fill!=null ? (k.avg_time_to_fill+' days') : '\u2014', 'Placed in '+esc(r.range_label||'').toLowerCase());
   html += _kpiCard('Candidates in pipeline', k.pipeline_candidates, 'Current snapshot');
   html += '</div>';
@@ -9670,9 +9678,11 @@ async function renderAnalytics(){
   body.innerHTML = html;
 }
 
-function _kpiCard(label, value, sub){
-  return '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px">'
-    + '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">'+esc(label)+'</div>'
+function _kpiCard(label, value, sub, onclick){
+  var box='background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px';
+  var attr = onclick ? (' onclick="'+onclick+'" title="Click to see the list" style="'+box+';cursor:pointer"') : (' style="'+box+'"');
+  return '<div'+attr+'>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">'+esc(label)+(onclick?' &#8594;':'')+'</div>'
     + '<div style="font-size:24px;font-weight:700;color:var(--navy)">'+esc(String(value))+'</div>'
     + '<div style="font-size:11px;color:var(--muted);margin-top:2px">'+esc(sub)+'</div></div>';
 }
@@ -11608,6 +11618,67 @@ async function renderStageCandidatesPage(stagesStr){
         + '<div style="font-size:10.5px;color:var(--muted)">'+esc(c.mandate_client||'')+'</div></div>'
         + staleBadge
         + (c.cv_path?'<span style="font-size:9px;font-weight:600;background:#E8F4EE;color:#127A57;padding:2px 6px;border-radius:6px">CV</span>':'')
+        + '</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  body.innerHTML = html;
+}
+
+// ── Placed / Joined candidates (one-click drill-down from Placements KPI) ────
+async function renderPlacedCandidatesPage(){
+  openAnalytics(true);
+  var body = document.getElementById('analytics-body');
+  if(!body) return;
+  body.innerHTML = '<div class="loading"><div class="spinner"></div>Loading placements...</div>';
+  var r = await req('GET', '/analytics/placed-list');
+  if(!r || !r.ok){ body.innerHTML='<div style="padding:20px;color:#E24B4A">Failed to load placements</div>'; return; }
+  var cands = r.candidates || [];
+  var nJoined = cands.filter(function(c){return c.placed_reason==='joined';}).length;
+  var nPlaced = cands.filter(function(c){return c.placed_reason==='placed';}).length;
+  var nOffer  = cands.filter(function(c){return c.placed_reason==='offer';}).length;
+
+  var html = '<div style="max-width:920px;margin:0 auto">';
+  html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+    + '<a href="#analytics" style="font-size:12px;color:var(--teal-deep);text-decoration:none">&#8592; Analytics</a></div>';
+  html += '<div style="font-size:18px;font-weight:700;color:var(--navy);margin-bottom:4px">Placements &middot; Placed + Joined</div>';
+  html += '<div style="font-size:12px;color:var(--muted);margin-bottom:16px"><b>'+cands.length+'</b> total'
+    + ' &middot; '+nJoined+' joined, '+nPlaced+' placed'
+    + (nOffer?' &middot; <span style="color:#C0522B;font-weight:600">'+nOffer+' offered (stage not moved)</span>':'')+'</div>';
+
+  if(nOffer){
+    html += '<div style="background:#FFF8F1;border:0.5px solid #F0D9C4;border-radius:10px;padding:10px 13px;margin-bottom:14px;font-size:11.5px;color:#8A5320;line-height:1.5">'
+      + '&#9888; '+nOffer+' candidate'+(nOffer!==1?'s have':' has')+' an offer/joining record but '+(nOffer!==1?'their':'its')+' pipeline stage is still not <b>Placed</b> or <b>Joined</b>. '
+      + 'They are counted here (a placement is a placement) &mdash; but you may want to move their stage so the pipeline funnel stays accurate.</div>';
+  }
+
+  if(!cands.length){
+    html += '<div style="text-align:center;padding:50px;color:var(--muted)">No placements yet.</div>';
+  } else {
+    html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;overflow:hidden">';
+    cands.forEach(function(c){
+      var badge, bg;
+      if(c.placed_reason==='joined'){ badge='JOINED'; bg='#0A7B5C'; }
+      else if(c.placed_reason==='placed'){ badge='PLACED'; bg='#0F6E56'; }
+      else { badge='OFFERED &#9888;'; bg='#C0522B'; }
+      var offer = (c.offered_ctc && c.offered_ctc>0) ? ('&#8377;'+Number(c.offered_ctc).toLocaleString('en-IN')) : '';
+      var jd = (c.joining_date||'').slice(0,10);
+      var rightLine = offer ? (offer+(jd?' &middot; joins '+jd:'')) : (jd?('joins '+jd):'');
+      html += '<div onclick="openCandidateInNewTab('+c.id+','+(c.mandate_id||'null')+')" title="Opens in a new tab" '
+        + 'style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:0.5px solid var(--line);cursor:pointer" '
+        + 'onmouseover="this.style.background=\'#F7F6F3\'" onmouseout="this.style.background=\'#fff\'">'
+        + avatarHtml(c.name, 34)
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="font-size:13px;font-weight:600;color:var(--navy)">'+esc(c.name||'')+'</div>'
+        + '<div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+        + esc(c.company||'')+(c.designation?' &middot; '+esc(c.designation):'')+'</div></div>'
+        + '<div style="text-align:right;min-width:0;margin-right:4px">'
+        + (c.mandate_role?'<div style="font-size:11px;color:var(--purple);font-weight:600">'+esc(c.mandate_role)+'</div>':'')
+        + (c.mandate_client?'<div style="font-size:10.5px;color:var(--muted)">'+esc(c.mandate_client)+'</div>':'')
+        + (rightLine?'<div style="font-size:10.5px;color:#127A57;font-weight:600">'+rightLine+'</div>':'')
+        + '</div>'
+        + '<span style="font-size:9px;font-weight:700;background:'+bg+';color:#fff;padding:2px 7px;border-radius:6px;white-space:nowrap">'+badge+'</span>'
         + '</div>';
     });
     html += '</div>';

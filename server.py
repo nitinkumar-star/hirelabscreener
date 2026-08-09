@@ -239,6 +239,25 @@ def effective_user_id():
 def effective_company_id():
     return effective_user_id()
 
+
+# ── Canonical "successful placement" definition ────────────────────────────
+# A candidate counts as placed if they're in the Placed/Joined stage, OR they
+# carry a real offer/joining record (offered CTC, placement fee, or a joining
+# date) — unless they sit in an explicitly-negative stage (offer fell through).
+# This catches candidates who were placed via the Billing module but whose
+# pipeline stage was never moved. Reused by Analytics, Command Center, the admin
+# summary and the placed-list endpoint so the KPI number and the click-through
+# list ALWAYS agree.
+_PLACED_REJECT_STAGES = ('not interested', 'not suitable',
+                         'client rejected on paper', 'client rejected after interview')
+PLACED_SQL = (
+    "( TRIM(LOWER(COALESCE(stage,''))) IN ('placed','joined') "
+    "  OR ( (COALESCE(offered_ctc,0)>0 OR COALESCE(placement_fee,0)>0 "
+    "        OR TRIM(COALESCE(joining_date,''))!='') "
+    "       AND TRIM(LOWER(COALESCE(stage,''))) NOT IN "
+    "       ('not interested','not suitable','client rejected on paper','client rejected after interview') ) )"
+)
+
 def is_admin():
     u = current_user()
     return u and u.get('role') == 'admin'
@@ -1577,7 +1596,7 @@ def admin_summary():
         mand = conn.execute('SELECT COUNT(*) n FROM mandates WHERE owner_id=?', (cid,)).fetchone()['n']
         active_mand = conn.execute("SELECT COUNT(*) n FROM mandates WHERE owner_id=? AND status='active'", (cid,)).fetchone()['n']
         cands = conn.execute('SELECT COUNT(*) n FROM candidates WHERE owner_id=?', (cid,)).fetchone()['n']
-        placed = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND TRIM(LOWER(stage)) IN ('placed','joined')", (cid,)).fetchone()['n']
+        placed = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND " + PLACED_SQL, (cid,)).fetchone()['n']
         members = conn.execute("SELECT COUNT(*) n FROM users WHERE company_id=? AND status='approved'", (cid,)).fetchone()['n']
         last_login = conn.execute("SELECT MAX(last_login) m FROM users WHERE company_id=?", (cid,)).fetchone()['m']
         summary.append({
@@ -3625,10 +3644,13 @@ def analytics():
     # TRIM/LOWER guards against stray whitespace/casing in imported data.
     if admin:
         placed_this_month = conn.execute(
-            "SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND TRIM(LOWER(stage)) IN ('placed','joined')",
-            (cid,)).fetchone()['n']
+            "SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND " + PLACED_SQL, (cid,)).fetchone()['n']
+    elif mandate_ids:
+        placed_this_month = conn.execute(
+            f"SELECT COUNT(*) n FROM candidates WHERE mandate_id IN {_in(mandate_ids)} AND " + PLACED_SQL,
+            mandate_ids).fetchone()['n']
     else:
-        placed_this_month = sum(1 for c in cands if (c['stage'] or '').strip().lower() in ('placed', 'joined'))
+        placed_this_month = 0
 
     # Avg time-to-fill (days from candidate created → Placed) within range.
     # Joined candidates count too — they were placed, just moved one step further.
@@ -3780,6 +3802,44 @@ def analytics_stage_candidates():
                 pass
         out.append(d)
     return jsonify({'ok': True, 'candidates': out, 'stages': stages, 'stale_days': int(stale_days)})
+
+@app.route('/api/analytics/placed-list')
+@login_required
+def analytics_placed_list():
+    """Every successful placement (Placed/Joined stage OR a real offer/joining
+    record), across all positions. Powers the one-click drill-down from the
+    Placements KPI, and uses the SAME predicate as the count so the list length
+    always equals the headline number."""
+    conn = get_db()
+    cid = effective_company_id()
+    sel = ("SELECT id,name,company,designation,phone,email,stage,mandate_id,updated_at,cv_path,"
+           "offered_ctc,placement_fee,joining_date FROM candidates WHERE ")
+    order = (" ORDER BY CASE TRIM(LOWER(COALESCE(stage,''))) "
+             "WHEN 'joined' THEN 0 WHEN 'placed' THEN 1 ELSE 2 END, name")
+    if is_company_admin():
+        rows = conn.execute(sel + "owner_id=? AND " + PLACED_SQL + order, (cid,)).fetchall()
+    else:
+        mrows = conn.execute('SELECT id FROM mandates WHERE owner_id=? AND assigned_user_id=?',
+                             (cid, real_user_id())).fetchall()
+        mids = [m['id'] for m in mrows]
+        if not mids:
+            conn.close(); return jsonify({'ok': True, 'candidates': [], 'count': 0})
+        ph = '(' + ','.join('?' for _ in mids) + ')'
+        rows = conn.execute(sel + f"mandate_id IN {ph} AND " + PLACED_SQL + order, mids).fetchall()
+    mmap = {}
+    for m in conn.execute('SELECT id, role, client FROM mandates WHERE owner_id=?', (cid,)).fetchall():
+        mmap[m['id']] = dict(m)
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        m = mmap.get(d.get('mandate_id'), {})
+        d['mandate_role'] = m.get('role', '')
+        d['mandate_client'] = m.get('client', '')
+        stg = (d.get('stage') or '').strip().lower()
+        d['placed_reason'] = 'joined' if stg == 'joined' else ('placed' if stg == 'placed' else 'offer')
+        out.append(d)
+    return jsonify({'ok': True, 'candidates': out, 'count': len(out)})
 
 @app.route('/api/tasks')
 @login_required
@@ -9859,7 +9919,7 @@ def _command_overview(conn, oid):
         by_stage = {}
         for c in cand_rows:
             s = c['stage'] or 'Unknown'; by_stage[s] = by_stage.get(s, 0) + 1
-        placed = sum(v for k, v in by_stage.items() if (k or '').strip().lower() in ('placed', 'joined'))
+        placed = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND " + PLACED_SQL, (oid,)).fetchone()['n']
         shared = by_stage.get('Shared with Client', 0)
     except Exception:
         total_cand = placed = shared = 0; by_stage = {}
