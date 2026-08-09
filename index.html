@@ -2970,7 +2970,7 @@ async function renderDashboard(el){
   var openM = (kpi.open_mandates!=null)?kpi.open_mandates:S.mandates.filter(function(m){return m.status==='active';}).length;
   var cards='<div style="padding:18px 16px 4px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">'
     +statCard('Open mandates', openM, ((kpi.active!=null?kpi.active:openM)+' active'+(kpi.hold?', '+kpi.hold+' hold':''))+' &middot; now')
-    +statCard('Placements', (kpi.placed_this_month!=null?kpi.placed_this_month:0), (analytics.range_label||'This period'))
+    +statCard('Placements', (kpi.placed_this_month!=null?kpi.placed_this_month:0), 'All time &middot; Placed + Joined')
     +statCard('Avg time-to-fill', (kpi.avg_time_to_fill!=null?kpi.avg_time_to_fill+'d':'&mdash;'), 'created &rarr; placed')
     +statCard('Candidates in pipeline', (kpi.pipeline_candidates!=null?kpi.pipeline_candidates:'&mdash;'), 'Current snapshot')
     +'</div>';
@@ -3541,7 +3541,7 @@ async function renderPipeline(el){
   const byStage={};PIPELINE_STAGES.forEach(s=>byStage[s.id]=[]);
   inPipeline.forEach(c=>{if(byStage[c.stage])byStage[c.stage].push(c);});
   const sharedCnt=(all||[]).filter(c=>c.stage==='Shared with Client').length;
-  const placedCnt=(all||[]).filter(c=>c.stage==='Placed').length;
+  const placedCnt=(all||[]).filter(c=>{var s=(c.stage||'').trim().toLowerCase();return s==='placed'||s==='joined';}).length;
 
   var _st=(S.activeMandate.status||'active');
   var _stBg=_st==='hold'?'#FAEEDA':_st==='closed'?'#F2F4F7':'#E1F5EE';
@@ -9595,7 +9595,7 @@ async function renderAnalytics(){
   html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px">';
   var rangeWord = (r.range_label||'').replace('Last ','').replace(' days',' din');
   html += _kpiCard('Open mandates', k.open_mandates, (k.active)+' active, '+(k.hold)+' hold  \u00b7 now');
-  html += _kpiCard('Placements', k.placed_this_month, esc(r.range_label||''));
+  html += _kpiCard('Placements', k.placed_this_month, 'All time · Placed + Joined');
   html += _kpiCard('Avg time-to-fill', k.avg_time_to_fill!=null ? (k.avg_time_to_fill+' days') : '\u2014', 'Placed in '+esc(r.range_label||'').toLowerCase());
   html += _kpiCard('Candidates in pipeline', k.pipeline_candidates, 'Current snapshot');
   html += '</div>';

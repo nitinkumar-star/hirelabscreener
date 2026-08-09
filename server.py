@@ -1577,7 +1577,7 @@ def admin_summary():
         mand = conn.execute('SELECT COUNT(*) n FROM mandates WHERE owner_id=?', (cid,)).fetchone()['n']
         active_mand = conn.execute("SELECT COUNT(*) n FROM mandates WHERE owner_id=? AND status='active'", (cid,)).fetchone()['n']
         cands = conn.execute('SELECT COUNT(*) n FROM candidates WHERE owner_id=?', (cid,)).fetchone()['n']
-        placed = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND stage='Placed'", (cid,)).fetchone()['n']
+        placed = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND TRIM(LOWER(stage)) IN ('placed','joined')", (cid,)).fetchone()['n']
         members = conn.execute("SELECT COUNT(*) n FROM users WHERE company_id=? AND status='approved'", (cid,)).fetchone()['n']
         last_login = conn.execute("SELECT MAX(last_login) m FROM users WHERE company_id=?", (cid,)).fetchone()['m']
         summary.append({
@@ -3618,20 +3618,23 @@ def analytics():
     cands = [dict(c) for c in cand_rows]
     total_pipeline = len([c for c in cands if c['stage'] not in ('Placed', 'Not Interested', 'Not Suitable', 'Client Rejected on Paper', 'Client Rejected After Interview')])
 
-    # Placements within the selected date range
-    placed_ids = [c['id'] for c in cands if c['stage'] == 'Placed']
-    placed_this_month = 0
-    for c in cands:
-        if c['stage'] == 'Placed':
-            sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
-            when = sh['created_at'] if sh else c['updated_at']
-            if _in_range(when):
-                placed_this_month += 1
+    # Total successful placements = Placed + Joined, ALL-TIME (deliberately NOT
+    # date-filtered) so the headline matches the actual Placed list and the
+    # Command Center. Admin view counts every candidate for the company (even
+    # those not tied to a mandate); a recruiter sees only their in-scope ones.
+    # TRIM/LOWER guards against stray whitespace/casing in imported data.
+    if admin:
+        placed_this_month = conn.execute(
+            "SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND TRIM(LOWER(stage)) IN ('placed','joined')",
+            (cid,)).fetchone()['n']
+    else:
+        placed_this_month = sum(1 for c in cands if (c['stage'] or '').strip().lower() in ('placed', 'joined'))
 
-    # Avg time-to-fill (days from candidate created → Placed) within range
+    # Avg time-to-fill (days from candidate created → Placed) within range.
+    # Joined candidates count too — they were placed, just moved one step further.
     fill_days = []
     for c in cands:
-        if c['stage'] == 'Placed':
+        if (c['stage'] or '').strip().lower() in ('placed', 'joined'):
             sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
             if sh and c['created_at']:
                 try:
@@ -3665,7 +3668,7 @@ def analytics():
         return 'Other'
     src_counts = {}
     for c in cands:
-        if c['stage'] == 'Placed':
+        if (c['stage'] or '').strip().lower() in ('placed', 'joined'):
             sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
             when = sh['created_at'] if sh else c['updated_at']
             if not _in_range(when):
@@ -3690,7 +3693,7 @@ def analytics():
                 for uc in u_cands:
                     if _in_range(uc['created_at']):
                         added += 1
-                    if uc['stage'] == 'Placed':
+                    if (uc['stage'] or '').strip().lower() in ('placed', 'joined'):
                         sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (uc['id'],)).fetchone()
                         if _in_range(sh['created_at'] if sh else uc['updated_at']):
                             placed += 1
@@ -9856,7 +9859,7 @@ def _command_overview(conn, oid):
         by_stage = {}
         for c in cand_rows:
             s = c['stage'] or 'Unknown'; by_stage[s] = by_stage.get(s, 0) + 1
-        placed = by_stage.get('Placed', 0) + by_stage.get('Joined', 0)
+        placed = sum(v for k, v in by_stage.items() if (k or '').strip().lower() in ('placed', 'joined'))
         shared = by_stage.get('Shared with Client', 0)
     except Exception:
         total_cand = placed = shared = 0; by_stage = {}
