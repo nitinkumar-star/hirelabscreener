@@ -715,6 +715,8 @@ body{font-size:14px !important; line-height:1.5}
 .sb-grp-count{background:rgba(255,255,255,.12);border-radius:8px;padding:0 7px;font-size:10px;flex-shrink:0}
 .sb-grp-body{overflow:hidden;max-height:3000px;transition:max-height .25s ease}
 .sb-grp-body.collapsed{max-height:0}
+.cc-taskcard{transition:box-shadow .15s,transform .15s;}
+.cc-taskcard:hover{box-shadow:0 4px 14px rgba(83,74,183,.13)!important;transform:translateY(-1px);}
 </style>
 </head>
 <body>
@@ -4028,6 +4030,15 @@ async function reindexVectors(btn){
   loadVectorStatus();
 }
 var _ccTaskPrioCol={high:'#C0392B',medium:'#B4690E',low:'#888'};
+var _ccPrioMeta={high:{c:'#E5484D',bg:'#FDECEC',lbl:'HIGH'},medium:{c:'#B4690E',bg:'#FBF0E2',lbl:'MED'},low:{c:'#7A8699',bg:'#EEF1F5',lbl:'LOW'}};
+var _ccCatMeta={
+  Payment:{i:'\uD83D\uDCB0',c:'#0F7A52'}, Invoice:{i:'\uD83E\uDDFE',c:'#0F7A52'},
+  Placement:{i:'\uD83C\uDFAF',c:'#534AB7'}, 'Follow-up':{i:'\uD83D\uDCDE',c:'#2456A6'},
+  Sourcing:{i:'\uD83D\uDD0D',c:'#B4690E'}, Client:{i:'\uD83E\uDD1D',c:'#2456A6'},
+  Email:{i:'\u2709\uFE0F',c:'#666'}, Admin:{i:'\uD83D\uDDC2\uFE0F',c:'#888'},
+  Growth:{i:'\uD83D\uDCC8',c:'#8E24AA'}
+};
+function _ccCat(cat){ return _ccCatMeta[cat]||{i:'\u26A1',c:'#888'}; }
 async function loadCommandTasks(autogen){
   var box=document.getElementById('cc-tasks-list'); if(!box) return;
   var r={};
@@ -4043,22 +4054,34 @@ async function loadCommandTasks(autogen){
     try{ var g=await req('POST','/command/tasks/generate',{}); if(g&&g.ok){ return loadCommandTasks(false); } }catch(e){}
   }
   if(!tasks.length){ box.innerHTML='<div style="color:#aaa;padding:12px;text-align:center">Abhi koi task nahi. <b>Generate Today\u2019s Tasks</b> dabao \u2014 brain tumhare pipeline, payments aur placements dekh ke aaj ka plan dega.</div>'; try{ var pr=await req('GET','/command/tasks/prefs'); _renderTaskPrefs(pr&&pr.prefs); }catch(e){} return; }
-  box.innerHTML=tasks.map(function(t){
-    var pc=_ccTaskPrioCol[t.priority]||'#888';
+  var doneN=tasks.filter(function(t){return t.done;}).length, totN=tasks.length;
+  var pctDone=totN?Math.round(doneN/totN*100):0;
+  var header='<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+    +'<div style="flex:1;height:7px;background:#eceaf6;border-radius:6px;overflow:hidden"><div style="width:'+pctDone+'%;height:100%;background:linear-gradient(90deg,#7C6FF0,#534AB7);transition:width .3s"></div></div>'
+    +'<div style="font-size:11px;color:#888;white-space:nowrap;font-weight:600">'+doneN+' / '+totN+' done</div></div>';
+  box.innerHTML=header+tasks.map(function(t){
+    var pm=_ccPrioMeta[t.priority]||_ccPrioMeta.low;
+    var cm=_ccCat(t.category);
     var clickable=(t.ref||'').trim() && !t.done;
-    var onclk=clickable?(' onclick="_ccOpenRef(\''+esc(t.ref)+'\')" title="Click to open"'):'';
-    var textStyle='font-size:13px;'+(clickable?'color:#2B2A6B;cursor:pointer;text-decoration:underline':(t.done?'text-decoration:line-through;color:#aaa':'color:#1B1B18'));
-    var link=clickable?('<a href="#" onclick="_ccOpenRef(\''+esc(t.ref)+'\');return false;" style="font-size:10.5px;color:#534AB7;white-space:nowrap;font-weight:600">Open &rarr;</a>'):'';
-    return '<div style="display:flex;align-items:flex-start;gap:9px;padding:9px 6px;border-bottom:1px solid #f4f4f4">'
-      +'<input type="checkbox" '+(t.done?'checked':'')+' onchange="toggleCommandTask('+t.id+',this.checked)" style="margin-top:3px;cursor:pointer">'
-      +'<div style="flex:1"><div'+onclk+' style="'+textStyle+'">'+esc(t.text)+(clickable?' <span style="font-size:10px;color:#534AB7">&#128279;</span>':'')+'</div>'
-      +(t.reason&&!t.done?'<div style="font-size:11px;color:#7a7a7a;margin-top:2px;font-style:italic">\uD83D\uDCA1 '+esc(t.reason)+'</div>':'')
-      +'<div style="font-size:10px;color:#aaa;margin-top:2px"><span style="color:'+pc+';font-weight:600">'+esc(t.priority)+'</span>'+(t.category?(' &middot; '+esc(t.category)):'')+(t.source==='manual'?' &middot; added':'')+'</div></div>'
-      +'<div style="display:flex;flex-direction:column;gap:3px;align-items:flex-end">'+link
-      +(!t.done?'<button class="btn btn-o" style="font-size:9.5px;padding:2px 6px" title="Kal ke liye tal do" onclick="snoozeTask('+t.id+')">\u21B7 Snooze</button>':'')
-      +'<button class="btn btn-o" style="font-size:9.5px;padding:2px 6px;color:#C0392B" onclick="deleteCommandTask('+t.id+')">&#10005;</button></div></div>';
+    var onclk=clickable?(' onclick="_ccOpenRef(\''+esc(t.ref)+'\')"'):'';
+    var cardBg=t.done?'#fafafa':'#fff';
+    var textStyle='font-size:13.5px;line-height:1.4;font-weight:500;'+(t.done?'text-decoration:line-through;color:#b0b0b0':(clickable?'color:#2B2A6B;cursor:pointer':'color:#1B1B18'));
+    var chips='<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:600;color:'+cm.c+';background:'+cm.c+'14;border-radius:20px;padding:2px 8px">'+cm.i+' '+esc(t.category||'Task')+'</span>'
+      +'<span style="font-size:9.5px;font-weight:700;color:'+pm.c+';background:'+pm.bg+';border-radius:20px;padding:2px 7px;letter-spacing:.3px">'+pm.lbl+'</span>'
+      +(t.source==='manual'?'<span style="font-size:9.5px;color:#aaa">\u2795 added</span>':'');
+    return '<div class="cc-taskcard" style="display:flex;gap:11px;padding:12px 13px;border-radius:13px;margin-bottom:9px;background:'+cardBg+';border:1px solid #ececf3;border-left:4px solid '+pm.c+';box-shadow:0 1px 2px rgba(20,20,40,.04)">'
+      +'<div onclick="toggleCommandTask('+t.id+','+(t.done?'false':'true')+')" title="Mark done" style="flex-shrink:0;width:20px;height:20px;margin-top:1px;border-radius:6px;border:2px solid '+(t.done?'#534AB7':'#cfcbe6')+';background:'+(t.done?'#534AB7':'#fff')+';cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;line-height:1">'+(t.done?'\u2713':'')+'</div>'
+      +'<div style="flex:1;min-width:0">'
+        +'<div'+onclk+' style="'+textStyle+'">'+esc(t.text)+(clickable?' <span style="font-size:11px">\u2197\uFE0F</span>':'')+'</div>'
+        +(t.reason&&!t.done?'<div style="font-size:11.5px;color:#7a7a7a;margin-top:4px;line-height:1.4"><span style="opacity:.7">\uD83D\uDCA1</span> '+esc(t.reason)+'</div>':'')
+        +'<div style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap">'+chips+'</div>'
+      +'</div>'
+      +'<div style="display:flex;flex-direction:column;gap:5px;align-items:center;flex-shrink:0">'
+        +(!t.done?'<button title="Snooze to tomorrow" onclick="snoozeTask('+t.id+')" style="border:none;background:#f4f3fb;color:#8a83b8;width:26px;height:26px;border-radius:8px;cursor:pointer;font-size:13px">\u21B7</button>':'')
+        +'<button title="Delete" onclick="deleteCommandTask('+t.id+')" style="border:none;background:#fcf0f0;color:#d0656a;width:26px;height:26px;border-radius:8px;cursor:pointer;font-size:12px">\u2715</button>'
+      +'</div></div>';
   }).join('')
-    +((r.snoozed_count>0)?('<div style="font-size:10.5px;color:#aaa;padding:8px 4px 0">\u21B7 '+r.snoozed_count+' task(s) snoozed for later</div>'):'');
+    +((r.snoozed_count>0)?('<div style="font-size:11px;color:#9a94c0;padding:6px 4px 0;text-align:center">\u21B7 '+r.snoozed_count+' task(s) snoozed for tomorrow</div>'):'');
   try{ var pr=await req('GET','/command/tasks/prefs'); _renderTaskPrefs(pr&&pr.prefs); }catch(e){}
 }
 function _ccOpenRef(ref){
@@ -4078,9 +4101,35 @@ function _ccOpenRef(ref){
   }
   if(p[0]==='invoice'){ try{ openInvoicing(); }catch(e){} }
 }
-async function snoozeTask(id){
-  var tm=new Date(Date.now()+86400000).toISOString().slice(0,10);
-  await req('PUT','/command/tasks/'+id,{snooze_until:tm}); toast('Snoozed','Kal dikhega'); loadCommandTasks();
+function snoozeTask(id){ openSnoozeMenu(id); }
+function _snoozeClose(){ var e=document.getElementById('snooze-modal'); if(e) e.remove(); }
+function _dPlus(days){ return new Date(Date.now()+days*86400000).toISOString().slice(0,10); }
+function openSnoozeMenu(id){
+  _snoozeClose();
+  var minD=_dPlus(1);
+  var bg=document.createElement('div'); bg.id='snooze-modal';
+  bg.style.cssText='position:fixed;inset:0;background:rgba(20,20,40,.35);z-index:9999;display:flex;align-items:center;justify-content:center';
+  bg.onclick=function(e){ if(e.target===bg) _snoozeClose(); };
+  var opt=function(lbl,sub,date){ return '<button onclick="snoozeTaskTo('+id+',\''+date+'\')" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;border:1px solid #ececf3;background:#fff;border-radius:10px;padding:11px 13px;margin-bottom:8px;cursor:pointer;font-size:13.5px;color:#1B1B18"><span>'+lbl+'</span><span style="font-size:11px;color:#999">'+sub+'</span></button>'; };
+  bg.innerHTML='<div style="background:#fff;border-radius:16px;padding:18px;width:320px;max-width:92%;box-shadow:0 12px 40px rgba(20,20,40,.25)" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-weight:700;font-size:15px">↷ Snooze task tak…</div><button onclick="_snoozeClose()" style="border:none;background:none;font-size:16px;color:#999;cursor:pointer">✕</button></div>'
+    +opt('Kal','Tomorrow',_dPlus(1))
+    +opt('3 din baad',_niceDate(_dPlus(3)),_dPlus(3))
+    +opt('Agle hafte',_niceDate(_dPlus(7)),_dPlus(7))
+    +'<div style="margin-top:10px;border-top:1px dashed #eee;padding-top:12px">'
+      +'<div style="font-size:11px;color:#888;margin-bottom:5px">Ya koi aur date chuno:</div>'
+      +'<div style="display:flex;gap:8px"><input type="date" id="snooze-date" min="'+minD+'" value="'+_dPlus(1)+'" style="flex:1;padding:9px 11px;border:1px solid #ddd;border-radius:8px;font-size:13px">'
+      +'<button onclick="snoozeTaskTo('+id+',(document.getElementById(\'snooze-date\')||{}).value)" style="background:#534AB7;color:#fff;border:none;border-radius:8px;padding:9px 14px;cursor:pointer;font-size:13px">Set</button></div>'
+    +'</div></div>';
+  document.body.appendChild(bg);
+}
+function _niceDate(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short',day:'2-digit',month:'short'}); }catch(e){ return d; } }
+async function snoozeTaskTo(id,date){
+  if(!date){ toast('Date chuno',''); return; }
+  _snoozeClose();
+  await req('PUT','/command/tasks/'+id,{snooze_until:date});
+  toast('Snoozed', _niceDate(date)+' tak chhupa diya');
+  loadCommandTasks();
 }
 async function generateTasks(btn){
   if(btn){ btn.disabled=true; btn.innerHTML='\uD83E\uDDE0 Planning… (10-20s)'; }
