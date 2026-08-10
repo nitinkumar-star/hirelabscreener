@@ -9441,7 +9441,7 @@ async function runReindex(force) {
     // every call — stop immediately and show the error instead of looping.
     if ((r.indexed || 0) === 0 && (r.failed || 0) > 0) {
       res.innerHTML = '<div style="color:#C0522B;padding:14px;background:#FCEBEB;border-radius:8px">'
-        + '<b>Indexing failed.</b><br>Gemini error: ' + esc(firstError || 'unknown')
+        + '<b>Indexing failed.</b><br>Embedding error: ' + esc(firstError || 'unknown')
         + '<br><br>Check: (1) Gemini API key is correct in Settings, '
         + '(2) the key has not been revoked, (3) "Generative Language API" is enabled for that key.</div>';
       return;

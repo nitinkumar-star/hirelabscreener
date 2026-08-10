@@ -4732,7 +4732,7 @@ def embed_one(text):
     except Exception as e:
         return {'error': str(e)}
     if not res or not res[0]:
-        return {'error': 'embedding provider returned nothing — check the Jina API key / embedding settings'}
+        return {'error': 'Jina embedding failed — ' + (_LAST_EMBED_ERROR or 'provider returned nothing; check key/model/base URL')}
     return res[0]
 
 
@@ -6214,7 +6214,7 @@ def ai_reindex():
             # abort so we don't burn the whole batch (unchanged behaviour).
             if 'API KEY' in eu or 'PERMISSION' in eu or 'API_KEY' in eu:
                 conn.close()
-                return jsonify({'error': 'Gemini error: ' + first_error,
+                return jsonify({'error': 'Embedding error: ' + first_error,
                                 'indexed': done, 'failed': failed}), 400
         else:
             done += 1
@@ -6946,7 +6946,7 @@ def ai_search():
     else:
         qvec = embed_one(query)
         if isinstance(qvec, dict) and qvec.get('error'):
-            return jsonify({'error': 'Gemini error: ' + qvec['error']}), 400
+            return jsonify({'error': 'Embedding error: ' + qvec['error']}), 400
         if not qvec:
             return jsonify({'error': 'Could not embed query'}), 400
         timing['embed_ms'] = int((_time.perf_counter() - t0) * 1000)
@@ -10205,12 +10205,19 @@ Be specific and numeric. Explain WHY for every forecast and probability. No flat
 # ══════════════════════════════════════════════════════════════════════════
 #  VECTOR / RAG ENGINE  (pluggable embeddings, vectors stored in SQLite)
 # ══════════════════════════════════════════════════════════════════════════
+_LAST_EMBED_ERROR = ''
+
 def _embed_texts(texts):
     """Embed a list of texts via an OpenAI-compatible /embeddings endpoint.
     Provider/key/model are configurable in settings; returns None if not configured
-    so the app gracefully falls back to the structured brief."""
+    so the app gracefully falls back to the structured brief. The real failure
+    reason (auth, model, network) is stashed in _LAST_EMBED_ERROR for surfacing."""
+    global _LAST_EMBED_ERROR
     key = get_setting('embedding_api_key', '')
-    if not key or not texts:
+    if not key:
+        _LAST_EMBED_ERROR = 'no embedding API key set'
+        return None
+    if not texts:
         return None
     base = (get_setting('embedding_base_url', 'https://api.jina.ai/v1') or 'https://api.jina.ai/v1').rstrip('/')
     model = get_setting('embedding_model', 'jina-embeddings-v3') or 'jina-embeddings-v3'
@@ -10224,11 +10231,17 @@ def _embed_texts(texts):
                          headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
                          json={'model': model, 'input': batch}, timeout=90)
             if r.status_code != 200:
+                _LAST_EMBED_ERROR = f'HTTP {r.status_code} from {base}/embeddings (model={model}): {r.text[:220]}'
                 return None
             data = r.json().get('data', [])
+            if not data:
+                _LAST_EMBED_ERROR = f'empty "data" in response from {base} (model={model}): {r.text[:200]}'
+                return None
             out.extend([d.get('embedding') for d in data])
-        except Exception:
+        except Exception as e:
+            _LAST_EMBED_ERROR = f'request to {base} failed: {str(e)[:200]}'
             return None
+    _LAST_EMBED_ERROR = ''
     return out
 
 
