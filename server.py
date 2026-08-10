@@ -1897,12 +1897,31 @@ def _load_skill_graph(conn, oid):
     if ce['nodes'] is not None and ce['oid'] == oid and now - ce['ts'] < 300:
         return ce
     nodes, lookup, children = {}, {}, {}
+    # Self-heal: make sure the table exists and is seeded even on an older DB
+    # that was migrated before Phase 1 shipped.
+    try:
+        conn.execute('''CREATE TABLE IF NOT EXISTS skill_graph (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER DEFAULT 0,
+            canonical TEXT NOT NULL, display TEXT DEFAULT '', category TEXT DEFAULT '',
+            aliases TEXT DEFAULT '[]', parents TEXT DEFAULT '[]', related TEXT DEFAULT '[]',
+            created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '')''')
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_skill_graph ON skill_graph(owner_id, canonical)")
+    except Exception:
+        pass
     try:
         rows = conn.execute(
             "SELECT canonical,display,aliases,parents,related FROM skill_graph WHERE owner_id=0 OR owner_id=?",
             (oid,)).fetchall()
     except sqlite3.OperationalError:
         rows = []
+    if not rows:
+        try:
+            _seed_skill_graph(conn); conn.commit()
+            rows = conn.execute(
+                "SELECT canonical,display,aliases,parents,related FROM skill_graph WHERE owner_id=0 OR owner_id=?",
+                (oid,)).fetchall()
+        except Exception as _e:
+            print('[skill-graph] lazy seed failed:', _e); rows = []
     def _jl(v):
         try:
             return [str(x).strip().lower() for x in json.loads(v or '[]') if str(x).strip()]
@@ -1920,8 +1939,11 @@ def _load_skill_graph(conn, oid):
     for can, n in nodes.items():
         for p in n['parents']:
             children.setdefault(p, set()).add(can)
-    ce.update({'ts': now, 'oid': oid, 'nodes': nodes, 'lookup': lookup, 'children': children})
-    return ce
+    if nodes:
+        ce.update({'ts': now, 'oid': oid, 'nodes': nodes, 'lookup': lookup, 'children': children})
+        return ce
+    # empty (not seeded yet) — return without caching so the next call retries
+    return {'ts': 0.0, 'oid': oid, 'nodes': nodes, 'lookup': lookup, 'children': children}
 
 
 def _skill_expand(query, conn, oid):
@@ -6617,14 +6639,13 @@ def _hybrid_process(conn, query, ranked, d):
     taxo = _hybrid_taxonomy(conn)
     detected = _extract_query_filters(query, taxo)
 
-    # Skill-graph expansion (Intelligence Layer · Phase 1): widen skill matching
-    # to aliases / related / child / parent skills so e.g. a "BMS" query also
-    # surfaces BACnet, Niagara and DDC candidates. Soft-weighted, so exact-skill
-    # matches still rank first, and completely silent when no skill is recognised.
-    try:
-        _sg = _skill_expand(query, conn, effective_company_id())
-    except Exception:
-        _sg = {'expand': {}, 'recognized': [], 'related': []}
+    # Skill-graph expansion — reuse the one computed in ai_search when present.
+    _sg = d.get('_skill_sg')
+    if _sg is None:
+        try:
+            _sg = _skill_expand(query, conn, effective_company_id())
+        except Exception:
+            _sg = {'expand': {}, 'recognized': [], 'related': []}
     detected['skill_expand'] = _sg['expand']
     detected['skill_recognized'] = _sg['recognized']
     detected['skill_related'] = _sg['related']
@@ -6935,6 +6956,16 @@ def ai_search():
         timing['multivector_ms'] = int((_time.perf_counter() - t0) * 1000)
         total = len(ranked)
 
+    # ── 2a½) Skill-graph expansion (Intelligence Layer · Phase 1) ──────
+    # Computed ONCE here, independent of hybrid on/off, so the "recognised
+    # skills" banner always renders and the hybrid scorer can reuse it.
+    try:
+        _sg = _skill_expand(query, conn, _oid)
+    except Exception as _e:
+        print('[skill-graph] expand error:', _e)
+        _sg = {'expand': {}, 'recognized': [], 'related': []}
+    d['_skill_sg'] = _sg
+
     # ── 2b) Hybrid re-rank (Sprint 6) ──────────────────────────────────
     # Default-on but soft: with no detectable structured signals it collapses
     # to pure semantic order (identical to the old engine). Opt out with hybrid=false.
@@ -6955,6 +6986,12 @@ def ai_search():
         page_slice = ranked[offset:offset + page_size]
         results = _search_hydrate(conn, page_slice, _oid)
         timing['hydrate_ms'] = int((_time.perf_counter() - t0) * 1000)
+
+    # Skill recognition is shown even on the semantic-only path.
+    if not isinstance(filters_detected, dict):
+        filters_detected = {}
+    filters_detected['skill_recognized'] = _sg['recognized']
+    filters_detected['skill_related'] = _sg['related']
 
     # ── 3b) LLM re-rank (Sprint 10) — opt-in, page 1 only ──────────────
     # A second AI pass reorders the top results and attaches fit reasons.
