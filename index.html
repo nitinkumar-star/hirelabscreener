@@ -9405,33 +9405,42 @@ async function runAISearch() {
   res.innerHTML = '<div class="loading"><div class="spinner"></div>Searching your talent pool...</div>';
 
   var r = await req('POST', '/ai/search', {query: q, top_k: 200, explain: explain});
+
+  // Skill-graph banner — show recognised/related skills for THIS query even if the
+  // search errors or returns nothing (proves the graph works independently of
+  // indexing/embeddings). Uses the search response when present, else a direct call.
+  var fd = (r && r.filters_detected) || {};
+  if (!(fd.skill_recognized && fd.skill_recognized.length) && !(fd.skill_related && fd.skill_related.length)) {
+    try { var _ex = await req('GET', '/skill-graph/expand?q=' + encodeURIComponent(q));
+          if (_ex && _ex.ok) fd = {skill_recognized: _ex.recognized || [], skill_related: _ex.related || []}; } catch (e) {}
+  }
+  var banner = '';
+  if ((fd.skill_recognized && fd.skill_recognized.length) || (fd.skill_related && fd.skill_related.length)) {
+    banner += '<div style="background:#EAF6F1;border:0.5px solid #BFE3D5;border-radius:9px;padding:10px 13px;margin-bottom:12px">';
+    if (fd.skill_recognized && fd.skill_recognized.length)
+      banner += '<div style="font-size:10.5px;color:#0F6E56;font-weight:700;margin-bottom:6px">&#128279; SKILL GRAPH &middot; recognised: ' + fd.skill_recognized.map(esc).join(', ') + '</div>';
+    if (fd.skill_related && fd.skill_related.length) {
+      banner += '<div style="font-size:10px;color:#437A68;margin-bottom:5px">Also surfacing candidates with related skills:</div><div style="display:flex;flex-wrap:wrap;gap:5px">';
+      fd.skill_related.forEach(function(s){ banner += '<span style="font-size:10px;background:#D7EFE6;color:#0F6E56;padding:2px 8px;border-radius:20px">' + esc(s) + '</span>'; });
+      banner += '</div>';
+    }
+    banner += '</div>';
+  }
+
   if (!r.ok) {
-    res.innerHTML = '<div style="color:#C0522B;padding:12px">' + esc(r.error||'Search failed') + '</div>';
+    res.innerHTML = banner + '<div style="color:#C0522B;padding:12px">' + esc(r.error||'Search failed') + '</div>';
     return;
   }
   if (!r.results.length) {
-    res.innerHTML = '<div style="text-align:center;color:var(--muted);padding:24px">No indexed candidates yet. Click \"Index new candidates\" first.</div>';
+    res.innerHTML = banner + '<div style="text-align:center;color:var(--muted);padding:24px">No indexed candidates yet. Click \"Index new candidates\" first.</div>';
     return;
   }
 
-  var html = '';
+  var html = banner;
   if (r.reasoning) {
     html += '<div style="background:#EEE9F8;border:0.5px solid #D6C9F0;border-radius:9px;padding:12px 14px;margin-bottom:14px">'
       + '<div style="font-size:11px;font-weight:700;color:#6B4FA0;margin-bottom:6px">&#10024; AI REASONING</div>'
       + '<div style="font-size:12px;color:#3D2E63;white-space:pre-wrap;line-height:1.5">' + esc(r.reasoning) + '</div></div>';
-  }
-  var fd = r.filters_detected || {};
-  if ((fd.skill_recognized && fd.skill_recognized.length) || (fd.skill_related && fd.skill_related.length)) {
-    html += '<div style="background:#EAF6F1;border:0.5px solid #BFE3D5;border-radius:9px;padding:10px 13px;margin-bottom:12px">';
-    if (fd.skill_recognized && fd.skill_recognized.length) {
-      html += '<div style="font-size:10.5px;color:#0F6E56;font-weight:700;margin-bottom:6px">&#128279; SKILL GRAPH &middot; recognised: ' + fd.skill_recognized.map(esc).join(', ') + '</div>';
-    }
-    if (fd.skill_related && fd.skill_related.length) {
-      html += '<div style="font-size:10px;color:#437A68;margin-bottom:5px">Also surfacing candidates with related skills:</div><div style="display:flex;flex-wrap:wrap;gap:5px">';
-      fd.skill_related.forEach(function(s){ html += '<span style="font-size:10px;background:#D7EFE6;color:#0F6E56;padding:2px 8px;border-radius:20px">' + esc(s) + '</span>'; });
-      html += '</div>';
-    }
-    html += '</div>';
   }
   html += '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">' + r.results.length + ' matches (searched ' + r.searched + ' indexed candidates)</div>';
 
