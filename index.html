@@ -902,6 +902,7 @@ body{font-size:14px !important; line-height:1.5}
     <div style="display:flex;gap:4px;padding:10px 16px 0;background:#fff;flex-shrink:0">
       <button class="ai-tab-btn ai-tab-active" id="ai-tab-search" onclick="switchAITab('search')">&#128269; Talent Search</button>
       <button class="ai-tab-btn" id="ai-tab-stats" onclick="switchAITab('stats')">&#128202; Data Questions</button>
+      <button class="ai-tab-btn" id="ai-tab-jd" onclick="switchAITab('jd')">&#128203; JD Intelligence</button>
     </div>
     <div id="ai-body" style="flex:1;overflow:auto;background:#f5f5f5;padding:16px"></div>
   </div>
@@ -9276,6 +9277,7 @@ function switchAITab(tab) {
   aiActiveTab = tab;
   document.getElementById('ai-tab-search').className = 'ai-tab-btn' + (tab==='search'?' ai-tab-active':'');
   document.getElementById('ai-tab-stats').className = 'ai-tab-btn' + (tab==='stats'?' ai-tab-active':'');
+  var jdb = document.getElementById('ai-tab-jd'); if (jdb) jdb.className = 'ai-tab-btn' + (tab==='jd'?' ai-tab-active':'');
   renderAITab();
 }
 
@@ -9322,6 +9324,17 @@ function renderAITab() {
       + '</div>'
       + '<div id="ai-search-results" style="margin-top:16px"></div>'
       + '</div>';
+  } else if (aiActiveTab === 'jd') {
+    body.innerHTML =
+      '<div style="max-width:820px;margin:0 auto">'
+      + '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:16px;box-shadow:var(--shadow-sm)">'
+      + '<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:4px">JD Intelligence</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Paste a job description &rarr; get the recognised + adjacent skills, a structured requirement, your in-house talent-pool size, the top source companies, and where that talent sits.</div>'
+      + '<textarea class="inp" id="jd-text" rows="7" placeholder="Paste the full JD here..." style="width:100%;resize:vertical"></textarea>'
+      + '<div style="margin-top:10px"><button class="btn btn-g" style="background:#8B6FCB" onclick="runJDIntel()">Analyse JD</button></div>'
+      + '</div>'
+      + '<div id="jd-results" style="margin-top:16px"></div>'
+      + '</div>';
   } else {
     body.innerHTML =
       '<div style="max-width:760px;margin:0 auto">'
@@ -9345,6 +9358,48 @@ function renderAITab() {
 
 function aiChip(q) {
   return '<button class="btn btn-o" style="font-size:10.5px;padding:4px 10px" onclick="document.getElementById(&#39;ai-stats-q&#39;).value=this.textContent;runAIStats()">' + esc(q) + '</button>';
+}
+
+// ── JD Intelligence (Phase 2) ───────────────────────────────────────────────
+async function runJDIntel() {
+  var jd = document.getElementById('jd-text').value.trim();
+  if (!jd) { toast('ERR','Paste a JD first'); return; }
+  var res = document.getElementById('jd-results');
+  res.innerHTML = '<div class="loading"><div class="spinner"></div>Analysing the JD & scanning your database...</div>';
+  var r = await req('POST', '/jd/analyze', {jd: jd});
+  if (!r || !r.ok) { res.innerHTML = '<div style="color:#C0522B;padding:12px">' + esc((r&&r.error)||'Analysis failed') + '</div>'; return; }
+  var s = r.structured || {};
+  var chips = function(arr, bg, col){ return (arr||[]).map(function(x){ return '<span style="font-size:10.5px;background:'+bg+';color:'+col+';padding:2px 9px;border-radius:20px;margin:0 4px 4px 0;display:inline-block">'+esc(String(x))+'</span>'; }).join(''); };
+  var card = function(title, inner){ return '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)"><div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px;letter-spacing:.3px">'+title+'</div>'+inner+'</div>'; };
+  var html = '';
+  html += '<div style="background:#EAF6F1;border:0.5px solid #BFE3D5;border-radius:10px;padding:14px 16px;margin-bottom:12px">'
+    + '<div style="font-size:26px;font-weight:700;color:#0F6E56">'+r.pool_size+'</div>'
+    + '<div style="font-size:11px;color:#437A68">candidates in YOUR database match these skills</div></div>';
+  if (s && !s._error) {
+    var srows = '';
+    if (s.title) srows += '<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:6px">'+esc(s.title)+'</div>';
+    var meta = [];
+    if (s.seniority) meta.push(esc(s.seniority));
+    if (s.min_experience!=null || s.max_experience!=null) meta.push(((s.min_experience!=null?s.min_experience:'')+(s.max_experience!=null?'-'+s.max_experience:'+'))+' yrs');
+    if (s.location) meta.push(esc(s.location));
+    if (s.industry) meta.push(esc(s.industry));
+    if (meta.length) srows += '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">'+meta.join(' &middot; ')+'</div>';
+    if ((s.must_have_skills||[]).length) srows += '<div style="font-size:10px;color:#888;margin-bottom:3px">Must-have</div><div style="margin-bottom:8px">'+chips(s.must_have_skills,'#EDE7FA','#5B3FA0')+'</div>';
+    if ((s.good_to_have_skills||[]).length) srows += '<div style="font-size:10px;color:#888;margin-bottom:3px">Good-to-have</div><div>'+chips(s.good_to_have_skills,'#F0EEF6','#7A6BA8')+'</div>';
+    if (srows) html += card('&#128203; STRUCTURED REQUIREMENT', srows);
+  }
+  var sgInner = '';
+  if ((r.recognized_skills||[]).length) sgInner += '<div style="font-size:10px;color:#888;margin-bottom:3px">Recognised in JD</div><div style="margin-bottom:8px">'+chips(r.recognized_skills,'#D7EFE6','#0F6E56')+'</div>';
+  if ((r.adjacent_skills||[]).length) sgInner += '<div style="font-size:10px;color:#888;margin-bottom:3px">Adjacent skills to also source for</div><div>'+chips(r.adjacent_skills,'#EAF6F1','#437A68')+'</div>';
+  if (sgInner) html += card('&#128279; SKILL GRAPH', sgInner);
+  if ((r.top_companies||[]).length) {
+    html += card('&#127970; TOP SOURCE COMPANIES (from your pool)', r.top_companies.map(function(c){ return '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:0.5px solid #f0f0f0"><span style="font-size:12px;color:var(--navy)">'+esc(c.name)+'</span><span style="font-size:11px;color:#888">'+c.count+'</span></div>'; }).join(''));
+  }
+  if ((r.top_locations||[]).length) {
+    html += card('&#128205; TALENT CONCENTRATION', r.top_locations.map(function(l){ return '<span style="font-size:11px;background:#F5F4F0;padding:3px 9px;border-radius:6px;margin:0 5px 5px 0;display:inline-block">'+esc(l.name)+' <b>'+l.count+'</b></span>'; }).join(''));
+  }
+  if (!r.pool_size) html += '<div style="color:var(--muted);font-size:12px;padding:8px">No matching candidates in your database yet — but the skills & sourcing plan above still tell you where to look.</div>';
+  res.innerHTML = html;
 }
 
 async function runReindex(force) {

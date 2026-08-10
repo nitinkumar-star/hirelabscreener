@@ -4718,6 +4718,24 @@ def gemini_embed(text, api_key):
     except Exception as e:
         return {'error': str(e)}
 
+def embed_one(text):
+    """Embed ONE text with the configured provider (Jina by default — via
+    embedding_api_key / embedding_base_url / embedding_model). Returns a
+    list[float], or {'error': ...} so callers can log/skip. This is the single
+    switch point: candidate, facet, mandate and QUERY embeddings all go through
+    here, so query and documents always share the SAME vector space."""
+    text = (text or '').strip()
+    if not text:
+        return None
+    try:
+        res = _embed_texts([text])
+    except Exception as e:
+        return {'error': str(e)}
+    if not res or not res[0]:
+        return {'error': 'embedding provider returned nothing — check the Jina API key / embedding settings'}
+    return res[0]
+
+
 def _row_get(c, key, default=''):
     """Safely read a column from a sqlite3.Row. Older/partial rows may lack a
     column added by a later migration; this returns `default` instead of
@@ -4769,7 +4787,7 @@ EMBED_TEXT_VERSION = 2
 # Stamped onto every vector so we can migrate embedding models in future
 # without breaking existing vectors. Nothing here is hardcoded into search;
 # it is descriptive metadata only.
-EMBEDDING_MODEL    = 'gemini-embedding-001'          # the model gemini_embed() calls
+EMBEDDING_MODEL    = 'jina-embeddings-v3'             # the model embed_one() -> _embed_texts() calls
 EMBEDDING_VERSION  = 'v1'                             # our embedding-pipeline version
 EMBED_TEXT_TEMPLATE = f'candidate-template-v{EMBED_TEXT_VERSION}'  # which text builder produced it
 
@@ -5482,7 +5500,7 @@ def embed_candidate_row(conn, c, api_key):
 
     print(f'[embed] cid={cid} started model={EMBEDDING_MODEL} chars={len(txt)}')
     t0 = _time.perf_counter()
-    vec = gemini_embed(txt, api_key)
+    vec = embed_one(txt)
     dur = int((_time.perf_counter() - t0) * 1000)
 
     if isinstance(vec, dict) and vec.get('error'):
@@ -5804,7 +5822,7 @@ def embed_candidate_facets(conn, c, api_key, facets=MV_FACETS):
                 _store_facet(conn, cid, facet, None, '', 'empty')
                 out[facet] = 'empty'; continue
             t0 = _time.perf_counter()
-            vec = gemini_embed(txt, api_key)
+            vec = embed_one(txt)
             dur = int((_time.perf_counter() - t0) * 1000)
             if isinstance(vec, dict) and vec.get('error'):
                 _store_facet(conn, cid, facet, None, txt, 'failed', error=vec['error'], duration_ms=dur)
@@ -5907,7 +5925,7 @@ def embed_mandate_jd(conn, m, api_key):
         _store_mandate_vec(conn, mid, None, '', 'empty')
         return 'empty'
     t0 = _time.perf_counter()
-    vec = gemini_embed(txt, api_key)
+    vec = embed_one(txt)
     dur = int((_time.perf_counter() - t0) * 1000)
     if isinstance(vec, dict) and vec.get('error'):
         _store_mandate_vec(conn, mid, None, txt, 'failed')
@@ -6003,7 +6021,7 @@ def _embedding_worker_loop():
     while True:
         cycle += 1
         try:
-            api_key = get_setting('gemini_api_key')
+            api_key = get_setting('embedding_api_key')
             if not api_key:
                 _time.sleep(30)  # nothing to do without a key
                 continue
@@ -6165,9 +6183,9 @@ def ai_reindex():
     d = request.json or {}
     force = bool(d.get('force'))
     batch = int(d.get('batch') or 25)
-    api_key = get_setting('gemini_api_key')
+    api_key = get_setting('embedding_api_key')
     if not api_key:
-        return jsonify({'error': 'Gemini API key not set. Add it in Settings.'}), 400
+        return jsonify({'error': 'Embedding (Jina) API key not set. Add your Jina key in Settings.'}), 400
 
     conn = get_db()
     if force:
@@ -6926,7 +6944,7 @@ def ai_search():
         qvec = cached['qvec']; ranked = cached['ranked']; scanned = cached['scanned']
         timing['embed_ms'] = 0; timing['scan_ms'] = 0; from_cache = True
     else:
-        qvec = gemini_embed(query, api_key)
+        qvec = embed_one(query)
         if isinstance(qvec, dict) and qvec.get('error'):
             return jsonify({'error': 'Gemini error: ' + qvec['error']}), 400
         if not qvec:
@@ -7140,6 +7158,103 @@ def skill_graph_expand_preview():
     res = _skill_expand(q, conn, effective_company_id())
     conn.close()
     return jsonify({'ok': True, **res})
+
+
+def _jd_pool(conn, oid, terms, location=''):
+    """Candidates in this tenant whose skill/tag columns mention ANY of `terms`.
+    Loose LIKE match across every tag column so the pool estimate is generous."""
+    if not terms:
+        return []
+    terms = list(terms)[:30]
+    tagcols = ['key_skill_tags', 'key_skills', 'secondary_skills', 'domain_tags', 'product_handles']
+    ors, params = [], []
+    for t in terms:
+        lt = '%' + t.lower() + '%'
+        for col in tagcols:
+            ors.append(f"LOWER(COALESCE({col},'')) LIKE ?")
+            params.append(lt)
+    sql = ("SELECT id,name,company,location,experience FROM candidates "
+           "WHERE owner_id=? AND (" + " OR ".join(ors) + ")")
+    args = [oid] + params
+    if location:
+        sql += " AND LOWER(COALESCE(location,'')) LIKE ?"
+        args.append('%' + location.lower() + '%')
+    try:
+        return conn.execute(sql, args).fetchall()
+    except Exception:
+        return []
+
+
+@app.route('/api/jd/analyze', methods=['POST'])
+@login_required
+def jd_analyze():
+    """Intelligence Layer · Phase 2 — JD Intelligence. Turn a pasted JD into a
+    sourcing plan: recognised + adjacent skills (skill graph), a structured
+    requirement (DeepSeek), and — from YOUR OWN database — the talent-pool size,
+    the top source companies, and where that talent sits."""
+    d = request.json or {}
+    jd = (d.get('jd') or d.get('jd_text') or '').strip()
+    if not jd:
+        return jsonify({'error': 'Paste a JD first'}), 400
+    conn = get_db(); oid = effective_company_id()
+
+    # 1) Skill graph — recognise skills + expand to adjacent/related/child
+    sg = _skill_expand(jd, conn, oid)
+    g = _load_skill_graph(conn, oid)
+    lookup = g['lookup']
+    grams, _t = _query_grams(jd)
+    core_terms = sorted({lookup[gr] for gr in grams if gr in lookup})
+    exp_terms = sorted((sg.get('expand') or {}).keys())
+    search_terms = sorted(set(core_terms) | set(exp_terms))
+
+    # 2) DeepSeek — structured requirement (best-effort, degrades gracefully)
+    structured = {}
+    ds_key = get_setting('deepseek_api_key')
+    if ds_key:
+        try:
+            sysmsg = ("Extract the hiring requirement from the job description. "
+                      "Reply with ONLY compact JSON, no prose, no code fences. Keys: "
+                      "title (string), must_have_skills (array of short strings), "
+                      "good_to_have_skills (array of short strings), "
+                      "min_experience (number or null), max_experience (number or null), "
+                      "location (string), industry (string), seniority (string).")
+            rr = call_deepseek(ds_key,
+                {'model': 'deepseek-chat', 'temperature': 0.1, 'max_tokens': 600,
+                 'messages': [{'role': 'system', 'content': sysmsg},
+                              {'role': 'user', 'content': jd[:9000]}]},
+                timeout=60, endpoint='jd_intel')
+            if rr.status_code == 200:
+                raw = (rr.json()['choices'][0]['message']['content'] or '').strip()
+                a, b = raw.find('{'), raw.rfind('}')
+                if a >= 0 and b > a:
+                    structured = json.loads(raw[a:b + 1])
+        except TokenCapError:
+            structured = {'_error': 'token cap reached'}
+        except Exception as e:
+            structured = {'_error': str(e)[:140]}
+
+    # 3) From YOUR DB — pool size, top source companies, top locations
+    pool = _jd_pool(conn, oid, search_terms)
+    from collections import Counter
+    comp, loc = Counter(), Counter()
+    for r in pool:
+        cc = (r['company'] or '').strip()
+        if cc:
+            comp[cc] += 1
+        ll = (r['location'] or '').strip()
+        if ll:
+            loc[ll] += 1
+    conn.close()
+    return jsonify({
+        'ok': True,
+        'structured': structured,
+        'recognized_skills': sg.get('recognized', []),
+        'adjacent_skills': sg.get('related', []),
+        'search_terms': search_terms,
+        'pool_size': len(pool),
+        'top_companies': [{'name': k, 'count': v} for k, v in comp.most_common(8)],
+        'top_locations': [{'name': k, 'count': v} for k, v in loc.most_common(8)],
+    })
 
 
 @app.route('/api/ai/search/metrics', methods=['GET'])
