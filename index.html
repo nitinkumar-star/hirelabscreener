@@ -9440,7 +9440,7 @@ async function runJDIntel() {
 
 async function runReindex(force) {
   var res = document.getElementById('ai-search-results');
-  var totalDone = 0, totalFailed = 0, rounds = 0;
+  var totalDone = 0, totalFailed = 0, rounds = 0, transientFails = 0;
   var firstError = '';
 
   res.innerHTML = '<div class="loading"><div class="spinner"></div>Starting indexing...</div>';
@@ -9448,14 +9448,25 @@ async function runReindex(force) {
   // Loop: each call embeds a small batch; repeat until pending = 0.
   while (true) {
     rounds++;
-    var payload = {batch: 20};
+    var payload = {batch: 6};
     if (force && rounds === 1) { payload.force = true; payload.reset = true; }
     var r = await req('POST', '/ai/reindex', payload);
 
     if (!r.ok) {
-      res.innerHTML = '<div style="color:#C0522B;padding:12px">' + esc(r.error||'Indexing failed') + '</div>';
+      // A 502 / timeout on one batch is transient (heavy PDF parse + Jina call).
+      // Don't abort the whole run — wait and retry the batch a few times.
+      transientFails++;
+      if (transientFails <= 6) {
+        res.innerHTML = '<div class="loading"><div class="spinner"></div>Indexing... ' + totalDone
+          + ' done &middot; a batch timed out, retrying (' + transientFails + ')...</div>';
+        await new Promise(function(rs){ setTimeout(rs, 2500); });
+        continue;
+      }
+      res.innerHTML = '<div style="color:#C0522B;padding:12px">' + esc(r.error||'Indexing failed')
+        + '<br><br><b>' + totalDone + '</b> indexed so far. Click <b>Re-index all</b> again to continue from here.</div>';
       return;
     }
+    transientFails = 0;
 
     totalDone += (r.indexed || 0);
     totalFailed += (r.failed || 0);
@@ -9477,8 +9488,8 @@ async function runReindex(force) {
     if ((r.indexed || 0) === 0 && (r.failed || 0) > 0) {
       res.innerHTML = '<div style="color:#C0522B;padding:14px;background:#FCEBEB;border-radius:8px">'
         + '<b>Indexing failed.</b><br>Embedding error: ' + esc(firstError || 'unknown')
-        + '<br><br>Check: (1) Gemini API key is correct in Settings, '
-        + '(2) the key has not been revoked, (3) "Generative Language API" is enabled for that key.</div>';
+        + '<br><br>Check: (1) your Jina API key (Render env <code>JINA_API_KEY</code>) is correct, '
+        + '(2) the key is active and has credits, (3) base URL & model in Settings.</div>';
       return;
     }
     if ((r.indexed || 0) === 0 && (r.failed || 0) === 0) break; // nothing progressed
