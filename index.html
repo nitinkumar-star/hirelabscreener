@@ -787,8 +787,7 @@ body{font-size:14px !important; line-height:1.5}
     </div>
     <!-- Sub-tabs: Search / AI Insights / Responses (moved in from sidebar) -->
     <div class="cdb-subtab-bar">
-      <button class="cdb-subtab active" onclick="openCentralDB()">&#128269; Search</button>
-      <button class="cdb-subtab" onclick="openAI()">&#10024; AI Insights</button>
+      <button class="cdb-subtab active" onclick="openAI()">&#10024; AI Search</button>
       <button class="cdb-subtab" onclick="openResponses()">&#9993; Responses</button>
     </div>
     <!-- Search form -->
@@ -861,8 +860,7 @@ body{font-size:14px !important; line-height:1.5}
     </div>
     <!-- Sub-tabs: Search / AI Insights / Responses (shared Central Database bar) -->
     <div class="cdb-subtab-bar">
-      <button class="cdb-subtab" onclick="openCentralDB()">&#128269; Search</button>
-      <button class="cdb-subtab" onclick="openAI()">&#10024; AI Insights</button>
+      <button class="cdb-subtab" onclick="openAI()">&#10024; AI Search</button>
       <button class="cdb-subtab active" onclick="openResponses()">&#9993; Responses</button>
     </div>
     <div id="resp-body" style="flex:1;overflow:auto;background:#f5f5f5"></div>
@@ -889,7 +887,7 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:28px;height:28px;border-radius:6px;background:#EEE9F8;display:flex;align-items:center;justify-content:center;font-size:14px">&#10024;</div>
-        <div><div style="font-size:14px;font-weight:600">AI Insights</div><div style="font-size:11px;color:#888;margin-top:1px">Semantic talent search &amp; data questions</div></div>
+        <div><div style="font-size:14px;font-weight:600">AI Search</div><div style="font-size:11px;color:#888;margin-top:1px">Filter the full database, or search by meaning with AI</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <span id="ai-index-badge" style="font-size:10px;color:#888"></span>
@@ -898,8 +896,7 @@ body{font-size:14px !important; line-height:1.5}
     </div>
     <!-- Sub-tabs: Search / AI Insights / Responses (shared Central Database bar) -->
     <div class="cdb-subtab-bar">
-      <button class="cdb-subtab" onclick="openCentralDB()">&#128269; Search</button>
-      <button class="cdb-subtab active" onclick="openAI()">&#10024; AI Insights</button>
+      <button class="cdb-subtab active" onclick="openAI()">&#10024; AI Search</button>
       <button class="cdb-subtab" onclick="openResponses()">&#9993; Responses</button>
     </div>
     <div style="display:flex;gap:4px;padding:10px 16px 0;background:#fff;flex-shrink:0">
@@ -7014,6 +7011,10 @@ function attachStageDropdown() {
 var _cdbBulkCandidates = [];
 
 function openCentralDB() {
+  // Search tab retired — the filter search now lives inside AI Search.
+  return openAI();
+}
+function _openCentralDB_legacy() {
   closeSidebarOnMobile();
   _hideAllViews();
   var av=document.getElementById('ai-view'); if(av) av.style.display='none';
@@ -9298,14 +9299,24 @@ function renderAITab() {
     body.innerHTML =
       '<div style="max-width:760px;margin:0 auto">'
       + '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:16px;box-shadow:var(--shadow-sm)">'
-      + '<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:4px">Semantic Talent Search</div>'
-      + '<div style="font-size:11px;color:var(--muted);margin-bottom:12px">Search your whole pool by meaning. A candidate saved for one role will surface for any role they fit.</div>'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'
+      +   '<div style="font-size:13px;font-weight:600;color:var(--navy)">Search Talent</div>'
+      +   '<button class="btn" style="background:#534AB7;color:#fff;font-size:11px" onclick="openAddCandidateModal()">+ Add Candidate</button>'
+      + '</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-bottom:12px">Type a query for <b>AI semantic ranking</b>, or leave it blank and use the filters to browse the <b>whole database</b>.</div>'
       + '<div style="display:flex;gap:8px">'
-      + '<input class="inp" id="ai-search-q" placeholder="e.g. procurement manager with vendor negotiation" style="flex:1" onkeydown="if(event.key===&#39;Enter&#39;)runAISearch()">'
-      + '<button class="btn btn-g" onclick="runAISearch()" style="background:#8B6FCB">Search</button>'
+      + '<input class="inp" id="ai-search-q" placeholder="e.g. BMS commissioning engineer  (blank = filter only)" style="flex:1" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()">'
+      + '<button class="btn btn-g" onclick="runTalentSearch()" style="background:#8B6FCB">Search</button>'
+      + '</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-top:10px">'
+      +   '<input class="inp" id="tf-loc" placeholder="Location" style="width:120px">'
+      +   '<span style="font-size:11px;color:#888">Exp</span><input class="inp" id="tf-emin" type="number" placeholder="Min" style="width:58px"><span style="color:#bbb">-</span><input class="inp" id="tf-emax" type="number" placeholder="Max" style="width:58px"><span style="font-size:10px;color:#888">y</span>'
+      +   '<span style="font-size:11px;color:#888">CTC</span><input class="inp" id="tf-cmin" type="number" placeholder="Min" style="width:58px"><span style="color:#bbb">-</span><input class="inp" id="tf-cmax" type="number" placeholder="Max" style="width:58px"><span style="font-size:10px;color:#888">L</span>'
+      +   '<input class="inp" id="tf-notice" type="number" placeholder="Notice days &#8804;" style="width:110px">'
+      +   '<button class="btn btn-o" style="font-size:11px" onclick="clearTalentFilters()">Clear</button>'
       + '</div>'
       + '<label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11px;color:var(--muted);cursor:pointer">'
-      + '<input type="checkbox" id="ai-explain" checked> Add AI reasoning (why they fit)</label>'
+      + '<input type="checkbox" id="ai-explain" checked> Add AI reasoning (only for text queries)</label>'
       + '<div style="margin-top:10px"><button class="btn btn-o" style="font-size:11px" onclick="runReindex(false)">&#8635; Index new candidates</button> '
       + '<button class="btn btn-o" style="font-size:11px" onclick="runReindex(true)">Re-index all</button></div>'
       + '</div>'
@@ -9397,7 +9408,54 @@ async function runReindex(force) {
   }
 }
 
-async function runAISearch() {
+// ── Unified Talent Search: filters-only = full DB, text = AI semantic + narrow ──
+function readTalentFilters() {
+  var v = function(id){ var e=document.getElementById(id); return e?e.value.trim():''; };
+  return {loc:v('tf-loc'), emin:v('tf-emin'), emax:v('tf-emax'), cmin:v('tf-cmin'), cmax:v('tf-cmax'), notice:v('tf-notice')};
+}
+function clearTalentFilters() {
+  ['tf-loc','tf-emin','tf-emax','tf-cmin','tf-cmax','tf-notice'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+}
+function runTalentSearch() {
+  var qEl = document.getElementById('ai-search-q');
+  var q = qEl ? qEl.value.trim() : '';
+  var f = readTalentFilters();
+  if (!q) { return talentFilterSearch(f); }   // no text → structured search over ALL candidates
+  return runAISearch(f);                        // text → AI semantic ranking, narrowed by filters
+}
+function talentRow(c) {
+  var sk = ((c.key_skills || []).slice(0, 4)).map(esc).join(' \u00b7 ');
+  return '<div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:9px;margin-bottom:7px;background:#fff;border:0.5px solid var(--line);box-shadow:var(--shadow-sm);cursor:pointer" onclick="openProfileById(' + c.id + ',' + (c.mandate_id||'null') + ')">'
+    + avatarHtml(c.name, 34)
+    + '<div style="flex:1;min-width:0">'
+    + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(c.name||'') + '</div>'
+    + '<div style="font-size:11px;color:var(--muted)">' + esc(c.designation||c.company||'') + (c.location?' \u00b7 '+esc(c.location):'') + (c.experience?' \u00b7 '+c.experience+'y':'') + '</div>'
+    + (sk ? '<div style="font-size:10px;color:#A99;margin-top:2px">' + sk + '</div>' : '')
+    + '</div>'
+    + (c.ctc ? '<div style="font-size:11px;color:#888;white-space:nowrap">' + esc(String(c.ctc)) + ' LPA</div>' : '')
+    + '</div>';
+}
+async function talentFilterSearch(f) {
+  var res = document.getElementById('ai-search-results');
+  if (!res) return;
+  res.innerHTML = '<div class="loading"><div class="spinner"></div>Searching your database...</div>';
+  var qs = 'page=1';
+  if (f.loc)    qs += '&location=' + encodeURIComponent(f.loc);
+  if (f.emin)   qs += '&exp_min='  + encodeURIComponent(f.emin);
+  if (f.emax)   qs += '&exp_max='  + encodeURIComponent(f.emax);
+  if (f.cmin)   qs += '&ctc_min='  + encodeURIComponent(f.cmin);
+  if (f.cmax)   qs += '&ctc_max='  + encodeURIComponent(f.cmax);
+  if (f.notice) qs += '&notice='   + encodeURIComponent(f.notice);
+  var r = await req('GET', '/central-db/search?' + qs);
+  if (!r || r.error) { res.innerHTML = '<div style="color:#C0522B;padding:12px">' + esc((r&&r.error)||'Search failed') + '</div>'; return; }
+  var cands = r.candidates || [];
+  if (!cands.length) { res.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">No candidates match these filters.</div>'; return; }
+  var html = '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Showing ' + cands.length + ' of ' + (r.total||cands.length) + ' candidates &middot; full database</div>';
+  cands.forEach(function(c){ html += talentRow(c); });
+  res.innerHTML = html;
+}
+
+async function runAISearch(filterObj) {
   var q = document.getElementById('ai-search-q').value.trim();
   if (!q) { toast('ERR','Type a search query'); return; }
   var explain = document.getElementById('ai-explain').checked;
@@ -9430,6 +9488,19 @@ async function runAISearch() {
   if (!r.ok) {
     res.innerHTML = banner + '<div style="color:#C0522B;padding:12px">' + esc(r.error||'Search failed') + '</div>';
     return;
+  }
+  if (filterObj && r && r.results && r.results.length) {
+    var _lc = (filterObj.loc||'').toLowerCase();
+    r.results = r.results.filter(function(c){
+      if (_lc && (c.location||'').toLowerCase().indexOf(_lc) < 0) return false;
+      var e = parseFloat(c.experience);
+      if (filterObj.emin && !isNaN(e) && e < parseFloat(filterObj.emin)) return false;
+      if (filterObj.emax && !isNaN(e) && e > parseFloat(filterObj.emax)) return false;
+      var ct = parseFloat(c.ctc);
+      if (filterObj.cmin && !isNaN(ct) && ct < parseFloat(filterObj.cmin)) return false;
+      if (filterObj.cmax && !isNaN(ct) && ct > parseFloat(filterObj.cmax)) return false;
+      return true;
+    });
   }
   if (!r.results.length) {
     res.innerHTML = banner + '<div style="text-align:center;color:var(--muted);padding:24px">No indexed candidates yet. Click \"Index new candidates\" first.</div>';
