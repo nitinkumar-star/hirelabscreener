@@ -9311,6 +9311,7 @@ function renderAITab() {
       + '<button class="btn btn-g" onclick="runTalentSearch()" style="background:#8B6FCB">Search</button>'
       + '</div>'
       + '<div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-top:10px">'
+      +   '<input class="inp" id="tf-company" placeholder="Company (e.g. ABB)" style="width:150px">'
       +   '<input class="inp" id="tf-loc" placeholder="Location" style="width:120px">'
       +   '<span style="font-size:11px;color:#888">Exp</span><input class="inp" id="tf-emin" type="number" placeholder="Min" style="width:58px"><span style="color:#bbb">-</span><input class="inp" id="tf-emax" type="number" placeholder="Max" style="width:58px"><span style="font-size:10px;color:#888">y</span>'
       +   '<span style="font-size:11px;color:#888">CTC</span><input class="inp" id="tf-cmin" type="number" placeholder="Min" style="width:58px"><span style="color:#bbb">-</span><input class="inp" id="tf-cmax" type="number" placeholder="Max" style="width:58px"><span style="font-size:10px;color:#888">L</span>'
@@ -9466,10 +9467,10 @@ async function runReindex(force) {
 // ── Unified Talent Search: filters-only = full DB, text = AI semantic + narrow ──
 function readTalentFilters() {
   var v = function(id){ var e=document.getElementById(id); return e?e.value.trim():''; };
-  return {loc:v('tf-loc'), emin:v('tf-emin'), emax:v('tf-emax'), cmin:v('tf-cmin'), cmax:v('tf-cmax'), notice:v('tf-notice')};
+  return {company:v('tf-company'), loc:v('tf-loc'), emin:v('tf-emin'), emax:v('tf-emax'), cmin:v('tf-cmin'), cmax:v('tf-cmax'), notice:v('tf-notice')};
 }
 function clearTalentFilters() {
-  ['tf-loc','tf-emin','tf-emax','tf-cmin','tf-cmax','tf-notice'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+  ['tf-company','tf-loc','tf-emin','tf-emax','tf-cmin','tf-cmax','tf-notice'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
 }
 function runTalentSearch() {
   var qEl = document.getElementById('ai-search-q');
@@ -9495,6 +9496,7 @@ async function talentFilterSearch(f) {
   if (!res) return;
   res.innerHTML = '<div class="loading"><div class="spinner"></div>Searching your database...</div>';
   var qs = 'page=1';
+  if (f.company) qs += '&company='  + encodeURIComponent(f.company);
   if (f.loc)    qs += '&location=' + encodeURIComponent(f.loc);
   if (f.emin)   qs += '&exp_min='  + encodeURIComponent(f.emin);
   if (f.emax)   qs += '&exp_max='  + encodeURIComponent(f.emax);
@@ -9546,7 +9548,9 @@ async function runAISearch(filterObj) {
   }
   if (filterObj && r && r.results && r.results.length) {
     var _lc = (filterObj.loc||'').toLowerCase();
+    var _co = (filterObj.company||'').toLowerCase();
     r.results = r.results.filter(function(c){
+      if (_co && (c.company||'').toLowerCase().indexOf(_co) < 0) return false;
       if (_lc && (c.location||'').toLowerCase().indexOf(_lc) < 0) return false;
       var e = parseFloat(c.experience);
       if (filterObj.emin && !isNaN(e) && e < parseFloat(filterObj.emin)) return false;

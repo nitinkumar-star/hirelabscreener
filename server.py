@@ -12953,6 +12953,7 @@ def get_or_create_central_mandate():
 @login_required
 def central_search():
     q        = request.args.get('q', '').strip().lower()
+    company  = request.args.get('company', '').strip().lower()
     location = request.args.get('location', '').strip().lower()
     phone    = request.args.get('phone', '').strip()
     ctc_min  = request.args.get('ctc_min', '')
@@ -12993,6 +12994,7 @@ def central_search():
                 str(d.get('phone') or ''),
             ]).lower()
             if q not in searchable: continue
+        if company and company not in (d.get('company') or '').lower(): continue
         if location and location not in (d.get('location') or '').lower(): continue
         if phone and phone not in (d.get('phone') or ''): continue
         if ctc_min:
