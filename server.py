@@ -1712,6 +1712,257 @@ def html_to_text(html):
     txt = _re.sub(r'\n{3,}', '\n\n', txt)
     return txt.strip()
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  SKILL GRAPH — Intelligence Layer · Phase 1
+#  Domain skill graph for electrical / automation / solar / renewable / BMS.
+#  Terms are lowercase & space-separated (no hyphens/slashes) so they match the
+#  query n-grams and candidate tags, which are normalised the same way.
+# ═══════════════════════════════════════════════════════════════════════════
+_SKILL_GRAPH_SEED_VERSION = '1'
+_SKILL_GRAPH_SEED = [
+    # ── Building Management / BMS ──────────────────────────────────────────
+    {'c': 'bms', 'd': 'BMS', 'cat': 'Building Automation',
+     'a': ['building management system', 'building management', 'bems'], 'p': ['building automation'],
+     'r': ['bacnet', 'niagara', 'ddc', 'hvac', 'modbus', 'lonworks', 'honeywell', 'johnson controls',
+           'desigo', 'ecostruxure', 'commissioning', 'scada']},
+    {'c': 'building automation', 'd': 'Building Automation', 'cat': 'Building Automation',
+     'a': ['building automation system', 'bas'], 'p': [], 'r': ['bms', 'ddc', 'hvac', 'bacnet']},
+    {'c': 'bacnet', 'd': 'BACnet', 'cat': 'Building Automation',
+     'a': ['bacnet ip', 'bacnet mstp'], 'p': ['building automation'], 'r': ['bms', 'modbus', 'lonworks', 'niagara']},
+    {'c': 'niagara', 'd': 'Niagara (Tridium)', 'cat': 'Building Automation',
+     'a': ['tridium', 'tridium niagara', 'niagara framework', 'niagara 4', 'jace'],
+     'p': ['building automation'], 'r': ['bms', 'bacnet', 'ddc', 'honeywell']},
+    {'c': 'ddc', 'd': 'DDC', 'cat': 'Building Automation',
+     'a': ['direct digital control'], 'p': ['building automation'], 'r': ['bms', 'plc', 'hvac']},
+    {'c': 'hvac', 'd': 'HVAC', 'cat': 'Building Automation',
+     'a': ['heating ventilation air conditioning'], 'p': [], 'r': ['bms', 'chillers', 'ahu', 'vav', 'ddc']},
+    {'c': 'lonworks', 'd': 'LonWorks', 'cat': 'Building Automation',
+     'a': [], 'p': ['building automation'], 'r': ['bacnet', 'bms']},
+    {'c': 'desigo', 'd': 'Siemens Desigo', 'cat': 'Building Automation',
+     'a': ['siemens desigo'], 'p': ['building automation'], 'r': ['bms', 'siemens']},
+    # ── PLC / SCADA / Industrial Automation ────────────────────────────────
+    {'c': 'plc', 'd': 'PLC', 'cat': 'Industrial Automation',
+     'a': ['programmable logic controller'], 'p': ['industrial automation'],
+     'r': ['scada', 'hmi', 'dcs', 'ladder logic', 'siemens', 'allen bradley', 'modbus', 'vfd']},
+    {'c': 'scada', 'd': 'SCADA', 'cat': 'Industrial Automation',
+     'a': ['supervisory control and data acquisition'], 'p': ['industrial automation'],
+     'r': ['plc', 'hmi', 'dcs', 'wincc', 'wonderware', 'ignition', 'modbus']},
+    {'c': 'hmi', 'd': 'HMI', 'cat': 'Industrial Automation',
+     'a': ['human machine interface'], 'p': ['industrial automation'], 'r': ['plc', 'scada', 'wincc']},
+    {'c': 'dcs', 'd': 'DCS', 'cat': 'Industrial Automation',
+     'a': ['distributed control system'], 'p': ['industrial automation'],
+     'r': ['plc', 'scada', '800xa', 'experion', 'yokogawa']},
+    {'c': 'industrial automation', 'd': 'Industrial Automation', 'cat': 'Industrial Automation',
+     'a': ['factory automation', 'process automation'], 'p': [],
+     'r': ['plc', 'scada', 'dcs', 'instrumentation', 'robotics']},
+    {'c': 'siemens', 'd': 'Siemens', 'cat': 'OEM / Ecosystem',
+     'a': ['siemens automation'], 'p': [], 'r': ['tia portal', 's7', 'simatic', 'wincc', 'profinet', 'plc', 'desigo']},
+    {'c': 'tia portal', 'd': 'TIA Portal', 'cat': 'Industrial Automation',
+     'a': ['tia'], 'p': ['siemens'], 'r': ['s7', 'simatic', 'wincc', 'plc']},
+    {'c': 's7', 'd': 'Siemens S7', 'cat': 'Industrial Automation',
+     'a': ['s7 1200', 's7 1500', 's7 300', 's7 400', 'simatic s7', 'simatic'], 'p': ['siemens'],
+     'r': ['tia portal', 'plc']},
+    {'c': 'wincc', 'd': 'WinCC', 'cat': 'Industrial Automation',
+     'a': [], 'p': ['siemens'], 'r': ['scada', 'hmi', 'tia portal']},
+    {'c': 'profinet', 'd': 'PROFINET', 'cat': 'Industrial Automation',
+     'a': [], 'p': ['siemens'], 'r': ['profibus', 'industrial ethernet', 'plc']},
+    {'c': 'profibus', 'd': 'PROFIBUS', 'cat': 'Industrial Automation',
+     'a': [], 'p': [], 'r': ['profinet', 'modbus', 'fieldbus']},
+    {'c': 'allen bradley', 'd': 'Allen-Bradley (Rockwell)', 'cat': 'OEM / Ecosystem',
+     'a': ['rockwell', 'rockwell automation'], 'p': [], 'r': ['rslogix', 'studio 5000', 'plc', 'factorytalk']},
+    {'c': 'rslogix', 'd': 'RSLogix / Studio 5000', 'cat': 'Industrial Automation',
+     'a': ['studio 5000', 'logix'], 'p': ['allen bradley'], 'r': ['plc']},
+    {'c': '800xa', 'd': 'ABB 800xA', 'cat': 'Industrial Automation',
+     'a': ['abb 800xa', 'system 800xa'], 'p': ['abb'], 'r': ['dcs']},
+    {'c': 'modbus', 'd': 'Modbus', 'cat': 'Industrial Automation',
+     'a': ['modbus tcp', 'modbus rtu'], 'p': [], 'r': ['plc', 'scada', 'bacnet', 'profibus']},
+    {'c': 'ladder logic', 'd': 'Ladder Logic', 'cat': 'Industrial Automation',
+     'a': ['ladder programming'], 'p': [], 'r': ['plc', 'function block']},
+    {'c': 'vfd', 'd': 'VFD / Drives', 'cat': 'Industrial Automation',
+     'a': ['variable frequency drive', 'variable speed drive', 'vsd', 'ac drive', 'drives'],
+     'p': [], 'r': ['motor control', 'plc', 'servo', 'altivar']},
+    {'c': 'servo', 'd': 'Servo / Motion', 'cat': 'Industrial Automation',
+     'a': ['servo drive', 'servo motor', 'motion control'], 'p': [], 'r': ['plc', 'vfd']},
+    {'c': 'instrumentation', 'd': 'Instrumentation', 'cat': 'Industrial Automation',
+     'a': ['field instrumentation'], 'p': [], 'r': ['transmitters', 'control valves', 'plc', 'scada', 'calibration', 'dcs']},
+    # ── Electrical / Power ─────────────────────────────────────────────────
+    {'c': 'switchgear', 'd': 'Switchgear', 'cat': 'Electrical',
+     'a': [], 'p': [], 'r': ['lv switchgear', 'mv switchgear', 'panels', 'circuit breaker']},
+    {'c': 'lv switchgear', 'd': 'LV Switchgear', 'cat': 'Electrical',
+     'a': ['low voltage switchgear', 'lv panels', 'lt switchgear', 'lt panels'], 'p': ['switchgear'],
+     'r': ['mcc', 'panels', 'acb', 'mccb', 'schneider', 'abb', 'siemens']},
+    {'c': 'mv switchgear', 'd': 'MV Switchgear', 'cat': 'Electrical',
+     'a': ['medium voltage switchgear', 'ht switchgear', 'ht panels'], 'p': ['switchgear'],
+     'r': ['vcb', 'protection relays', 'ring main unit', 'gis']},
+    {'c': 'protection relays', 'd': 'Protection Relays', 'cat': 'Electrical',
+     'a': ['protection relay', 'numerical relay', 'relay coordination'], 'p': [],
+     'r': ['switchgear', 'sld', 'substation', 'siprotec']},
+    {'c': 'sld', 'd': 'Single Line Diagram', 'cat': 'Electrical',
+     'a': ['single line diagram'], 'p': [], 'r': ['electrical design', 'power distribution', 'etap']},
+    {'c': 'etap', 'd': 'ETAP', 'cat': 'Electrical',
+     'a': [], 'p': [], 'r': ['power system study', 'load flow', 'sld', 'electrical design']},
+    {'c': 'mcc', 'd': 'MCC', 'cat': 'Electrical',
+     'a': ['motor control center', 'motor control centre'], 'p': [], 'r': ['switchgear', 'vfd', 'panels', 'plc']},
+    {'c': 'power distribution', 'd': 'Power Distribution', 'cat': 'Electrical',
+     'a': ['electrical distribution'], 'p': [], 'r': ['switchgear', 'transformers', 'sld', 'substation']},
+    {'c': 'transformers', 'd': 'Transformers', 'cat': 'Electrical',
+     'a': ['transformer'], 'p': [], 'r': ['power distribution', 'substation']},
+    {'c': 'substation', 'd': 'Substation', 'cat': 'Electrical',
+     'a': [], 'p': [], 'r': ['transformers', 'switchgear', 'protection relays', 'power distribution']},
+    {'c': 'panels', 'd': 'Panels / Panel Design', 'cat': 'Electrical',
+     'a': ['electrical panels', 'panel design', 'control panels'], 'p': [], 'r': ['switchgear', 'mcc', 'wiring']},
+    {'c': 'electrical design', 'd': 'Electrical Design', 'cat': 'Electrical',
+     'a': [], 'p': [], 'r': ['sld', 'etap', 'autocad electrical', 'power distribution']},
+    # ── Solar / Renewable ──────────────────────────────────────────────────
+    {'c': 'solar pv', 'd': 'Solar PV', 'cat': 'Renewable',
+     'a': ['solar', 'solar power', 'photovoltaic', 'pv', 'solar energy'], 'p': ['renewable energy'],
+     'r': ['inverters', 'mppt', 'string design', 'pvsyst', 'epc', 'net metering', 'bess', 'on grid', 'off grid']},
+    {'c': 'renewable energy', 'd': 'Renewable Energy', 'cat': 'Renewable',
+     'a': ['renewables', 'clean energy', 'green energy'], 'p': [], 'r': ['solar pv', 'wind', 'bess']},
+    {'c': 'inverters', 'd': 'Inverters', 'cat': 'Renewable',
+     'a': ['solar inverter', 'string inverter', 'central inverter'], 'p': ['solar pv'],
+     'r': ['mppt', 'sungrow', 'sma']},
+    {'c': 'mppt', 'd': 'MPPT', 'cat': 'Renewable',
+     'a': ['maximum power point tracking'], 'p': ['solar pv'], 'r': ['inverters']},
+    {'c': 'pvsyst', 'd': 'PVsyst', 'cat': 'Renewable',
+     'a': [], 'p': ['solar pv'], 'r': ['string design', 'energy yield']},
+    {'c': 'string design', 'd': 'String Design', 'cat': 'Renewable',
+     'a': ['string sizing'], 'p': ['solar pv'], 'r': ['pvsyst', 'inverters']},
+    {'c': 'bess', 'd': 'BESS / Energy Storage', 'cat': 'Renewable',
+     'a': ['battery energy storage', 'battery storage', 'energy storage'], 'p': [],
+     'r': ['solar pv', 'renewable energy', 'inverters', 'lithium ion']},
+    {'c': 'wind', 'd': 'Wind Energy', 'cat': 'Renewable',
+     'a': ['wind energy', 'wind power', 'wind turbine'], 'p': ['renewable energy'], 'r': ['scada']},
+    {'c': 'epc', 'd': 'EPC', 'cat': 'Renewable',
+     'a': ['engineering procurement construction'], 'p': [], 'r': ['solar pv', 'substation', 'project management']},
+    {'c': 'net metering', 'd': 'Net Metering', 'cat': 'Renewable',
+     'a': [], 'p': [], 'r': ['solar pv', 'discom', 'on grid']},
+    {'c': 'on grid', 'd': 'On-Grid', 'cat': 'Renewable',
+     'a': ['grid tied', 'grid connected'], 'p': [], 'r': ['solar pv', 'net metering', 'inverters']},
+    {'c': 'off grid', 'd': 'Off-Grid', 'cat': 'Renewable',
+     'a': ['standalone solar'], 'p': [], 'r': ['solar pv', 'bess', 'inverters']},
+    # ── OEM ecosystems ─────────────────────────────────────────────────────
+    {'c': 'abb', 'd': 'ABB', 'cat': 'OEM / Ecosystem',
+     'a': [], 'p': [], 'r': ['800xa', 'dcs', 'robotics', 'switchgear', 'drives']},
+    {'c': 'schneider', 'd': 'Schneider Electric', 'cat': 'OEM / Ecosystem',
+     'a': ['schneider electric'], 'p': [], 'r': ['ecostruxure', 'modicon', 'lv switchgear', 'altivar', 'bms']},
+    {'c': 'ecostruxure', 'd': 'EcoStruxure', 'cat': 'OEM / Ecosystem',
+     'a': [], 'p': ['schneider'], 'r': ['bms', 'scada']},
+    {'c': 'modicon', 'd': 'Modicon', 'cat': 'Industrial Automation',
+     'a': ['unity pro'], 'p': ['schneider'], 'r': ['plc']},
+    {'c': 'honeywell', 'd': 'Honeywell', 'cat': 'OEM / Ecosystem',
+     'a': [], 'p': [], 'r': ['experion', 'niagara', 'bms', 'dcs']},
+    {'c': 'johnson controls', 'd': 'Johnson Controls (JCI)', 'cat': 'OEM / Ecosystem',
+     'a': ['jci', 'metasys'], 'p': [], 'r': ['bms', 'hvac', 'building automation']},
+    # ── Cross-cutting ──────────────────────────────────────────────────────
+    {'c': 'commissioning', 'd': 'Commissioning', 'cat': 'Functional',
+     'a': ['testing and commissioning'], 'p': [], 'r': ['bms', 'plc', 'scada', 'hvac', 'installation']},
+]
+
+
+def _seed_skill_graph(c):
+    """Idempotent, version-guarded seed of the shared (owner_id=0) skill graph."""
+    try:
+        row = c.execute("SELECT value FROM settings WHERE key='skill_graph_seed_version'").fetchone()
+        cur = row['value'] if row else None
+    except Exception:
+        cur = None
+    if cur == _SKILL_GRAPH_SEED_VERSION:
+        return
+    now = ts()
+    for n in _SKILL_GRAPH_SEED:
+        c.execute(
+            "INSERT INTO skill_graph (owner_id,canonical,display,category,aliases,parents,related,created_at,updated_at) "
+            "VALUES (0,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(owner_id,canonical) DO UPDATE SET "
+            "display=excluded.display, category=excluded.category, aliases=excluded.aliases, "
+            "parents=excluded.parents, related=excluded.related, updated_at=excluded.updated_at",
+            (n['c'], n.get('d', ''), n.get('cat', ''),
+             json.dumps(n.get('a', [])), json.dumps(n.get('p', [])), json.dumps(n.get('r', [])), now, now))
+    c.execute("INSERT OR REPLACE INTO settings (key,value) VALUES ('skill_graph_seed_version',?)",
+              (_SKILL_GRAPH_SEED_VERSION,))
+    print(f'[skill-graph] seeded {len(_SKILL_GRAPH_SEED)} nodes (v{_SKILL_GRAPH_SEED_VERSION})')
+
+
+_SKILL_GRAPH_CACHE = {'ts': 0.0, 'oid': None, 'nodes': None, 'lookup': None, 'children': None}
+
+
+def _load_skill_graph(conn, oid):
+    """Load shared (owner_id=0) + this tenant's skill-graph nodes. Cached briefly.
+    Returns dict with: nodes{canonical->{display,aliases,parents,related}},
+    lookup{term->canonical}, children{canonical->set(child canonicals)}."""
+    import time as _t
+    now = _t.time()
+    ce = _SKILL_GRAPH_CACHE
+    if ce['nodes'] is not None and ce['oid'] == oid and now - ce['ts'] < 300:
+        return ce
+    nodes, lookup, children = {}, {}, {}
+    try:
+        rows = conn.execute(
+            "SELECT canonical,display,aliases,parents,related FROM skill_graph WHERE owner_id=0 OR owner_id=?",
+            (oid,)).fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    def _jl(v):
+        try:
+            return [str(x).strip().lower() for x in json.loads(v or '[]') if str(x).strip()]
+        except Exception:
+            return []
+    for r in rows:
+        can = (r['canonical'] or '').strip().lower()
+        if not can:
+            continue
+        nodes[can] = {'display': r['display'] or can, 'aliases': _jl(r['aliases']),
+                      'parents': _jl(r['parents']), 'related': _jl(r['related'])}
+        lookup[can] = can
+        for a in nodes[can]['aliases']:
+            lookup.setdefault(a, can)
+    for can, n in nodes.items():
+        for p in n['parents']:
+            children.setdefault(p, set()).add(can)
+    ce.update({'ts': now, 'oid': oid, 'nodes': nodes, 'lookup': lookup, 'children': children})
+    return ce
+
+
+def _skill_expand(query, conn, oid):
+    """Use the domain skill graph to expand recognised query skills into aliases
+    (same skill), related, child (more specific) and parent (broader) skills.
+    Returns {'expand': {term: weight}, 'recognized': [display], 'related': [display]}.
+    Stays empty when the query has no known skills, so search is unaffected."""
+    g = _load_skill_graph(conn, oid)
+    nodes, lookup, children = g['nodes'], g['lookup'], g['children']
+    if not nodes:
+        return {'expand': {}, 'recognized': [], 'related': []}
+    grams, _toks = _query_grams(query)
+    hit = set(lookup[gr] for gr in grams if gr in lookup)
+    expand, recognized = {}, []
+    def _bump(term, w):
+        term = (term or '').strip().lower()
+        if term and term not in hit and expand.get(term, 0) < w:
+            expand[term] = w
+    for can in hit:
+        n = nodes.get(can) or {}
+        recognized.append(n.get('display', can))
+        for a in n.get('aliases', []):
+            _bump(a, 1.0)
+        for rterm in n.get('related', []):
+            _bump(rterm, 0.5)
+        for ch in children.get(can, ()):
+            _bump(ch, 0.5)
+            for a in (nodes.get(ch) or {}).get('aliases', []):
+                _bump(a, 0.5)
+        for p in n.get('parents', []):
+            _bump(p, 0.35)
+    rel_display, seen = [], set()
+    for term, w in sorted(expand.items(), key=lambda kv: -kv[1]):
+        if w >= 1.0:
+            continue
+        d = (nodes.get(lookup.get(term, term)) or {}).get('display', term)
+        if d not in seen:
+            seen.add(d); rel_display.append(d)
+    return {'expand': expand, 'recognized': sorted(set(recognized)), 'related': rel_display[:12]}
+
+
 def init_db():
     conn = get_db(); c = conn.cursor()
     c.executescript("""
@@ -2622,6 +2873,32 @@ def init_db():
             c.execute(idx_sql)
         except sqlite3.OperationalError:
             pass
+
+    # ── Skill Graph (Intelligence Layer · Phase 1) ─────────────────────────
+    # A domain skill graph for electrical / automation / solar recruiting.
+    # owner_id=0 rows are the shared system seed; owner_id=<company> rows are a
+    # tenant's own additions. Powers query-time skill expansion in search
+    # (e.g. "BMS" also matches BACnet / Niagara / DDC candidates).
+    c.execute('''CREATE TABLE IF NOT EXISTS skill_graph (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id  INTEGER DEFAULT 0,
+        canonical TEXT NOT NULL,
+        display   TEXT DEFAULT '',
+        category  TEXT DEFAULT '',
+        aliases   TEXT DEFAULT '[]',
+        parents   TEXT DEFAULT '[]',
+        related   TEXT DEFAULT '[]',
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT ''
+    )''')
+    try:
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_skill_graph ON skill_graph(owner_id, canonical)")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        _seed_skill_graph(c)
+    except Exception as _e:
+        print('[skill-graph] seed skipped:', _e)
 
     # Migrate: add reminders table if not exists
     c.execute('''CREATE TABLE IF NOT EXISTS reminders (
@@ -6274,13 +6551,22 @@ def _hybrid_score_one(sem, c, wh_companies, detected, weights, mandatory_skills)
     cskills, ccomp, cloc, cind = _candidate_signal_sets(c, wh_companies)
     signals = {'semantic': max(0.0, min(1.0, sem))}
     active = {'semantic': weights['semantic']}
-    explain = {'matched_skills': [], 'matched_industries': [], 'matched_companies': [],
+    explain = {'matched_skills': [], 'matched_related': [], 'matched_industries': [], 'matched_companies': [],
                'matched_experience': None, 'missing_mandatory_skills': []}
 
-    if detected['skills']:
-        matched = [s for s in detected['skills'] if s in cskills]
-        signals['skills'] = len(matched) / len(detected['skills'])
-        active['skills'] = weights['skills']; explain['matched_skills'] = matched
+    core = detected.get('skills') or []
+    exp = detected.get('skill_expand') or {}
+    if core or exp:
+        core_matched = [s for s in core if s in cskills]
+        # related/adjacent skills present on the candidate (from the skill graph),
+        # not already counted as an exact match — each adds a fractional boost.
+        rel_hits = {s: w for s, w in exp.items() if s in cskills and s not in core}
+        denom = len(core) if core else 1
+        raw = len(core_matched) + sum(rel_hits.values())
+        signals['skills'] = max(0.0, min(1.0, raw / denom))
+        active['skills'] = weights['skills']
+        explain['matched_skills'] = core_matched
+        explain['matched_related'] = sorted(rel_hits.keys())
     if detected['industries']:
         matched = [s for s in detected['industries'] if s in cind]
         signals['industry'] = 1.0 if matched else 0.0
@@ -6330,6 +6616,18 @@ def _hybrid_process(conn, query, ranked, d):
     }
     taxo = _hybrid_taxonomy(conn)
     detected = _extract_query_filters(query, taxo)
+
+    # Skill-graph expansion (Intelligence Layer · Phase 1): widen skill matching
+    # to aliases / related / child / parent skills so e.g. a "BMS" query also
+    # surfaces BACnet, Niagara and DDC candidates. Soft-weighted, so exact-skill
+    # matches still rank first, and completely silent when no skill is recognised.
+    try:
+        _sg = _skill_expand(query, conn, effective_company_id())
+    except Exception:
+        _sg = {'expand': {}, 'recognized': [], 'related': []}
+    detected['skill_expand'] = _sg['expand']
+    detected['skill_recognized'] = _sg['recognized']
+    detected['skill_related'] = _sg['related']
 
     # merge explicit filters (opt-in, can be mandatory/hard)
     exp_filters = d.get('filters') or {}
@@ -6731,6 +7029,80 @@ def ai_search():
         'filters_detected': filters_detected,
         'timing': timing,
     })
+
+
+@app.route('/api/skill-graph', methods=['GET'])
+@login_required
+def skill_graph_list():
+    """List the domain skill graph (shared seed + this tenant's own nodes)."""
+    conn = get_db()
+    oid = effective_company_id()
+    rows = conn.execute(
+        "SELECT id,owner_id,canonical,display,category,aliases,parents,related FROM skill_graph "
+        "WHERE owner_id=0 OR owner_id=? ORDER BY category, canonical", (oid,)).fetchall()
+    conn.close()
+    def _jl(v):
+        try: return json.loads(v or '[]')
+        except Exception: return []
+    out = []
+    for r in rows:
+        out.append({'id': r['id'], 'canonical': r['canonical'], 'display': r['display'],
+                    'category': r['category'], 'aliases': _jl(r['aliases']),
+                    'parents': _jl(r['parents']), 'related': _jl(r['related']),
+                    'custom': (r['owner_id'] == oid and oid != 0)})
+    return jsonify({'ok': True, 'nodes': out, 'count': len(out)})
+
+
+@app.route('/api/skill-graph', methods=['POST'])
+@login_required
+def skill_graph_add():
+    """Add or extend a skill node for THIS tenant (owner_id = company). Merges
+    aliases/parents/related into any existing tenant node with the same canonical.
+    Lets Nitin grow the graph as he learns his market — this is the moat compounding."""
+    d = request.json or {}
+    can = (d.get('canonical') or '').strip().lower()
+    if not can:
+        return jsonify({'error': 'canonical required'}), 400
+    def _norm(lst):
+        return sorted({str(x).strip().lower() for x in (lst or []) if str(x).strip()})
+    aliases, parents, related = _norm(d.get('aliases')), _norm(d.get('parents')), _norm(d.get('related'))
+    display = (d.get('display') or can).strip()
+    category = (d.get('category') or '').strip()
+    conn = get_db(); oid = effective_company_id()
+    existing = conn.execute("SELECT aliases,parents,related FROM skill_graph WHERE owner_id=? AND canonical=?",
+                            (oid, can)).fetchone()
+    def _jl(v):
+        try: return json.loads(v or '[]')
+        except Exception: return []
+    if existing:
+        aliases = sorted(set(aliases) | set(_jl(existing['aliases'])))
+        parents = sorted(set(parents) | set(_jl(existing['parents'])))
+        related = sorted(set(related) | set(_jl(existing['related'])))
+        conn.execute("UPDATE skill_graph SET display=?, category=?, aliases=?, parents=?, related=?, updated_at=? "
+                     "WHERE owner_id=? AND canonical=?",
+                     (display, category, json.dumps(aliases), json.dumps(parents), json.dumps(related),
+                      ts(), oid, can))
+    else:
+        conn.execute("INSERT INTO skill_graph (owner_id,canonical,display,category,aliases,parents,related,created_at,updated_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?)",
+                     (oid, can, display, category, json.dumps(aliases), json.dumps(parents), json.dumps(related),
+                      ts(), ts()))
+    conn.commit(); conn.close()
+    _SKILL_GRAPH_CACHE['nodes'] = None  # invalidate cache so search picks it up
+    return jsonify({'ok': True, 'canonical': can})
+
+
+@app.route('/api/skill-graph/expand', methods=['GET'])
+@login_required
+def skill_graph_expand_preview():
+    """Preview what a query expands to — a quick way to test the graph."""
+    q = (request.args.get('q') or '').strip()
+    if not q:
+        return jsonify({'ok': True, 'recognized': [], 'related': [], 'expand': {}})
+    conn = get_db()
+    res = _skill_expand(q, conn, effective_company_id())
+    conn.close()
+    return jsonify({'ok': True, **res})
 
 
 @app.route('/api/ai/search/metrics', methods=['GET'])

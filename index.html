@@ -9420,6 +9420,19 @@ async function runAISearch() {
       + '<div style="font-size:11px;font-weight:700;color:#6B4FA0;margin-bottom:6px">&#10024; AI REASONING</div>'
       + '<div style="font-size:12px;color:#3D2E63;white-space:pre-wrap;line-height:1.5">' + esc(r.reasoning) + '</div></div>';
   }
+  var fd = r.filters_detected || {};
+  if ((fd.skill_recognized && fd.skill_recognized.length) || (fd.skill_related && fd.skill_related.length)) {
+    html += '<div style="background:#EAF6F1;border:0.5px solid #BFE3D5;border-radius:9px;padding:10px 13px;margin-bottom:12px">';
+    if (fd.skill_recognized && fd.skill_recognized.length) {
+      html += '<div style="font-size:10.5px;color:#0F6E56;font-weight:700;margin-bottom:6px">&#128279; SKILL GRAPH &middot; recognised: ' + fd.skill_recognized.map(esc).join(', ') + '</div>';
+    }
+    if (fd.skill_related && fd.skill_related.length) {
+      html += '<div style="font-size:10px;color:#437A68;margin-bottom:5px">Also surfacing candidates with related skills:</div><div style="display:flex;flex-wrap:wrap;gap:5px">';
+      fd.skill_related.forEach(function(s){ html += '<span style="font-size:10px;background:#D7EFE6;color:#0F6E56;padding:2px 8px;border-radius:20px">' + esc(s) + '</span>'; });
+      html += '</div>';
+    }
+    html += '</div>';
+  }
   html += '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">' + r.results.length + ' matches (searched ' + r.searched + ' indexed candidates)</div>';
 
   r.results.forEach(function(c) {
@@ -9430,6 +9443,7 @@ async function runAISearch() {
       + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(c.name||'') + '</div>'
       + '<div style="font-size:11px;color:var(--muted)">' + esc(c.designation||'') + (c.company?' @ '+esc(c.company):'') + (c.location?' · '+esc(c.location):'') + (c.experience?' · '+c.experience+'y':'') + '</div>'
       + '<div style="font-size:10px;color:#A99;margin-top:2px">In mandate: ' + esc(c.mandate_role||'N/A') + (c.mandate_client?' ('+esc(c.mandate_client)+')':'') + ' · stage: ' + esc(c.stage||'') + '</div>'
+      + (((c.explain&&c.explain.matched_related)||[]).length ? '<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">' + c.explain.matched_related.slice(0,6).map(function(s){return '<span style="font-size:9px;background:#EAF6F1;color:#0F6E56;padding:1px 6px;border-radius:5px">&#128279; '+esc(s)+'</span>';}).join('') + '</div>' : '')
       + '</div>'
       + '<div style="font-size:13px;font-weight:700;color:' + scoreColor + ';white-space:nowrap">' + c.score + '%</div>'
       + '</div>';
