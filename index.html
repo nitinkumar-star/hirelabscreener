@@ -9397,7 +9397,8 @@ function renderCompaniesList() {
     html += '<div onclick="openCompany(&#39;'+esc(c.company.replace(/'/g,"\\'"))+'&#39;)" style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:9px;margin-bottom:7px;background:#fff;border:0.5px solid var(--line);box-shadow:var(--shadow-sm);cursor:pointer" onmouseover="this.style.background=&#39;#F7F6F3&#39;" onmouseout="this.style.background=&#39;#fff&#39;">'
       + '<div style="width:34px;height:34px;border-radius:8px;background:#EDE7FA;color:#5B3FA0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">'+esc((c.company[0]||'?').toUpperCase())+'</div>'
       + '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:var(--navy)">'+esc(c.company)+'</div>'
-      + ((c.top_locations||[]).length?'<div style="font-size:10.5px;color:var(--muted)">'+c.top_locations.map(esc).join(' · ')+'</div>':'')+'</div>'
+      + ((c.top_locations||[]).length?'<div style="font-size:10.5px;color:var(--muted)">'+c.top_locations.map(esc).join(' · ')+'</div>':'')
+      + ((c.variants&&c.variants.length>1)?'<div style="font-size:9.5px;color:#C0522B">merged '+c.variants.length+' spellings</div>':'')+'</div>'
       + '<div style="text-align:right"><div style="font-size:15px;font-weight:700;color:#5B3FA0">'+c.count+'</div><div style="font-size:9px;color:#aaa">candidates</div></div>'
       + '</div>';
   });
@@ -9412,7 +9413,9 @@ async function openCompany(name) {
   var chips = function(arr, bg, col, key){ return (arr||[]).map(function(x){ return '<span style="font-size:10.5px;background:'+bg+';color:'+col+';padding:2px 9px;border-radius:20px;margin:0 4px 4px 0;display:inline-block">'+esc(x.name||x)+(x.count?' <b>'+x.count+'</b>':'')+'</span>'; }).join(''); };
   var card = function(title, inner){ return '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)"><div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px;letter-spacing:.3px">'+title+'</div>'+inner+'</div>'; };
   var html = '<div style="margin-bottom:10px"><a onclick="renderCompaniesList()" style="font-size:12px;color:var(--teal-deep);cursor:pointer">&#8592; All companies</a></div>';
-  html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><div style="width:44px;height:44px;border-radius:10px;background:#EDE7FA;color:#5B3FA0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px">'+esc((r.company[0]||'?').toUpperCase())+'</div><div><div style="font-size:17px;font-weight:700;color:var(--navy)">'+esc(r.company)+'</div><div style="font-size:11px;color:var(--muted)">'+r.count+' candidates you already know here</div></div></div>';
+  html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><div style="width:44px;height:44px;border-radius:10px;background:#EDE7FA;color:#5B3FA0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px">'+esc((r.company[0]||'?').toUpperCase())+'</div><div><div style="font-size:17px;font-weight:700;color:var(--navy)">'+esc(r.company)+'</div><div style="font-size:11px;color:var(--muted)">'+r.count+' candidates you already know here</div>'
+    + ((r.variants&&r.variants.length>1)?'<div style="font-size:10px;color:#C0522B;margin-top:2px">Merged spellings: '+r.variants.map(esc).join(', ')+'</div>':'')
+    + '</div></div>';
   if ((r.competitors||[]).length) html += card('&#9878; ECOSYSTEM COMPETITORS (pivot your sourcing)', '<div>'+r.competitors.map(function(c){ return '<span onclick="document.getElementById(&#39;co-q&#39;)&&(function(){}());" style="font-size:11px;background:#FFF3E9;color:#C0522B;padding:3px 10px;border-radius:20px;margin:0 5px 5px 0;display:inline-block">'+esc(c)+'</span>'; }).join('')+'</div>');
   if ((r.top_skills||[]).length) html += card('&#128296; TOP SKILLS HERE', '<div>'+chips(r.top_skills,'#D7EFE6','#0F6E56')+'</div>');
   if ((r.top_designations||[]).length) html += card('&#128188; ROLES', '<div>'+chips(r.top_designations,'#EDE7FA','#5B3FA0')+'</div>');

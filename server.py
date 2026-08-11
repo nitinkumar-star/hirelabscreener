@@ -7291,11 +7291,29 @@ def _company_competitors(company):
     return [p for p in _OEM_PEERS[best] if p.lower() not in cl]
 
 
+_COMPANY_SUFFIX_TOKENS = {'ltd', 'limited', 'pvt', 'private', 'llp', 'inc', 'incorporated',
+                          'corp', 'corporation', 'co', 'company', 'gmbh', 'plc', 'llc',
+                          'sa', 'ag', 'bv', 'srl', 'india', 'group'}
+
+def _norm_company(name):
+    """Normalisation KEY for a company name so 'Siemens Ltd.', 'Siemens Limited'
+    and 'Siemens India' all collapse to one. Strips punctuation + legal-suffix /
+    country tokens; keeps meaningful words (so 'Siemens Energy' stays separate)."""
+    s = (name or '').lower().strip()
+    if not s:
+        return ''
+    s = re.sub(r'[.,/&\-()]', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    toks = [t for t in s.split(' ') if t and t not in _COMPANY_SUFFIX_TOKENS]
+    key = ' '.join(toks).strip()
+    return key or s
+
+
 @app.route('/api/companies', methods=['GET'])
 @login_required
 def companies_list():
-    """Phase 3 — Company Intelligence. Aggregate YOUR candidate pool by company:
-    who you already know, and where."""
+    """Phase 3 — Company Intelligence. Aggregate YOUR candidate pool by company
+    (name variants like Ltd/Limited/India merged into one)."""
     conn = get_db(); oid = effective_company_id()
     q = (request.args.get('q') or '').strip().lower()
     rows = conn.execute(
@@ -7303,37 +7321,42 @@ def companies_list():
         (oid,)).fetchall()
     conn.close()
     from collections import Counter, defaultdict
-    counts = Counter(); locs = defaultdict(Counter)
+    gcount = Counter(); gvariants = defaultdict(Counter); glocs = defaultdict(Counter)
     for r in rows:
-        c = (r['company'] or '').strip()
-        if not c:
+        orig = (r['company'] or '').strip()
+        if not orig:
             continue
-        counts[c] += 1
+        key = _norm_company(orig) or orig.lower()
+        gcount[key] += 1
+        gvariants[key][orig] += 1
         l = (r['location'] or '').strip()
         if l:
-            locs[c][l] += 1
+            glocs[key][l] += 1
     out = []
-    for name, n in counts.most_common():
-        if q and q not in name.lower():
+    for key, n in gcount.most_common():
+        display = gvariants[key].most_common(1)[0][0]
+        if q and q not in display.lower() and q not in key:
             continue
-        out.append({'company': name, 'count': n,
-                    'top_locations': [x for x, _ in locs[name].most_common(3)]})
-    return jsonify({'ok': True, 'companies': out[:300], 'total_companies': len(counts)})
+        out.append({'company': display, 'key': key, 'count': n,
+                    'variants': [v for v, _ in gvariants[key].most_common()],
+                    'top_locations': [x for x, _ in glocs[key].most_common(3)]})
+    return jsonify({'ok': True, 'companies': out[:300], 'total_companies': len(gcount)})
 
 
 @app.route('/api/companies/detail', methods=['GET'])
 @login_required
 def company_detail():
     name = (request.args.get('name') or '').strip()
-    if not name:
+    key = (request.args.get('key') or '').strip() or _norm_company(name)
+    if not name and not key:
         return jsonify({'error': 'name required'}), 400
     conn = get_db(); oid = effective_company_id()
-    rows = conn.execute(
+    allrows = conn.execute(
         "SELECT id,name,designation,location,key_skills,key_skill_tags,secondary_skills,"
-        "mandate_id,stage,experience FROM candidates "
-        "WHERE owner_id=? AND LOWER(TRIM(COALESCE(company,'')))=?", (oid, name.lower())).fetchall()
+        "mandate_id,stage,experience,company FROM candidates WHERE owner_id=?", (oid,)).fetchall()
+    rows = [r for r in allrows if (_norm_company(r['company']) or (r['company'] or '').lower().strip()) == key]
     from collections import Counter
-    skills = Counter(); locs = Counter(); desigs = Counter(); people = []
+    skills = Counter(); locs = Counter(); desigs = Counter(); variants = Counter(); people = []
     for r in rows:
         for col in ('key_skills', 'key_skill_tags', 'secondary_skills'):
             for s in _parse_tag_list(r[col]):
@@ -7342,16 +7365,20 @@ def company_detail():
             locs[r['location'].strip()] += 1
         if (r['designation'] or '').strip():
             desigs[r['designation'].strip()] += 1
+        if (r['company'] or '').strip():
+            variants[r['company'].strip()] += 1
         people.append({'id': r['id'], 'name': r['name'], 'designation': r['designation'],
                        'location': r['location'], 'experience': r['experience'],
                        'mandate_id': r['mandate_id'], 'stage': r['stage']})
     conn.close()
+    display = variants.most_common(1)[0][0] if variants else name
     return jsonify({
-        'ok': True, 'company': name, 'count': len(people), 'people': people,
+        'ok': True, 'company': display, 'count': len(people), 'people': people,
+        'variants': [v for v, _ in variants.most_common()],
         'top_skills': [{'name': k, 'count': v} for k, v in skills.most_common(15)],
         'top_locations': [{'name': k, 'count': v} for k, v in locs.most_common(8)],
         'top_designations': [{'name': k, 'count': v} for k, v in desigs.most_common(8)],
-        'competitors': _company_competitors(name),
+        'competitors': _company_competitors(display),
     })
 
 
