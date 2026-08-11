@@ -7257,6 +7257,104 @@ def jd_analyze():
     })
 
 
+# ── Company Intelligence (Intelligence Layer · Phase 3) ─────────────────────
+# Curated OEM/ecosystem competitor map for electrical/automation/BMS/renewable.
+_OEM_PEERS = {
+    'abb': ['Siemens', 'Schneider Electric', 'Rockwell (Allen-Bradley)', 'Honeywell', 'Mitsubishi Electric', 'GE', 'L&T'],
+    'siemens': ['ABB', 'Schneider Electric', 'Rockwell (Allen-Bradley)', 'Honeywell', 'Mitsubishi Electric', 'GE'],
+    'schneider': ['ABB', 'Siemens', 'Eaton', 'L&T', 'Legrand', 'Honeywell'],
+    'honeywell': ['Johnson Controls', 'Siemens', 'Schneider Electric', 'ABB', 'Trane', 'Carrier'],
+    'johnson controls': ['Honeywell', 'Siemens', 'Schneider Electric', 'Trane', 'Carrier'],
+    'jci': ['Honeywell', 'Siemens', 'Schneider Electric', 'Trane', 'Carrier'],
+    'rockwell': ['Siemens', 'ABB', 'Mitsubishi Electric', 'Omron', 'Schneider Electric'],
+    'allen bradley': ['Siemens', 'ABB', 'Mitsubishi Electric', 'Omron'],
+    'l&t': ['Schneider Electric', 'ABB', 'Siemens', 'Legrand', 'Havells'],
+    'larsen': ['Schneider Electric', 'ABB', 'Siemens', 'Legrand'],
+    'legrand': ['Schneider Electric', 'L&T', 'ABB', 'Havells'],
+    'eaton': ['Schneider Electric', 'ABB', 'Siemens', 'Legrand'],
+    'mitsubishi': ['Siemens', 'ABB', 'Omron', 'Rockwell (Allen-Bradley)'],
+    'omron': ['Mitsubishi Electric', 'Siemens', 'Rockwell (Allen-Bradley)'],
+    'lauritz knudsen': ['Schneider Electric', 'ABB', 'Siemens', 'L&T', 'Legrand'],
+}
+
+
+def _company_competitors(company):
+    """Ecosystem competitors for a company name (longest-substring match)."""
+    cl = (company or '').lower()
+    best = None
+    for key in _OEM_PEERS:
+        if key in cl and (best is None or len(key) > len(best)):
+            best = key
+    if not best:
+        return []
+    # don't list the company itself back
+    return [p for p in _OEM_PEERS[best] if p.lower() not in cl]
+
+
+@app.route('/api/companies', methods=['GET'])
+@login_required
+def companies_list():
+    """Phase 3 — Company Intelligence. Aggregate YOUR candidate pool by company:
+    who you already know, and where."""
+    conn = get_db(); oid = effective_company_id()
+    q = (request.args.get('q') or '').strip().lower()
+    rows = conn.execute(
+        "SELECT company, location FROM candidates WHERE owner_id=? AND TRIM(COALESCE(company,''))!=''",
+        (oid,)).fetchall()
+    conn.close()
+    from collections import Counter, defaultdict
+    counts = Counter(); locs = defaultdict(Counter)
+    for r in rows:
+        c = (r['company'] or '').strip()
+        if not c:
+            continue
+        counts[c] += 1
+        l = (r['location'] or '').strip()
+        if l:
+            locs[c][l] += 1
+    out = []
+    for name, n in counts.most_common():
+        if q and q not in name.lower():
+            continue
+        out.append({'company': name, 'count': n,
+                    'top_locations': [x for x, _ in locs[name].most_common(3)]})
+    return jsonify({'ok': True, 'companies': out[:300], 'total_companies': len(counts)})
+
+
+@app.route('/api/companies/detail', methods=['GET'])
+@login_required
+def company_detail():
+    name = (request.args.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'name required'}), 400
+    conn = get_db(); oid = effective_company_id()
+    rows = conn.execute(
+        "SELECT id,name,designation,location,key_skills,key_skill_tags,secondary_skills,"
+        "mandate_id,stage,experience FROM candidates "
+        "WHERE owner_id=? AND LOWER(TRIM(COALESCE(company,'')))=?", (oid, name.lower())).fetchall()
+    from collections import Counter
+    skills = Counter(); locs = Counter(); desigs = Counter(); people = []
+    for r in rows:
+        for col in ('key_skills', 'key_skill_tags', 'secondary_skills'):
+            for s in _parse_tag_list(r[col]):
+                skills[s] += 1
+        if (r['location'] or '').strip():
+            locs[r['location'].strip()] += 1
+        if (r['designation'] or '').strip():
+            desigs[r['designation'].strip()] += 1
+        people.append({'id': r['id'], 'name': r['name'], 'designation': r['designation'],
+                       'location': r['location'], 'experience': r['experience'],
+                       'mandate_id': r['mandate_id'], 'stage': r['stage']})
+    conn.close()
+    return jsonify({
+        'ok': True, 'company': name, 'count': len(people), 'people': people,
+        'top_skills': [{'name': k, 'count': v} for k, v in skills.most_common(15)],
+        'top_locations': [{'name': k, 'count': v} for k, v in locs.most_common(8)],
+        'top_designations': [{'name': k, 'count': v} for k, v in desigs.most_common(8)],
+        'competitors': _company_competitors(name),
+    })
+
+
 @app.route('/api/ai/search/metrics', methods=['GET'])
 @login_required
 def ai_search_metrics():
