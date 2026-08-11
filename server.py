@@ -7382,6 +7382,110 @@ def company_detail():
     })
 
 
+# ── People Movement (Intelligence Layer · Phase 4) ──────────────────────────
+def _wh_year(s):
+    m = re.search(r'(19|20)\d{2}', s or '')
+    return int(m.group(0)) if m else None
+
+
+def _movement_sequences(conn, oid):
+    """Return {candidate_id: [(sort_order, company_display), ...]} newest-first,
+    for every candidate in this tenant that has work history."""
+    rows = conn.execute(
+        "SELECT w.candidate_id, w.company, w.sort_order FROM work_history w "
+        "JOIN candidates c ON c.id = w.candidate_id WHERE c.owner_id=? "
+        "ORDER BY w.candidate_id, w.sort_order ASC", (oid,)).fetchall()
+    from collections import defaultdict
+    seq = defaultdict(list)
+    for r in rows:
+        co = (r['company'] or '').strip()
+        if co:
+            seq[r['candidate_id']].append((r['sort_order'], co))
+    for cid in seq:
+        seq[cid].sort(key=lambda x: x[0])  # 0 = newest
+    return seq
+
+
+@app.route('/api/movement/flows', methods=['GET'])
+@login_required
+def movement_flows():
+    """Top company→company talent flows across your pool (a 'move' = two adjacent
+    jobs in a candidate's history). Company name variants are merged."""
+    conn = get_db(); oid = effective_company_id()
+    seq = _movement_sequences(conn, oid)
+    conn.close()
+    from collections import Counter
+    agg = Counter(); disp = {}
+    for cid, lst in seq.items():
+        for i in range(len(lst) - 1):
+            dnew, dold = lst[i][1], lst[i + 1][1]           # i newer than i+1
+            kn, ko = _norm_company(dnew), _norm_company(dold)
+            if not kn or not ko or kn == ko:
+                continue
+            agg[(ko, kn)] += 1
+            disp.setdefault((ko, kn), (dold, dnew))
+    out = [{'from': disp[k][0], 'to': disp[k][1], 'count': n} for k, n in agg.most_common(40)]
+    return jsonify({'ok': True, 'flows': out, 'total_moves': sum(agg.values())})
+
+
+@app.route('/api/movement/company', methods=['GET'])
+@login_required
+def movement_company():
+    """For one company: where its people CAME FROM (sources) and where they WENT
+    NEXT (destinations)."""
+    name = (request.args.get('name') or '').strip()
+    key = (request.args.get('key') or '').strip() or _norm_company(name)
+    if not key:
+        return jsonify({'error': 'name required'}), 400
+    conn = get_db(); oid = effective_company_id()
+    seq = _movement_sequences(conn, oid)
+    conn.close()
+    from collections import Counter
+    src_agg = Counter(); src_disp = {}; dst_agg = Counter(); dst_disp = {}
+    for cid, lst in seq.items():
+        for i, (so, co) in enumerate(lst):
+            if _norm_company(co) != key:
+                continue
+            if i > 0:
+                d = lst[i - 1][1]; k = _norm_company(d)
+                if k and k != key:
+                    dst_agg[k] += 1; dst_disp.setdefault(k, d)
+            if i + 1 < len(lst):
+                s = lst[i + 1][1]; k = _norm_company(s)
+                if k and k != key:
+                    src_agg[k] += 1; src_disp.setdefault(k, s)
+    return jsonify({'ok': True, 'company': name or key,
+                    'sources': [{'name': src_disp[k], 'count': v} for k, v in src_agg.most_common(12)],
+                    'destinations': [{'name': dst_disp[k], 'count': v} for k, v in dst_agg.most_common(12)]})
+
+
+@app.route('/api/movement/propensity', methods=['GET'])
+@login_required
+def movement_propensity():
+    """Candidates likely ripe to move — longest tenure in their CURRENT role
+    (best-effort, from the year in the current job's start date). Contact first."""
+    conn = get_db(); oid = effective_company_id()
+    rows = conn.execute(
+        "SELECT w.company,w.designation,w.start_date, c.id,c.name,c.location,c.mandate_id,c.stage "
+        "FROM work_history w JOIN candidates c ON c.id=w.candidate_id "
+        "WHERE c.owner_id=? AND w.is_current=1", (oid,)).fetchall()
+    conn.close()
+    now_year = datetime.datetime.now().year
+    out = []
+    for r in rows:
+        y = _wh_year(r['start_date'])
+        if not y:
+            continue
+        tenure = now_year - y
+        if tenure < 2 or tenure > 40:
+            continue
+        out.append({'id': r['id'], 'name': r['name'], 'company': r['company'],
+                    'designation': r['designation'], 'location': r['location'],
+                    'mandate_id': r['mandate_id'], 'stage': r['stage'], 'tenure_years': tenure})
+    out.sort(key=lambda x: -x['tenure_years'])
+    return jsonify({'ok': True, 'candidates': out[:40]})
+
+
 @app.route('/api/ai/search/metrics', methods=['GET'])
 @login_required
 def ai_search_metrics():
