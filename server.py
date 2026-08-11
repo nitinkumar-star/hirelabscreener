@@ -7357,6 +7357,97 @@ def jd_match():
                     'must_have': [_sg_disp(t, g) for t in core_list], 'total_scored': len(out)})
 
 
+@app.route('/api/market/report', methods=['POST'])
+@login_required
+def market_report():
+    """Intelligence Layer · Phase 6 — Market Availability. For a role/skills query,
+    report (from YOUR database, honestly labelled): skill availability, the
+    scarcity funnel (how each added skill shrinks the pool), geographic heat map,
+    experience bands and top companies."""
+    d = request.json or {}
+    q = (d.get('query') or d.get('jd') or '').strip()
+    if not q:
+        return jsonify({'error': 'Type a role or skills'}), 400
+    conn = get_db(); oid = effective_company_id()
+    g = _load_skill_graph(conn, oid)
+    grams, _t = _query_grams(q)
+    core = sorted({g['lookup'][gr] for gr in grams if gr in g['lookup']})
+    core_disp = {t: _sg_disp(t, g) for t in core}
+    rows = conn.execute(
+        "SELECT location,experience,company,key_skills,key_skill_tags,secondary_skills,"
+        "domain_tags,product_handles FROM candidates WHERE owner_id=?", (oid,)).fetchall()
+    conn.close()
+
+    cand = []
+    for r in rows:
+        sk = set()
+        for col in ('key_skills', 'key_skill_tags', 'secondary_skills', 'domain_tags', 'product_handles'):
+            sk |= _parse_tag_list(r[col])
+        cand.append((sk, r))
+    total_db = len(cand)
+
+    def has(sk, term):
+        return term in sk or any(term in s for s in sk)
+    def _num(v):
+        try: return float(v)
+        except Exception: return None
+
+    # availability per recognised skill
+    avail = [{'skill': core_disp[t], 'term': t, 'count': sum(1 for sk, _ in cand if has(sk, t))} for t in core]
+    avail.sort(key=lambda x: -x['count'])
+
+    # scarcity funnel — progressive AND, most-common skill first
+    funnel, acc = [], []
+    for a in avail:
+        acc.append(a['term'])
+        n = sum(1 for sk, _ in cand if all(has(sk, x) for x in acc))
+        funnel.append({'added': core_disp[a['term']], 'count': n})
+
+    # qualified pool = matches ALL recognised skills; fall back to ANY
+    if core:
+        qual = [(sk, r) for sk, r in cand if all(has(sk, t) for t in core)]
+        anyp = [(sk, r) for sk, r in cand if any(has(sk, t) for t in core)]
+    else:
+        qual, anyp = [], cand
+    pool = qual if qual else anyp
+
+    from collections import Counter
+    geo = Counter(); comp = Counter(); comp_disp = {}
+    bands = {'0-3 yrs': 0, '4-7 yrs': 0, '8-12 yrs': 0, '12+ yrs': 0, 'unknown': 0}
+    for sk, r in pool:
+        l = (r['location'] or '').strip()
+        if l:
+            geo[l] += 1
+        c = (r['company'] or '').strip()
+        if c:
+            k = _norm_company(c) or c.lower()
+            comp[k] += 1; comp_disp.setdefault(k, c)
+        e = _num(r['experience'])
+        if e is None:
+            bands['unknown'] += 1
+        elif e <= 3:
+            bands['0-3 yrs'] += 1
+        elif e <= 7:
+            bands['4-7 yrs'] += 1
+        elif e <= 12:
+            bands['8-12 yrs'] += 1
+        else:
+            bands['12+ yrs'] += 1
+
+    return jsonify({
+        'ok': True,
+        'total_db': total_db,
+        'recognized_skills': [core_disp[t] for t in core],
+        'availability': avail,
+        'funnel': funnel,
+        'qualified_pool': len(qual),
+        'any_pool': len(anyp),
+        'heat_map': [{'name': k, 'count': v} for k, v in geo.most_common(12)],
+        'experience_bands': [{'band': k, 'count': v} for k, v in bands.items() if v],
+        'top_companies': [{'name': comp_disp[k], 'count': v} for k, v in comp.most_common(10)],
+    })
+
+
 # ── Company Intelligence (Intelligence Layer · Phase 3) ─────────────────────
 # Curated OEM/ecosystem competitor map for electrical/automation/BMS/renewable.
 _OEM_PEERS = {

@@ -905,6 +905,7 @@ body{font-size:14px !important; line-height:1.5}
       <button class="ai-tab-btn" id="ai-tab-jd" onclick="switchAITab('jd')">&#128203; JD Intelligence</button>
       <button class="ai-tab-btn" id="ai-tab-companies" onclick="switchAITab('companies')">&#127970; Companies</button>
       <button class="ai-tab-btn" id="ai-tab-movement" onclick="switchAITab('movement')">&#128260; Movement</button>
+      <button class="ai-tab-btn" id="ai-tab-market" onclick="switchAITab('market')">&#128202; Market</button>
     </div>
     <div id="ai-body" style="flex:1;overflow:auto;background:#f5f5f5;padding:16px"></div>
   </div>
@@ -9282,6 +9283,7 @@ function switchAITab(tab) {
   var jdb = document.getElementById('ai-tab-jd'); if (jdb) jdb.className = 'ai-tab-btn' + (tab==='jd'?' ai-tab-active':'');
   var cob = document.getElementById('ai-tab-companies'); if (cob) cob.className = 'ai-tab-btn' + (tab==='companies'?' ai-tab-active':'');
   var mvb = document.getElementById('ai-tab-movement'); if (mvb) mvb.className = 'ai-tab-btn' + (tab==='movement'?' ai-tab-active':'');
+  var mkb = document.getElementById('ai-tab-market'); if (mkb) mkb.className = 'ai-tab-btn' + (tab==='market'?' ai-tab-active':'');
   renderAITab();
 }
 
@@ -9364,6 +9366,17 @@ function renderAITab() {
       + '</div>'
       + '<div id="movement-panel" style="margin-top:16px"></div>'
       + '</div>';
+  } else if (aiActiveTab === 'market') {
+    body.innerHTML =
+      '<div style="max-width:820px;margin:0 auto">'
+      + '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:16px;box-shadow:var(--shadow-sm)">'
+      + '<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:4px">Market Availability</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Type a role or skills. See how many exist <b>in your database</b>, how each added skill shrinks the pool (scarcity), the city heat map, experience bands & top companies.</div>'
+      + '<div style="display:flex;gap:8px"><input class="inp" id="mk-q" placeholder="e.g. BMS BACnet Niagara commissioning" style="flex:1" onkeydown="if(event.key===&#39;Enter&#39;)runMarketReport()">'
+      + '<button class="btn btn-g" style="background:#8B6FCB" onclick="runMarketReport()">Report</button></div>'
+      + '</div>'
+      + '<div id="market-panel" style="margin-top:16px"></div>'
+      + '</div>';
   } else {
     body.innerHTML =
       '<div style="max-width:760px;margin:0 auto">'
@@ -9390,6 +9403,41 @@ function renderAITab() {
 
 function aiChip(q) {
   return '<button class="btn btn-o" style="font-size:10.5px;padding:4px 10px" onclick="document.getElementById(&#39;ai-stats-q&#39;).value=this.textContent;runAIStats()">' + esc(q) + '</button>';
+}
+
+// ── Market Availability (Phase 6) ───────────────────────────────────────────
+async function runMarketReport() {
+  var el = document.getElementById('mk-q'); var q = el ? el.value.trim() : '';
+  if (!q) { toast('ERR','Type a role or skills'); return; }
+  var p = document.getElementById('market-panel'); if (!p) return;
+  p.innerHTML = '<div class="loading"><div class="spinner"></div>Sizing the market in your database...</div>';
+  var r = await req('POST', '/market/report', {query: q});
+  if (!r || !r.ok) { p.innerHTML = '<div style="color:#C0522B;padding:12px">'+esc((r&&r.error)||'Failed')+'</div>'; return; }
+  if (!(r.recognized_skills||[]).length) { p.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">No known skills recognised in that query. Try skills like BMS, PLC, SCADA, solar PV, switchgear.</div>'; return; }
+  var card = function(t,inner){ return '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)"><div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:10px;letter-spacing:.3px">'+t+'</div>'+inner+'</div>'; };
+  var bars = function(arr, col){ var mx=Math.max.apply(null,arr.map(function(a){return a.count;}).concat([1]));
+    return arr.map(function(a){ var w=Math.max(4,Math.round(a.count/mx*100));
+      return '<div style="padding:5px 0"><div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--navy);margin-bottom:2px"><span>'+esc(a.name||a.skill||a.band||a.added)+'</span><b>'+a.count+'</b></div><div style="height:6px;background:#F0EEF6;border-radius:3px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:'+col+'"></div></div></div>'; }).join(''); };
+  var html = '';
+  // headline
+  html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
+    + '<div style="flex:1;min-width:120px;background:#EAF6F1;border:0.5px solid #BFE3D5;border-radius:10px;padding:12px 14px"><div style="font-size:24px;font-weight:700;color:#0F6E56">'+r.qualified_pool+'</div><div style="font-size:10.5px;color:#437A68">match <b>all</b> skills</div></div>'
+    + '<div style="flex:1;min-width:120px;background:#F0EEF6;border:0.5px solid #D6C9F0;border-radius:10px;padding:12px 14px"><div style="font-size:24px;font-weight:700;color:#5B3FA0">'+r.any_pool+'</div><div style="font-size:10.5px;color:#7A6BA8">match <b>any</b> skill</div></div>'
+    + '<div style="flex:1;min-width:120px;background:#F5F4F0;border:0.5px solid var(--line);border-radius:10px;padding:12px 14px"><div style="font-size:24px;font-weight:700;color:#555">'+r.total_db+'</div><div style="font-size:10.5px;color:#888">total in your DB</div></div>'
+    + '</div>';
+  html += '<div style="font-size:10px;color:#aaa;margin:-4px 0 12px">Numbers are from <b>your database</b> (not the full open market) — they grow as you add candidates.</div>';
+  // scarcity funnel
+  if ((r.funnel||[]).length) {
+    var fmax = r.funnel[0].count || 1;
+    var fin = r.funnel.map(function(f,i){ var w=Math.max(4,Math.round(f.count/fmax*100));
+      return '<div style="padding:5px 0"><div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--navy);margin-bottom:2px"><span>'+(i>0?'<span style="color:#8B6FCB">+ </span>':'')+esc(f.added)+'</span><b>'+f.count+'</b></div><div style="height:7px;background:#FBE9E7;border-radius:3px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:linear-gradient(90deg,#8B6FCB,#C0522B)"></div></div></div>'; }).join('');
+    html += card('&#8987; SCARCITY FUNNEL — each added skill shrinks the pool', fin);
+  }
+  if ((r.availability||[]).length) html += card('&#128296; SKILL AVAILABILITY', bars(r.availability,'#0F6E56'));
+  if ((r.heat_map||[]).length) html += card('&#128205; TALENT HEAT MAP (qualified pool)', bars(r.heat_map,'#8B6FCB'));
+  if ((r.experience_bands||[]).length) html += card('&#128200; EXPERIENCE BANDS', bars(r.experience_bands,'#437A68'));
+  if ((r.top_companies||[]).length) html += card('&#127970; TOP COMPANIES', bars(r.top_companies,'#5B3FA0'));
+  p.innerHTML = html;
 }
 
 // ── People Movement (Phase 4) ───────────────────────────────────────────────
