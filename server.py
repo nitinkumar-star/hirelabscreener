@@ -7257,6 +7257,106 @@ def jd_analyze():
     })
 
 
+def _sg_disp(term, g):
+    """Display name for a skill term via the graph, else the term itself."""
+    node = (g['nodes'].get(g['lookup'].get(term, term)) or {})
+    return node.get('display', term)
+
+
+@app.route('/api/jd/match', methods=['POST'])
+@login_required
+def jd_match():
+    """Intelligence Layer · Phase 5 — Explainable matching. Rank YOUR candidates
+    against a JD and, for each, show WHY: matched must-have skills (✓), gaps (✗),
+    adjacent skills, plus experience & location fit."""
+    d = request.json or {}
+    jd = (d.get('jd') or d.get('jd_text') or '').strip()
+    if not jd:
+        return jsonify({'error': 'Paste or pick a JD first'}), 400
+    must_extra = [str(x).strip().lower() for x in (d.get('must_have') or []) if str(x).strip()]
+    def _num(v):
+        try: return float(v)
+        except Exception: return None
+    min_exp, max_exp = _num(d.get('min_experience')), _num(d.get('max_experience'))
+    location = (d.get('location') or '').strip().lower()
+
+    conn = get_db(); oid = effective_company_id()
+    sg = _skill_expand(jd, conn, oid)
+    g = _load_skill_graph(conn, oid)
+    grams, _t = _query_grams(jd)
+    core = {g['lookup'][gr] for gr in grams if gr in g['lookup']}
+    core_set = set(core) | set(must_extra)
+    adj = set((sg.get('expand') or {}).keys()) - core_set
+    terms = list(core_set | adj)[:40]
+
+    # narrow to candidates mentioning at least one relevant term, WITH their skills
+    rows = []
+    if terms:
+        tagcols = ['key_skill_tags', 'key_skills', 'secondary_skills', 'domain_tags', 'product_handles']
+        ors, params = [], []
+        for t in terms:
+            lt = '%' + t.lower() + '%'
+            for col in tagcols:
+                ors.append(f"LOWER(COALESCE({col},'')) LIKE ?")
+                params.append(lt)
+        sql = ("SELECT id,name,company,designation,location,experience,mandate_id,stage,"
+               "key_skills,key_skill_tags,secondary_skills FROM candidates "
+               "WHERE owner_id=? AND (" + " OR ".join(ors) + ")")
+        try:
+            rows = conn.execute(sql, [oid] + params).fetchall()
+        except Exception:
+            rows = []
+    conn.close()
+
+    def _has(term, sk):
+        if term in sk:
+            return True
+        for s in sk:
+            if term in s:
+                return True
+        return False
+
+    out = []
+    core_list = sorted(core_set)
+    for r in rows:
+        sk = set()
+        for col in ('key_skills', 'key_skill_tags', 'secondary_skills'):
+            sk |= _parse_tag_list(r[col])
+        matched = [t for t in core_list if _has(t, sk)]
+        missing = [t for t in core_list if t not in matched]
+        adj_present = [t for t in adj if _has(t, sk)]
+        skill_score = (len(matched) / len(core_list)) if core_list else 0.0
+        adj_bonus = min(0.10, len(adj_present) * 0.03)
+        # experience fit
+        e = _num(r['experience'])
+        exp_score = 1.0
+        if e is not None and (min_exp is not None or max_exp is not None):
+            if min_exp is not None and e < min_exp:
+                exp_score = max(0.0, 1.0 - (min_exp - e) / max(min_exp, 1.0))
+            elif max_exp is not None and e > max_exp:
+                exp_score = 0.7
+        # location fit
+        loc_score = 1.0
+        if location:
+            loc_score = 1.0 if location in (r['location'] or '').lower() else 0.4
+        total = 0.70 * skill_score + 0.15 * exp_score + 0.15 * loc_score + adj_bonus
+        pct = round(min(1.0, total) * 100)
+        if pct <= 0 and not matched:
+            continue
+        out.append({
+            'id': r['id'], 'name': r['name'], 'company': r['company'],
+            'designation': r['designation'], 'location': r['location'],
+            'experience': r['experience'], 'mandate_id': r['mandate_id'], 'stage': r['stage'],
+            'score': pct,
+            'matched_skills': [_sg_disp(t, g) for t in matched],
+            'missing_skills': [_sg_disp(t, g) for t in missing],
+            'adjacent_skills': [_sg_disp(t, g) for t in adj_present][:6],
+        })
+    out.sort(key=lambda x: -x['score'])
+    return jsonify({'ok': True, 'candidates': out[:30],
+                    'must_have': [_sg_disp(t, g) for t in core_list], 'total_scored': len(out)})
+
+
 # ── Company Intelligence (Intelligence Layer · Phase 3) ─────────────────────
 # Curated OEM/ecosystem competitor map for electrical/automation/BMS/renewable.
 _OEM_PEERS = {

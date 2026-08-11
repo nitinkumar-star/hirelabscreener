@@ -9531,6 +9531,8 @@ async function runJDIntel() {
   var r = await req('POST', '/jd/analyze', {jd: jd});
   if (!r || !r.ok) { res.innerHTML = '<div style="color:#C0522B;padding:12px">' + esc((r&&r.error)||'Analysis failed') + '</div>'; return; }
   var s = r.structured || {};
+  window._jdCtx = {jd: jd, must_have: (s.must_have_skills || r.recognized_skills || []),
+                   min_experience: s.min_experience, max_experience: s.max_experience, location: s.location || ''};
   var chips = function(arr, bg, col){ return (arr||[]).map(function(x){ return '<span style="font-size:10.5px;background:'+bg+';color:'+col+';padding:2px 9px;border-radius:20px;margin:0 4px 4px 0;display:inline-block">'+esc(String(x))+'</span>'; }).join(''); };
   var card = function(title, inner){ return '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)"><div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px;letter-spacing:.3px">'+title+'</div>'+inner+'</div>'; };
   var html = '';
@@ -9561,7 +9563,37 @@ async function runJDIntel() {
     html += card('&#128205; TALENT CONCENTRATION', r.top_locations.map(function(l){ return '<span style="font-size:11px;background:#F5F4F0;padding:3px 9px;border-radius:6px;margin:0 5px 5px 0;display:inline-block">'+esc(l.name)+' <b>'+l.count+'</b></span>'; }).join(''));
   }
   if (!r.pool_size) html += '<div style="color:var(--muted);font-size:12px;padding:8px">No matching candidates in your database yet — but the skills & sourcing plan above still tell you where to look.</div>';
+  html += '<div style="text-align:center;margin:6px 0 4px"><button class="btn btn-g" style="background:#0F6E56" onclick="runJDMatch()">&#127919; Match &amp; rank my candidates</button></div>';
+  html += '<div id="jd-match-results" style="margin-top:8px"></div>';
   res.innerHTML = html;
+}
+
+async function runJDMatch() {
+  var ctx = window._jdCtx; if (!ctx) return;
+  var box = document.getElementById('jd-match-results');
+  if (!box) return;
+  box.innerHTML = '<div class="loading"><div class="spinner"></div>Scoring your candidates against this JD...</div>';
+  var r = await req('POST', '/jd/match', ctx);
+  if (!r || !r.ok) { box.innerHTML = '<div style="color:#C0522B;padding:12px">' + esc((r&&r.error)||'Match failed') + '</div>'; return; }
+  var cs = r.candidates || [];
+  if (!cs.length) { box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:24px">No candidates to rank for this JD yet.</div>'; return; }
+  var chip = function(t, bg, col){ return '<span style="font-size:9.5px;background:'+bg+';color:'+col+';padding:1px 7px;border-radius:5px;margin:0 3px 3px 0;display:inline-block">'+esc(t)+'</span>'; };
+  var html = '<div style="font-size:11px;color:var(--muted);margin:10px 0 8px">Ranked '+cs.length+' candidates &middot; must-have: '+(r.must_have||[]).map(esc).join(', ')+'</div>';
+  cs.forEach(function(c){
+    var col = c.score>=75?'#0F6E56':(c.score>=45?'#C99700':'#C0522B');
+    html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:11px 14px;margin-bottom:8px;box-shadow:var(--shadow-sm)">'
+      + '<div onclick="openProfileById('+c.id+','+(c.mandate_id||'null')+')" style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:6px">'
+      +   avatarHtml(c.name,32)
+      +   '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:var(--navy)">'+esc(c.name||'')+'</div>'
+      +     '<div style="font-size:10.5px;color:var(--muted)">'+esc(c.designation||'')+(c.company?' @ '+esc(c.company):'')+(c.location?' · '+esc(c.location):'')+(c.experience?' · '+c.experience+'y':'')+'</div></div>'
+      +   '<div style="font-size:17px;font-weight:700;color:'+col+'">'+c.score+'%</div>'
+      + '</div>'
+      + ((c.matched_skills||[]).length?'<div>'+c.matched_skills.map(function(t){return chip('\u2713 '+t,'#D7EFE6','#0F6E56');}).join('')+'</div>':'')
+      + ((c.missing_skills||[]).length?'<div>'+c.missing_skills.map(function(t){return chip('\u2717 '+t,'#FBE9E7','#C0522B');}).join('')+'</div>':'')
+      + ((c.adjacent_skills||[]).length?'<div>'+c.adjacent_skills.map(function(t){return chip('\u223c '+t,'#EAF6F1','#437A68');}).join('')+'</div>':'')
+      + '</div>';
+  });
+  box.innerHTML = html;
 }
 
 async function runReindex(force) {
