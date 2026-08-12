@@ -7401,6 +7401,12 @@ def agent_work_role():
         except Exception: return None
 
     steps = []
+    # State-awareness: what's already in THIS role's pipeline?
+    prows = conn.execute("SELECT stage, COUNT(*) n FROM candidates WHERE mandate_id=? GROUP BY stage", (mid,)).fetchall()
+    pipeline_state = [{'stage': (r['stage'] or 'Unknown'), 'count': r['n']} for r in prows]
+    in_pipeline = sum(r['n'] for r in prows)
+    steps.append({'step': 'Checked the pipeline', 'detail': f"{in_pipeline} candidate(s) already in this role"})
+
     sg = _skill_expand(jd, conn, oid)
     steps.append({'step': 'Analysed the JD',
                   'detail': f"Recognised {len(sg.get('recognized', []))} skills, {len(sg.get('related', []))} adjacent"})
@@ -7432,9 +7438,37 @@ def agent_work_role():
                             (' · ' + ', '.join((structured.get('must_have_skills') or [])[:5])
                              if structured.get('must_have_skills') else '')})
 
-    cands, must, core = _match_candidates(conn, oid, jd, must_extra, min_exp, max_exp, loc, top_n)
-    steps.append({'step': 'Ranked your candidates', 'detail': f"{len(cands)} shortlisted, best-fit first"})
+    cands, must, core = _match_candidates(conn, oid, jd, must_extra, min_exp, max_exp, loc, 40)
 
+    # De-dup & multi-source: skip those already in THIS pipeline or recently
+    # contacted; flag ripe-to-move (long tenure in current role).
+    contacted = {row['candidate_id'] for row in
+                 conn.execute("SELECT DISTINCT candidate_id FROM outreach_log WHERE owner_id=?", (oid,)).fetchall()}
+    ripe = set()
+    now_year = datetime.datetime.now().year
+    for row in conn.execute("SELECT w.start_date,c.id FROM work_history w JOIN candidates c ON c.id=w.candidate_id "
+                            "WHERE c.owner_id=? AND w.is_current=1", (oid,)).fetchall():
+        y = _wh_year(row['start_date'])
+        if y and 4 <= (now_year - y) <= 40:
+            ripe.add(row['id'])
+
+    queue = []; n_inpipe = 0; n_contacted = 0
+    for c in cands:
+        if c.get('mandate_id') == mid:
+            n_inpipe += 1; continue
+        if c['id'] in contacted:
+            n_contacted += 1; continue
+        c['ripe'] = c['id'] in ripe
+        queue.append(c)
+    queue.sort(key=lambda x: -(x['score'] + (6 if x.get('ripe') else 0)))
+    shortlist = queue[:top_n]
+    steps.append({'step': 'Ranked candidates from your DB',
+                  'detail': f"{len(queue)} fresh fits (skipped {n_inpipe} already in pipeline, {n_contacted} already contacted)"})
+    n_ripe = sum(1 for c in shortlist if c.get('ripe'))
+    if n_ripe:
+        steps.append({'step': 'Flagged ripe-to-move', 'detail': f"{n_ripe} in the shortlist are long in their current role"})
+
+    # Market + gap diagnosis
     pool = _jd_pool(conn, oid, core[:20]) if core else []
     from collections import Counter
     comp = Counter(); comp_disp = {}
@@ -7444,25 +7478,76 @@ def agent_work_role():
             k = _norm_company(cc) or cc.lower()
             comp[k] += 1; comp_disp.setdefault(k, cc)
     top_companies = [{'name': comp_disp[k], 'count': v} for k, v in comp.most_common(6)]
-    steps.append({'step': 'Sized the market', 'detail': f"{len(pool)} candidates in your DB match these skills"})
+
+    strong = [c for c in queue if c['score'] >= 60]
+    thin = len(strong) < top_n
+    gap = {'thin': thin, 'target': top_n, 'strong_found': len(strong), 'competitors': []}
+    if thin:
+        for comp_name in _company_competitors(m['client'] or ''):
+            kn = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND LOWER(COALESCE(company,'')) LIKE ?",
+                              (oid, '%' + comp_name.lower().split(' ')[0] + '%')).fetchone()['n']
+            gap['competitors'].append({'name': comp_name, 'you_know': kn})
+        steps.append({'step': 'Diagnosed a thin pipeline',
+                      'detail': f"Only {len(strong)} strong fit(s) vs target {top_n} — recommended competitor sourcing"})
+    else:
+        steps.append({'step': 'Sized the market', 'detail': f"{len(pool)} candidates in your DB match; pipeline is healthy"})
     conn.close()
 
     recruiter = get_setting('company_name', '') or 'HireLab'
-    for c in cands:
+    for c in shortlist:
         first = (c['name'] or 'there').split(' ')[0]
         bit = f" at {c['company']}" if c.get('company') else ""
         client_bit = f" with {m['client']}" if m['client'] else ""
         c['draft'] = (f"Hi {first}, this is {recruiter} Talent. We're hiring for a {role or 'new role'}{client_bit} "
                       f"and your background{bit} looks like a strong fit. Would you be open to a quick chat this "
                       f"week? — {recruiter}")
-    steps.append({'step': 'Drafted outreach', 'detail': f"{len(cands)} messages ready for your approval"})
+    steps.append({'step': 'Drafted outreach', 'detail': f"{len(shortlist)} messages ready for your approval"})
 
     return jsonify({'ok': True,
                     'mandate': {'id': m['id'], 'role': role, 'client': m['client'] or ''},
                     'steps': steps,
+                    'pipeline_state': pipeline_state, 'in_pipeline': in_pipeline,
+                    'counts': {'fresh_fits': len(queue), 'already_in_pipeline': n_inpipe,
+                               'already_contacted': n_contacted, 'ripe_in_shortlist': n_ripe},
+                    'gap': gap,
                     'summary': {'recognized': sg.get('recognized', []), 'adjacent': sg.get('related', []),
                                 'must_have': must, 'pool': len(pool), 'top_companies': top_companies},
-                    'shortlist': cands})
+                    'shortlist': shortlist})
+
+
+@app.route('/api/agent/add-to-pipeline', methods=['POST'])
+@login_required
+def agent_add_to_pipeline():
+    """Agent action — copy an existing candidate into a role's pipeline at Screening."""
+    d = request.json or {}
+    cid = d.get('candidate_id'); mid = d.get('mandate_id')
+    if not cid or not mid:
+        return jsonify({'error': 'candidate_id and mandate_id required'}), 400
+    conn = get_db(); oid = effective_company_id()
+    if not _tenant_owns_mandate(conn, mid):
+        conn.close(); return jsonify({'error': 'mandate not found'}), 404
+    src = conn.execute("SELECT name,company,designation,experience,ctc_current,ctc_expected,notice_period,"
+                       "location,phone,email,career_summary,key_skills FROM candidates "
+                       "WHERE id=? AND owner_id=?", (cid, oid)).fetchone()
+    if not src:
+        conn.close(); return jsonify({'error': 'candidate not found'}), 404
+    dup = conn.execute("SELECT id FROM candidates WHERE mandate_id=? AND LOWER(COALESCE(name,''))=? "
+                       "AND COALESCE(phone,'')=?", (mid, (src['name'] or '').lower(), src['phone'] or '')).fetchone()
+    if dup:
+        conn.close(); return jsonify({'ok': True, 'id': dup['id'], 'already': True})
+    c = conn.cursor()
+    c.execute("INSERT INTO candidates (mandate_id,name,company,designation,experience,ctc_current,ctc_expected,"
+              "notice_period,location,phone,email,career_summary,key_skills,screening_decision,ai_reasoning,"
+              "stage,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              (mid, src['name'], src['company'], src['designation'], src['experience'], src['ctc_current'],
+               src['ctc_expected'], src['notice_period'], src['location'], src['phone'], src['email'],
+               src['career_summary'], src['key_skills'], 'worth_opening', 'Added to pipeline by agent',
+               'Screening', ts(), ts()))
+    nid = c.lastrowid
+    c.execute("INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)",
+              (nid, '', 'Screening', 'Added to pipeline by agent', ts()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'id': nid})
 
 
 @app.route('/api/market/report', methods=['POST'])

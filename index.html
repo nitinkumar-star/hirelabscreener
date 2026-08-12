@@ -9482,33 +9482,47 @@ async function runAgentWorkRole() {
   var sel = document.getElementById('ag-mandate'); var mid = sel ? sel.value : '';
   if (!mid) { toast('ERR','Pick a job first'); return; }
   var p = document.getElementById('agent-panel'); if (!p) return;
-  p.innerHTML = '<div class="loading"><div class="spinner"></div>Agent is working the role — analysing, ranking, drafting...</div>';
+  p.innerHTML = '<div class="loading"><div class="spinner"></div>Agent is working the role — checking pipeline, ranking, diagnosing gaps, drafting...</div>';
   var r = await req('POST', '/agent/work-role', {mandate_id: mid, top_n: 8});
   if (!r || !r.ok) { p.innerHTML='<div style="color:#C0522B;padding:12px">'+esc((r&&r.error)||'Agent failed')+'</div>'; return; }
-  var s = r.summary || {};
+  var s = r.summary || {}, gap = r.gap || {}, cnt = r.counts || {};
+  var chips = function(arr,bg,col){ return (arr||[]).map(function(x){return '<span style="font-size:10px;background:'+bg+';color:'+col+';padding:2px 8px;border-radius:20px;margin:0 4px 4px 0;display:inline-block">'+esc(x.name||x.stage||x)+((x.count!=null||x.you_know!=null)?' <b>'+(x.count!=null?x.count:x.you_know)+'</b>':'')+'</span>';}).join(''); };
   var html = '';
   // steps timeline
   html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)">'
     + '<div style="font-size:11px;font-weight:700;color:#5B3FA0;margin-bottom:8px">&#129302; WHAT THE AGENT DID</div>'
     + (r.steps||[]).map(function(st){ return '<div style="display:flex;gap:8px;padding:4px 0;font-size:12px"><span style="color:#0F6E56">&#10003;</span><span style="color:var(--navy);font-weight:600">'+esc(st.step)+'</span><span style="color:var(--muted)">&mdash; '+esc(st.detail)+'</span></div>'; }).join('')
     + '</div>';
-  // summary
-  var chips = function(arr,bg,col){ return (arr||[]).map(function(x){return '<span style="font-size:10px;background:'+bg+';color:'+col+';padding:2px 8px;border-radius:20px;margin:0 4px 4px 0;display:inline-block">'+esc(x.name||x)+(x.count?' <b>'+x.count+'</b>':'')+'</span>';}).join(''); };
+  // pipeline state + de-dup intelligence
   html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)">'
-    + '<div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px">&#128203; ROLE SUMMARY &middot; '+esc(r.mandate.role||'')+(r.mandate.client?' @ '+esc(r.mandate.client):'')+'</div>'
-    + '<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Market pool in your DB: <b>'+(s.pool||0)+'</b></div>'
+    + '<div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px">&#128203; PIPELINE STATE</div>'
+    + '<div style="font-size:12px;color:var(--navy);margin-bottom:6px"><b>'+(r.in_pipeline||0)+'</b> already in this role &nbsp; '
+    + ((r.pipeline_state||[]).length?chips(r.pipeline_state,'#F5F4F0','#555'):'')+'</div>'
+    + '<div style="font-size:10.5px;color:var(--muted)">Agent skipped <b>'+(cnt.already_in_pipeline||0)+'</b> already in pipeline and <b>'+(cnt.already_contacted||0)+'</b> already contacted &middot; '
+    + '<b>'+(cnt.fresh_fits||0)+'</b> fresh fits found'+(cnt.ripe_in_shortlist?', <b style="color:#C0522B">'+cnt.ripe_in_shortlist+'</b> ripe-to-move':'')+'</div>'
+    + '</div>';
+  // gap diagnosis
+  if (gap.thin) {
+    html += '<div style="background:#FFF8F1;border:0.5px solid #F0D9C4;border-radius:10px;padding:14px 16px;margin-bottom:12px">'
+      + '<div style="font-size:11px;font-weight:700;color:#C0522B;margin-bottom:6px">&#9888; PIPELINE IS THIN &mdash; only '+(gap.strong_found||0)+' strong fits vs target '+(gap.target||8)+'</div>'
+      + '<div style="font-size:11px;color:#8A5320;margin-bottom:6px">Source from these competitor companies (number = people you already know there):</div>'
+      + '<div>'+chips(gap.competitors,'#FBE9E7','#C0522B')+'</div></div>';
+  }
+  // role summary
+  html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px">ROLE &middot; '+esc(r.mandate.role||'')+(r.mandate.client?' @ '+esc(r.mandate.client):'')+'</div>'
     + ((s.must_have||[]).length?'<div style="margin-bottom:6px"><span style="font-size:10px;color:#888">Must-have: </span>'+chips(s.must_have,'#EDE7FA','#5B3FA0')+'</div>':'')
     + ((s.top_companies||[]).length?'<div><span style="font-size:10px;color:#888">Source companies: </span>'+chips(s.top_companies,'#EAF6F1','#0F6E56')+'</div>':'')
     + '</div>';
   // approval queue
   var cs = r.shortlist || [];
-  html += '<div style="font-size:11px;font-weight:700;color:#5B3FA0;margin:6px 0 8px">&#9993; APPROVAL QUEUE &middot; '+cs.length+' candidates (nothing is sent until you approve)</div>';
+  html += '<div style="font-size:11px;font-weight:700;color:#5B3FA0;margin:6px 0 8px">&#9993; APPROVAL QUEUE &middot; '+cs.length+' candidates (nothing happens until you approve)</div>';
   cs.forEach(function(c){
     _agState[c.id] = {role: r.mandate.role, mid: r.mandate.id, phone: c.phone, logId: null};
     var col = c.score>=75?'#0F6E56':(c.score>=45?'#C99700':'#C0522B');
     html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:9px;box-shadow:var(--shadow-sm)">'
       + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'+avatarHtml(c.name,32)
-      + '<div style="flex:1;min-width:0" onclick="openProfileById('+c.id+','+(c.mandate_id||'null')+')"><div style="font-size:13px;font-weight:600;color:var(--navy);cursor:pointer">'+esc(c.name||'')+'</div>'
+      + '<div style="flex:1;min-width:0" onclick="openProfileById('+c.id+','+(c.mandate_id||'null')+')"><div style="font-size:13px;font-weight:600;color:var(--navy);cursor:pointer">'+esc(c.name||'')+(c.ripe?' <span style="font-size:9px;background:#FBE9E7;color:#C0522B;padding:1px 6px;border-radius:5px">&#128293; ripe to move</span>':'')+'</div>'
       + '<div style="font-size:10.5px;color:var(--muted)">'+esc(c.designation||'')+(c.company?' @ '+esc(c.company):'')+(c.experience?' · '+c.experience+'y':'')+'</div></div>'
       + '<div style="font-size:15px;font-weight:700;color:'+col+'">'+c.score+'%</div></div>'
       + ((c.matched_skills||[]).length?'<div style="margin-bottom:2px">'+c.matched_skills.map(function(t){return '<span style="font-size:9px;background:#D7EFE6;color:#0F6E56;padding:1px 6px;border-radius:5px;margin:0 3px 3px 0;display:inline-block">\u2713 '+esc(t)+'</span>';}).join('')+'</div>':'')
@@ -9517,11 +9531,25 @@ async function runAgentWorkRole() {
       + '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">'
       + '<button class="btn btn-o" style="font-size:11px" onclick="agentRegen('+c.id+')">&#9851; AI rewrite</button>'
       + '<button class="btn btn-g" style="background:#25D366;font-size:11px" onclick="agentApprove('+c.id+')">&#10003; Approve &amp; WhatsApp</button>'
+      + '<button class="btn btn-o" style="font-size:11px;color:#5B3FA0" onclick="agentAddPipe('+c.id+')">&#43; Pipeline</button>'
+      + '<button class="btn btn-o" style="font-size:11px;color:#437A68" onclick="agentTask('+c.id+',this)">&#128203; Task</button>'
       + '<button class="btn btn-o" style="font-size:11px;color:#888" onclick="agentSkip('+c.id+')">Skip</button>'
       + '<span id="ag-done-'+c.id+'" style="font-size:10.5px;color:#0F6E56;align-self:center"></span>'
       + '</div></div>';
   });
   p.innerHTML = html;
+}
+async function agentAddPipe(cid) {
+  var st = _agState[cid]||{};
+  var r = await req('POST','/agent/add-to-pipeline',{candidate_id:cid,mandate_id:st.mid});
+  var d=document.getElementById('ag-done-'+cid);
+  if (r&&r.ok) { if(d) d.textContent = r.already?'Already in pipeline':'Added to pipeline ✓'; }
+  else if(d) d.textContent='Add failed';
+}
+async function agentTask(cid, btn) {
+  var st = _agState[cid]||{};
+  await req('POST','/command/tasks',{text:'Follow up for '+(st.role||'role')+' — candidate #'+cid,category:'outreach',priority:'medium'});
+  var d=document.getElementById('ag-done-'+cid); if(d) d.textContent='Task created ✓';
 }
 async function agentRegen(cid) {
   var ta = document.getElementById('ag-ta-'+cid); var st = _agState[cid]||{};
