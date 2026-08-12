@@ -2922,6 +2922,23 @@ def init_db():
     except Exception as _e:
         print('[skill-graph] seed skipped:', _e)
 
+    # ── Intelligent Outreach log (Intelligence Layer · Phase 7) ────────────
+    c.execute('''CREATE TABLE IF NOT EXISTS outreach_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER DEFAULT 0,
+        candidate_id INTEGER,
+        mandate_id INTEGER,
+        channel TEXT DEFAULT 'whatsapp',
+        message TEXT DEFAULT '',
+        status TEXT DEFAULT 'sent',
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT ''
+    )''')
+    try:
+        c.execute("CREATE INDEX IF NOT EXISTS idx_outreach_owner ON outreach_log(owner_id, status)")
+    except sqlite3.OperationalError:
+        pass
+
     # Migrate: add reminders table if not exists
     c.execute('''CREATE TABLE IF NOT EXISTS reminders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -7446,6 +7463,93 @@ def market_report():
         'experience_bands': [{'band': k, 'count': v} for k, v in bands.items() if v],
         'top_companies': [{'name': comp_disp[k], 'count': v} for k, v in comp.most_common(10)],
     })
+
+
+# ── Intelligent Outreach (Intelligence Layer · Phase 7) ─────────────────────
+@app.route('/api/outreach/message', methods=['POST'])
+@login_required
+def outreach_message():
+    """Generate a short, personalised WhatsApp outreach for one candidate against
+    a role — referencing their current company & fit. DeepSeek if available, else
+    a clean template. Returns the message + phone so the UI can open wa.me."""
+    d = request.json or {}
+    cid = d.get('candidate_id')
+    role = (d.get('role') or 'this role').strip()
+    conn = get_db(); oid = effective_company_id()
+    c = conn.execute("SELECT name,phone,company,designation,key_skills FROM candidates "
+                     "WHERE id=? AND owner_id=?", (cid, oid)).fetchone()
+    conn.close()
+    if not c:
+        return jsonify({'error': 'candidate not found'}), 404
+    nm = (c['name'] or 'there').split(' ')[0]
+    company = (c['company'] or '').strip()
+    recruiter = get_setting('company_name', '') or 'HireLab'
+    msg = ''
+    ds_key = get_setting('deepseek_api_key')
+    if ds_key:
+        try:
+            skills = ', '.join(list(_parse_tag_list(c['key_skills']))[:4])
+            prompt = (f"Write a SHORT, warm WhatsApp message (max 55 words) from a recruiter to a passive "
+                      f"candidate. Candidate first name: {nm}. Current company: {company or 'N/A'}. "
+                      f"Their skills: {skills or 'N/A'}. Role we're hiring for: {role}. "
+                      f"Be respectful, specific about why they fit, ask if open to a quick chat. "
+                      f"Sign off as {recruiter}. No emojis, no subject line, plain text only.")
+            rr = call_deepseek(ds_key,
+                {'model': 'deepseek-chat', 'temperature': 0.6, 'max_tokens': 180,
+                 'messages': [{'role': 'user', 'content': prompt}]}, timeout=45, endpoint='outreach')
+            if rr.status_code == 200:
+                msg = (rr.json()['choices'][0]['message']['content'] or '').strip().strip('"')
+        except Exception:
+            msg = ''
+    if not msg:
+        bit = f" at {company}" if company else ""
+        msg = (f"Hi {nm}, this is {recruiter} Talent. We're hiring for a {role} and your background{bit} "
+               f"looks like a strong fit. Would you be open to a quick chat this week? — {recruiter}")
+    return jsonify({'ok': True, 'message': msg, 'phone': (c['phone'] or ''), 'name': c['name']})
+
+
+@app.route('/api/outreach/log', methods=['POST'])
+@login_required
+def outreach_log_add():
+    d = request.json or {}
+    conn = get_db(); oid = effective_company_id()
+    cur = conn.execute(
+        "INSERT INTO outreach_log (owner_id,candidate_id,mandate_id,channel,message,status,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (oid, d.get('candidate_id'), d.get('mandate_id'), d.get('channel', 'whatsapp'),
+         (d.get('message') or '')[:2000], d.get('status', 'sent'), ts(), ts()))
+    conn.commit(); lid = cur.lastrowid; conn.close()
+    return jsonify({'ok': True, 'id': lid})
+
+
+@app.route('/api/outreach/update', methods=['POST'])
+@login_required
+def outreach_log_update():
+    d = request.json or {}
+    lid = d.get('id'); status = d.get('status')
+    if not lid or not status:
+        return jsonify({'error': 'id and status required'}), 400
+    conn = get_db(); oid = effective_company_id()
+    conn.execute("UPDATE outreach_log SET status=?, updated_at=? WHERE id=? AND owner_id=?",
+                 (status, ts(), lid, oid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/outreach/stats', methods=['GET'])
+@login_required
+def outreach_stats():
+    conn = get_db(); oid = effective_company_id()
+    rows = conn.execute("SELECT status, COUNT(*) n FROM outreach_log WHERE owner_id=? GROUP BY status",
+                        (oid,)).fetchall()
+    conn.close()
+    by = {r['status']: r['n'] for r in rows}
+    sent = sum(by.values())
+    replied = by.get('interested', 0) + by.get('not_interested', 0) + by.get('replied', 0)
+    interested = by.get('interested', 0)
+    return jsonify({'ok': True, 'sent': sent, 'replied': replied, 'interested': interested,
+                    'reply_rate': round(replied / sent * 100) if sent else 0,
+                    'by_status': by})
 
 
 # ── Company Intelligence (Intelligence Layer · Phase 3) ─────────────────────
