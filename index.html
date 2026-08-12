@@ -907,6 +907,7 @@ body{font-size:14px !important; line-height:1.5}
       <button class="ai-tab-btn" id="ai-tab-movement" onclick="switchAITab('movement')">&#128260; Movement</button>
       <button class="ai-tab-btn" id="ai-tab-market" onclick="switchAITab('market')">&#128202; Market</button>
       <button class="ai-tab-btn" id="ai-tab-outreach" onclick="switchAITab('outreach')">&#128227; Outreach</button>
+      <button class="ai-tab-btn" id="ai-tab-agent" onclick="switchAITab('agent')" style="color:#5B3FA0">&#129302; Agent</button>
     </div>
     <div id="ai-body" style="flex:1;overflow:auto;background:#f5f5f5;padding:16px"></div>
   </div>
@@ -9286,6 +9287,7 @@ function switchAITab(tab) {
   var mvb = document.getElementById('ai-tab-movement'); if (mvb) mvb.className = 'ai-tab-btn' + (tab==='movement'?' ai-tab-active':'');
   var mkb = document.getElementById('ai-tab-market'); if (mkb) mkb.className = 'ai-tab-btn' + (tab==='market'?' ai-tab-active':'');
   var orb = document.getElementById('ai-tab-outreach'); if (orb) orb.className = 'ai-tab-btn' + (tab==='outreach'?' ai-tab-active':'');
+  var agb = document.getElementById('ai-tab-agent'); if (agb) agb.className = 'ai-tab-btn' + (tab==='agent'?' ai-tab-active':'');
   renderAITab();
 }
 
@@ -9391,6 +9393,17 @@ function renderAITab() {
       + '</div>'
       + '<div id="outreach-panel" style="margin-top:16px"></div>'
       + '</div>';
+  } else if (aiActiveTab === 'agent') {
+    body.innerHTML =
+      '<div style="max-width:820px;margin:0 auto">'
+      + '<div style="background:linear-gradient(135deg,#F3EFFB,#fff);border:0.5px solid #D6C9F0;border-radius:10px;padding:16px;box-shadow:var(--shadow-sm)">'
+      + '<div style="font-size:13px;font-weight:600;color:#5B3FA0;margin-bottom:4px">&#129302; Work this role &mdash; Agent</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Pick a job. The agent analyses the JD, ranks your best-fit candidates, sizes the market and drafts outreach &mdash; then <b>you approve</b> each message before anything is sent.</div>'
+      + '<select class="inp" id="ag-mandate" style="width:100%"><option value="">&#128188; Pick a job\u2026</option></select>'
+      + '<div style="margin-top:8px"><button class="btn btn-g" style="background:#5B3FA0" onclick="runAgentWorkRole()">&#9654; Work this role</button></div>'
+      + '</div>'
+      + '<div id="agent-panel" style="margin-top:16px"></div>'
+      + '</div>';
   } else {
     body.innerHTML =
       '<div style="max-width:760px;margin:0 auto">'
@@ -9414,6 +9427,7 @@ function renderAITab() {
   if (aiActiveTab === 'companies') loadCompanies();
   if (aiActiveTab === 'movement') loadMovementFlows();
   if (aiActiveTab === 'outreach') { loadOutreachMandates(); loadOutreachStats(); }
+  if (aiActiveTab === 'agent') loadAgentMandates();
 }
 
 function aiChip(q) {
@@ -9449,6 +9463,86 @@ async function runSalaryHeatmap() {
     html += card('&#127970; COMPANY &times; SALARY &times; EXPERIENCE &times; LOCATION', head+body);
   }
   p.innerHTML = html;
+}
+
+// ── Agent #1: Work this role (propose → approve) ────────────────────────────
+var _agMandates = {}, _agState = {};
+async function loadAgentMandates() {
+  var sel = document.getElementById('ag-mandate'); if (!sel) return;
+  try {
+    var r = await req('GET', '/mandates');
+    var list = Array.isArray(r) ? r : ((r && r.mandates) || []);
+    _agMandates = {};
+    var opts = '<option value="">&#128188; Pick a job\u2026</option>';
+    list.forEach(function(m){ _agMandates[m.id]=m; opts += '<option value="'+m.id+'">'+esc((m.role||'Untitled')+(m.client?' \u2014 '+m.client:''))+'</option>'; });
+    sel.innerHTML = opts;
+  } catch(e){}
+}
+async function runAgentWorkRole() {
+  var sel = document.getElementById('ag-mandate'); var mid = sel ? sel.value : '';
+  if (!mid) { toast('ERR','Pick a job first'); return; }
+  var p = document.getElementById('agent-panel'); if (!p) return;
+  p.innerHTML = '<div class="loading"><div class="spinner"></div>Agent is working the role — analysing, ranking, drafting...</div>';
+  var r = await req('POST', '/agent/work-role', {mandate_id: mid, top_n: 8});
+  if (!r || !r.ok) { p.innerHTML='<div style="color:#C0522B;padding:12px">'+esc((r&&r.error)||'Agent failed')+'</div>'; return; }
+  var s = r.summary || {};
+  var html = '';
+  // steps timeline
+  html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)">'
+    + '<div style="font-size:11px;font-weight:700;color:#5B3FA0;margin-bottom:8px">&#129302; WHAT THE AGENT DID</div>'
+    + (r.steps||[]).map(function(st){ return '<div style="display:flex;gap:8px;padding:4px 0;font-size:12px"><span style="color:#0F6E56">&#10003;</span><span style="color:var(--navy);font-weight:600">'+esc(st.step)+'</span><span style="color:var(--muted)">&mdash; '+esc(st.detail)+'</span></div>'; }).join('')
+    + '</div>';
+  // summary
+  var chips = function(arr,bg,col){ return (arr||[]).map(function(x){return '<span style="font-size:10px;background:'+bg+';color:'+col+';padding:2px 8px;border-radius:20px;margin:0 4px 4px 0;display:inline-block">'+esc(x.name||x)+(x.count?' <b>'+x.count+'</b>':'')+'</span>';}).join(''); };
+  html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px">&#128203; ROLE SUMMARY &middot; '+esc(r.mandate.role||'')+(r.mandate.client?' @ '+esc(r.mandate.client):'')+'</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Market pool in your DB: <b>'+(s.pool||0)+'</b></div>'
+    + ((s.must_have||[]).length?'<div style="margin-bottom:6px"><span style="font-size:10px;color:#888">Must-have: </span>'+chips(s.must_have,'#EDE7FA','#5B3FA0')+'</div>':'')
+    + ((s.top_companies||[]).length?'<div><span style="font-size:10px;color:#888">Source companies: </span>'+chips(s.top_companies,'#EAF6F1','#0F6E56')+'</div>':'')
+    + '</div>';
+  // approval queue
+  var cs = r.shortlist || [];
+  html += '<div style="font-size:11px;font-weight:700;color:#5B3FA0;margin:6px 0 8px">&#9993; APPROVAL QUEUE &middot; '+cs.length+' candidates (nothing is sent until you approve)</div>';
+  cs.forEach(function(c){
+    _agState[c.id] = {role: r.mandate.role, mid: r.mandate.id, phone: c.phone, logId: null};
+    var col = c.score>=75?'#0F6E56':(c.score>=45?'#C99700':'#C0522B');
+    html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:9px;box-shadow:var(--shadow-sm)">'
+      + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'+avatarHtml(c.name,32)
+      + '<div style="flex:1;min-width:0" onclick="openProfileById('+c.id+','+(c.mandate_id||'null')+')"><div style="font-size:13px;font-weight:600;color:var(--navy);cursor:pointer">'+esc(c.name||'')+'</div>'
+      + '<div style="font-size:10.5px;color:var(--muted)">'+esc(c.designation||'')+(c.company?' @ '+esc(c.company):'')+(c.experience?' · '+c.experience+'y':'')+'</div></div>'
+      + '<div style="font-size:15px;font-weight:700;color:'+col+'">'+c.score+'%</div></div>'
+      + ((c.matched_skills||[]).length?'<div style="margin-bottom:2px">'+c.matched_skills.map(function(t){return '<span style="font-size:9px;background:#D7EFE6;color:#0F6E56;padding:1px 6px;border-radius:5px;margin:0 3px 3px 0;display:inline-block">\u2713 '+esc(t)+'</span>';}).join('')+'</div>':'')
+      + ((c.missing_skills||[]).length?'<div style="margin-bottom:6px">'+c.missing_skills.map(function(t){return '<span style="font-size:9px;background:#FBE9E7;color:#C0522B;padding:1px 6px;border-radius:5px;margin:0 3px 3px 0;display:inline-block">\u2717 '+esc(t)+'</span>';}).join('')+'</div>':'')
+      + '<textarea class="inp" id="ag-ta-'+c.id+'" rows="3" style="width:100%;font-size:12px">'+esc(c.draft||'')+'</textarea>'
+      + '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">'
+      + '<button class="btn btn-o" style="font-size:11px" onclick="agentRegen('+c.id+')">&#9851; AI rewrite</button>'
+      + '<button class="btn btn-g" style="background:#25D366;font-size:11px" onclick="agentApprove('+c.id+')">&#10003; Approve &amp; WhatsApp</button>'
+      + '<button class="btn btn-o" style="font-size:11px;color:#888" onclick="agentSkip('+c.id+')">Skip</button>'
+      + '<span id="ag-done-'+c.id+'" style="font-size:10.5px;color:#0F6E56;align-self:center"></span>'
+      + '</div></div>';
+  });
+  p.innerHTML = html;
+}
+async function agentRegen(cid) {
+  var ta = document.getElementById('ag-ta-'+cid); var st = _agState[cid]||{};
+  if (ta) ta.value = 'Rewriting...';
+  var r = await req('POST', '/outreach/message', {candidate_id: cid, role: st.role});
+  if (r && r.ok && ta) { ta.value = r.message; st.phone = r.phone; }
+  else if (ta) ta.value = (st._prev||'');
+}
+async function agentApprove(cid) {
+  var ta = document.getElementById('ag-ta-'+cid); var st = _agState[cid]||{};
+  var msg = ta ? ta.value.trim() : '';
+  var phone = (st.phone||'').replace(/\D/g,'');
+  if (phone) { var waNum = phone.startsWith('91')?phone:'91'+phone; window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg),'_blank'); }
+  else { toast('WA','No phone on this candidate'); }
+  var lg = await req('POST','/outreach/log',{candidate_id:cid,mandate_id:st.mid,message:msg,status:'sent'});
+  if (lg&&lg.id) st.logId=lg.id;
+  var d=document.getElementById('ag-done-'+cid); if(d) d.textContent='Sent ✓';
+}
+function agentSkip(cid) {
+  var d=document.getElementById('ag-done-'+cid); if(d) d.textContent='Skipped';
+  var ta=document.getElementById('ag-ta-'+cid); if(ta) ta.disabled=true;
 }
 
 // ── Intelligent Outreach (Phase 7) ──────────────────────────────────────────

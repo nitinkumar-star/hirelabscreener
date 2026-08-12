@@ -7282,22 +7282,14 @@ def _sg_disp(term, g):
 
 @app.route('/api/jd/match', methods=['POST'])
 @login_required
-def jd_match():
-    """Intelligence Layer · Phase 5 — Explainable matching. Rank YOUR candidates
-    against a JD and, for each, show WHY: matched must-have skills (✓), gaps (✗),
-    adjacent skills, plus experience & location fit."""
-    d = request.json or {}
-    jd = (d.get('jd') or d.get('jd_text') or '').strip()
-    if not jd:
-        return jsonify({'error': 'Paste or pick a JD first'}), 400
-    must_extra = [str(x).strip().lower() for x in (d.get('must_have') or []) if str(x).strip()]
+def _match_candidates(conn, oid, jd, must_extra=None, min_exp=None, max_exp=None, location='', limit=30):
+    """Reusable explainable matcher (also the agent's 'rank' tool). Returns
+    (candidates, must_have_display, core_terms)."""
+    must_extra = [str(x).strip().lower() for x in (must_extra or []) if str(x).strip()]
+    location = (location or '').strip().lower()
     def _num(v):
         try: return float(v)
         except Exception: return None
-    min_exp, max_exp = _num(d.get('min_experience')), _num(d.get('max_experience'))
-    location = (d.get('location') or '').strip().lower()
-
-    conn = get_db(); oid = effective_company_id()
     sg = _skill_expand(jd, conn, oid)
     g = _load_skill_graph(conn, oid)
     grams, _t = _query_grams(jd)
@@ -7305,8 +7297,6 @@ def jd_match():
     core_set = set(core) | set(must_extra)
     adj = set((sg.get('expand') or {}).keys()) - core_set
     terms = list(core_set | adj)[:40]
-
-    # narrow to candidates mentioning at least one relevant term, WITH their skills
     rows = []
     if terms:
         tagcols = ['key_skill_tags', 'key_skills', 'secondary_skills', 'domain_tags', 'product_handles']
@@ -7316,22 +7306,16 @@ def jd_match():
             for col in tagcols:
                 ors.append(f"LOWER(COALESCE({col},'')) LIKE ?")
                 params.append(lt)
-        sql = ("SELECT id,name,company,designation,location,experience,mandate_id,stage,"
+        sql = ("SELECT id,name,company,designation,location,experience,phone,mandate_id,stage,"
                "key_skills,key_skill_tags,secondary_skills FROM candidates "
                "WHERE owner_id=? AND (" + " OR ".join(ors) + ")")
         try:
             rows = conn.execute(sql, [oid] + params).fetchall()
         except Exception:
             rows = []
-    conn.close()
 
     def _has(term, sk):
-        if term in sk:
-            return True
-        for s in sk:
-            if term in s:
-                return True
-        return False
+        return term in sk or any(term in s for s in sk)
 
     out = []
     core_list = sorted(core_set)
@@ -7344,7 +7328,6 @@ def jd_match():
         adj_present = [t for t in adj if _has(t, sk)]
         skill_score = (len(matched) / len(core_list)) if core_list else 0.0
         adj_bonus = min(0.10, len(adj_present) * 0.03)
-        # experience fit
         e = _num(r['experience'])
         exp_score = 1.0
         if e is not None and (min_exp is not None or max_exp is not None):
@@ -7352,7 +7335,6 @@ def jd_match():
                 exp_score = max(0.0, 1.0 - (min_exp - e) / max(min_exp, 1.0))
             elif max_exp is not None and e > max_exp:
                 exp_score = 0.7
-        # location fit
         loc_score = 1.0
         if location:
             loc_score = 1.0 if location in (r['location'] or '').lower() else 0.4
@@ -7362,7 +7344,7 @@ def jd_match():
             continue
         out.append({
             'id': r['id'], 'name': r['name'], 'company': r['company'],
-            'designation': r['designation'], 'location': r['location'],
+            'designation': r['designation'], 'location': r['location'], 'phone': r['phone'],
             'experience': r['experience'], 'mandate_id': r['mandate_id'], 'stage': r['stage'],
             'score': pct,
             'matched_skills': [_sg_disp(t, g) for t in matched],
@@ -7370,8 +7352,117 @@ def jd_match():
             'adjacent_skills': [_sg_disp(t, g) for t in adj_present][:6],
         })
     out.sort(key=lambda x: -x['score'])
-    return jsonify({'ok': True, 'candidates': out[:30],
-                    'must_have': [_sg_disp(t, g) for t in core_list], 'total_scored': len(out)})
+    return out[:limit], [_sg_disp(t, g) for t in core_list], core_list
+
+
+@app.route('/api/jd/match', methods=['POST'])
+@login_required
+def jd_match():
+    """Intelligence Layer · Phase 5 — Explainable matching."""
+    d = request.json or {}
+    jd = (d.get('jd') or d.get('jd_text') or '').strip()
+    if not jd:
+        return jsonify({'error': 'Paste or pick a JD first'}), 400
+    def _num(v):
+        try: return float(v)
+        except Exception: return None
+    conn = get_db(); oid = effective_company_id()
+    cands, must, _core = _match_candidates(conn, oid, jd, d.get('must_have'),
+                                           _num(d.get('min_experience')), _num(d.get('max_experience')),
+                                           d.get('location') or '', 30)
+    conn.close()
+    return jsonify({'ok': True, 'candidates': cands, 'must_have': must, 'total_scored': len(cands)})
+
+
+@app.route('/api/agent/work-role', methods=['POST'])
+@login_required
+def agent_work_role():
+    """Agent #1 — 'Work this role'. Read-only orchestration: analyse the JD →
+    build a structured requirement → rank best-fit candidates → size the market →
+    draft outreach for the top N. Nothing is sent; the recruiter approves each."""
+    d = request.json or {}
+    mid = d.get('mandate_id')
+    top_n = max(1, min(20, int(d.get('top_n') or 8)))
+    conn = get_db(); oid = effective_company_id()
+    m = conn.execute("SELECT id,role,client,location,jd FROM mandates WHERE id=? AND owner_id=?",
+                     (mid, oid)).fetchone()
+    if not m:
+        conn.close(); return jsonify({'error': 'mandate not found'}), 404
+    role = (m['role'] or '').strip()
+    jd_parts = []
+    if role: jd_parts.append('Role: ' + role)
+    if m['location']: jd_parts.append('Location: ' + m['location'])
+    if (m['jd'] or '').strip(): jd_parts.append(m['jd'].strip())
+    jd = '\n'.join(jd_parts) or role
+    client_ctx = ('Client: ' + m['client'] + '\n') if m['client'] else ''
+
+    def _num(v):
+        try: return float(v)
+        except Exception: return None
+
+    steps = []
+    sg = _skill_expand(jd, conn, oid)
+    steps.append({'step': 'Analysed the JD',
+                  'detail': f"Recognised {len(sg.get('recognized', []))} skills, {len(sg.get('related', []))} adjacent"})
+
+    # structured requirement (one DeepSeek call, optional)
+    structured = {}
+    ds_key = get_setting('deepseek_api_key')
+    if ds_key:
+        try:
+            sysmsg = ("Extract the hiring requirement. Reply ONLY compact JSON: title, "
+                      "must_have_skills (array), min_experience (number|null), "
+                      "max_experience (number|null), location (string).")
+            rr = call_deepseek(ds_key, {'model': 'deepseek-chat', 'temperature': 0.1, 'max_tokens': 400,
+                'messages': [{'role': 'system', 'content': sysmsg}, {'role': 'user', 'content': client_ctx + jd[:8000]}]},
+                timeout=45, endpoint='agent')
+            if rr.status_code == 200:
+                raw = (rr.json()['choices'][0]['message']['content'] or '').strip()
+                a, b = raw.find('{'), raw.rfind('}')
+                if a >= 0 and b > a:
+                    structured = json.loads(raw[a:b + 1])
+        except Exception:
+            structured = {}
+    must_extra = [str(x).lower() for x in (structured.get('must_have_skills') or [])]
+    min_exp = _num(structured.get('min_experience'))
+    max_exp = _num(structured.get('max_experience'))
+    loc = (structured.get('location') or m['location'] or '')
+    steps.append({'step': 'Built structured requirement',
+                  'detail': (structured.get('title') or role or 'role') +
+                            (' · ' + ', '.join((structured.get('must_have_skills') or [])[:5])
+                             if structured.get('must_have_skills') else '')})
+
+    cands, must, core = _match_candidates(conn, oid, jd, must_extra, min_exp, max_exp, loc, top_n)
+    steps.append({'step': 'Ranked your candidates', 'detail': f"{len(cands)} shortlisted, best-fit first"})
+
+    pool = _jd_pool(conn, oid, core[:20]) if core else []
+    from collections import Counter
+    comp = Counter(); comp_disp = {}
+    for r in pool:
+        cc = (r['company'] or '').strip()
+        if cc:
+            k = _norm_company(cc) or cc.lower()
+            comp[k] += 1; comp_disp.setdefault(k, cc)
+    top_companies = [{'name': comp_disp[k], 'count': v} for k, v in comp.most_common(6)]
+    steps.append({'step': 'Sized the market', 'detail': f"{len(pool)} candidates in your DB match these skills"})
+    conn.close()
+
+    recruiter = get_setting('company_name', '') or 'HireLab'
+    for c in cands:
+        first = (c['name'] or 'there').split(' ')[0]
+        bit = f" at {c['company']}" if c.get('company') else ""
+        client_bit = f" with {m['client']}" if m['client'] else ""
+        c['draft'] = (f"Hi {first}, this is {recruiter} Talent. We're hiring for a {role or 'new role'}{client_bit} "
+                      f"and your background{bit} looks like a strong fit. Would you be open to a quick chat this "
+                      f"week? — {recruiter}")
+    steps.append({'step': 'Drafted outreach', 'detail': f"{len(cands)} messages ready for your approval"})
+
+    return jsonify({'ok': True,
+                    'mandate': {'id': m['id'], 'role': role, 'client': m['client'] or ''},
+                    'steps': steps,
+                    'summary': {'recognized': sg.get('recognized', []), 'adjacent': sg.get('related', []),
+                                'must_have': must, 'pool': len(pool), 'top_companies': top_companies},
+                    'shortlist': cands})
 
 
 @app.route('/api/market/report', methods=['POST'])
