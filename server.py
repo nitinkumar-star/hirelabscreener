@@ -2939,6 +2939,36 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # ── Email Agent (background follow-up / reply watcher) ─────────────────
+    # OFF by default everywhere: nothing is watched until the recruiter turns a
+    # candidate or a whole mandate ON. The agent only ever drafts — never sends.
+    for _tbl in ('candidates', 'mandates'):
+        try:
+            c.execute(f"ALTER TABLE {_tbl} ADD COLUMN email_agent INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+    c.execute('''CREATE TABLE IF NOT EXISTS agent_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER DEFAULT 0,
+        candidate_id INTEGER,
+        mandate_id INTEGER,
+        kind TEXT DEFAULT 'followup',      -- followup | reply | referral
+        status TEXT DEFAULT 'pending',     -- pending | sent | dismissed | snoozed
+        subject TEXT DEFAULT '',
+        body TEXT DEFAULT '',
+        reason TEXT DEFAULT '',
+        dedup_key TEXT DEFAULT '',
+        followup_no INTEGER DEFAULT 0,
+        snooze_until TEXT DEFAULT '',
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT ''
+    )''')
+    try:
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_item ON agent_items(owner_id, dedup_key)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_agent_item_status ON agent_items(owner_id, status)")
+    except sqlite3.OperationalError:
+        pass
+
     # Migrate: add reminders table if not exists
     c.execute('''CREATE TABLE IF NOT EXISTS reminders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -7548,6 +7578,225 @@ def agent_add_to_pipeline():
               (nid, '', 'Screening', 'Added to pipeline by agent', ts()))
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'id': nid})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  EMAIL AGENT — background follow-up / reply watcher (drafts only, never sends)
+# ══════════════════════════════════════════════════════════════════════════
+_EMAIL_AGENT_FU_GAP = [2, 3, 4]   # days: 1st follow-up after 2d, then +3d, then +4d
+_EMAIL_AGENT_MAX_FU = 3
+
+
+def _ts_to_epoch(s):
+    if not s:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(s).timestamp()
+    except Exception:
+        try:
+            return datetime.datetime.strptime(str(s)[:19], '%Y-%m-%dT%H:%M:%S').timestamp()
+        except Exception:
+            return None
+
+
+def _followup_draft(first, role, recruiter, fno):
+    subs = [f"Following up — {role}", f"Quick note on the {role} role", f"Last check — {role}"]
+    bodies = [
+        f"Hi {first}, just following up on my previous note about the {role} role. Would you be open to a quick chat this week? — {recruiter}",
+        f"Hi {first}, circling back on the {role} role — it could be a strong fit for your background. Even a 10-minute call would help. — {recruiter}",
+        f"Hi {first}, last check on the {role} opportunity. If the timing isn't right, no problem — I'll keep you posted on future roles that fit. — {recruiter}",
+    ]
+    i = min(fno, 2)
+    return subs[i], bodies[i]
+
+
+def _email_agent_scan(oid):
+    """Compute pending agent items for one company's watched candidates."""
+    conn = get_db()
+    recruiter = get_setting('company_name', '') or 'HireLab'
+    try:
+        cands = conn.execute(
+            "SELECT c.id,c.name,c.email,c.mandate_id,m.role,m.status FROM candidates c "
+            "JOIN mandates m ON m.id=c.mandate_id "
+            "WHERE c.owner_id=? AND c.email_agent=1 AND TRIM(COALESCE(c.email,''))!=''", (oid,)).fetchall()
+    except Exception:
+        conn.close(); return 0
+    now = time.time(); created = 0
+    for c in cands:
+        if (c['status'] or '').lower() in ('closed', 'lost', 'filled', 'on hold'):
+            continue
+        email = (c['email'] or '').strip().lower()
+        role = c['role'] or 'the role'
+        first = (c['name'] or 'there').split(' ')[0]
+        # last time WE emailed this candidate
+        ev = conn.execute("SELECT created_at FROM candidate_events WHERE candidate_id=? AND event_type='email' "
+                          "ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
+        last_out = _ts_to_epoch(ev['created_at']) if ev else None
+        if not last_out:
+            continue  # agent only acts once you've emailed them
+        # latest reply FROM them
+        rep = conn.execute("SELECT date_ts FROM emails WHERE owner_id=? AND LOWER(from_addr) LIKE ? "
+                           "ORDER BY date_ts DESC LIMIT 1", (oid, '%' + email + '%')).fetchone()
+        last_in = rep['date_ts'] if rep and rep['date_ts'] else None
+
+        if last_in and last_in > last_out:
+            key = f"reply:{c['id']}:{int(last_in)}"
+            try:
+                conn.execute("INSERT OR IGNORE INTO agent_items (owner_id,candidate_id,mandate_id,kind,status,"
+                             "subject,body,reason,dedup_key,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                             (oid, c['id'], c['mandate_id'], 'reply', 'pending', '', '',
+                              f"{c['name']} replied — needs your response", key, ts(), ts()))
+                if conn.total_changes:
+                    created += 1
+            except Exception:
+                pass
+            continue
+
+        # no reply → escalating follow-up
+        fu_sent = conn.execute("SELECT COUNT(*) n FROM agent_items WHERE candidate_id=? AND kind='followup' "
+                               "AND status='sent'", (c['id'],)).fetchone()['n']
+        if fu_sent >= _EMAIL_AGENT_MAX_FU:
+            continue
+        pend = conn.execute("SELECT 1 FROM agent_items WHERE candidate_id=? AND kind='followup' AND status='pending' "
+                            "LIMIT 1", (c['id'],)).fetchone()
+        if pend:
+            continue
+        last_fu = conn.execute("SELECT updated_at FROM agent_items WHERE candidate_id=? AND kind='followup' "
+                               "AND status='sent' ORDER BY updated_at DESC LIMIT 1", (c['id'],)).fetchone()
+        gap_days = _EMAIL_AGENT_FU_GAP[min(fu_sent, len(_EMAIL_AGENT_FU_GAP) - 1)]
+        anchor = _ts_to_epoch(last_fu['updated_at']) if last_fu else last_out
+        if anchor is None or (now - anchor) < gap_days * 86400:
+            continue
+        subj, body = _followup_draft(first, role, recruiter, fu_sent)
+        key = f"followup:{c['id']}:{fu_sent}"
+        try:
+            conn.execute("INSERT OR IGNORE INTO agent_items (owner_id,candidate_id,mandate_id,kind,status,subject,"
+                         "body,reason,dedup_key,followup_no,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (oid, c['id'], c['mandate_id'], 'followup', 'pending', subj, body,
+                          f"No reply for {int((now-last_out)/86400)} days", key, fu_sent + 1, ts(), ts()))
+            if conn.total_changes:
+                created += 1
+        except Exception:
+            pass
+    conn.commit(); conn.close()
+    return created
+
+
+def _email_agent_loop():
+    import time as _t
+    while True:
+        _t.sleep(120)
+        try:
+            conn = get_db()
+            oids = [r['owner_id'] for r in conn.execute(
+                "SELECT DISTINCT owner_id FROM candidates WHERE email_agent=1").fetchall()]
+            conn.close()
+            for oid in oids:
+                try:
+                    _sync_imap_inbox(oid)
+                except Exception:
+                    pass
+                try:
+                    _email_agent_scan(oid)
+                except Exception as _se:
+                    print('[email-agent] scan error:', _se)
+        except Exception as e:
+            print('[email-agent] loop error:', e)
+
+
+def _start_email_agent():
+    import threading
+    t = threading.Thread(target=_email_agent_loop, daemon=True)
+    t.start()
+    print('[email-agent] background thread started')
+
+
+@app.route('/api/candidates/<int:cid>/email-agent', methods=['POST'])
+@login_required
+def toggle_candidate_agent(cid):
+    on = 1 if (request.json or {}).get('on') else 0
+    conn = get_db()
+    conn.execute("UPDATE candidates SET email_agent=? WHERE id=? AND owner_id=?", (on, cid, effective_company_id()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'on': bool(on)})
+
+
+@app.route('/api/mandates/<int:mid>/email-agent', methods=['POST'])
+@login_required
+def toggle_mandate_agent(mid):
+    """Master toggle — flips the whole role's candidates on/off at once."""
+    on = 1 if (request.json or {}).get('on') else 0
+    conn = get_db(); oid = effective_company_id()
+    if not _tenant_owns_mandate(conn, mid):
+        conn.close(); return jsonify({'error': 'mandate not found'}), 404
+    conn.execute("UPDATE mandates SET email_agent=? WHERE id=?", (on, mid))
+    conn.execute("UPDATE candidates SET email_agent=? WHERE mandate_id=? AND owner_id=?", (on, mid, oid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'on': bool(on)})
+
+
+@app.route('/api/email-agent/status', methods=['GET'])
+@login_required
+def email_agent_status():
+    conn = get_db(); oid = effective_company_id()
+    mands = conn.execute("SELECT id,role,client,email_agent,"
+                         "(SELECT COUNT(*) FROM candidates c WHERE c.mandate_id=m.id AND c.email_agent=1) watched "
+                         "FROM mandates m WHERE owner_id=? AND LOWER(COALESCE(status,'open')) NOT IN "
+                         "('closed','lost','filled') ORDER BY email_agent DESC, role", (oid,)).fetchall()
+    pend = conn.execute("SELECT COUNT(*) n FROM agent_items WHERE owner_id=? AND status='pending'", (oid,)).fetchone()['n']
+    watched = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND email_agent=1", (oid,)).fetchone()['n']
+    conn.close()
+    return jsonify({'ok': True, 'pending': pend, 'watched': watched,
+                    'mandates': [{'id': m['id'], 'role': m['role'], 'client': m['client'] or '',
+                                  'on': bool(m['email_agent']), 'watched': m['watched']} for m in mands]})
+
+
+@app.route('/api/email-agent/items', methods=['GET'])
+@login_required
+def email_agent_items():
+    conn = get_db(); oid = effective_company_id()
+    rows = conn.execute(
+        "SELECT a.*, c.name cand_name, c.email cand_email, c.company cand_company, m.role role "
+        "FROM agent_items a JOIN candidates c ON c.id=a.candidate_id "
+        "LEFT JOIN mandates m ON m.id=a.mandate_id "
+        "WHERE a.owner_id=? AND a.status='pending' ORDER BY "
+        "CASE a.kind WHEN 'reply' THEN 0 WHEN 'referral' THEN 1 ELSE 2 END, a.created_at DESC", (oid,)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'items': [dict(r) for r in rows]})
+
+
+@app.route('/api/email-agent/item/<int:iid>/action', methods=['POST'])
+@login_required
+def email_agent_item_action(iid):
+    d = request.json or {}
+    action = d.get('action')
+    conn = get_db(); oid = effective_company_id()
+    it = conn.execute("SELECT * FROM agent_items WHERE id=? AND owner_id=?", (iid, oid)).fetchone()
+    if not it:
+        conn.close(); return jsonify({'error': 'not found'}), 404
+    if action == 'sent':
+        conn.execute("UPDATE agent_items SET status='sent', subject=?, body=?, updated_at=? WHERE id=?",
+                     (d.get('subject', it['subject']), d.get('body', it['body']), ts(), iid))
+    elif action == 'dismiss':
+        conn.execute("UPDATE agent_items SET status='dismissed', updated_at=? WHERE id=?", (ts(), iid))
+    elif action == 'snooze':
+        conn.execute("UPDATE agent_items SET status='dismissed', updated_at=? WHERE id=?", (ts(), iid))
+    else:
+        conn.close(); return jsonify({'error': 'bad action'}), 400
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/email-agent/scan', methods=['POST'])
+@login_required
+def email_agent_manual_scan():
+    oid = effective_company_id()
+    try:
+        _sync_imap_inbox(oid)
+    except Exception:
+        pass
+    created = _email_agent_scan(oid)
+    return jsonify({'ok': True, 'new_items': created})
 
 
 @app.route('/api/market/report', methods=['POST'])
@@ -15351,6 +15600,10 @@ try:
         _start_embedding_worker()
     except Exception as _emb_err:
         print(f'[embed-worker] failed to start: {_emb_err}')
+    try:
+        _start_email_agent()
+    except Exception as _ea_err:
+        print(f'[email-agent] failed to start: {_ea_err}')
     _ucount = _db_user_count(DB_PATH)
     print('\n' + '=' * 56)
     print('  HireLab Screener — startup')
