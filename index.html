@@ -9375,7 +9375,8 @@ function renderAITab() {
       + '<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:4px">Market Availability</div>'
       + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Type a role or skills. See how many exist <b>in your database</b>, how each added skill shrinks the pool (scarcity), the city heat map, experience bands & top companies.</div>'
       + '<div style="display:flex;gap:8px"><input class="inp" id="mk-q" placeholder="e.g. BMS BACnet Niagara commissioning" style="flex:1" onkeydown="if(event.key===&#39;Enter&#39;)runMarketReport()">'
-      + '<button class="btn btn-g" style="background:#8B6FCB" onclick="runMarketReport()">Report</button></div>'
+      + '<button class="btn btn-g" style="background:#8B6FCB" onclick="runMarketReport()">Report</button>'
+      + '<button class="btn btn-g" style="background:#0F6E56" onclick="runSalaryHeatmap()">&#128176; Salary</button></div>'
       + '</div>'
       + '<div id="market-panel" style="margin-top:16px"></div>'
       + '</div>';
@@ -9417,6 +9418,37 @@ function renderAITab() {
 
 function aiChip(q) {
   return '<button class="btn btn-o" style="font-size:10.5px;padding:4px 10px" onclick="document.getElementById(&#39;ai-stats-q&#39;).value=this.textContent;runAIStats()">' + esc(q) + '</button>';
+}
+
+async function runSalaryHeatmap() {
+  var el = document.getElementById('mk-q'); var q = el ? el.value.trim() : '';
+  if (!q) { toast('ERR','Type a role or skills'); return; }
+  var p = document.getElementById('market-panel'); if (!p) return;
+  p.innerHTML = '<div class="loading"><div class="spinner"></div>Building salary heat maps...</div>';
+  var r = await req('POST', '/market/salary', {query: q});
+  if (!r || !r.ok) { p.innerHTML='<div style="color:#C0522B;padding:12px">'+esc((r&&r.error)||'Failed')+'</div>'; return; }
+  if (!(r.recognized_skills||[]).length) { p.innerHTML='<div style="text-align:center;color:var(--muted);padding:40px">No known skills recognised. Try BMS, PLC, SCADA, solar PV, switchgear.</div>'; return; }
+  var card = function(t,inner){ return '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)"><div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:10px;letter-spacing:.3px">'+t+'</div>'+inner+'</div>'; };
+  // salary heat bar (green->amber->red intensity by value)
+  var sbar = function(arr, labelKey){ if(!arr.length) return '<div style="font-size:11px;color:var(--muted)">No salary data yet.</div>';
+    var mx=Math.max.apply(null,arr.map(function(a){return a.avg_ctc;}).concat([1]));
+    return arr.map(function(a){ var w=Math.max(6,Math.round(a.avg_ctc/mx*100));
+      return '<div style="padding:5px 0"><div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--navy);margin-bottom:2px"><span>'+esc(a[labelKey])+' <span style="color:#aaa">('+a.count+')</span></span><b style="color:#0F6E56">'+a.avg_ctc+' LPA</b></div><div style="height:8px;background:#EAF6F1;border-radius:3px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:linear-gradient(90deg,#7Fc9a9,#0F6E56)"></div></div></div>'; }).join(''); };
+  var html = '<div style="font-size:10px;color:#aaa;margin:0 0 10px">Salary from <b>ctc_current</b> in your DB &middot; pool: '+r.pool+' &middot; skills: '+(r.recognized_skills||[]).map(esc).join(', ')+'</div>';
+  html += card('&#128205; SALARY &times; LOCATION (avg LPA)', sbar(r.salary_by_location,'location'));
+  html += card('&#128200; EXPERIENCE &times; SALARY (avg LPA)', sbar(r.salary_by_experience,'band'));
+  // company matrix table
+  if ((r.companies||[]).length) {
+    var head = '<div style="display:flex;font-size:9.5px;color:#888;font-weight:700;padding:0 0 5px;border-bottom:0.5px solid #eee"><div style="flex:2">COMPANY</div><div style="flex:1;text-align:right">#</div><div style="flex:1.2;text-align:right">AVG CTC</div><div style="flex:1;text-align:right">AVG EXP</div><div style="flex:1.5;text-align:right">TOP LOC</div></div>';
+    var body = r.companies.map(function(c){ return '<div style="display:flex;font-size:11.5px;color:var(--navy);padding:6px 0;border-bottom:0.5px solid #f4f4f4;align-items:center">'
+      + '<div style="flex:2;font-weight:600">'+esc(c.company)+'</div>'
+      + '<div style="flex:1;text-align:right">'+c.count+'</div>'
+      + '<div style="flex:1.2;text-align:right;color:#0F6E56;font-weight:700">'+(c.avg_ctc!=null?c.avg_ctc+'L':'—')+'</div>'
+      + '<div style="flex:1;text-align:right">'+(c.avg_exp!=null?c.avg_exp+'y':'—')+'</div>'
+      + '<div style="flex:1.5;text-align:right;color:var(--muted)">'+esc(c.top_location||'—')+'</div></div>'; }).join('');
+    html += card('&#127970; COMPANY &times; SALARY &times; EXPERIENCE &times; LOCATION', head+body);
+  }
+  p.innerHTML = html;
 }
 
 // ── Intelligent Outreach (Phase 7) ──────────────────────────────────────────

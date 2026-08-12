@@ -7465,6 +7465,107 @@ def market_report():
     })
 
 
+def _lpa(v):
+    """Parse a CTC value into LPA (lakhs). Handles rupee amounts too."""
+    try:
+        x = float(str(v).replace(',', '').strip())
+    except Exception:
+        return None
+    if x <= 0:
+        return None
+    if x > 1000:            # looks like rupees, not lakhs
+        x = x / 100000.0
+    return round(x, 1)
+
+
+@app.route('/api/market/salary', methods=['POST'])
+@login_required
+def market_salary():
+    """Salary heat-maps for a skill/role: Salary×Location, Experience×Salary, and a
+    Company matrix (avg CTC, avg experience, top location). From YOUR database."""
+    d = request.json or {}
+    q = (d.get('query') or d.get('jd') or '').strip()
+    if not q:
+        return jsonify({'error': 'Type a role or skills'}), 400
+    conn = get_db(); oid = effective_company_id()
+    g = _load_skill_graph(conn, oid)
+    grams, _t = _query_grams(q)
+    core = sorted({g['lookup'][gr] for gr in grams if gr in g['lookup']})
+    rows = conn.execute(
+        "SELECT location,experience,company,ctc_current,ctc_expected,"
+        "key_skills,key_skill_tags,secondary_skills,domain_tags,product_handles "
+        "FROM candidates WHERE owner_id=?", (oid,)).fetchall()
+    conn.close()
+
+    def has(sk, term):
+        return term in sk or any(term in s for s in sk)
+    def _numf(v):
+        try: return float(v)
+        except Exception: return None
+
+    pool = []
+    for r in rows:
+        sk = set()
+        for col in ('key_skills', 'key_skill_tags', 'secondary_skills', 'domain_tags', 'product_handles'):
+            sk |= _parse_tag_list(r[col])
+        if core and not any(has(sk, t) for t in core):
+            continue
+        pool.append(r)
+
+    def _band(e):
+        if e is None: return None
+        if e <= 3: return '0-3 yrs'
+        if e <= 7: return '4-7 yrs'
+        if e <= 12: return '8-12 yrs'
+        return '12+ yrs'
+
+    from collections import defaultdict
+    def _agg():
+        return {'sum': 0.0, 'n': 0}
+    by_loc = defaultdict(_agg); by_band = defaultdict(_agg)
+    by_comp = defaultdict(lambda: {'ctc_sum': 0.0, 'ctc_n': 0, 'exp_sum': 0.0, 'exp_n': 0, 'n': 0, 'disp': '', 'locs': defaultdict(int)})
+    band_order = ['0-3 yrs', '4-7 yrs', '8-12 yrs', '12+ yrs']
+
+    for r in pool:
+        ctc = _lpa(r['ctc_current'])
+        e = _numf(r['experience'])
+        loc = (r['location'] or '').strip()
+        comp = (r['company'] or '').strip()
+        if ctc is not None and loc:
+            by_loc[loc]['sum'] += ctc; by_loc[loc]['n'] += 1
+        b = _band(e)
+        if ctc is not None and b:
+            by_band[b]['sum'] += ctc; by_band[b]['n'] += 1
+        if comp:
+            k = _norm_company(comp) or comp.lower()
+            cc = by_comp[k]; cc['n'] += 1
+            if not cc['disp']: cc['disp'] = comp
+            if ctc is not None: cc['ctc_sum'] += ctc; cc['ctc_n'] += 1
+            if e is not None: cc['exp_sum'] += e; cc['exp_n'] += 1
+            if loc: cc['locs'][loc] += 1
+
+    salary_by_location = sorted(
+        [{'location': k, 'avg_ctc': round(v['sum'] / v['n'], 1), 'count': v['n']} for k, v in by_loc.items()],
+        key=lambda x: -x['count'])[:12]
+    salary_by_experience = [
+        {'band': b, 'avg_ctc': round(by_band[b]['sum'] / by_band[b]['n'], 1), 'count': by_band[b]['n']}
+        for b in band_order if by_band[b]['n']]
+    companies = []
+    for k, v in by_comp.items():
+        top_loc = max(v['locs'].items(), key=lambda x: x[1])[0] if v['locs'] else ''
+        companies.append({'company': v['disp'], 'count': v['n'],
+                          'avg_ctc': round(v['ctc_sum'] / v['ctc_n'], 1) if v['ctc_n'] else None,
+                          'avg_exp': round(v['exp_sum'] / v['exp_n'], 1) if v['exp_n'] else None,
+                          'top_location': top_loc})
+    companies.sort(key=lambda x: -x['count'])
+
+    return jsonify({'ok': True, 'recognized_skills': [_sg_disp(t, g) for t in core],
+                    'pool': len(pool),
+                    'salary_by_location': salary_by_location,
+                    'salary_by_experience': salary_by_experience,
+                    'companies': companies[:12]})
+
+
 # ── Intelligent Outreach (Intelligence Layer · Phase 7) ─────────────────────
 @app.route('/api/outreach/message', methods=['POST'])
 @login_required
