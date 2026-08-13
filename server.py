@@ -11276,32 +11276,48 @@ def _find_sent_folder(M):
     return '[Gmail]/Sent Mail'
 
 
-@app.route('/api/emailbox/sync', methods=['POST'])
-@login_required
-def emailbox_sync():
+def _resolve_thread_id(conn, oid, in_reply_to, references, subject):
+    """Thread priority: In-Reply-To -> References -> subject (fallback). Empty -> new."""
+    refs = []
+    if in_reply_to: refs.append(in_reply_to.strip())
+    if references: refs += [x.strip() for x in references.split() if x.strip()]
+    for ref in refs:
+        row = conn.execute("SELECT thread_id, msg_id FROM emails WHERE owner_id=? AND msg_id=? LIMIT 1",
+                           (oid, ref)).fetchone()
+        if row:
+            return (row['thread_id'] or row['msg_id'] or '')
+    key = _norm_subject(subject)
+    if key:
+        rows = conn.execute("SELECT thread_id, subject FROM emails WHERE owner_id=? AND COALESCE(thread_id,'')!='' "
+                            "ORDER BY date_ts DESC LIMIT 400", (oid,)).fetchall()
+        for r in rows:
+            if _norm_subject(r['subject']) == key:
+                return r['thread_id']
+    return ''
+
+
+def _sync_mailbox(oid):
+    """Canonical IMAP sync -> emails table with full threading metadata + candidate
+    linkage. Mirrors incoming candidate mail into email_messages too. Returns (added, error)."""
     import imaplib, email as emaillib, email.utils, datetime as _dt
     host = get_setting('imap_host', 'imap.gmail.com') or 'imap.gmail.com'
-    user = get_setting('smtp_email', ''); pw = get_setting('smtp_app_password', '')
+    user = get_setting('smtp_email', ''); pw = (get_setting('smtp_app_password', '') or '').replace(' ', '')
     if not user or not pw:
-        return jsonify({'error': 'Email not configured. Settings → Email Configuration.'}), 400
-    oid = effective_company_id()
+        return 0, 'Email not configured. Settings -> Email Configuration.'
     since = (_dt.date.today() - _dt.timedelta(days=30)).strftime('%d-%b-%Y')
     try:
-        M = imaplib.IMAP4_SSL(host)
-        M.login(user, pw)
+        M = imaplib.IMAP4_SSL(host); M.login(user, pw)
     except imaplib.IMAP4.error as e:
-        return jsonify({'error': f'IMAP login failed: {e}. Gmail mein IMAP enable karo aur app password check karo.'}), 502
+        return 0, f'IMAP login failed: {e}. Enable IMAP in Gmail and check the app password.'
     except Exception as e:
-        return jsonify({'error': f'Could not connect ({host}): {e}'}), 502
-
+        return 0, f'Could not connect ({host}): {e}'
+    conn = get_db()
+    email_to_cid = {}
+    for r in conn.execute("SELECT id,email FROM candidates WHERE owner_id=? AND COALESCE(email,'')!=''", (oid,)).fetchall():
+        email_to_cid[(r['email'] or '').strip().lower()] = r['id']
     folders = [('INBOX', 'Inbox'), ('"' + _find_sent_folder(M) + '"', 'Sent')]
     added = 0
-    conn = get_db()
     try:
-        try:
-            conn.execute("ALTER TABLE emails ADD COLUMN body_html TEXT DEFAULT ''"); conn.commit()
-        except Exception:
-            pass
         for fexpr, fname in folders:
             try:
                 typ, _ = M.select(fexpr, readonly=True)
@@ -11316,22 +11332,36 @@ def emailbox_sync():
                         msg = emaillib.message_from_bytes(md[0][1])
                         mid = (msg.get('Message-ID') or '').strip() or (fname + ':' + num.decode())
                         nm, addr = email.utils.parseaddr(_email_decode(msg.get('From')))
+                        _tnm, taddr = email.utils.parseaddr(_email_decode(msg.get('To')))
                         dt = msg.get('Date') or ''
                         try: dts = email.utils.parsedate_to_datetime(dt).timestamp()
                         except Exception: dts = 0
+                        subject = _email_decode(msg.get('Subject'))
+                        irt = (msg.get('In-Reply-To') or '').strip()
+                        refs = (msg.get('References') or '').strip()
                         text, htmlbody = _email_bodies(msg)
                         text = text[:20000]; htmlbody = (htmlbody or '')[:400000]
                         snip = re.sub(r'\s+', ' ', text)[:220]
+                        cid = email_to_cid.get((addr or '').lower()) or email_to_cid.get((taddr or '').lower())
+                        tid = _resolve_thread_id(conn, oid, irt, refs, subject) or mid
                         ex = conn.execute('SELECT id FROM emails WHERE owner_id=? AND msg_id=?', (oid, mid)).fetchone()
                         if ex:
-                            # backfill/refresh body so previously-synced emails display correctly
-                            conn.execute('UPDATE emails SET body=?, body_html=?, snippet=? WHERE id=?',
-                                         (text, htmlbody, snip, ex['id']))
+                            conn.execute("UPDATE emails SET body=?, body_html=?, snippet=?, in_reply_to=?, refs=?, "
+                                         "thread_id=CASE WHEN COALESCE(thread_id,'')='' THEN ? ELSE thread_id END, "
+                                         "candidate_id=COALESCE(candidate_id,?) WHERE id=?",
+                                         (text, htmlbody, snip, irt, refs, tid, cid, ex['id']))
                             continue
-                        conn.execute('INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,subject,date_str,date_ts,snippet,body,body_html,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                            (oid, mid, fname, addr, nm or addr, _email_decode(msg.get('To')),
-                             _email_decode(msg.get('Subject')), dt, dts, snip, text, htmlbody, ts()))
+                        conn.execute('INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,subject,'
+                            'date_str,date_ts,snippet,body,body_html,in_reply_to,refs,thread_id,candidate_id,created_at) '
+                            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                            (oid, mid, fname, addr, nm or addr, _email_decode(msg.get('To')), subject, dt, dts,
+                             snip, text, htmlbody, irt, refs, tid, cid, ts()))
                         added += 1
+                        if cid and fname == 'Inbox':
+                            conn.execute('INSERT OR IGNORE INTO email_messages (company_id,candidate_id,direction,'
+                                'from_addr,to_addr,subject,body,message_id,in_reply_to,sent_at,created_at) '
+                                'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                                (oid, cid, 'received', addr, user, subject, text, mid, irt, ts(), ts()))
                     except Exception:
                         continue
             except Exception:
@@ -11341,6 +11371,15 @@ def emailbox_sync():
         conn.close()
         try: M.logout()
         except Exception: pass
+    return added, None
+
+
+@app.route('/api/emailbox/sync', methods=['POST'])
+@login_required
+def emailbox_sync():
+    added, err = _sync_mailbox(effective_company_id())
+    if err:
+        return jsonify({'error': err}), 502
     return jsonify({'ok': True, 'added': added})
 
 
@@ -12758,99 +12797,14 @@ def _extract_plain_body(msg):
 
 
 def _sync_imap_inbox(company_id):
-    """Connect via IMAP, fetch recent inbox messages, match to candidates by
-    email address, and store new incoming messages. Returns (new_count, error)."""
-    import imaplib, email as _email, re as _re
-
-    smtp_email = (get_setting('smtp_email', '') or '').strip()
-    smtp_pass = (get_setting('smtp_app_password', '') or '')
-    if not smtp_email or not smtp_pass:
-        return 0, 'Email not configured. Add your Gmail + App Password in Settings.'
-    # Gmail app passwords are shown with spaces ("xxxx xxxx xxxx xxxx") but must be
-    # sent without spaces. Strip them defensively.
-    smtp_pass = smtp_pass.replace(' ', '').strip()
-
-    host = _imap_host_for(smtp_email)
-
-    # Build a map of candidate email -> candidate_id for this tenant
-    conn = get_db()
-    cand_rows = conn.execute(
-        "SELECT id, email FROM candidates WHERE owner_id=? AND email IS NOT NULL AND email!=''",
-        (company_id,)).fetchall()
-    email_to_cid = {}
-    for r in cand_rows:
-        em = (r['email'] or '').strip().lower()
-        if em:
-            email_to_cid[em] = r['id']
-
-    if not email_to_cid:
-        conn.close()
-        return 0, None  # no candidates with emails, nothing to match
-
-    new_count = 0
+    """Compatibility shim -> routes to the canonical _sync_mailbox (emails table +
+    threading + email_messages mirror). Kept so the Email Agent loop and older
+    callers keep working. Returns (added, error)."""
     try:
-        M = imaplib.IMAP4_SSL(host, 993)
-        M.login(smtp_email, smtp_pass)
-        M.select('INBOX')
-        # Search last 60 days to keep it light
-        import datetime as _dt
-        since = (_dt.datetime.utcnow() - _dt.timedelta(days=60)).strftime('%d-%b-%Y')
-        typ, data = M.search(None, f'(SINCE {since})')
-        if typ != 'OK':
-            M.logout(); conn.close()
-            return 0, 'IMAP search failed'
-        ids = data[0].split()
-        # Only look at the most recent ~200 to bound work
-        ids = ids[-200:]
-        for num in ids:
-            typ, msg_data = M.fetch(num, '(RFC822)')
-            if typ != 'OK' or not msg_data or not msg_data[0]:
-                continue
-            raw = msg_data[0][1]
-            m = _email.message_from_bytes(raw)
-            from_hdr = _decode_mime_header(m.get('From', ''))
-            # extract bare email
-            fmatch = _re.search(r'[\w\.\-\+]+@[\w\.\-]+', from_hdr)
-            from_email = (fmatch.group(0).lower() if fmatch else '')
-            if from_email not in email_to_cid:
-                continue  # not from a known candidate
-            cid = email_to_cid[from_email]
-            message_id = (m.get('Message-ID', '') or '').strip()
-            if not message_id:
-                continue
-            # Dedup: skip if we already stored this message_id
-            exists = conn.execute(
-                'SELECT id FROM email_messages WHERE company_id=? AND message_id=?',
-                (company_id, message_id)).fetchone()
-            if exists:
-                continue
-            subject = _decode_mime_header(m.get('Subject', ''))
-            in_reply_to = (m.get('In-Reply-To', '') or '').strip()
-            body = _extract_plain_body(m)
-            import email.utils as _eut
-            date_hdr = m.get('Date', '')
-            try:
-                dt = _eut.parsedate_to_datetime(date_hdr)
-                sent_at = dt.strftime('%Y-%m-%dT%H:%M:%S')
-            except Exception:
-                sent_at = ts()
-            conn.execute(
-                'INSERT OR IGNORE INTO email_messages (company_id, candidate_id, direction, '
-                'from_addr, to_addr, subject, body, message_id, in_reply_to, sent_at, created_at) '
-                'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                (company_id, cid, 'received', from_email, smtp_email, subject, body,
-                 message_id, in_reply_to, sent_at, ts()))
-            new_count += 1
-        conn.commit()
-        M.logout()
-    except imaplib.IMAP4.error as e:
-        conn.close()
-        return 0, f'IMAP login failed. Check your email & app password. ({str(e)[:80]})'
+        return _sync_mailbox(company_id)
     except Exception as e:
-        conn.close()
         return 0, f'IMAP sync error: {str(e)[:100]}'
-    conn.close()
-    return new_count, None
+
 
 
 @app.route('/api/email/sync', methods=['POST'])
