@@ -4279,7 +4279,7 @@ async function renderEmailBox(){
   window._ebEmails=emails;
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
     +'<div style="display:flex;gap:6px">'+tab('','All')+tab('Inbox','Inbox')+tab('Sent','Sent')+'</div>'
-    +'<div style="display:flex;gap:6px;align-items:center"><input class="inp" id="eb-search" placeholder="Search mail" style="font-size:12px;width:160px;padding:5px 9px" oninput="renderEmailList()"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="openCompose()">&#9998; Compose</button><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync</button></div></div>'
+    +'<div style="display:flex;gap:6px;align-items:center"><input class="inp" id="eb-search" placeholder="Search mail" style="font-size:12px;width:160px;padding:5px 9px" oninput="renderEmailList()"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="openCompose()">&#9998; Compose</button><button class="btn btn-o" style="font-size:12px" onclick="openSignatureEditor()">&#9997; Signature</button><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync</button></div></div>'
     +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden" id="eb-list"></div>';
   renderEmailList();
 }
@@ -4319,7 +4319,7 @@ async function openEmail(id){
   var replyTo=(e.folder==='Sent')?(e.to_addr||''):(e.from_addr||'');
   var qd=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB'):'';
   var quoted='\n\n--- On '+qd+', '+(e.from_name||e.from_addr||'')+' wrote ---\n'+((e.body||e.snippet||'').split('\n').map(function(l){return '> '+l;}).join('\n'));
-  window._replyCtx={to:replyTo,sub:rSub,body:quoted};
+  window._replyCtx={to:replyTo,sub:rSub,body:quoted,in_reply_to:(e.msg_id||''),thread_id:(e.thread_id||'')};
   var msgHtml=msgs.map(function(m){
     var d=m.date_ts?new Date(m.date_ts*1000).toLocaleString('en-GB'):'';
     var content;
@@ -4336,8 +4336,29 @@ async function openEmail(id){
     +msgHtml+'</div></div>';
   document.body.appendChild(bg);
 }
-function replyFromEmail(){ var c=window._replyCtx||{}; openCompose(c.to,c.sub,c.body); }
-function openCompose(to, subject, body){
+function replyFromEmail(){ var c=window._replyCtx||{}; openCompose(c.to,c.sub,c.body,{in_reply_to:c.in_reply_to||'',thread_id:c.thread_id||''}); }
+async function openSignatureEditor(){
+  var r=await req('GET','/email/signature'); if(!r) r={};
+  var ex=document.getElementById('modal-sig'); if(ex) ex.remove();
+  var f=function(id,lbl,val){ return '<div style="margin-bottom:8px"><label style="font-size:10px;color:#888;display:block">'+lbl+'</label><input class="inp" id="sig-'+id+'" value="'+esc(val||'')+'" style="width:100%;font-size:12px"></div>'; };
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-sig';
+  bg.innerHTML='<div class="modal" style="max-width:520px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">&#9997; Email Signature</span><button class="modal-x" onclick="document.getElementById(\''+'modal-sig'+'\').remove()">&#10005;</button></div>'
+    +'<div class="modal-body">'
+    +'<div style="font-size:10.5px;color:#888;margin-bottom:10px">Your official signature — added automatically to every email you and the agent send. The AI never writes this itself.</div>'
+    +f('name','Name',r.sig_name)+f('designation','Designation',r.sig_designation)+f('company','Company',r.sig_company)
+    +f('phone','Phone',r.sig_phone)+f('email','Email',r.sig_email)+f('website','Website',r.sig_website)
+    +'<div style="margin-top:10px"><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="saveSignature(this)">&#128190; Save</button> <span id="sig-status" style="font-size:11px;color:#0F6E56;margin-left:8px"></span></div>'
+    +'</div></div>';
+  document.body.appendChild(bg);
+}
+async function saveSignature(btn){
+  var g=function(id){ var e=document.getElementById('sig-'+id); return e?e.value.trim():''; };
+  var st=document.getElementById('sig-status'); if(st) st.textContent='Saving...'; if(btn) btn.disabled=true;
+  var r=await req('POST','/email/signature',{sig_name:g('name'),sig_designation:g('designation'),sig_company:g('company'),sig_phone:g('phone'),sig_email:g('email'),sig_website:g('website')});
+  if(st) st.textContent=(r&&r.ok)?'Saved \u2713':'Failed'; if(btn) btn.disabled=false;
+}
+function openCompose(to, subject, body, meta){
+  window._composeMeta = meta || {};
   var ex=document.getElementById('modal-compose'); if(ex) ex.remove();
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-compose';
   bg.innerHTML='<div class="modal" style="max-width:640px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">New message</span><button class="modal-x" onclick="document.getElementById(\'modal-compose\').remove()">&#10005;</button></div>'
@@ -4354,7 +4375,8 @@ async function sendCompose(btn){
   to=to.trim(); sub=sub.trim(); body=body.trim();
   if(!to||!sub||!body){ toast('EMAIL','To, subject and message are required'); return; }
   var st=document.getElementById('cmp-status'); if(st) st.textContent='Sending...'; if(btn) btn.disabled=true;
-  var r=await req('POST','/emailbox/send',{to:to,subject:sub,body:body});
+  var meta=window._composeMeta||{};
+  var r=await req('POST','/emailbox/send',{to:to,subject:sub,body:body,in_reply_to:meta.in_reply_to||'',thread_id:meta.thread_id||''});
   if(r&&r.ok){ if(st) st.textContent='Sent \u2713'; setTimeout(function(){ var m=document.getElementById('modal-compose'); if(m) m.remove(); if(document.getElementById('emailbox-body')) renderEmailBox(); },700); }
   else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Send failed'; } if(btn) btn.disabled=false; }
 }

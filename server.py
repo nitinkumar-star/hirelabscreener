@@ -2973,6 +2973,14 @@ def init_db():
             c.execute(f"ALTER TABLE agent_items ADD COLUMN {_col}")
         except sqlite3.OperationalError:
             pass
+    # Email threading + Gmail-like metadata (additive; never drops existing data)
+    for _col in ("in_reply_to TEXT DEFAULT ''", "refs TEXT DEFAULT ''", "thread_id TEXT DEFAULT ''",
+                 "cc TEXT DEFAULT ''", "bcc TEXT DEFAULT ''", "is_draft INTEGER DEFAULT 0",
+                 "candidate_id INTEGER"):
+        try:
+            c.execute(f"ALTER TABLE emails ADD COLUMN {_col}")
+        except sqlite3.OperationalError:
+            pass
 
     # Migrate: add reminders table if not exists
     c.execute('''CREATE TABLE IF NOT EXISTS reminders (
@@ -11373,25 +11381,25 @@ def _norm_subject(s):
 @app.route('/api/emailbox/send', methods=['POST'])
 @login_required
 def emailbox_send():
-    """Compose / reply — send to any address and store a copy in Sent so the
-    thread stays complete (this is what lets the agent draft replies in-thread)."""
+    """Compose / reply — goes through the ONE central email pipeline (threading,
+    signature, multipart) and stores in Sent so the thread stays complete."""
     d = request.json or {}
     to = (d.get('to') or '').strip()
     subject = (d.get('subject') or '').strip()
-    body = (d.get('body') or '').strip()
+    body = (d.get('body') or d.get('body_text') or '').strip()
     if not to or not subject or not body:
         return jsonify({'error': 'To, subject and message are all required'}), 400
-    ok, err = _smtp_send(to, subject, body)
+    ok, err, mid, tid = email_service_send(
+        to, subject, body,
+        body_html=(d.get('body_html') or None),
+        cc=(d.get('cc') or ''), bcc=(d.get('bcc') or ''),
+        in_reply_to=(d.get('in_reply_to') or d.get('reply_to_message_id') or ''),
+        references=(d.get('references') or ''),
+        thread_id=(d.get('thread_id') or ''),
+        candidate_id=d.get('candidate_id'))
     if not ok:
         return jsonify({'error': err or 'Send failed'}), 400
-    conn = get_db(); oid = effective_company_id()
-    frm = get_setting('smtp_email', '')
-    conn.execute("INSERT INTO emails (owner_id,folder,from_addr,from_name,to_addr,subject,date_str,date_ts,"
-                 "snippet,body,is_read,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,?)",
-                 (oid, 'Sent', frm, get_setting('smtp_display_name', '') or frm, to, subject,
-                  ts(), time.time(), body[:200], body, ts()))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'message_id': mid, 'thread_id': tid})
 
 
 @app.route('/api/emailbox/thread', methods=['GET'])
@@ -11399,14 +11407,21 @@ def emailbox_send():
 def emailbox_thread():
     eid = request.args.get('eid')
     conn = get_db(); oid = effective_company_id()
-    base = conn.execute("SELECT subject FROM emails WHERE id=? AND owner_id=?", (eid, oid)).fetchone()
+    base = conn.execute("SELECT subject, thread_id, msg_id FROM emails WHERE id=? AND owner_id=?",
+                        (eid, oid)).fetchone()
     if not base:
         conn.close(); return jsonify({'error': 'not found'}), 404
-    key = _norm_subject(base['subject'])
-    rows = conn.execute("SELECT id,folder,from_addr,from_name,to_addr,subject,date_ts,body,body_html,snippet "
-                        "FROM emails WHERE owner_id=? ORDER BY date_ts ASC", (oid,)).fetchall()
+    tid = (base['thread_id'] or '').strip()
+    rows = conn.execute("SELECT id,folder,from_addr,from_name,to_addr,subject,date_ts,body,body_html,snippet,"
+                        "thread_id,msg_id,in_reply_to FROM emails WHERE owner_id=? ORDER BY date_ts ASC",
+                        (oid,)).fetchall()
     conn.close()
-    thread = [dict(r) for r in rows if _norm_subject(r['subject']) == key]
+    if tid:
+        thread = [dict(r) for r in rows if (r['thread_id'] or '') == tid
+                  or r['msg_id'] == base['msg_id']]
+    else:
+        key = _norm_subject(base['subject'])
+        thread = [dict(r) for r in rows if _norm_subject(r['subject']) == key]
     return jsonify({'ok': True, 'thread': thread, 'subject': base['subject']})
 
 
@@ -12655,77 +12670,25 @@ def send_candidate_email(cid):
     if not to_email or not subject or not body:
         return jsonify({'error': 'To, Subject and Body are required'}), 400
 
-    smtp_email = get_setting('smtp_email', '')
-    smtp_pass = get_setting('smtp_app_password', '')
-    smtp_name = get_setting('smtp_display_name', '') or smtp_email
-    if not smtp_email or not smtp_pass:
+    if not get_setting('smtp_email', '') or not get_setting('smtp_app_password', ''):
         return jsonify({'error': 'Email not configured. Go to Settings → Email Configuration and add your Gmail + App Password.'}), 400
-
-    # Build the email
-    msg = MIMEMultipart('alternative')
-    msg['From'] = f'{smtp_name} <{smtp_email}>' if smtp_name else smtp_email
-    msg['To'] = to_email
-    msg['Subject'] = subject
-    # Generate a stable Message-ID so replies can be threaded back to this email
-    import email.utils as _eut
-    domain = smtp_email.split('@')[-1] if '@' in smtp_email else 'hirelab.local'
-    gen_msg_id = _eut.make_msgid(domain=domain)
-    msg['Message-ID'] = gen_msg_id
-    msg['Date'] = _eut.formatdate(localtime=True)
-    # Send as both plain text and HTML
-    msg.attach(MIMEText(body, 'plain', 'utf-8'))
-    body_html = (d.get('body_html') or '').strip()
-    if body_html:
-        # Use the rich-text HTML from the editor
-        html_content = f'<div style="font-family:sans-serif;font-size:14px">{body_html}</div>'
-    else:
-        html_content = f'<div style="font-family:sans-serif;font-size:14px">{body.replace(chr(10), "<br>")}</div>'
-    msg.attach(MIMEText(html_content, 'html', 'utf-8'))
-
-    # Detect SMTP server from email domain
-    if '@gmail' in smtp_email.lower() or '@googlemail' in smtp_email.lower():
-        smtp_host, smtp_port = 'smtp.gmail.com', 587
-    elif '@outlook' in smtp_email.lower() or '@hotmail' in smtp_email.lower() or '@live' in smtp_email.lower():
-        smtp_host, smtp_port = 'smtp-mail.outlook.com', 587
-    elif '@yahoo' in smtp_email.lower():
-        smtp_host, smtp_port = 'smtp.mail.yahoo.com', 587
-    else:
-        smtp_host, smtp_port = 'smtp.gmail.com', 587  # default to Gmail
-
-    try:
-        server = smtplib.SMTP(smtp_host, smtp_port, timeout=15)
-        server.starttls()
-        server.login(smtp_email, smtp_pass)
-        server.sendmail(smtp_email, [to_email], msg.as_string())
-        server.quit()
-    except smtplib.SMTPAuthenticationError:
-        return jsonify({'error': 'Email authentication failed. Check your email address and app password in Settings.'}), 401
-    except Exception as e:
-        return jsonify({'error': f'Failed to send email: {str(e)}'}), 500
-
-    # Log to candidate journey (full email for history)
+    # Route through the ONE central email pipeline (threading + signature + multipart).
+    ok, err, mid, tid = email_service_send(
+        to_email, subject, body,
+        body_html=(d.get('body_html') or None),
+        in_reply_to=(d.get('in_reply_to') or ''),
+        references=(d.get('references') or ''),
+        thread_id=(d.get('thread_id') or ''),
+        candidate_id=cid)
+    if not ok:
+        return jsonify({'error': err or 'Failed to send email'}), 400
     u = current_user()
     who = (u.get('display_name') or u.get('username') or '') if u else ''
     full_log = f'Email sent to {to_email}\nSubject: {subject}\n\n{body}'
     if who:
         full_log += f'\n— {who}'
     log_candidate_event(cid, 'email', full_log)
-
-    # Store in the 2-way email thread table
-    try:
-        conn = get_db()
-        conn.execute(
-            'INSERT OR IGNORE INTO email_messages (company_id, candidate_id, direction, '
-            'from_addr, to_addr, subject, body, message_id, in_reply_to, sent_at, created_at) '
-            'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-            (effective_company_id(), cid, 'sent', smtp_email, to_email, subject, body,
-             gen_msg_id, '', ts(), ts()))
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
-
-    return jsonify({'ok': True, 'message': 'Email sent successfully'})
+    return jsonify({'ok': True, 'message': 'Email sent successfully', 'message_id': mid, 'thread_id': tid})
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -12981,6 +12944,173 @@ def candidate_email_thread(cid):
         (effective_company_id(), cid)).fetchall()
     conn.close()
     return jsonify({'ok': True, 'messages': [dict(r) for r in rows]})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  CENTRAL EMAIL SERVICE — one pipeline: signature + threading + MIME + SMTP
+# ══════════════════════════════════════════════════════════════════════════
+def _smtp_params():
+    """Resolve the tenant's SMTP creds + host. Returns (email, password, host, port, display_name)."""
+    email = get_setting('smtp_email', '')
+    pw = get_setting('smtp_app_password', '')
+    dname = get_setting('smtp_display_name', '') or email
+    e = (email or '').lower()
+    if '@gmail' in e or '@googlemail' in e:
+        host, port = 'smtp.gmail.com', 587
+    elif '@outlook' in e or '@hotmail' in e or '@live' in e:
+        host, port = 'smtp-mail.outlook.com', 587
+    elif '@yahoo' in e:
+        host, port = 'smtp.mail.yahoo.com', 587
+    else:
+        host, port = 'smtp.gmail.com', 587
+    return email, pw, host, port, dname
+
+
+def _build_signature():
+    """Official recruiter signature from ATS settings — (plain, html). Never
+    AI-generated. Falls back to company name if nothing is configured."""
+    html_override = get_setting('sig_html', '')
+    name = get_setting('sig_name', '') or get_setting('company_name', '')
+    desig = get_setting('sig_designation', '')
+    company = get_setting('sig_company', '') or get_setting('company_name', '') or 'HireLab'
+    phone = get_setting('sig_phone', '')
+    email = get_setting('sig_email', '') or get_setting('smtp_email', '')
+    website = get_setting('sig_website', '') or get_setting('company_website', '')
+    if html_override.strip():
+        plain = re.sub(r'<[^>]+>', '', html_override)
+        return plain.strip(), html_override
+    lines = ['Regards,']
+    if name:
+        lines.append(name)
+    if desig or company:
+        lines.append(', '.join([x for x in (desig, company) if x]))
+    if phone:
+        lines.append(phone)
+    if email:
+        lines.append(email)
+    if website:
+        lines.append(website)
+    plain = '\n'.join(lines)
+    html = ('<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#333;'
+            'margin-top:16px;border-top:1px solid #eee;padding-top:10px">Regards,<br>'
+            + (f'<b>{name}</b><br>' if name else '')
+            + ((', '.join([x for x in (desig, company) if x]) + '<br>') if (desig or company) else '')
+            + (f'{phone}<br>' if phone else '')
+            + (f'<a href="mailto:{email}" style="color:#0F6E56">{email}</a><br>' if email else '')
+            + (f'<a href="{website}" style="color:#0F6E56">{website}</a>' if website else '')
+            + '</div>')
+    return plain, html
+
+
+def _has_signature(text):
+    """Heuristic to avoid double signatures if the AI/recruiter already signed off."""
+    tail = (text or '')[-260:].lower()
+    return ('regards' in tail or 'best,' in tail or 'thanks,' in tail) and \
+           (get_setting('sig_name', '').lower() in tail or (get_setting('company_name', '') or 'hirelab').lower() in tail)
+
+
+def _text_to_html(text):
+    safe = (text or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    return ('<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;line-height:1.6">'
+            + safe.replace('\n', '<br>') + '</div>')
+
+
+def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
+                       in_reply_to='', references='', thread_id='', candidate_id=None,
+                       append_signature=True):
+    """THE single outgoing-email pipeline. Builds multipart plain+HTML, sets
+    Message-ID / In-Reply-To / References, appends the official signature, sends
+    via SMTP, and stores the sent copy in `emails` (+ `email_messages` if linked
+    to a candidate). Returns (ok, error, message_id, thread_id)."""
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.utils import make_msgid, formatdate
+    email_addr, pw, host, port, dname = _smtp_params()
+    if not email_addr or not pw:
+        return False, 'Email not configured. Go to Settings → Email and add your Gmail + App Password.', '', ''
+    to = (to or '').strip()
+    if not to or not subject or not (body_text or body_html):
+        return False, 'To, subject and message are required.', '', ''
+
+    sig_plain, sig_html = _build_signature()
+    text = (body_text or '').rstrip()
+    if append_signature and sig_plain and not _has_signature(text):
+        text = text + '\n\n' + sig_plain
+    if body_html:
+        html = body_html
+    else:
+        html = _text_to_html(body_text or '')
+    if append_signature and sig_html and not _has_signature(body_text or ''):
+        html = html + sig_html
+
+    msg = MIMEMultipart('alternative')
+    msg['From'] = f'{dname} <{email_addr}>' if dname else email_addr
+    msg['To'] = to
+    if cc:
+        msg['Cc'] = cc
+    msg['Subject'] = subject
+    mid = make_msgid(domain=email_addr.split('@')[-1] if '@' in email_addr else 'hirelab.com')
+    msg['Message-ID'] = mid
+    msg['Date'] = formatdate(localtime=True)
+    refs = references or ''
+    if in_reply_to:
+        msg['In-Reply-To'] = in_reply_to
+        refs = (refs + ' ' + in_reply_to).strip()
+        msg['References'] = refs
+    msg.attach(MIMEText(text, 'plain', 'utf-8'))
+    msg.attach(MIMEText(html, 'html', 'utf-8'))
+
+    rcpts = [to]
+    for extra in (cc, bcc):
+        if extra:
+            rcpts += [x.strip() for x in extra.split(',') if x.strip()]
+    try:
+        server = smtplib.SMTP(host, port, timeout=20)
+        server.starttls()
+        server.login(email_addr, pw)
+        server.sendmail(email_addr, rcpts, msg.as_string())
+        server.quit()
+    except smtplib.SMTPAuthenticationError:
+        return False, 'Email authentication failed. Check your email + app password in Settings.', '', ''
+    except Exception as e:
+        return False, f'Failed to send email: {str(e)}', '', ''
+
+    tid = thread_id or in_reply_to or mid
+    try:
+        conn = get_db(); oid = effective_company_id()
+        conn.execute("INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,cc,bcc,subject,"
+                     "date_str,date_ts,snippet,body,body_html,in_reply_to,refs,thread_id,candidate_id,is_read,"
+                     "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
+                     (oid, mid, 'Sent', email_addr, dname or email_addr, to, cc or '', bcc or '', subject,
+                      ts(), time.time(), text[:200], text, html, in_reply_to, refs, tid, candidate_id, ts()))
+        if candidate_id:
+            conn.execute("INSERT OR IGNORE INTO email_messages (company_id,candidate_id,direction,from_addr,to_addr,"
+                         "subject,body,message_id,in_reply_to,sent_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                         (oid, candidate_id, 'sent', email_addr, to, subject, text, mid, in_reply_to, ts(), ts()))
+        conn.commit(); conn.close()
+    except Exception as _e:
+        print('[email-service] store error:', _e)
+    return True, None, mid, tid
+
+
+@app.route('/api/email/signature', methods=['GET'])
+@login_required
+def email_signature_get():
+    keys = ['sig_name', 'sig_designation', 'sig_company', 'sig_phone', 'sig_email', 'sig_website', 'sig_html']
+    data = {k: get_setting(k, '') for k in keys}
+    plain, html = _build_signature()
+    data['preview_html'] = html
+    return jsonify({'ok': True, **data})
+
+
+@app.route('/api/email/signature', methods=['POST'])
+@login_required
+def email_signature_save():
+    d = request.json or {}
+    for k in ['sig_name', 'sig_designation', 'sig_company', 'sig_phone', 'sig_email', 'sig_website', 'sig_html']:
+        if k in d:
+            set_setting(k, (d.get(k) or '').strip())
+    return jsonify({'ok': True})
 
 
 def _smtp_send(to_email, subject, plain_body, html_body=None):
