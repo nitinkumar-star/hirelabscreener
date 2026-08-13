@@ -7615,19 +7615,91 @@ def _followup_draft(first, role, recruiter, fno):
     return subs[i], bodies[i]
 
 
+_DEFAULT_AGENT_KB = """EMAIL AGENT — INSTRUCTIONS & KNOWLEDGE BASE
+(Edit this freely. The agent follows these rules when it reads replies and drafts emails. Change anything that feels off — no code changes needed.)
+
+WHO WE ARE / TONE
+- Recruiter's assistant for HireLab, a specialist recruitment firm in Solar, Electrical, Automation & Renewable Energy (PLC, SCADA, BMS, Siemens, ABB, Schneider, Honeywell).
+- Write warm, professional and concise. No emojis. No jargon. Short paragraphs. Always sign off with the signature below.
+
+FOLLOW-UPS (candidate has not replied)
+- Maximum 3 follow-ups, then stop.
+- Cadence: 1st after 2 days, 2nd after 3 more days, 3rd after 4 more days.
+- Vary the angle each time; the final one is a soft "last check — happy to keep you posted on future roles".
+
+WHEN A CANDIDATE REPLIES
+- Classify intent: interested / not_interested / needs_info / asked_jd / not_now / other.
+- Extract and save if they mention it: current CTC, expected CTC, notice period, current company, location.
+- Draft a suitable reply: interested -> confirm & outline next steps; asked for JD -> share it; not now -> acknowledge warmly and offer to stay in touch.
+
+NOT INTERESTED -> ASK FOR A REFERRAL
+- Thank them, share the JD, and politely ask if anyone in their network fits the role.
+
+SAFETY (change only if you are sure)
+- The agent ONLY drafts. It never sends automatically — you approve every email.
+- Never contact anyone who asked to stop / opt out.
+
+SIGNATURE
+- HireLab Talent
+"""
+
+
+def _agent_cfg():
+    """Editable Email-Agent config + knowledge base (all recruiter-controlled)."""
+    kb = get_setting('email_agent_kb', '')
+    if not kb.strip():
+        kb = _DEFAULT_AGENT_KB
+    gaps = (get_setting('email_agent_gaps', '') or '2,3,4')
+    try:
+        gap_list = [int(x) for x in gaps.split(',') if x.strip()][:6] or [2, 3, 4]
+    except Exception:
+        gap_list = [2, 3, 4]
+    try:
+        max_fu = int(get_setting('email_agent_max_fu', '') or 3)
+    except Exception:
+        max_fu = 3
+    sig = get_setting('email_agent_signature', '') or (get_setting('company_name', '') or 'HireLab') + ' Talent'
+    return {'kb': kb, 'gaps': gap_list, 'max_fu': max(1, max_fu), 'signature': sig}
+
+
+@app.route('/api/email-agent/kb', methods=['GET'])
+@login_required
+def email_agent_kb_get():
+    cfg = _agent_cfg()
+    return jsonify({'ok': True, 'kb': cfg['kb'], 'gaps': ','.join(str(g) for g in cfg['gaps']),
+                    'max_fu': cfg['max_fu'], 'signature': cfg['signature']})
+
+
+@app.route('/api/email-agent/kb', methods=['POST'])
+@login_required
+def email_agent_kb_save():
+    d = request.json or {}
+    if 'kb' in d:
+        set_setting('email_agent_kb', (d.get('kb') or '').strip())
+    if 'gaps' in d:
+        set_setting('email_agent_gaps', (d.get('gaps') or '2,3,4').strip())
+    if 'max_fu' in d:
+        set_setting('email_agent_max_fu', str(d.get('max_fu') or 3))
+    if 'signature' in d:
+        set_setting('email_agent_signature', (d.get('signature') or '').strip())
+    return jsonify({'ok': True})
+
+
 def _process_reply(conn, oid, cand, reply_body):
     """When a candidate replies: classify intent, extract CTC/notice/company,
     draft a suitable reply (or a referral if not interested), and fill any EMPTY
     fields on the candidate record. Best-effort — needs a DeepSeek key."""
     role = cand.get('role') or 'the role'
     first = (cand.get('name') or 'there').split(' ')[0]
-    recruiter = get_setting('company_name', '') or 'HireLab'
+    cfg = _agent_cfg()
+    recruiter = cfg['signature']
     out = {'intent': '', 'extracted': {}, 'kind': 'reply', 'subject': 'Re: ' + role, 'body': ''}
     ds_key = get_setting('deepseek_api_key')
     if not ds_key or not (reply_body or '').strip():
         return out
-    sysmsg = ("You are a recruiter's assistant. Read the candidate's email reply and return ONLY compact JSON with "
-              "keys: intent (one of interested, not_interested, needs_info, asked_jd, not_now, other), "
+    sysmsg = ("Follow these recruiter instructions strictly:\n" + cfg['kb'] + "\n\n"
+              "Now: read the candidate's email reply and return ONLY compact JSON with keys: "
+              "intent (one of interested, not_interested, needs_info, asked_jd, not_now, other), "
               "current_ctc, expected_ctc, notice_period (days as number-ish), current_company, location "
               "(use '' if not stated), reply_subject, reply_body (a short professional reply FROM the recruiter, "
               f"under 70 words, sign off as {recruiter}). Candidate first name {first}, role {role}.")
@@ -7678,7 +7750,8 @@ def _process_reply(conn, oid, cand, reply_body):
 def _email_agent_scan(oid):
     """Compute pending agent items for one company's watched candidates."""
     conn = get_db()
-    recruiter = get_setting('company_name', '') or 'HireLab'
+    cfg = _agent_cfg()
+    recruiter = cfg['signature']
     try:
         cands = conn.execute(
             "SELECT c.id,c.name,c.email,c.mandate_id,m.role,m.status FROM candidates c "
@@ -7725,7 +7798,7 @@ def _email_agent_scan(oid):
         # no reply → escalating follow-up
         fu_sent = conn.execute("SELECT COUNT(*) n FROM agent_items WHERE candidate_id=? AND kind='followup' "
                                "AND status='sent'", (c['id'],)).fetchone()['n']
-        if fu_sent >= _EMAIL_AGENT_MAX_FU:
+        if fu_sent >= cfg['max_fu']:
             continue
         pend = conn.execute("SELECT 1 FROM agent_items WHERE candidate_id=? AND kind='followup' AND status='pending' "
                             "LIMIT 1", (c['id'],)).fetchone()
@@ -7733,7 +7806,7 @@ def _email_agent_scan(oid):
             continue
         last_fu = conn.execute("SELECT updated_at FROM agent_items WHERE candidate_id=? AND kind='followup' "
                                "AND status='sent' ORDER BY updated_at DESC LIMIT 1", (c['id'],)).fetchone()
-        gap_days = _EMAIL_AGENT_FU_GAP[min(fu_sent, len(_EMAIL_AGENT_FU_GAP) - 1)]
+        gap_days = cfg['gaps'][min(fu_sent, len(cfg['gaps']) - 1)]
         anchor = _ts_to_epoch(last_fu['updated_at']) if last_fu else last_out
         if anchor is None or (now - anchor) < gap_days * 86400:
             continue

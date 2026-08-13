@@ -4265,7 +4265,8 @@ async function renderEmailBox(){
       +'<div style="background:linear-gradient(135deg,#EAF6F1,#fff);border:0.5px solid #BFE3D5;border-radius:10px;padding:16px;margin-bottom:14px">'
       +'<div style="font-size:11px;color:#555;line-height:1.5">Watches replies to your emails and drafts follow-ups so <b>no candidate goes silent</b>. It only <b>drafts</b> &mdash; you approve every send. <b>OFF by default</b>: turn on a job below.</div>'
       +'<div id="ea-status" style="font-size:11px;color:#777;margin-top:8px"></div>'
-      +'<div style="margin-top:8px"><button class="btn btn-o" style="font-size:11px" onclick="loadEmailAgent()">&#8635; Refresh</button> <button class="btn btn-o" style="font-size:11px" onclick="eaScan()">Scan now</button></div></div>'
+      +'<div style="margin-top:8px"><button class="btn btn-o" style="font-size:11px" onclick="loadEmailAgent()">&#8635; Refresh</button> <button class="btn btn-o" style="font-size:11px" onclick="eaScan()">Scan now</button> <button class="btn btn-o" style="font-size:11px;color:#5B3FA0" onclick="toggleAgentKB()">&#128214; Knowledge Base / Instructions</button></div></div>'
+      +'<div id="ea-kb" style="display:none;margin-bottom:14px"></div>'
       +'<div id="ea-mandates"></div><div id="ea-items" style="margin-top:12px"></div>';
     loadEmailAgent();
     return;
@@ -9515,6 +9516,39 @@ async function runSalaryHeatmap() {
 }
 
 // ── Email Agent (background follow-up / reply watcher) ──────────────────────
+async function toggleAgentKB(){
+  var el=document.getElementById('ea-kb'); if(!el) return;
+  if(el.style.display==='none'){ el.style.display='block'; loadEmailAgentKB(); }
+  else { el.style.display='none'; }
+}
+async function loadEmailAgentKB(){
+  var el=document.getElementById('ea-kb'); if(!el) return;
+  el.innerHTML='<div class="loading" style="padding:14px"><div class="spinner"></div>Loading instructions...</div>';
+  var r=await req('GET','/email-agent/kb');
+  if(!r||!r.ok){ el.innerHTML='<div style="color:#C0522B;padding:10px">Could not load.</div>'; return; }
+  el.innerHTML='<div style="background:#fff;border:0.5px solid #D6C9F0;border-radius:10px;padding:14px 16px;box-shadow:var(--shadow-sm)">'
+    +'<div style="font-size:11px;font-weight:700;color:#5B3FA0;margin-bottom:4px">&#128214; KNOWLEDGE BASE &amp; INSTRUCTIONS</div>'
+    +'<div style="font-size:10.5px;color:var(--muted);margin-bottom:8px">Edit how the agent behaves. It reads this every time it drafts a reply. Change anything that feels off &mdash; no need to ask anyone.</div>'
+    +'<textarea class="inp" id="kb-text" rows="14" style="width:100%;font-size:12px;font-family:ui-monospace,monospace;line-height:1.5">'+esc(r.kb||'')+'</textarea>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">'
+    +'<div><label style="font-size:10px;color:#888;display:block">Max follow-ups</label><input class="inp" id="kb-maxfu" value="'+esc(String(r.max_fu||3))+'" style="width:80px;font-size:12px"></div>'
+    +'<div><label style="font-size:10px;color:#888;display:block">Cadence (days, comma-sep)</label><input class="inp" id="kb-gaps" value="'+esc(r.gaps||"2,3,4")+'" style="width:130px;font-size:12px"></div>'
+    +'<div style="flex:1;min-width:160px"><label style="font-size:10px;color:#888;display:block">Signature / sign-off</label><input class="inp" id="kb-sig" value="'+esc(r.signature||"")+'" style="width:100%;font-size:12px"></div>'
+    +'</div>'
+    +'<div style="margin-top:10px"><button class="btn btn-g" style="background:#5B3FA0;font-size:12px" onclick="saveEmailAgentKB(this)">&#128190; Save instructions</button> <span id="kb-status" style="font-size:11px;color:#0F6E56;margin-left:8px"></span></div>'
+    +'</div>';
+}
+async function saveEmailAgentKB(btn){
+  var kb=(document.getElementById('kb-text')||{}).value||'';
+  var maxfu=(document.getElementById('kb-maxfu')||{}).value||'3';
+  var gaps=(document.getElementById('kb-gaps')||{}).value||'2,3,4';
+  var sig=(document.getElementById('kb-sig')||{}).value||'';
+  var st=document.getElementById('kb-status'); if(st) st.textContent='Saving...'; if(btn) btn.disabled=true;
+  var r=await req('POST','/email-agent/kb',{kb:kb,max_fu:parseInt(maxfu)||3,gaps:gaps,signature:sig});
+  if(st) st.textContent=(r&&r.ok)?'Saved ✓ — the agent will use this from now on':'Save failed';
+  if(btn) btn.disabled=false;
+}
+
 async function loadEmailAgent() {
   var st = await req('GET', '/email-agent/status');
   var sd = document.getElementById('ea-status');
