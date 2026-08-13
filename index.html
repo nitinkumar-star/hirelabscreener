@@ -908,7 +908,6 @@ body{font-size:14px !important; line-height:1.5}
       <button class="ai-tab-btn" id="ai-tab-market" onclick="switchAITab('market')">&#128202; Market</button>
       <button class="ai-tab-btn" id="ai-tab-outreach" onclick="switchAITab('outreach')">&#128227; Outreach</button>
       <button class="ai-tab-btn" id="ai-tab-agent" onclick="switchAITab('agent')" style="color:#5B3FA0">&#129302; Agent</button>
-      <button class="ai-tab-btn" id="ai-tab-emailagent" onclick="switchAITab('emailagent')" style="color:#0F6E56">&#128231; Email Agent</button>
     </div>
     <div id="ai-body" style="flex:1;overflow:auto;background:#f5f5f5;padding:16px"></div>
   </div>
@@ -4258,6 +4257,19 @@ async function generatePlan(btn){
 window._emailFolder='';
 async function renderEmailBox(){
   var el=document.getElementById('emailbox-body'); if(!el) return;
+  // Email Agent view (lives inside the Email Box)
+  if(window._emailFolder==='__agent'){
+    el.innerHTML='<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">'
+      +'<button class="btn btn-o" style="font-size:12px" onclick="window._emailFolder=\'\';renderEmailBox()">&#8592; Inbox</button>'
+      +'<button class="btn" style="font-size:12px;background:#0F6E56;color:#fff;border:none">&#129302; Email Agent</button></div>'
+      +'<div style="background:linear-gradient(135deg,#EAF6F1,#fff);border:0.5px solid #BFE3D5;border-radius:10px;padding:16px;margin-bottom:14px">'
+      +'<div style="font-size:11px;color:#555;line-height:1.5">Watches replies to your emails and drafts follow-ups so <b>no candidate goes silent</b>. It only <b>drafts</b> &mdash; you approve every send. <b>OFF by default</b>: turn on a job below.</div>'
+      +'<div id="ea-status" style="font-size:11px;color:#777;margin-top:8px"></div>'
+      +'<div style="margin-top:8px"><button class="btn btn-o" style="font-size:11px" onclick="loadEmailAgent()">&#8635; Refresh</button> <button class="btn btn-o" style="font-size:11px" onclick="eaScan()">Scan now</button></div></div>'
+      +'<div id="ea-mandates"></div><div id="ea-items" style="margin-top:12px"></div>';
+    loadEmailAgent();
+    return;
+  }
   el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
   var r={};
   try{ r=await req('GET','/emailbox/list'+(window._emailFolder?('?folder='+window._emailFolder):'')); }catch(e){}
@@ -4274,7 +4286,7 @@ async function renderEmailBox(){
   }).join('');
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
     +'<div style="display:flex;gap:6px">'+tab('','All')+tab('Inbox','Inbox')+tab('Sent','Sent')+'</div>'
-    +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync (last 30 days)</button></div>'
+    +'<div style="display:flex;gap:6px"><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync (last 30 days)</button></div></div>'
     +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden">'
     +(rows||'<div style="padding:30px;text-align:center;color:#aaa">No emails yet. Click <b>Sync</b> to pull your inbox + sent (last 30 days).</div>')+'</div>';
 }
@@ -9289,7 +9301,6 @@ function switchAITab(tab) {
   var mkb = document.getElementById('ai-tab-market'); if (mkb) mkb.className = 'ai-tab-btn' + (tab==='market'?' ai-tab-active':'');
   var orb = document.getElementById('ai-tab-outreach'); if (orb) orb.className = 'ai-tab-btn' + (tab==='outreach'?' ai-tab-active':'');
   var agb = document.getElementById('ai-tab-agent'); if (agb) agb.className = 'ai-tab-btn' + (tab==='agent'?' ai-tab-active':'');
-  var eab = document.getElementById('ai-tab-emailagent'); if (eab) eab.className = 'ai-tab-btn' + (tab==='emailagent'?' ai-tab-active':'');
   renderAITab();
 }
 
@@ -9407,17 +9418,7 @@ function renderAITab() {
       + '<div id="agent-panel" style="margin-top:16px"></div>'
       + '</div>';
   } else if (aiActiveTab === 'emailagent') {
-    body.innerHTML =
-      '<div style="max-width:820px;margin:0 auto">'
-      + '<div style="background:linear-gradient(135deg,#EAF6F1,#fff);border:0.5px solid #BFE3D5;border-radius:10px;padding:16px;box-shadow:var(--shadow-sm)">'
-      + '<div style="font-size:13px;font-weight:600;color:#0F6E56;margin-bottom:4px">&#128231; Email Agent</div>'
-      + '<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Watches replies to your emails and drafts follow-ups so <b>no candidate goes silent</b>. It only <b>drafts</b> &mdash; you approve every send. <b>OFF by default</b>: turn on a job below.</div>'
-      + '<div id="ea-status" style="font-size:11px;color:var(--muted)"></div>'
-      + '<div style="margin-top:8px"><button class="btn btn-o" style="font-size:11px" onclick="loadEmailAgent()">&#8635; Refresh</button> <button class="btn btn-o" style="font-size:11px" onclick="eaScan()">Scan now</button></div>'
-      + '</div>'
-      + '<div id="ea-mandates" style="margin-top:16px"></div>'
-      + '<div id="ea-items" style="margin-top:12px"></div>'
-      + '</div>';
+    body.innerHTML = '<div style="max-width:760px;margin:0 auto;text-align:center;color:var(--muted);padding:40px">The Email Agent has moved to the <b>Email Box</b> &rarr; &#128231; Email Agent tab.</div>';
   } else {
     body.innerHTML =
       '<div style="max-width:760px;margin:0 auto">'
@@ -9442,7 +9443,6 @@ function renderAITab() {
   if (aiActiveTab === 'movement') loadMovementFlows();
   if (aiActiveTab === 'outreach') { loadOutreachMandates(); loadOutreachStats(); }
   if (aiActiveTab === 'agent') loadAgentMandates();
-  if (aiActiveTab === 'emailagent') loadEmailAgent();
 }
 
 function aiChip(q) {
@@ -9513,11 +9513,16 @@ async function loadEmailAgent() {
               : (it.kind==='referral' ? '<span style="font-size:9px;background:#FFF3E9;color:#C0522B;padding:1px 7px;border-radius:5px">REFERRAL</span>'
                  : '<span style="font-size:9px;background:#EAF6F1;color:#0F6E56;padding:1px 7px;border-radius:5px">FOLLOW-UP #'+(it.followup_no||1)+'</span>');
     var subj = it.subject || (isReply ? ('Re: ' + (it.role||'')) : '');
+    var intentBadge = it.intent ? '<span style="font-size:9px;background:#F0EEF6;color:#5B3FA0;padding:1px 7px;border-radius:5px;margin-left:4px">'+esc(it.intent.replace(/_/g,' '))+'</span>' : '';
+    var ex = {}; try { ex = it.extracted ? JSON.parse(it.extracted) : {}; } catch(e){}
+    var exKeys = Object.keys(ex||{});
+    var exLine = exKeys.length ? '<div style="font-size:10px;color:#0F6E56;margin-bottom:6px">&#9989; Agent updated: '+exKeys.map(function(k){return esc(k.replace(/_/g,' '))+' '+esc(String(ex[k]));}).join(' · ')+'</div>' : '';
     html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:9px;box-shadow:var(--shadow-sm)">'
-      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'+badge
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'+badge+intentBadge
       + '<div style="flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--navy);cursor:pointer" onclick="openProfileById('+it.candidate_id+','+(it.mandate_id||'null')+')">'+esc(it.cand_name||'')+(it.cand_company?' <span style="font-weight:400;color:var(--muted)">@ '+esc(it.cand_company)+'</span>':'')+'</div>'
       + '<span style="font-size:10px;color:var(--muted)">'+esc(it.role||'')+'</span></div>'
-      + '<div style="font-size:10.5px;color:'+(isReply?'#5B3FA0':'#888')+';margin-bottom:8px">'+esc(it.reason||'')+'</div>'
+      + '<div style="font-size:10.5px;color:'+(isReply?'#5B3FA0':'#888')+';margin-bottom:6px">'+esc(it.reason||'')+'</div>'
+      + exLine
       + '<input class="inp" id="ea-sub-'+it.id+'" value="'+esc(subj)+'" placeholder="Subject" style="width:100%;font-size:12px;margin-bottom:6px">'
       + '<textarea class="inp" id="ea-body-'+it.id+'" rows="3" placeholder="'+(isReply?'Write your reply...':'')+'" style="width:100%;font-size:12px">'+esc(it.body||'')+'</textarea>'
       + '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'

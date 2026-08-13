@@ -2968,6 +2968,11 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_agent_item_status ON agent_items(owner_id, status)")
     except sqlite3.OperationalError:
         pass
+    for _col in ("intent TEXT DEFAULT ''", "extracted TEXT DEFAULT ''"):
+        try:
+            c.execute(f"ALTER TABLE agent_items ADD COLUMN {_col}")
+        except sqlite3.OperationalError:
+            pass
 
     # Migrate: add reminders table if not exists
     c.execute('''CREATE TABLE IF NOT EXISTS reminders (
@@ -7610,6 +7615,66 @@ def _followup_draft(first, role, recruiter, fno):
     return subs[i], bodies[i]
 
 
+def _process_reply(conn, oid, cand, reply_body):
+    """When a candidate replies: classify intent, extract CTC/notice/company,
+    draft a suitable reply (or a referral if not interested), and fill any EMPTY
+    fields on the candidate record. Best-effort — needs a DeepSeek key."""
+    role = cand.get('role') or 'the role'
+    first = (cand.get('name') or 'there').split(' ')[0]
+    recruiter = get_setting('company_name', '') or 'HireLab'
+    out = {'intent': '', 'extracted': {}, 'kind': 'reply', 'subject': 'Re: ' + role, 'body': ''}
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key or not (reply_body or '').strip():
+        return out
+    sysmsg = ("You are a recruiter's assistant. Read the candidate's email reply and return ONLY compact JSON with "
+              "keys: intent (one of interested, not_interested, needs_info, asked_jd, not_now, other), "
+              "current_ctc, expected_ctc, notice_period (days as number-ish), current_company, location "
+              "(use '' if not stated), reply_subject, reply_body (a short professional reply FROM the recruiter, "
+              f"under 70 words, sign off as {recruiter}). Candidate first name {first}, role {role}.")
+    try:
+        rr = call_deepseek(ds_key, {'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 450,
+            'messages': [{'role': 'system', 'content': sysmsg}, {'role': 'user', 'content': reply_body[:4000]}]},
+            timeout=45, endpoint='email-agent')
+        if rr.status_code == 200:
+            raw = (rr.json()['choices'][0]['message']['content'] or '').strip()
+            a, b = raw.find('{'), raw.rfind('}')
+            if a >= 0 and b > a:
+                j = json.loads(raw[a:b + 1])
+                out['intent'] = (j.get('intent') or '').strip()
+                out['extracted'] = {k: j.get(k, '') for k in
+                                    ('current_ctc', 'expected_ctc', 'notice_period', 'current_company', 'location')
+                                    if (j.get(k) or '').strip()}
+                out['subject'] = (j.get('reply_subject') or ('Re: ' + role)).strip()
+                out['body'] = (j.get('reply_body') or '').strip()
+                if out['intent'] == 'not_interested':
+                    out['kind'] = 'referral'
+                    out['subject'] = 'Re: ' + role
+                    out['body'] = (f"Thanks for letting me know, {first} — completely understand. I'm attaching the JD; "
+                                   f"if anyone in your network would suit a {role} role, a quick intro would mean a lot. "
+                                   f"Happy to return the favour anytime. — {recruiter}")
+                # Fill EMPTY candidate fields only (never overwrite good data)
+                ex = out['extracted']; cid = cand['id']
+                if ex.get('current_company'):
+                    conn.execute("UPDATE candidates SET company=? WHERE id=? AND TRIM(COALESCE(company,''))=''",
+                                 (ex['current_company'], cid))
+                if ex.get('location'):
+                    conn.execute("UPDATE candidates SET location=? WHERE id=? AND TRIM(COALESCE(location,''))=''",
+                                 (ex['location'], cid))
+                nd = re.search(r'\d+', str(ex.get('notice_period', '')))
+                if nd:
+                    conn.execute("UPDATE candidates SET notice_period=? WHERE id=? AND COALESCE(notice_period,0)=0",
+                                 (int(nd.group(0)), cid))
+                cc = _lpa(ex.get('current_ctc', ''))
+                if cc:
+                    conn.execute("UPDATE candidates SET ctc_current=? WHERE id=? AND COALESCE(ctc_current,0)=0", (cc, cid))
+                ec = _lpa(ex.get('expected_ctc', ''))
+                if ec:
+                    conn.execute("UPDATE candidates SET ctc_expected=? WHERE id=? AND COALESCE(ctc_expected,0)=0", (ec, cid))
+    except Exception as _e:
+        print('[email-agent] reply process error:', _e)
+    return out
+
+
 def _email_agent_scan(oid):
     """Compute pending agent items for one company's watched candidates."""
     conn = get_db()
@@ -7641,15 +7706,20 @@ def _email_agent_scan(oid):
 
         if last_in and last_in > last_out:
             key = f"reply:{c['id']}:{int(last_in)}"
-            try:
-                conn.execute("INSERT OR IGNORE INTO agent_items (owner_id,candidate_id,mandate_id,kind,status,"
-                             "subject,body,reason,dedup_key,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                             (oid, c['id'], c['mandate_id'], 'reply', 'pending', '', '',
-                              f"{c['name']} replied — needs your response", key, ts(), ts()))
+            exists = conn.execute("SELECT 1 FROM agent_items WHERE owner_id=? AND dedup_key=? LIMIT 1",
+                                  (oid, key)).fetchone()
+            if not exists:
+                em = conn.execute("SELECT body, snippet FROM emails WHERE owner_id=? AND LOWER(from_addr) LIKE ? "
+                                  "ORDER BY date_ts DESC LIMIT 1", (oid, '%' + email + '%')).fetchone()
+                rbody = (em['body'] if (em and em['body']) else (em['snippet'] if em else '')) or ''
+                pr = _process_reply(conn, oid, {'id': c['id'], 'name': c['name'], 'role': role}, rbody)
+                reason = f"{c['name']} replied" + (f" · {pr['intent'].replace('_', ' ')}" if pr['intent'] else " — needs your response")
+                conn.execute("INSERT OR IGNORE INTO agent_items (owner_id,candidate_id,mandate_id,kind,status,subject,"
+                             "body,reason,dedup_key,intent,extracted,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                             (oid, c['id'], c['mandate_id'], pr['kind'], 'pending', pr['subject'], pr['body'],
+                              reason, key, pr['intent'], json.dumps(pr['extracted']), ts(), ts()))
                 if conn.total_changes:
                     created += 1
-            except Exception:
-                pass
             continue
 
         # no reply → escalating follow-up
@@ -7891,9 +7961,12 @@ def market_report():
 
 
 def _lpa(v):
-    """Parse a CTC value into LPA (lakhs). Handles rupee amounts too."""
+    """Parse a CTC value into LPA (lakhs). Handles '18 LPA', '18,00,000', 1800000."""
+    m = re.search(r'\d+(?:\.\d+)?', str(v).replace(',', ''))
+    if not m:
+        return None
     try:
-        x = float(str(v).replace(',', '').strip())
+        x = float(m.group(0))
     except Exception:
         return None
     if x <= 0:
