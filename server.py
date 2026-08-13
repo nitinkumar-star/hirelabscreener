@@ -11290,6 +11290,53 @@ def emailbox_get(eid):
     return jsonify({'ok': True, 'email': dict(r)})
 
 
+def _norm_subject(s):
+    s = (s or '').strip()
+    while re.match(r'^\s*(re|fwd|fw)\s*:\s*', s, flags=re.I):
+        s = re.sub(r'^\s*(re|fwd|fw)\s*:\s*', '', s, flags=re.I)
+    return s.strip().lower()
+
+
+@app.route('/api/emailbox/send', methods=['POST'])
+@login_required
+def emailbox_send():
+    """Compose / reply — send to any address and store a copy in Sent so the
+    thread stays complete (this is what lets the agent draft replies in-thread)."""
+    d = request.json or {}
+    to = (d.get('to') or '').strip()
+    subject = (d.get('subject') or '').strip()
+    body = (d.get('body') or '').strip()
+    if not to or not subject or not body:
+        return jsonify({'error': 'To, subject and message are all required'}), 400
+    ok, err = _smtp_send(to, subject, body)
+    if not ok:
+        return jsonify({'error': err or 'Send failed'}), 400
+    conn = get_db(); oid = effective_company_id()
+    frm = get_setting('smtp_email', '')
+    conn.execute("INSERT INTO emails (owner_id,folder,from_addr,from_name,to_addr,subject,date_str,date_ts,"
+                 "snippet,body,is_read,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,?)",
+                 (oid, 'Sent', frm, get_setting('smtp_display_name', '') or frm, to, subject,
+                  ts(), time.time(), body[:200], body, ts()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/emailbox/thread', methods=['GET'])
+@login_required
+def emailbox_thread():
+    eid = request.args.get('eid')
+    conn = get_db(); oid = effective_company_id()
+    base = conn.execute("SELECT subject FROM emails WHERE id=? AND owner_id=?", (eid, oid)).fetchone()
+    if not base:
+        conn.close(); return jsonify({'error': 'not found'}), 404
+    key = _norm_subject(base['subject'])
+    rows = conn.execute("SELECT id,folder,from_addr,from_name,to_addr,subject,date_ts,body,body_html,snippet "
+                        "FROM emails WHERE owner_id=? ORDER BY date_ts ASC", (oid,)).fetchall()
+    conn.close()
+    thread = [dict(r) for r in rows if _norm_subject(r['subject']) == key]
+    return jsonify({'ok': True, 'thread': thread, 'subject': base['subject']})
+
+
 # ── CEO Command Center (strategic brain toward the ₹100 Cr goal) ─────────────
 CEO_BRAIN_PROMPT = """You are not an AI assistant. You are the Executive Leadership Team of HireLab, acting simultaneously as CEO, COO, CRO, CFO, Head of Recruitment, Delivery Manager, Account Director, and Business Strategist. Your only responsibility is to maximize the long-term enterprise value of HireLab. Ignore vanity metrics. Every recommendation must increase one or more of: Revenue, Gross Profit, Cash Flow, Placement Success, Client Retention, Candidate Quality, Recruiter Productivity, Business Scalability. Never optimize for activity — always optimize for business outcomes.
 

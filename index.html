@@ -4275,21 +4275,29 @@ async function renderEmailBox(){
   try{ r=await req('GET','/emailbox/list'+(window._emailFolder?('?folder='+window._emailFolder):'')); }catch(e){}
   var emails=(r&&r.emails)||[];
   function tab(id,label){ var on=window._emailFolder===id; return '<button class="btn'+(on?'':' btn-o')+'" style="font-size:12px'+(on?';background:#534AB7;color:#fff;border:none':'')+'" onclick="window._emailFolder=\''+id+'\';renderEmailBox()">'+label+'</button>'; }
-  var rows=emails.map(function(e){
-    var d=e.date_ts?new Date(e.date_ts*1000).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}):'';
-    var who=e.folder==='Sent'?('To: '+esc(e.to_addr||'')):esc(e.from_name||e.from_addr||'');
-    var fb=e.folder==='Sent'?'<span style="font-size:9px;background:#EAF3FF;color:#2456A6;padding:1px 6px;border-radius:6px">Sent</span>':'<span style="font-size:9px;background:#EAF7F0;color:#127A57;padding:1px 6px;border-radius:6px">Inbox</span>';
-    return '<div onclick="openEmail('+e.id+')" style="padding:10px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer" onmouseover="this.style.background=\'#faf9ff\'" onmouseout="this.style.background=\'\'">'
-      +'<div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:'+(e.is_read?'500':'700')+';font-size:12.5px;color:#1B1B18">'+who+'</div><div style="font-size:10.5px;color:#999;white-space:nowrap">'+fb+' '+d+'</div></div>'
-      +'<div style="font-size:12.5px;color:#333;margin-top:2px;font-weight:'+(e.is_read?'400':'600')+'">'+esc(e.subject||'(no subject)')+'</div>'
-      +'<div style="font-size:11px;color:#999;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.snippet||'')+'</div></div>';
-  }).join('');
+  window._ebEmails=emails;
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
     +'<div style="display:flex;gap:6px">'+tab('','All')+tab('Inbox','Inbox')+tab('Sent','Sent')+'</div>'
-    +'<div style="display:flex;gap:6px"><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync (last 30 days)</button></div></div>'
-    +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden">'
-    +(rows||'<div style="padding:30px;text-align:center;color:#aaa">No emails yet. Click <b>Sync</b> to pull your inbox + sent (last 30 days).</div>')+'</div>';
+    +'<div style="display:flex;gap:6px;align-items:center"><input class="inp" id="eb-search" placeholder="Search mail" style="font-size:12px;width:160px;padding:5px 9px" oninput="renderEmailList()"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="openCompose()">&#9998; Compose</button><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync</button></div></div>'
+    +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden" id="eb-list"></div>';
+  renderEmailList();
 }
+function _ebRow(e){
+  var d=e.date_ts?new Date(e.date_ts*1000).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}):'';
+  var who=e.folder==='Sent'?('To: '+esc(e.to_addr||'')):esc(e.from_name||e.from_addr||'');
+  var fb=e.folder==='Sent'?'<span style="font-size:9px;background:#EAF3FF;color:#2456A6;padding:1px 6px;border-radius:6px">Sent</span>':'<span style="font-size:9px;background:#EAF7F0;color:#127A57;padding:1px 6px;border-radius:6px">Inbox</span>';
+  return '<div onclick="openEmail('+e.id+')" style="padding:10px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer" onmouseover="this.style.background=\'#faf9ff\'" onmouseout="this.style.background=\'\'">'
+    +'<div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:'+(e.is_read?'500':'700')+';font-size:12.5px;color:#1B1B18">'+who+'</div><div style="font-size:10.5px;color:#999;white-space:nowrap">'+fb+' '+d+'</div></div>'
+    +'<div style="font-size:12.5px;color:#333;margin-top:2px;font-weight:'+(e.is_read?'400':'600')+'">'+esc(e.subject||'(no subject)')+'</div>'
+    +'<div style="font-size:11px;color:#999;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.snippet||'')+'</div></div>';
+}
+function renderEmailList(){
+  var box=document.getElementById('eb-list'); if(!box) return;
+  var qEl=document.getElementById('eb-search'); var q=(qEl?qEl.value:'').trim().toLowerCase();
+  var list=(window._ebEmails||[]).filter(function(e){ if(!q) return true; return ((e.subject||'')+' '+(e.from_name||'')+' '+(e.from_addr||'')+' '+(e.to_addr||'')+' '+(e.snippet||'')).toLowerCase().indexOf(q)>=0; });
+  box.innerHTML = list.map(_ebRow).join('') || '<div style="padding:30px;text-align:center;color:#aaa">No emails'+(q?' match your search':' yet. Click <b>Sync</b> to pull your inbox + sent')+'.</div>';
+}
+
 async function syncEmail(btn){
   if(btn){ btn.disabled=true; btn.innerHTML='&#8987; Syncing…'; }
   var r;
@@ -4300,30 +4308,56 @@ async function syncEmail(btn){
   renderEmailBox();
 }
 async function openEmail(id){
-  var r;
-  try{ r=await req('GET','/emailbox/'+id); }
-  catch(e){ toast('Error','Email load failed'); return; }
+  var r; try{ r=await req('GET','/emailbox/'+id); }catch(e){ toast('Error','Email load failed'); return; }
   if(!r || r.error || !r.email){ toast('Error',(r&&r.error)||'Could not open email'); return; }
   var e=r.email;
-  var d=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB'):(e.date_str||'');
+  var tr={}; try{ tr=await req('GET','/emailbox/thread?eid='+id); }catch(_){}
+  var msgs=(tr&&tr.thread&&tr.thread.length)?tr.thread:[e];
+  var subject=e.subject||'';
+  var rSub=/^re:/i.test(subject)?subject:('Re: '+subject);
+  var replyTo=(e.folder==='Sent')?(e.to_addr||''):(e.from_addr||'');
+  var qd=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB'):'';
+  var quoted='\n\n--- On '+qd+', '+(e.from_name||e.from_addr||'')+' wrote ---\n'+((e.body||e.snippet||'').split('\n').map(function(l){return '> '+l;}).join('\n'));
+  window._replyCtx={to:replyTo,sub:rSub,body:quoted};
+  var msgHtml=msgs.map(function(m){
+    var d=m.date_ts?new Date(m.date_ts*1000).toLocaleString('en-GB'):'';
+    var content;
+    if(m.body_html && m.body_html.length>15){ var safe=m.body_html.replace(/&/g,'&amp;').replace(/"/g,'&quot;'); content='<iframe sandbox="" referrerpolicy="no-referrer" srcdoc="'+safe+'" style="width:100%;height:280px;border:none;background:#fff"></iframe>'; }
+    else { content='<div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#222">'+esc(m.body||m.snippet||'(empty email)')+'</div>'; }
+    return '<div style="border:1px solid #eee;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:'+(m.folder==='Sent'?'#F7F9FF':'#fff')+'">'
+      +'<div style="font-size:11px;color:#666;border-bottom:1px solid #f0f0f0;padding-bottom:6px;margin-bottom:8px"><b>'+esc(m.from_name||m.from_addr||'')+'</b> &rarr; '+esc(m.to_addr||'')+' <span style="color:#aaa">&middot; '+esc(d)+' &middot; '+esc(m.folder||'')+'</span></div>'+content+'</div>';
+  }).join('');
   var ex=document.getElementById('modal-email'); if(ex) ex.remove();
-  var content;
-  if(e.body_html && e.body_html.length>15){
-    var safe=e.body_html.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-    content='<iframe sandbox="" referrerpolicy="no-referrer" srcdoc="'+safe+'" style="width:100%;height:62vh;border:none;background:#fff"></iframe>';
-  } else {
-    content='<div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#222;max-height:62vh;overflow:auto">'+esc(e.body||e.snippet||'(empty email)')+'</div>';
-  }
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-email';
-  bg.innerHTML='<div class="modal" style="max-width:760px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">'+esc(e.subject||'(no subject)')+'</span><button class="modal-x" onclick="document.getElementById(\'modal-email\').remove()">&#10005;</button></div>'
-    +'<div class="modal-body" style="max-height:82vh;overflow:auto">'
-    +'<div style="font-size:12px;color:#555;border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:10px">'
-      +'<div><b>From:</b> '+esc(e.from_name||'')+' &lt;'+esc(e.from_addr||'')+'&gt;</div>'
-      +'<div><b>To:</b> '+esc(e.to_addr||'')+'</div>'
-      +'<div style="color:#999">'+esc(d)+' &middot; '+esc(e.folder||'')+'</div></div>'
-    +content+'</div></div>';
+  bg.innerHTML='<div class="modal" style="max-width:760px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">'+esc(subject||'(no subject)')+' <span style="font-size:11px;color:#999">('+msgs.length+')</span></span><button class="modal-x" onclick="document.getElementById(\'modal-email\').remove()">&#10005;</button></div>'
+    +'<div class="modal-body" style="max-height:80vh;overflow:auto">'
+    +'<div style="margin-bottom:10px"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="document.getElementById(\'modal-email\').remove();replyFromEmail()">&#8617; Reply</button></div>'
+    +msgHtml+'</div></div>';
   document.body.appendChild(bg);
 }
+function replyFromEmail(){ var c=window._replyCtx||{}; openCompose(c.to,c.sub,c.body); }
+function openCompose(to, subject, body){
+  var ex=document.getElementById('modal-compose'); if(ex) ex.remove();
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-compose';
+  bg.innerHTML='<div class="modal" style="max-width:640px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">New message</span><button class="modal-x" onclick="document.getElementById(\'modal-compose\').remove()">&#10005;</button></div>'
+    +'<div class="modal-body">'
+    +'<input class="inp" id="cmp-to" placeholder="To (email)" value="'+esc(to||'')+'" style="width:100%;margin-bottom:8px">'
+    +'<input class="inp" id="cmp-sub" placeholder="Subject" value="'+esc(subject||'')+'" style="width:100%;margin-bottom:8px">'
+    +'<textarea class="inp" id="cmp-body" rows="10" placeholder="Write your message..." style="width:100%">'+esc(body||'')+'</textarea>'
+    +'<div style="margin-top:10px"><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="sendCompose(this)">&#9993; Send</button> <span id="cmp-status" style="font-size:11px;color:#0F6E56;margin-left:8px"></span></div>'
+    +'</div></div>';
+  document.body.appendChild(bg);
+}
+async function sendCompose(btn){
+  var to=(document.getElementById('cmp-to')||{}).value||'', sub=(document.getElementById('cmp-sub')||{}).value||'', body=(document.getElementById('cmp-body')||{}).value||'';
+  to=to.trim(); sub=sub.trim(); body=body.trim();
+  if(!to||!sub||!body){ toast('EMAIL','To, subject and message are required'); return; }
+  var st=document.getElementById('cmp-status'); if(st) st.textContent='Sending...'; if(btn) btn.disabled=true;
+  var r=await req('POST','/emailbox/send',{to:to,subject:sub,body:body});
+  if(r&&r.ok){ if(st) st.textContent='Sent \u2713'; setTimeout(function(){ var m=document.getElementById('modal-compose'); if(m) m.remove(); if(document.getElementById('emailbox-body')) renderEmailBox(); },700); }
+  else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Send failed'; } if(btn) btn.disabled=false; }
+}
+
 function _invRup(n){ return '\u20B9'+Number(Math.round(n||0)).toLocaleString('en-IN'); }
 function _invCard(label,val,col){
   return '<div style="flex:1;min-width:150px;background:#fff;border:1px solid #eee;border-left:3px solid '+col+';border-radius:9px;padding:12px 14px"><div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.4px">'+label+'</div><div style="font-size:20px;font-weight:700;color:'+col+';margin-top:3px">'+val+'</div></div>';
