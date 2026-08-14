@@ -4283,22 +4283,31 @@ async function renderEmailBox(){
     +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden" id="eb-list"></div>';
   renderEmailList();
 }
-function _ebRow(e){
+function _ebRow(e, count, unread){
   var d=e.date_ts?new Date(e.date_ts*1000).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}):'';
   var isDraft=e.is_draft||e.folder==='Drafts';
+  var anyUnread=(unread||0)>0 || (!isDraft && !e.is_read);
   var who=isDraft?('To: '+esc(e.to_addr||'(no recipient)')):(e.folder==='Sent'?('To: '+esc(e.to_addr||'')):esc(e.from_name||e.from_addr||''));
+  var cnt=(count&&count>1)?(' <span style="font-size:9px;color:#666;background:#eee;border-radius:8px;padding:0 6px">'+count+'</span>'):'';
   var fb=isDraft?'<span style="font-size:9px;background:#FBECEC;color:#B23B3B;padding:1px 6px;border-radius:6px">Draft</span>':(e.folder==='Sent'?'<span style="font-size:9px;background:#EAF3FF;color:#2456A6;padding:1px 6px;border-radius:6px">Sent</span>':'<span style="font-size:9px;background:#EAF7F0;color:#127A57;padding:1px 6px;border-radius:6px">Inbox</span>');
   var click=isDraft?('openDraft('+e.id+')'):('openEmail('+e.id+')');
   return '<div onclick="'+click+'" style="padding:10px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer" onmouseover="this.style.background=\'#faf9ff\'" onmouseout="this.style.background=\'\'">'
-    +'<div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:'+(e.is_read?'500':'700')+';font-size:12.5px;color:#1B1B18">'+who+'</div><div style="font-size:10.5px;color:#999;white-space:nowrap">'+fb+' '+d+'</div></div>'
-    +'<div style="font-size:12.5px;color:#333;margin-top:2px;font-weight:'+(e.is_read?'400':'600')+'">'+esc(e.subject||'(no subject)')+'</div>'
+    +'<div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:'+(anyUnread?'700':'500')+';font-size:12.5px;color:#1B1B18">'+who+cnt+'</div><div style="font-size:10.5px;color:#999;white-space:nowrap">'+fb+' '+d+'</div></div>'
+    +'<div style="font-size:12.5px;color:#333;margin-top:2px;font-weight:'+(anyUnread?'700':'400')+'">'+esc(e.subject||'(no subject)')+'</div>'
     +'<div style="font-size:11px;color:#999;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.snippet||'')+'</div></div>';
 }
 function renderEmailList(){
   var box=document.getElementById('eb-list'); if(!box) return;
   var qEl=document.getElementById('eb-search'); var q=(qEl?qEl.value:'').trim().toLowerCase();
   var list=(window._ebEmails||[]).filter(function(e){ if(!q) return true; return ((e.subject||'')+' '+(e.from_name||'')+' '+(e.from_addr||'')+' '+(e.to_addr||'')+' '+(e.snippet||'')).toLowerCase().indexOf(q)>=0; });
-  box.innerHTML = list.map(_ebRow).join('') || '<div style="padding:30px;text-align:center;color:#aaa">No emails'+(q?' match your search':' yet. Click <b>Sync</b> to pull your inbox + sent')+'.</div>';
+  var groups={}, order=[];
+  list.forEach(function(e){
+    var key=(e.is_draft||e.folder==='Drafts')?('d'+e.id):('t'+(e.thread_id||('id'+e.id)));
+    if(!groups[key]){ groups[key]={latest:e,count:1,unread:(!e.is_read&&e.folder!=='Sent'&&e.folder!=='Drafts')?1:0}; order.push(key); }
+    else { var g=groups[key]; g.count++; if(!e.is_read&&e.folder!=='Sent'&&e.folder!=='Drafts') g.unread++; if((e.date_ts||0)>(g.latest.date_ts||0)) g.latest=e; }
+  });
+  box.innerHTML = order.map(function(k){ var g=groups[k]; return _ebRow(g.latest,g.count,g.unread); }).join('')
+    || '<div style="padding:30px;text-align:center;color:#aaa">No emails'+(q?' match your search':' yet. Click <b>Sync</b> to pull your inbox + sent')+'.</div>';
 }
 
 async function syncEmail(btn){
