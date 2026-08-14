@@ -11287,6 +11287,15 @@ def _find_sent_folder(M):
     return '[Gmail]/Sent Mail'
 
 
+def _conv_thread_id(a, b, subject):
+    """Deterministic thread id from the two participants + normalised subject.
+    Guarantees every message in a conversation groups together even when email
+    headers are missing or rewritten by the provider."""
+    parts = sorted([(a or '').lower().strip(), (b or '').lower().strip()])
+    key = _norm_subject(subject) + '|' + '|'.join(parts)
+    return 'conv-' + hashlib.md5(key.encode('utf-8')).hexdigest()[:16]
+
+
 def _resolve_thread_id(conn, oid, in_reply_to, references, subject):
     """Thread priority: In-Reply-To -> References -> subject (fallback). Empty -> new."""
     refs = []
@@ -11354,7 +11363,8 @@ def _sync_mailbox(oid):
                         text = text[:20000]; htmlbody = (htmlbody or '')[:400000]
                         snip = re.sub(r'\s+', ' ', text)[:220]
                         cid = email_to_cid.get((addr or '').lower()) or email_to_cid.get((taddr or '').lower())
-                        tid = _resolve_thread_id(conn, oid, irt, refs, subject) or mid
+                        other = addr if fname == 'Inbox' else (taddr or addr)
+                        tid = _resolve_thread_id(conn, oid, irt, refs, subject) or _conv_thread_id(user, other, subject)
                         ex = conn.execute('SELECT id FROM emails WHERE owner_id=? AND msg_id=?', (oid, mid)).fetchone()
                         if ex:
                             conn.execute("UPDATE emails SET body=?, body_html=?, snippet=?, in_reply_to=?, refs=?, "
@@ -11504,6 +11514,25 @@ def emailbox_send():
     if not ok:
         return jsonify({'error': err or 'Send failed'}), 400
     return jsonify({'ok': True, 'message_id': mid, 'thread_id': tid})
+
+
+@app.route('/api/emailbox/rethread', methods=['POST'])
+@login_required
+def emailbox_rethread():
+    """One-time repair: regroup the whole mailbox by conversation (participants +
+    subject), so existing emails thread correctly regardless of headers."""
+    oid = effective_company_id()
+    user = (get_setting('smtp_email', '') or '').lower()
+    conn = get_db()
+    rows = conn.execute("SELECT id,folder,from_addr,to_addr,subject FROM emails WHERE owner_id=?", (oid,)).fetchall()
+    n = 0
+    for r in rows:
+        other = r['from_addr'] if (r['folder'] == 'Inbox') else (r['to_addr'] or r['from_addr'])
+        tid = _conv_thread_id(user, other, r['subject'])
+        conn.execute("UPDATE emails SET thread_id=? WHERE id=?", (tid, r['id']))
+        n += 1
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'rethreaded': n})
 
 
 @app.route('/api/emailbox/thread', methods=['GET'])
@@ -13071,10 +13100,27 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
     mid = make_msgid(domain=email_addr.split('@')[-1] if '@' in email_addr else 'hirelab.com')
     msg['Message-ID'] = mid
     msg['Date'] = formatdate(localtime=True)
-    refs = references or ''
+    # Build a COMPLETE References chain so Gmail/Outlook thread reliably.
+    if in_reply_to and not references:
+        try:
+            _c0 = get_db()
+            _pr = _c0.execute("SELECT refs FROM emails WHERE owner_id=? AND msg_id=? LIMIT 1",
+                              (effective_company_id(), in_reply_to)).fetchone()
+            _c0.close()
+            if _pr and _pr['refs']:
+                references = _pr['refs']
+        except Exception:
+            pass
+    ref_ids = []
+    for chunk in (references or '').split():
+        if chunk and chunk not in ref_ids:
+            ref_ids.append(chunk)
+    refs = ' '.join(ref_ids)
     if in_reply_to:
         msg['In-Reply-To'] = in_reply_to
-        refs = (refs + ' ' + in_reply_to).strip()
+        if in_reply_to not in ref_ids:
+            ref_ids.append(in_reply_to)
+        refs = ' '.join(ref_ids)
         msg['References'] = refs
     msg.attach(MIMEText(text, 'plain', 'utf-8'))
     msg.attach(MIMEText(html, 'html', 'utf-8'))
@@ -13094,7 +13140,19 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
     except Exception as e:
         return False, f'Failed to send email: {str(e)}', '', ''
 
-    tid = thread_id or in_reply_to or mid
+    tid = thread_id
+    if not tid and in_reply_to:
+        try:
+            _c1 = get_db()
+            _pt = _c1.execute("SELECT thread_id FROM emails WHERE owner_id=? AND msg_id=? AND COALESCE(thread_id,'')!='' "
+                              "LIMIT 1", (effective_company_id(), in_reply_to)).fetchone()
+            _c1.close()
+            if _pt and _pt['thread_id']:
+                tid = _pt['thread_id']
+        except Exception:
+            pass
+    if not tid:
+        tid = _conv_thread_id(email_addr, to, subject)
     try:
         conn = get_db(); oid = effective_company_id()
         conn.execute("INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,cc,bcc,subject,"

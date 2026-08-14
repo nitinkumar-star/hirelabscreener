@@ -4279,7 +4279,7 @@ async function renderEmailBox(){
   window._ebEmails=emails;
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap">'+tab('','All')+tab('Inbox','Inbox')+tab('Unread','Unread')+tab('Sent','Sent')+tab('Drafts','Drafts')+'</div>'
-    +'<div style="display:flex;gap:6px;align-items:center"><input class="inp" id="eb-search" placeholder="Search mail" style="font-size:12px;width:160px;padding:5px 9px" oninput="renderEmailList()"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="openCompose()">&#9998; Compose</button><button class="btn btn-o" style="font-size:12px" onclick="openSignatureEditor()">&#9997; Signature</button><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync</button></div></div>'
+    +'<div style="display:flex;gap:6px;align-items:center"><input class="inp" id="eb-search" placeholder="Search mail" style="font-size:12px;width:160px;padding:5px 9px" oninput="renderEmailList()"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="openCompose()">&#9998; Compose</button><button class="btn btn-o" style="font-size:12px" onclick="openSignatureEditor()">&#9997; Signature</button><button class="btn btn-o" style="font-size:12px" title="Regroup existing emails into conversations" onclick="ebRethread(this)">&#128260; Fix threads</button><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync</button></div></div>'
     +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden" id="eb-list"></div>';
   renderEmailList();
 }
@@ -4350,6 +4350,12 @@ async function openEmail(id){
   document.body.appendChild(bg);
 }
 function replyFromEmail(){ var c=window._replyCtx||{}; openCompose(c.to,c.sub,c.body,{in_reply_to:c.in_reply_to||'',thread_id:c.thread_id||''}); }
+async function ebRethread(btn){
+  if(btn){ btn.disabled=true; btn.textContent='Fixing...'; }
+  var r=await req('POST','/emailbox/rethread',{});
+  toast('EMAIL', (r&&r.ok)?('Regrouped '+r.rethreaded+' emails into conversations'):'Failed');
+  renderEmailBox();
+}
 async function openSignatureEditor(){
   var r=await req('GET','/email/signature'); if(!r) r={};
   var ex=document.getElementById('modal-sig'); if(ex) ex.remove();
