@@ -4278,16 +4278,18 @@ async function renderEmailBox(){
   function tab(id,label){ var on=window._emailFolder===id; return '<button class="btn'+(on?'':' btn-o')+'" style="font-size:12px'+(on?';background:#534AB7;color:#fff;border:none':'')+'" onclick="window._emailFolder=\''+id+'\';renderEmailBox()">'+label+'</button>'; }
   window._ebEmails=emails;
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
-    +'<div style="display:flex;gap:6px">'+tab('','All')+tab('Inbox','Inbox')+tab('Sent','Sent')+'</div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap">'+tab('','All')+tab('Inbox','Inbox')+tab('Unread','Unread')+tab('Sent','Sent')+tab('Drafts','Drafts')+'</div>'
     +'<div style="display:flex;gap:6px;align-items:center"><input class="inp" id="eb-search" placeholder="Search mail" style="font-size:12px;width:160px;padding:5px 9px" oninput="renderEmailList()"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="openCompose()">&#9998; Compose</button><button class="btn btn-o" style="font-size:12px" onclick="openSignatureEditor()">&#9997; Signature</button><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync</button></div></div>'
     +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden" id="eb-list"></div>';
   renderEmailList();
 }
 function _ebRow(e){
   var d=e.date_ts?new Date(e.date_ts*1000).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}):'';
-  var who=e.folder==='Sent'?('To: '+esc(e.to_addr||'')):esc(e.from_name||e.from_addr||'');
-  var fb=e.folder==='Sent'?'<span style="font-size:9px;background:#EAF3FF;color:#2456A6;padding:1px 6px;border-radius:6px">Sent</span>':'<span style="font-size:9px;background:#EAF7F0;color:#127A57;padding:1px 6px;border-radius:6px">Inbox</span>';
-  return '<div onclick="openEmail('+e.id+')" style="padding:10px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer" onmouseover="this.style.background=\'#faf9ff\'" onmouseout="this.style.background=\'\'">'
+  var isDraft=e.is_draft||e.folder==='Drafts';
+  var who=isDraft?('To: '+esc(e.to_addr||'(no recipient)')):(e.folder==='Sent'?('To: '+esc(e.to_addr||'')):esc(e.from_name||e.from_addr||''));
+  var fb=isDraft?'<span style="font-size:9px;background:#FBECEC;color:#B23B3B;padding:1px 6px;border-radius:6px">Draft</span>':(e.folder==='Sent'?'<span style="font-size:9px;background:#EAF3FF;color:#2456A6;padding:1px 6px;border-radius:6px">Sent</span>':'<span style="font-size:9px;background:#EAF7F0;color:#127A57;padding:1px 6px;border-radius:6px">Inbox</span>');
+  var click=isDraft?('openDraft('+e.id+')'):('openEmail('+e.id+')');
+  return '<div onclick="'+click+'" style="padding:10px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer" onmouseover="this.style.background=\'#faf9ff\'" onmouseout="this.style.background=\'\'">'
     +'<div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:'+(e.is_read?'500':'700')+';font-size:12.5px;color:#1B1B18">'+who+'</div><div style="font-size:10.5px;color:#999;white-space:nowrap">'+fb+' '+d+'</div></div>'
     +'<div style="font-size:12.5px;color:#333;margin-top:2px;font-weight:'+(e.is_read?'400':'600')+'">'+esc(e.subject||'(no subject)')+'</div>'
     +'<div style="font-size:11px;color:#999;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.snippet||'')+'</div></div>';
@@ -4308,6 +4310,19 @@ async function syncEmail(btn){
   toast('OK',(r.added||0)+' new email(s) synced');
   renderEmailBox();
 }
+function _emailContent(m){
+  if(m.body_html && m.body_html.length>15){ var safe=m.body_html.replace(/&/g,'&amp;').replace(/"/g,'&quot;'); return '<iframe sandbox="" referrerpolicy="no-referrer" srcdoc="'+safe+'" style="width:100%;height:280px;border:none;background:#fff"></iframe>'; }
+  var raw=m.body||m.snippet||'(empty email)';
+  var qm=raw.indexOf('\n--- On ');
+  if(qm<0){ var gm=raw.search(/\n>\s?/); if(gm>=0) qm=gm; }
+  var main=raw, quoted='';
+  if(qm>0){ main=raw.slice(0,qm); quoted=raw.slice(qm); }
+  var html='<div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#222">'+esc(main)+'</div>';
+  if(quoted){ var qid='q'+Math.random().toString(36).slice(2,8);
+    html+='<div style="margin-top:4px"><span onclick="var x=document.getElementById(\''+qid+'\');x.style.display=x.style.display===\'none\'?\'block\':\'none\'" title="Show quoted text" style="cursor:pointer;color:#888;font-size:15px;background:#eee;border-radius:6px;padding:0 8px;display:inline-block;line-height:1.4">&#8943;</span>'
+      +'<div id="'+qid+'" style="display:none;white-space:pre-wrap;font-size:12px;color:#888;border-left:2px solid #ddd;padding-left:8px;margin-top:6px">'+esc(quoted.trim())+'</div></div>'; }
+  return html;
+}
 async function openEmail(id){
   var r; try{ r=await req('GET','/emailbox/'+id); }catch(e){ toast('Error','Email load failed'); return; }
   if(!r || r.error || !r.email){ toast('Error',(r&&r.error)||'Could not open email'); return; }
@@ -4322,9 +4337,7 @@ async function openEmail(id){
   window._replyCtx={to:replyTo,sub:rSub,body:quoted,in_reply_to:(e.msg_id||''),thread_id:(e.thread_id||'')};
   var msgHtml=msgs.map(function(m){
     var d=m.date_ts?new Date(m.date_ts*1000).toLocaleString('en-GB'):'';
-    var content;
-    if(m.body_html && m.body_html.length>15){ var safe=m.body_html.replace(/&/g,'&amp;').replace(/"/g,'&quot;'); content='<iframe sandbox="" referrerpolicy="no-referrer" srcdoc="'+safe+'" style="width:100%;height:280px;border:none;background:#fff"></iframe>'; }
-    else { content='<div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#222">'+esc(m.body||m.snippet||'(empty email)')+'</div>'; }
+    var content=_emailContent(m);
     return '<div style="border:1px solid #eee;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:'+(m.folder==='Sent'?'#F7F9FF':'#fff')+'">'
       +'<div style="font-size:11px;color:#666;border-bottom:1px solid #f0f0f0;padding-bottom:6px;margin-bottom:8px"><b>'+esc(m.from_name||m.from_addr||'')+'</b> &rarr; '+esc(m.to_addr||'')+' <span style="color:#aaa">&middot; '+esc(d)+' &middot; '+esc(m.folder||'')+'</span></div>'+content+'</div>';
   }).join('');
@@ -4359,26 +4372,44 @@ async function saveSignature(btn){
 }
 function openCompose(to, subject, body, meta){
   window._composeMeta = meta || {};
+  window._composeDraftId = (meta && meta.draft_id) || null;
   var ex=document.getElementById('modal-compose'); if(ex) ex.remove();
+  var initHtml=(body||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-compose';
-  bg.innerHTML='<div class="modal" style="max-width:640px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">New message</span><button class="modal-x" onclick="document.getElementById(\'modal-compose\').remove()">&#10005;</button></div>'
+  bg.innerHTML='<div class="modal" style="max-width:660px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">New message</span><button class="modal-x" onclick="document.getElementById(\'modal-compose\').remove()">&#10005;</button></div>'
     +'<div class="modal-body">'
     +'<input class="inp" id="cmp-to" placeholder="To (email)" value="'+esc(to||'')+'" style="width:100%;margin-bottom:8px">'
     +'<input class="inp" id="cmp-sub" placeholder="Subject" value="'+esc(subject||'')+'" style="width:100%;margin-bottom:8px">'
-    +'<textarea class="inp" id="cmp-body" rows="10" placeholder="Write your message..." style="width:100%">'+esc(body||'')+'</textarea>'
-    +'<div style="margin-top:10px"><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="sendCompose(this)">&#9993; Send</button> <span id="cmp-status" style="font-size:11px;color:#0F6E56;margin-left:8px"></span></div>'
+    +'<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap">'+eBtn('bold','<b>B</b>')+eBtn('italic','<i>I</i>')+eBtn('underline','<u>U</u>')+eBtn('insertUnorderedList','&#8226; List')+eBtn('insertOrderedList','1. List')+'<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="eLink()">&#128279; Link</button></div>'
+    +'<div id="cmp-editor" contenteditable="true" style="width:100%;min-height:170px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;outline:none;overflow:auto">'+initHtml+'</div>'
+    +'<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="sendCompose(this)">&#9993; Send</button><button class="btn btn-o" onclick="saveDraft(this)">Save draft</button><span id="cmp-status" style="font-size:11px;color:#0F6E56"></span></div>'
     +'</div></div>';
   document.body.appendChild(bg);
 }
+function eBtn(cmd,label){ return '<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="document.execCommand(\''+cmd+'\',false,null);document.getElementById(\'cmp-editor\').focus()">'+label+'</button>'; }
+function eLink(){ var u=prompt('Link URL:'); if(u){ document.execCommand('createLink',false,u); } var ed=document.getElementById('cmp-editor'); if(ed) ed.focus(); }
+function _cmpVals(){ var ed=document.getElementById('cmp-editor'); return {to:((document.getElementById('cmp-to')||{}).value||'').trim(), sub:((document.getElementById('cmp-sub')||{}).value||'').trim(), html:ed?ed.innerHTML:'', text:(ed?ed.innerText:'').trim()}; }
 async function sendCompose(btn){
-  var to=(document.getElementById('cmp-to')||{}).value||'', sub=(document.getElementById('cmp-sub')||{}).value||'', body=(document.getElementById('cmp-body')||{}).value||'';
-  to=to.trim(); sub=sub.trim(); body=body.trim();
-  if(!to||!sub||!body){ toast('EMAIL','To, subject and message are required'); return; }
+  var v=_cmpVals();
+  if(!v.to||!v.sub||!v.text){ toast('EMAIL','To, subject and message are required'); return; }
   var st=document.getElementById('cmp-status'); if(st) st.textContent='Sending...'; if(btn) btn.disabled=true;
   var meta=window._composeMeta||{};
-  var r=await req('POST','/emailbox/send',{to:to,subject:sub,body:body,in_reply_to:meta.in_reply_to||'',thread_id:meta.thread_id||''});
-  if(r&&r.ok){ if(st) st.textContent='Sent \u2713'; setTimeout(function(){ var m=document.getElementById('modal-compose'); if(m) m.remove(); if(document.getElementById('emailbox-body')) renderEmailBox(); },700); }
+  var r=await req('POST','/emailbox/send',{to:v.to,subject:v.sub,body:v.text,body_html:v.html,in_reply_to:meta.in_reply_to||'',thread_id:meta.thread_id||''});
+  if(r&&r.ok){ if(window._composeDraftId){ await req('POST','/emailbox/draft/'+window._composeDraftId+'/delete',{}); } if(st) st.textContent='Sent \u2713'; setTimeout(function(){ var m=document.getElementById('modal-compose'); if(m) m.remove(); if(document.getElementById('emailbox-body')) renderEmailBox(); },700); }
   else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Send failed'; } if(btn) btn.disabled=false; }
+}
+async function saveDraft(btn){
+  var v=_cmpVals(); var meta=window._composeMeta||{};
+  var payload={to:v.to,subject:v.sub,body:v.text,body_html:v.html,in_reply_to:meta.in_reply_to||'',thread_id:meta.thread_id||''};
+  if(window._composeDraftId) payload.id=window._composeDraftId;
+  var r=await req('POST','/emailbox/draft',payload);
+  if(r&&r.id) window._composeDraftId=r.id;
+  var st=document.getElementById('cmp-status'); if(st) st.textContent='Draft saved';
+}
+async function openDraft(id){
+  var r=await req('GET','/emailbox/'+id); if(!r||!r.email) return; var e=r.email;
+  openCompose(e.to_addr||'', e.subject||'', '', {in_reply_to:e.in_reply_to||'',thread_id:e.thread_id||'',draft_id:e.id});
+  setTimeout(function(){ var ed=document.getElementById('cmp-editor'); if(ed) ed.innerHTML=(e.body_html||((e.body||'').replace(/\n/g,'<br>'))); },60);
 }
 
 function _invRup(n){ return '\u20B9'+Number(Math.round(n||0)).toLocaleString('en-IN'); }

@@ -11387,14 +11387,68 @@ def emailbox_sync():
 @login_required
 def emailbox_list():
     conn = get_db(); folder = request.args.get('folder', '')
-    q = 'SELECT id,folder,from_addr,from_name,to_addr,subject,date_str,date_ts,snippet,is_read FROM emails WHERE owner_id=?'
+    q = ('SELECT id,folder,from_addr,from_name,to_addr,subject,date_str,date_ts,snippet,is_read,'
+         'is_draft,candidate_id FROM emails WHERE owner_id=?')
     params = [effective_company_id()]
-    if folder in ('Inbox', 'Sent'):
+    if folder in ('Inbox', 'Sent', 'Drafts'):
         q += ' AND folder=?'; params.append(folder)
+    elif folder == 'Unread':
+        q += " AND is_read=0 AND COALESCE(folder,'')!='Drafts'"
+    elif folder == 'Candidate':
+        q += ' AND candidate_id IS NOT NULL'
     q += ' ORDER BY date_ts DESC LIMIT 500'
     rows = conn.execute(q, tuple(params)).fetchall()
+    unread = conn.execute("SELECT COUNT(*) n FROM emails WHERE owner_id=? AND is_read=0 AND "
+                          "COALESCE(folder,'')!='Drafts' AND COALESCE(folder,'')!='Sent'",
+                          (effective_company_id(),)).fetchone()['n']
     conn.close()
-    return jsonify({'ok': True, 'emails': [dict(r) for r in rows]})
+    return jsonify({'ok': True, 'emails': [dict(r) for r in rows], 'unread': unread})
+
+
+@app.route('/api/emailbox/mark-read', methods=['POST'])
+@login_required
+def emailbox_mark_read():
+    d = request.json or {}
+    conn = get_db()
+    conn.execute('UPDATE emails SET is_read=? WHERE id=? AND owner_id=?',
+                 (1 if d.get('read', True) else 0, d.get('id'), effective_company_id()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/emailbox/draft', methods=['POST'])
+@login_required
+def emailbox_draft_save():
+    d = request.json or {}
+    conn = get_db(); oid = effective_company_id()
+    frm = get_setting('smtp_email', '')
+    body = (d.get('body') or '').strip()
+    fields = (d.get('to', ''), d.get('cc', ''), d.get('subject', ''), body,
+              d.get('body_html', ''), d.get('in_reply_to', ''), d.get('thread_id', ''))
+    if d.get('id'):
+        conn.execute("UPDATE emails SET to_addr=?, cc=?, subject=?, body=?, body_html=?, in_reply_to=?, "
+                     "thread_id=?, snippet=?, date_ts=?, created_at=? WHERE id=? AND owner_id=? AND is_draft=1",
+                     fields + (body[:200], time.time(), ts(), d['id'], oid))
+        did = d['id']
+    else:
+        cur = conn.execute("INSERT INTO emails (owner_id,folder,is_draft,from_addr,to_addr,cc,subject,body,"
+                           "body_html,in_reply_to,thread_id,snippet,date_str,date_ts,is_read,created_at) "
+                           "VALUES (?,?,1,?,?,?,?,?,?,?,?,?,?,?,1,?)",
+                           (oid, 'Drafts', frm, d.get('to', ''), d.get('cc', ''), d.get('subject', ''),
+                            body, d.get('body_html', ''), d.get('in_reply_to', ''), d.get('thread_id', ''),
+                            body[:200], ts(), time.time(), ts()))
+        did = cur.lastrowid
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'id': did})
+
+
+@app.route('/api/emailbox/draft/<int:did>/delete', methods=['POST'])
+@login_required
+def emailbox_draft_delete(did):
+    conn = get_db()
+    conn.execute("DELETE FROM emails WHERE id=? AND owner_id=? AND is_draft=1", (did, effective_company_id()))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
 
 
 @app.route('/api/emailbox/<int:eid>', methods=['GET'])
