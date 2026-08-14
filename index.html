@@ -9647,7 +9647,7 @@ async function loadEmailAgent() {
       + '<input class="inp" id="ea-sub-'+it.id+'" value="'+esc(subj)+'" placeholder="Subject" style="width:100%;font-size:12px;margin-bottom:6px">'
       + '<textarea class="inp" id="ea-body-'+it.id+'" rows="3" placeholder="'+(isReply?'Write your reply...':'')+'" style="width:100%;font-size:12px">'+esc(it.body||'')+'</textarea>'
       + '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
-      + '<button class="btn btn-g" style="background:#0F6E56;font-size:11px" onclick="eaSend('+it.id+',\''+esc((it.cand_email||'').replace(/'/g,"\\'"))+'\','+it.candidate_id+')">&#9993; Approve &amp; Send</button>'
+      + '<button class="btn btn-g" style="background:#0F6E56;font-size:11px" onclick="eaSend('+it.id+',\''+esc((it.cand_email||'').replace(/'/g,"\\'"))+'\','+it.candidate_id+',\''+esc((it.in_reply_to||'').replace(/'/g,"\\'"))+'\',\''+esc((it.thread_id||'').replace(/'/g,"\\'"))+'\')">&#9993; Approve &amp; Send</button>'
       + '<button class="btn btn-o" style="font-size:11px;color:#888" onclick="eaDismiss('+it.id+')">Dismiss</button>'
       + '<button class="btn btn-o" style="font-size:11px;color:#C0522B" onclick="eaOffCandidate('+it.candidate_id+')">&#128683; Off for this candidate</button>'
       + '<span id="ea-done-'+it.id+'" style="font-size:10.5px;color:#0F6E56"></span></div></div>';
@@ -9660,14 +9660,14 @@ async function toggleMandateAgent(mid, on) {
 }
 async function toggleCandAgent(cid, on) { await req('POST', '/candidates/'+cid+'/email-agent', {on: on}); }
 async function eaOffCandidate(cid) { await toggleCandAgent(cid, false); loadEmailAgent(); }
-async function eaSend(iid, toEmail, cid) {
+async function eaSend(iid, toEmail, cid, inReplyTo, threadId){
   var sub = document.getElementById('ea-sub-'+iid), bod = document.getElementById('ea-body-'+iid);
   var subject = sub?sub.value.trim():'', body = bod?bod.value.trim():'';
   if (!toEmail) { toast('EMAIL','No email on this candidate'); return; }
   if (!subject || !body) { toast('EMAIL','Add a subject and message'); return; }
   var d = document.getElementById('ea-done-'+iid); if (d) d.textContent = 'Sending...';
-  var r = await req('POST', '/candidates/'+cid+'/send-email', {to: toEmail, subject: subject, body: body});
-  if (r && r.ok) { await req('POST','/email-agent/item/'+iid+'/action',{action:'sent',subject:subject,body:body}); if(d) d.textContent='Sent ✓'; setTimeout(loadEmailAgent,600); }
+  var r = await req('POST', '/candidates/'+cid+'/send-email', {to: toEmail, subject: subject, body: body, in_reply_to: inReplyTo||'', thread_id: threadId||''});
+  if (r && r.ok) { await req('POST','/email-agent/item/'+iid+'/action',{action:'sent',subject:subject,body:body}); if(d) d.textContent='Sent ✓ (in thread)'; setTimeout(loadEmailAgent,600); }
   else if (d) d.textContent = (r&&r.error)||'Send failed';
 }
 async function eaDismiss(iid) {

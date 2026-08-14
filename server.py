@@ -2968,7 +2968,8 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_agent_item_status ON agent_items(owner_id, status)")
     except sqlite3.OperationalError:
         pass
-    for _col in ("intent TEXT DEFAULT ''", "extracted TEXT DEFAULT ''"):
+    for _col in ("intent TEXT DEFAULT ''", "extracted TEXT DEFAULT ''",
+                 "in_reply_to TEXT DEFAULT ''", "thread_id TEXT DEFAULT ''"):
         try:
             c.execute(f"ALTER TABLE agent_items ADD COLUMN {_col}")
         except sqlite3.OperationalError:
@@ -7790,15 +7791,19 @@ def _email_agent_scan(oid):
             exists = conn.execute("SELECT 1 FROM agent_items WHERE owner_id=? AND dedup_key=? LIMIT 1",
                                   (oid, key)).fetchone()
             if not exists:
-                em = conn.execute("SELECT body, snippet FROM emails WHERE owner_id=? AND LOWER(from_addr) LIKE ? "
-                                  "ORDER BY date_ts DESC LIMIT 1", (oid, '%' + email + '%')).fetchone()
+                em = conn.execute("SELECT body, snippet, msg_id, thread_id FROM emails WHERE owner_id=? AND "
+                                  "LOWER(from_addr) LIKE ? ORDER BY date_ts DESC LIMIT 1",
+                                  (oid, '%' + email + '%')).fetchone()
                 rbody = (em['body'] if (em and em['body']) else (em['snippet'] if em else '')) or ''
+                r_irt = (em['msg_id'] if em else '') or ''
+                r_tid = (em['thread_id'] if em else '') or ''
                 pr = _process_reply(conn, oid, {'id': c['id'], 'name': c['name'], 'role': role}, rbody)
                 reason = f"{c['name']} replied" + (f" · {pr['intent'].replace('_', ' ')}" if pr['intent'] else " — needs your response")
                 conn.execute("INSERT OR IGNORE INTO agent_items (owner_id,candidate_id,mandate_id,kind,status,subject,"
-                             "body,reason,dedup_key,intent,extracted,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                             "body,reason,dedup_key,intent,extracted,in_reply_to,thread_id,created_at,updated_at) "
+                             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                              (oid, c['id'], c['mandate_id'], pr['kind'], 'pending', pr['subject'], pr['body'],
-                              reason, key, pr['intent'], json.dumps(pr['extracted']), ts(), ts()))
+                              reason, key, pr['intent'], json.dumps(pr['extracted']), r_irt, r_tid, ts(), ts()))
                 if conn.total_changes:
                     created += 1
             continue
@@ -7820,11 +7825,17 @@ def _email_agent_scan(oid):
             continue
         subj, body = _followup_draft(first, role, recruiter, fu_sent)
         key = f"followup:{c['id']}:{fu_sent}"
+        lastout = conn.execute("SELECT msg_id, thread_id FROM emails WHERE owner_id=? AND folder='Sent' AND "
+                               "(LOWER(to_addr) LIKE ? OR candidate_id=?) ORDER BY date_ts DESC LIMIT 1",
+                               (oid, '%' + email + '%', c['id'])).fetchone()
+        f_irt = (lastout['msg_id'] if lastout else '') or ''
+        f_tid = (lastout['thread_id'] if lastout else '') or ''
         try:
             conn.execute("INSERT OR IGNORE INTO agent_items (owner_id,candidate_id,mandate_id,kind,status,subject,"
-                         "body,reason,dedup_key,followup_no,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                         "body,reason,dedup_key,followup_no,in_reply_to,thread_id,created_at,updated_at) "
+                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          (oid, c['id'], c['mandate_id'], 'followup', 'pending', subj, body,
-                          f"No reply for {int((now-last_out)/86400)} days", key, fu_sent + 1, ts(), ts()))
+                          f"No reply for {int((now-last_out)/86400)} days", key, fu_sent + 1, f_irt, f_tid, ts(), ts()))
             if conn.total_changes:
                 created += 1
         except Exception:
