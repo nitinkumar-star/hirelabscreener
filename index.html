@@ -9692,9 +9692,10 @@ async function eaDismiss(iid) {
   var d=document.getElementById('ea-done-'+iid); if(d) d.textContent='Dismissed'; setTimeout(loadEmailAgent,500);
 }
 async function eaScan() {
-  var sd=document.getElementById('ea-status'); if(sd) sd.innerHTML='Scanning inbox...';
-  var r=await req('POST','/email-agent/scan');
-  loadEmailAgent();
+  var sd=document.getElementById('ea-status'); if(sd) sd.innerHTML='Scanning in the background — checking inbox &amp; drafting. This can take up to a minute; new items appear as they\'re ready.';
+  await req('POST','/email-agent/scan');
+  setTimeout(loadEmailAgent, 8000);
+  setTimeout(loadEmailAgent, 22000);
 }
 
 // ── Agent #1: Work this role (propose → approve) ────────────────────────────

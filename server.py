@@ -7992,12 +7992,20 @@ def email_agent_item_action(iid):
 @login_required
 def email_agent_manual_scan():
     oid = effective_company_id()
-    try:
-        _sync_imap_inbox(oid)
-    except Exception:
-        pass
-    created = _email_agent_scan(oid)
-    return jsonify({'ok': True, 'new_items': created})
+    import threading
+
+    def _bg(_oid):
+        try:
+            _sync_imap_inbox(_oid)
+        except Exception as _e:
+            print('[email-agent] manual sync error:', _e)
+        try:
+            _email_agent_scan(_oid)
+        except Exception as _e:
+            print('[email-agent] manual scan error:', _e)
+
+    threading.Thread(target=_bg, args=(oid,), daemon=True).start()
+    return jsonify({'ok': True, 'started': True})
 
 
 @app.route('/api/market/report', methods=['POST'])
@@ -11365,7 +11373,7 @@ def _sync_mailbox(oid):
         return 0, 'Email not configured. Settings -> Email Configuration.'
     since = (_dt.date.today() - _dt.timedelta(days=30)).strftime('%d-%b-%Y')
     try:
-        M = imaplib.IMAP4_SSL(host); M.login(user, pw)
+        M = imaplib.IMAP4_SSL(host, timeout=20); M.login(user, pw)
     except imaplib.IMAP4.error as e:
         return 0, f'IMAP login failed: {e}. Enable IMAP in Gmail and check the app password.'
     except Exception as e:
