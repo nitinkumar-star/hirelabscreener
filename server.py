@@ -7785,9 +7785,27 @@ def _process_reply(conn, oid, cand, reply_body):
     return out
 
 
+# ── Single-flight guard ───────────────────────────────────────────────────
+# Only ONE sync+scan may run at a time across the whole process. Without this,
+# the 120s background loop and every manual "Scan now" click each spawn their
+# own sync/scan; because a scan holds a SQLite write transaction, overlapping
+# runs pile up and wedge the DB (toggles/refresh block on the lock, scan never
+# finishes). acquire(blocking=False) => if a scan is already running we skip.
+import threading as _agent_threading
+_AGENT_BUSY = _agent_threading.Lock()
+# How much AI work a single scan pass may do before yielding to the next cycle.
+_AGENT_MAX_ITEMS_PER_PASS = 15
+_AGENT_MAX_SECONDS_PER_PASS = 90
+
+
 def _email_agent_scan(oid):
-    """Compute pending agent items for one company's watched candidates."""
+    """Compute pending agent items for one company's watched candidates.
+
+    Commits after EACH candidate so the SQLite write lock is released between
+    the slow DeepSeek calls — otherwise the whole DB stays exclusively locked
+    for the entire scan and toggles/refresh freeze."""
     conn = get_db()
+    _scan_started = time.time()
     cfg = _agent_cfg()
     recruiter = cfg['signature']
     try:
@@ -7797,8 +7815,12 @@ def _email_agent_scan(oid):
             "WHERE c.owner_id=? AND c.email_agent=1 AND TRIM(COALESCE(c.email,''))!=''", (oid,)).fetchall()
     except Exception:
         conn.close(); return 0
-    now = time.time(); created = 0
+    now = time.time(); created = 0; _ai_work = 0
     for c in cands:
+        # Per-pass budget: never let one scan run forever. Anything skipped here
+        # is picked up on the next cycle (or the next manual scan).
+        if _ai_work >= _AGENT_MAX_ITEMS_PER_PASS or (time.time() - _scan_started) > _AGENT_MAX_SECONDS_PER_PASS:
+            break
         if (c['status'] or '').lower() in ('closed', 'lost', 'filled', 'on hold'):
             continue
         email = (c['email'] or '').strip().lower()
@@ -7826,6 +7848,7 @@ def _email_agent_scan(oid):
                 rbody = (em['body'] if (em and em['body']) else (em['snippet'] if em else '')) or ''
                 r_irt = (em['msg_id'] if em else '') or ''
                 r_tid = (em['thread_id'] if em else '') or ''
+                _ai_work += 1  # this candidate triggers a DeepSeek call
                 pr = _process_reply(conn, oid, {'id': c['id'], 'name': c['name'], 'role': role}, rbody)
                 in_subj = ((em['subject'] if em else '') or '').strip()
                 if in_subj:
@@ -7838,6 +7861,10 @@ def _email_agent_scan(oid):
                               reason, key, pr['intent'], json.dumps(pr['extracted']), r_irt, r_tid, ts(), ts()))
                 if conn.total_changes:
                     created += 1
+                try:
+                    conn.commit()  # release the write lock now, before the next candidate's DeepSeek call
+                except Exception:
+                    pass
             continue
 
         # no reply → escalating follow-up
@@ -7865,6 +7892,7 @@ def _email_agent_scan(oid):
                                (oid, '%' + email + '%', c['id'])).fetchone()
         orig_subject = ((lastout['subject'] if lastout else '') or '').strip() or role
         subj = orig_subject if re.match(r'^\s*re:', orig_subject, re.I) else ('Re: ' + orig_subject)
+        _ai_work += 1  # this candidate triggers a DeepSeek follow-up generation
         body = _gen_followup(first, role, cfg, fu_sent, get_setting('deepseek_api_key'))
         key = f"followup:{c['id']}:{fu_sent}"
         f_irt = (lastout['msg_id'] if lastout else '') or ''
@@ -7879,6 +7907,10 @@ def _email_agent_scan(oid):
                 created += 1
         except Exception:
             pass
+        try:
+            conn.commit()  # release the write lock now, before the next candidate
+        except Exception:
+            pass
     conn.commit(); conn.close()
     return created
 
@@ -7887,6 +7919,10 @@ def _email_agent_loop():
     import time as _t
     while True:
         _t.sleep(120)
+        # Skip this cycle entirely if a scan (manual or previous) is still
+        # running — never stack overlapping sync/scan passes.
+        if not _AGENT_BUSY.acquire(blocking=False):
+            continue
         try:
             conn = get_db()
             oids = [r['owner_id'] for r in conn.execute(
@@ -7903,6 +7939,8 @@ def _email_agent_loop():
                     print('[email-agent] scan error:', _se)
         except Exception as e:
             print('[email-agent] loop error:', e)
+        finally:
+            _AGENT_BUSY.release()
 
 
 def _start_email_agent():
@@ -7994,15 +8032,23 @@ def email_agent_manual_scan():
     oid = effective_company_id()
     import threading
 
+    # If a scan is already running (manual or the 120s loop), don't start a
+    # second one — that's what used to pile up and wedge the DB.
+    if not _AGENT_BUSY.acquire(blocking=False):
+        return jsonify({'ok': True, 'started': False, 'busy': True})
+
     def _bg(_oid):
         try:
-            _sync_imap_inbox(_oid)
-        except Exception as _e:
-            print('[email-agent] manual sync error:', _e)
-        try:
-            _email_agent_scan(_oid)
-        except Exception as _e:
-            print('[email-agent] manual scan error:', _e)
+            try:
+                _sync_imap_inbox(_oid)
+            except Exception as _e:
+                print('[email-agent] manual sync error:', _e)
+            try:
+                _email_agent_scan(_oid)
+            except Exception as _e:
+                print('[email-agent] manual scan error:', _e)
+        finally:
+            _AGENT_BUSY.release()
 
     threading.Thread(target=_bg, args=(oid,), daemon=True).start()
     return jsonify({'ok': True, 'started': True})
@@ -11384,6 +11430,9 @@ def _sync_mailbox(oid):
         email_to_cid[(r['email'] or '').strip().lower()] = r['id']
     folders = [('INBOX', 'Inbox'), ('"' + _find_sent_folder(M) + '"', 'Sent')]
     added = 0
+    _since_commit = 0  # commit in small batches so the write lock is released
+                       # frequently during the slow IMAP fetch loop (otherwise the
+                       # whole DB stays locked for the entire sync)
     try:
         for fexpr, fname in folders:
             try:
@@ -11418,18 +11467,25 @@ def _sync_mailbox(oid):
                                          "thread_id=CASE WHEN COALESCE(thread_id,'')='' THEN ? ELSE thread_id END, "
                                          "candidate_id=COALESCE(candidate_id,?) WHERE id=?",
                                          (text, htmlbody, snip, irt, refs, tid, cid, ex['id']))
-                            continue
-                        conn.execute('INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,subject,'
-                            'date_str,date_ts,snippet,body,body_html,in_reply_to,refs,thread_id,candidate_id,created_at) '
-                            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                            (oid, mid, fname, addr, nm or addr, _email_decode(msg.get('To')), subject, dt, dts,
-                             snip, text, htmlbody, irt, refs, tid, cid, ts()))
-                        added += 1
-                        if cid and fname == 'Inbox':
-                            conn.execute('INSERT OR IGNORE INTO email_messages (company_id,candidate_id,direction,'
-                                'from_addr,to_addr,subject,body,message_id,in_reply_to,sent_at,created_at) '
-                                'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                                (oid, cid, 'received', addr, user, subject, text, mid, irt, ts(), ts()))
+                        else:
+                            conn.execute('INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,subject,'
+                                'date_str,date_ts,snippet,body,body_html,in_reply_to,refs,thread_id,candidate_id,created_at) '
+                                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                                (oid, mid, fname, addr, nm or addr, _email_decode(msg.get('To')), subject, dt, dts,
+                                 snip, text, htmlbody, irt, refs, tid, cid, ts()))
+                            added += 1
+                            if cid and fname == 'Inbox':
+                                conn.execute('INSERT OR IGNORE INTO email_messages (company_id,candidate_id,direction,'
+                                    'from_addr,to_addr,subject,body,message_id,in_reply_to,sent_at,created_at) '
+                                    'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                                    (oid, cid, 'received', addr, user, subject, text, mid, irt, ts(), ts()))
+                        # Release the write lock every few messages so toggles /
+                        # refresh don't block for the whole (slow) IMAP fetch loop.
+                        _since_commit += 1
+                        if _since_commit >= 10:
+                            try: conn.commit()
+                            except Exception: pass
+                            _since_commit = 0
                     except Exception:
                         continue
             except Exception:
