@@ -7678,16 +7678,24 @@ def _agent_cfg():
 
 def _gen_followup(first, role, cfg, fno, ds_key):
     """KB-aware follow-up body so edits to the knowledge base actually change
-    follow-ups. Template fallback if DeepSeek isn't configured."""
+    follow-ups. The recruiter's Knowledge Base is passed as a SYSTEM instruction
+    (strong adherence) and governs tone AND length — we no longer force a tight
+    word cap that fought the KB. Template fallback only if DeepSeek isn't set."""
     if ds_key:
         try:
-            sysmsg = ("Follow these recruiter instructions strictly:\n" + cfg['kb'] + "\n\n"
-                      "Write follow-up number " + str(fno + 1) + " to a candidate named " + first +
-                      " who has NOT replied to our earlier email about a " + role + " role. "
-                      "Return ONLY the plain-text message body, under 60 words, warm and professional, "
-                      "signing off exactly as: " + cfg['signature'] + ". No subject line, no quotes.")
-            rr = call_deepseek(ds_key, {'model': 'deepseek-chat', 'temperature': 0.5, 'max_tokens': 220,
-                'messages': [{'role': 'user', 'content': sysmsg}]}, timeout=45, endpoint='email-agent')
+            sysmsg = ("You are the recruiter's email assistant. Follow the recruiter's "
+                      "Knowledge Base / instructions below EXACTLY — they govern tone, length, "
+                      "what to mention, and how to sign off. Do not add anything they didn't ask for.\n\n"
+                      "===== RECRUITER KNOWLEDGE BASE =====\n" + cfg['kb'] +
+                      "\n===== END KNOWLEDGE BASE =====\n\n"
+                      "Sign off exactly as: " + cfg['signature'] + " (do not invent a different signature).")
+            usermsg = ("Write follow-up number " + str(fno + 1) + " to a candidate named " + first +
+                       " who has NOT replied to our earlier email about a " + role + " role. "
+                       "Return ONLY the plain-text message body (no subject line, no surrounding quotes). "
+                       "Keep it concise unless the Knowledge Base says otherwise.")
+            rr = call_deepseek(ds_key, {'model': 'deepseek-chat', 'temperature': 0.5, 'max_tokens': 400,
+                'messages': [{'role': 'system', 'content': sysmsg},
+                             {'role': 'user', 'content': usermsg}]}, timeout=45, endpoint='email-agent')
             if rr.status_code == 200:
                 b = (rr.json()['choices'][0]['message']['content'] or '').strip().strip('"')
                 if b:
@@ -7735,14 +7743,16 @@ def _process_reply(conn, oid, cand, reply_body):
     ds_key = get_setting('deepseek_api_key')
     if not ds_key or not (reply_body or '').strip():
         return out
-    sysmsg = ("Follow these recruiter instructions strictly:\n" + cfg['kb'] + "\n\n"
+    sysmsg = ("Follow these recruiter instructions strictly — they govern tone, length and content:\n"
+              + cfg['kb'] + "\n\n"
               "Now: read the candidate's email reply and return ONLY compact JSON with keys: "
               "intent (one of interested, not_interested, needs_info, asked_jd, not_now, other), "
               "current_ctc, expected_ctc, notice_period (days as number-ish), current_company, location "
-              "(use '' if not stated), reply_subject, reply_body (a short professional reply FROM the recruiter, "
-              f"under 70 words, sign off as {recruiter}). Candidate first name {first}, role {role}.")
+              "(use '' if not stated), reply_subject, reply_body (a professional reply FROM the recruiter, "
+              f"following the Knowledge Base above for tone and length, sign off as {recruiter}). "
+              f"Candidate first name {first}, role {role}.")
     try:
-        rr = call_deepseek(ds_key, {'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 450,
+        rr = call_deepseek(ds_key, {'model': 'deepseek-chat', 'temperature': 0.3, 'max_tokens': 600,
             'messages': [{'role': 'system', 'content': sysmsg}, {'role': 'user', 'content': reply_body[:4000]}]},
             timeout=45, endpoint='email-agent')
         if rr.status_code == 200:
@@ -7890,13 +7900,28 @@ def _email_agent_scan(oid):
         lastout = conn.execute("SELECT msg_id, thread_id, subject FROM emails WHERE owner_id=? AND folder='Sent' AND "
                                "(LOWER(to_addr) LIKE ? OR candidate_id=?) ORDER BY date_ts DESC LIMIT 1",
                                (oid, '%' + email + '%', c['id'])).fetchone()
-        orig_subject = ((lastout['subject'] if lastout else '') or '').strip() or role
+        # Fallback: if we didn't SEND the original from the ATS (e.g. JD shared
+        # from your own Gmail), still grab the latest known email with this
+        # candidate so the subject + thread grouping stay correct.
+        anymail = None
+        if not lastout:
+            anymail = conn.execute(
+                "SELECT msg_id, thread_id, subject FROM emails WHERE owner_id=? AND "
+                "(candidate_id=? OR LOWER(to_addr) LIKE ? OR LOWER(from_addr) LIKE ?) "
+                "ORDER BY date_ts DESC LIMIT 1",
+                (oid, c['id'], '%' + email + '%', '%' + email + '%')).fetchone()
+        src = lastout or anymail
+        orig_subject = ((src['subject'] if src else '') or '').strip() or role
         subj = orig_subject if re.match(r'^\s*re:', orig_subject, re.I) else ('Re: ' + orig_subject)
         _ai_work += 1  # this candidate triggers a DeepSeek follow-up generation
         body = _gen_followup(first, role, cfg, fu_sent, get_setting('deepseek_api_key'))
         key = f"followup:{c['id']}:{fu_sent}"
+        # In-Reply-To must reference a message the candidate actually received —
+        # only a Sent original qualifies. thread_id always set (falls back to the
+        # deterministic conversation key) so the ATS Email Box groups it.
         f_irt = (lastout['msg_id'] if lastout else '') or ''
-        f_tid = (lastout['thread_id'] if lastout else '') or ''
+        f_tid = ((src['thread_id'] if src else '') or '') or _conv_thread_id(
+            get_setting('smtp_email', '') or '', email, orig_subject)
         try:
             conn.execute("INSERT OR IGNORE INTO agent_items (owner_id,candidate_id,mandate_id,kind,status,subject,"
                          "body,reason,dedup_key,followup_no,in_reply_to,thread_id,created_at,updated_at) "
@@ -13225,6 +13250,36 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
             ref_ids.append(in_reply_to)
         refs = ' '.join(ref_ids)
         msg['References'] = refs
+    # ── Quoted history ────────────────────────────────────────────────────
+    # When this is a reply/follow-up (in_reply_to set), append the previous
+    # message as a quoted block so the candidate always sees earlier context —
+    # even if their mail client fails to thread by Message-ID. Central here =>
+    # every reply, follow-up and agent email gets it automatically. Skip if the
+    # draft already contains a quote (don't double up).
+    _already_quoted = ('\n> ' in text) or ('wrote:' in text.lower())
+    if in_reply_to and not _already_quoted:
+        try:
+            _cq = get_db()
+            _orig = _cq.execute(
+                "SELECT from_name, from_addr, subject, date_str, body, body_html "
+                "FROM emails WHERE owner_id=? AND msg_id=? LIMIT 1",
+                (effective_company_id(), in_reply_to)).fetchone()
+            _cq.close()
+            if _orig and (_orig['body'] or _orig['body_html']):
+                _who = (_orig['from_name'] or _orig['from_addr'] or 'earlier').strip()
+                _when = (_orig['date_str'] or '').strip()
+                _hdr = 'On ' + (_when + ', ' if _when else '') + _who + ' wrote:'
+                _obody = ((_orig['body'] or '') or html_to_text(_orig['body_html'] or '')).strip()
+                if _obody:
+                    text = text + '\n\n' + _hdr + '\n' + '\n'.join('> ' + ln for ln in _obody.splitlines())
+                    html = html + ('<div style="margin-top:14px;padding-left:12px;border-left:2px solid #ccc;'
+                                   'color:#555">'
+                                   '<div style="font-size:12px;color:#888;margin-bottom:6px">'
+                                   + esc_html(_hdr) + '</div>'
+                                   + (_orig['body_html'] or _text_to_html(_obody)) + '</div>')
+        except Exception as _qe:
+            print('[email-service] quote error:', _qe)
+
     msg.attach(MIMEText(text, 'plain', 'utf-8'))
     msg.attach(MIMEText(html, 'html', 'utf-8'))
 
