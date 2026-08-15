@@ -9603,6 +9603,7 @@ async function loadEmailAgentKB(){
     +'<div><label style="font-size:10px;color:#888;display:block">Cadence (days, comma-sep)</label><input class="inp" id="kb-gaps" value="'+esc(r.gaps||"2,3,4")+'" style="width:130px;font-size:12px"></div>'
     +'<div style="flex:1;min-width:160px"><label style="font-size:10px;color:#888;display:block">Signature / sign-off</label><input class="inp" id="kb-sig" value="'+esc(r.signature||"")+'" style="width:100%;font-size:12px"></div>'
     +'</div>'
+    +'<div style="margin-top:8px"><label style="font-size:10px;color:#888;display:block">Skip follow-ups when candidate stage is (comma-separated)</label><input class="inp" id="kb-skip" value="'+esc(r.skip_stages||"")+'" style="width:100%;font-size:12px" placeholder="Not Interested, Shared with Client, Placed..."></div>'
     +'<div style="margin-top:10px"><button class="btn btn-g" style="background:#5B3FA0;font-size:12px" onclick="saveEmailAgentKB(this)">&#128190; Save instructions</button> <span id="kb-status" style="font-size:11px;color:#0F6E56;margin-left:8px"></span></div>'
     +'</div>';
 }
@@ -9611,8 +9612,9 @@ async function saveEmailAgentKB(btn){
   var maxfu=(document.getElementById('kb-maxfu')||{}).value||'3';
   var gaps=(document.getElementById('kb-gaps')||{}).value||'2,3,4';
   var sig=(document.getElementById('kb-sig')||{}).value||'';
+  var skip=(document.getElementById('kb-skip')||{}).value||'';
   var st=document.getElementById('kb-status'); if(st) st.textContent='Saving...'; if(btn) btn.disabled=true;
-  var r=await req('POST','/email-agent/kb',{kb:kb,max_fu:parseInt(maxfu)||3,gaps:gaps,signature:sig});
+  var r=await req('POST','/email-agent/kb',{kb:kb,max_fu:parseInt(maxfu)||3,gaps:gaps,signature:sig,skip_stages:skip});
   if(st) st.textContent=(r&&r.ok)?'Saved ✓ — the agent will use this from now on':'Save failed';
   if(btn) btn.disabled=false;
 }

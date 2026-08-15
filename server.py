@@ -7668,7 +7668,34 @@ def _agent_cfg():
     except Exception:
         max_fu = 3
     sig = get_setting('email_agent_signature', '') or (get_setting('company_name', '') or 'HireLab') + ' Talent'
-    return {'kb': kb, 'gaps': gap_list, 'max_fu': max(1, max_fu), 'signature': sig}
+    default_skip = ('not interested,rejected,shared with client,client rejected,client rejected after interview,'
+                    'offer,offered,offer accepted,offer declined,placed,joined,on hold,dropped,not now,do not contact')
+    skip_raw = get_setting('email_agent_skip_stages', '') or default_skip
+    skip_stages = [x.strip().lower() for x in skip_raw.split(',') if x.strip()]
+    return {'kb': kb, 'gaps': gap_list, 'max_fu': max(1, max_fu), 'signature': sig,
+            'skip_stages': skip_stages, 'skip_raw': skip_raw}
+
+
+def _gen_followup(first, role, cfg, fno, ds_key):
+    """KB-aware follow-up body so edits to the knowledge base actually change
+    follow-ups. Template fallback if DeepSeek isn't configured."""
+    if ds_key:
+        try:
+            sysmsg = ("Follow these recruiter instructions strictly:\n" + cfg['kb'] + "\n\n"
+                      "Write follow-up number " + str(fno + 1) + " to a candidate named " + first +
+                      " who has NOT replied to our earlier email about a " + role + " role. "
+                      "Return ONLY the plain-text message body, under 60 words, warm and professional, "
+                      "signing off exactly as: " + cfg['signature'] + ". No subject line, no quotes.")
+            rr = call_deepseek(ds_key, {'model': 'deepseek-chat', 'temperature': 0.5, 'max_tokens': 220,
+                'messages': [{'role': 'user', 'content': sysmsg}]}, timeout=45, endpoint='email-agent')
+            if rr.status_code == 200:
+                b = (rr.json()['choices'][0]['message']['content'] or '').strip().strip('"')
+                if b:
+                    return b
+        except Exception:
+            pass
+    _s, body = _followup_draft(first, role, cfg['signature'], fno)
+    return body
 
 
 @app.route('/api/email-agent/kb', methods=['GET'])
@@ -7676,7 +7703,7 @@ def _agent_cfg():
 def email_agent_kb_get():
     cfg = _agent_cfg()
     return jsonify({'ok': True, 'kb': cfg['kb'], 'gaps': ','.join(str(g) for g in cfg['gaps']),
-                    'max_fu': cfg['max_fu'], 'signature': cfg['signature']})
+                    'max_fu': cfg['max_fu'], 'signature': cfg['signature'], 'skip_stages': cfg['skip_raw']})
 
 
 @app.route('/api/email-agent/kb', methods=['POST'])
@@ -7691,6 +7718,8 @@ def email_agent_kb_save():
         set_setting('email_agent_max_fu', str(d.get('max_fu') or 3))
     if 'signature' in d:
         set_setting('email_agent_signature', (d.get('signature') or '').strip())
+    if 'skip_stages' in d:
+        set_setting('email_agent_skip_stages', (d.get('skip_stages') or '').strip())
     return jsonify({'ok': True})
 
 
@@ -7763,7 +7792,7 @@ def _email_agent_scan(oid):
     recruiter = cfg['signature']
     try:
         cands = conn.execute(
-            "SELECT c.id,c.name,c.email,c.mandate_id,m.role,m.status FROM candidates c "
+            "SELECT c.id,c.name,c.email,c.stage,c.mandate_id,m.role,m.status FROM candidates c "
             "JOIN mandates m ON m.id=c.mandate_id "
             "WHERE c.owner_id=? AND c.email_agent=1 AND TRIM(COALESCE(c.email,''))!=''", (oid,)).fetchall()
     except Exception:
@@ -7791,13 +7820,16 @@ def _email_agent_scan(oid):
             exists = conn.execute("SELECT 1 FROM agent_items WHERE owner_id=? AND dedup_key=? LIMIT 1",
                                   (oid, key)).fetchone()
             if not exists:
-                em = conn.execute("SELECT body, snippet, msg_id, thread_id FROM emails WHERE owner_id=? AND "
+                em = conn.execute("SELECT body, snippet, msg_id, thread_id, subject FROM emails WHERE owner_id=? AND "
                                   "LOWER(from_addr) LIKE ? ORDER BY date_ts DESC LIMIT 1",
                                   (oid, '%' + email + '%')).fetchone()
                 rbody = (em['body'] if (em and em['body']) else (em['snippet'] if em else '')) or ''
                 r_irt = (em['msg_id'] if em else '') or ''
                 r_tid = (em['thread_id'] if em else '') or ''
                 pr = _process_reply(conn, oid, {'id': c['id'], 'name': c['name'], 'role': role}, rbody)
+                in_subj = ((em['subject'] if em else '') or '').strip()
+                if in_subj:
+                    pr['subject'] = in_subj if re.match(r'^\s*re:', in_subj, re.I) else ('Re: ' + in_subj)
                 reason = f"{c['name']} replied" + (f" · {pr['intent'].replace('_', ' ')}" if pr['intent'] else " — needs your response")
                 conn.execute("INSERT OR IGNORE INTO agent_items (owner_id,candidate_id,mandate_id,kind,status,subject,"
                              "body,reason,dedup_key,intent,extracted,in_reply_to,thread_id,created_at,updated_at) "
@@ -7809,6 +7841,10 @@ def _email_agent_scan(oid):
             continue
 
         # no reply → escalating follow-up
+        # STAGE-AWARE: never follow up when the candidate's stage makes it pointless
+        # (Not Interested, Shared with Client, Placed, etc.) — editable in the KB panel.
+        if (c['stage'] or '').strip().lower() in cfg['skip_stages']:
+            continue
         fu_sent = conn.execute("SELECT COUNT(*) n FROM agent_items WHERE candidate_id=? AND kind='followup' "
                                "AND status='sent'", (c['id'],)).fetchone()['n']
         if fu_sent >= cfg['max_fu']:
@@ -7823,11 +7859,14 @@ def _email_agent_scan(oid):
         anchor = _ts_to_epoch(last_fu['updated_at']) if last_fu else last_out
         if anchor is None or (now - anchor) < gap_days * 86400:
             continue
-        subj, body = _followup_draft(first, role, recruiter, fu_sent)
-        key = f"followup:{c['id']}:{fu_sent}"
-        lastout = conn.execute("SELECT msg_id, thread_id FROM emails WHERE owner_id=? AND folder='Sent' AND "
+        # Thread the follow-up to the ORIGINAL email: same subject (Re:) + In-Reply-To.
+        lastout = conn.execute("SELECT msg_id, thread_id, subject FROM emails WHERE owner_id=? AND folder='Sent' AND "
                                "(LOWER(to_addr) LIKE ? OR candidate_id=?) ORDER BY date_ts DESC LIMIT 1",
                                (oid, '%' + email + '%', c['id'])).fetchone()
+        orig_subject = ((lastout['subject'] if lastout else '') or '').strip() or role
+        subj = orig_subject if re.match(r'^\s*re:', orig_subject, re.I) else ('Re: ' + orig_subject)
+        body = _gen_followup(first, role, cfg, fu_sent, get_setting('deepseek_api_key'))
+        key = f"followup:{c['id']}:{fu_sent}"
         f_irt = (lastout['msg_id'] if lastout else '') or ''
         f_tid = (lastout['thread_id'] if lastout else '') or ''
         try:
