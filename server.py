@@ -1660,11 +1660,12 @@ DB_PATH  = os.path.join(DATA_DIR, 'hirelab.db')
 CV_DIR   = os.path.join(DATA_DIR, 'cvs')
 BAK_DIR  = os.path.join(DATA_DIR, 'backups')
 CRM_FILES_DIR = os.path.join(DATA_DIR, 'crm_files')
+EMAIL_ATTACH_DIR = os.path.join(DATA_DIR, 'email_attachments')
 
 CLAUDE_URL   = 'https://api.anthropic.com/v1/messages'
 CLAUDE_MODEL = 'claude-sonnet-4-20250514'
 
-for d in [DATA_DIR, CV_DIR, BAK_DIR, CRM_FILES_DIR]:
+for d in [DATA_DIR, CV_DIR, BAK_DIR, CRM_FILES_DIR, EMAIL_ATTACH_DIR]:
     os.makedirs(d, exist_ok=True)
 
 def get_db():
@@ -2565,7 +2566,23 @@ def init_db():
         );
     """)
 
-    # Client-submission drafts: composed 'Share to Client' emails saved for later.
+    # Wave E — email attachments (files live on the persistent disk; DB holds
+    # only metadata). email_id is NULL for freshly-uploaded pending files until
+    # the email is actually sent, then it's linked.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS email_attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            email_id INTEGER,
+            direction TEXT DEFAULT 'out',
+            filename TEXT DEFAULT '',
+            mime TEXT DEFAULT 'application/octet-stream',
+            size INTEGER DEFAULT 0,
+            path TEXT DEFAULT '',
+            created_at TEXT
+        );
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_eatt_email ON email_attachments(email_id)")
     c.execute("""
         CREATE TABLE IF NOT EXISTS submission_drafts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -11493,12 +11510,14 @@ def _sync_mailbox(oid):
                                          "candidate_id=COALESCE(candidate_id,?) WHERE id=?",
                                          (text, htmlbody, snip, irt, refs, tid, cid, ex['id']))
                         else:
-                            conn.execute('INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,subject,'
+                            _icur = conn.execute('INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,subject,'
                                 'date_str,date_ts,snippet,body,body_html,in_reply_to,refs,thread_id,candidate_id,created_at) '
                                 'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                                 (oid, mid, fname, addr, nm or addr, _email_decode(msg.get('To')), subject, dt, dts,
                                  snip, text, htmlbody, irt, refs, tid, cid, ts()))
                             added += 1
+                            # Capture real attachments once, on first insert.
+                            _save_incoming_attachments(msg, conn, oid, _icur.lastrowid)
                             if cid and fname == 'Inbox':
                                 conn.execute('INSERT OR IGNORE INTO email_messages (company_id,candidate_id,direction,'
                                     'from_addr,to_addr,subject,body,message_id,in_reply_to,sent_at,created_at) '
@@ -11603,14 +11622,15 @@ def emailbox_draft_delete(did):
 @app.route('/api/emailbox/<int:eid>', methods=['GET'])
 @login_required
 def emailbox_get(eid):
-    conn = get_db()
-    r = conn.execute('SELECT * FROM emails WHERE id=? AND owner_id=?', (eid, effective_company_id())).fetchone()
+    conn = get_db(); oid = effective_company_id()
+    r = conn.execute('SELECT * FROM emails WHERE id=? AND owner_id=?', (eid, oid)).fetchone()
     if r:
         conn.execute('UPDATE emails SET is_read=1 WHERE id=?', (eid,)); conn.commit()
+    atts = [dict(a) for a in _attachments_for_email(conn, oid, eid)] if r else []
     conn.close()
     if not r:
         return jsonify({'error': 'Not found'}), 404
-    return jsonify({'ok': True, 'email': dict(r)})
+    return jsonify({'ok': True, 'email': dict(r), 'attachments': atts})
 
 
 def _norm_subject(s):
@@ -11638,10 +11658,129 @@ def emailbox_send():
         in_reply_to=(d.get('in_reply_to') or d.get('reply_to_message_id') or ''),
         references=(d.get('references') or ''),
         thread_id=(d.get('thread_id') or ''),
-        candidate_id=d.get('candidate_id'))
+        candidate_id=d.get('candidate_id'),
+        attachment_ids=(d.get('attachment_ids') or []),
+        forward_from_email_id=(d.get('forward_from_email_id') or None))
     if not ok:
         return jsonify({'error': err or 'Send failed'}), 400
     return jsonify({'ok': True, 'message_id': mid, 'thread_id': tid})
+
+
+# ── Wave E: attachment helpers + endpoints ────────────────────────────────
+def _safe_filename(name):
+    name = os.path.basename((name or '').strip()) or 'file'
+    name = re.sub(r'[^A-Za-z0-9._\- ]+', '_', name)
+    return name[:120] or 'file'
+
+
+_ATTACH_MAX_BYTES = 15 * 1024 * 1024  # 15 MB per file
+
+
+@app.route('/api/emailbox/attach', methods=['POST'])
+@login_required
+def emailbox_attach_upload():
+    """Upload one file → store on the persistent disk, return its id. The file is
+    'pending' (email_id NULL) until the email is actually sent."""
+    import uuid as _uuid
+    oid = effective_company_id()
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return jsonify({'error': 'No file provided'}), 400
+    raw = f.read()
+    if len(raw) > _ATTACH_MAX_BYTES:
+        return jsonify({'error': 'File too large (max 15 MB)'}), 400
+    fname = _safe_filename(f.filename)
+    subdir = os.path.join(EMAIL_ATTACH_DIR, str(oid or 0))
+    os.makedirs(subdir, exist_ok=True)
+    disk = os.path.join(subdir, _uuid.uuid4().hex + '_' + fname)
+    try:
+        with open(disk, 'wb') as fh:
+            fh.write(raw)
+    except Exception as e:
+        return jsonify({'error': 'Could not save file: ' + str(e)}), 500
+    mime = f.mimetype or 'application/octet-stream'
+    conn = get_db()
+    cur = conn.execute("INSERT INTO email_attachments (owner_id,email_id,direction,filename,mime,size,path,created_at) "
+                       "VALUES (?,?,?,?,?,?,?,?)", (oid, None, 'out', fname, mime, len(raw), disk, ts()))
+    aid = cur.lastrowid
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'id': aid, 'filename': fname, 'size': len(raw), 'mime': mime})
+
+
+@app.route('/api/emailbox/attachment/<int:aid>', methods=['GET'])
+@login_required
+def emailbox_attach_download(aid):
+    oid = effective_company_id()
+    conn = get_db()
+    r = conn.execute("SELECT filename,mime,path FROM email_attachments WHERE id=? AND owner_id=?",
+                     (aid, oid)).fetchone()
+    conn.close()
+    if not r or not r['path'] or not os.path.exists(r['path']):
+        return jsonify({'error': 'Not found'}), 404
+    return send_file(r['path'], mimetype=(r['mime'] or 'application/octet-stream'),
+                     as_attachment=True, download_name=(r['filename'] or 'file'))
+
+
+@app.route('/api/emailbox/attachment/<int:aid>', methods=['DELETE'])
+@login_required
+def emailbox_attach_delete(aid):
+    """Remove a still-pending (un-sent) attachment the user changed their mind on."""
+    oid = effective_company_id()
+    conn = get_db()
+    r = conn.execute("SELECT path,email_id FROM email_attachments WHERE id=? AND owner_id=?", (aid, oid)).fetchone()
+    if r and r['email_id'] is None:
+        try:
+            if r['path'] and os.path.exists(r['path']):
+                os.remove(r['path'])
+        except Exception:
+            pass
+        conn.execute("DELETE FROM email_attachments WHERE id=? AND owner_id=?", (aid, oid))
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+def _attachments_for_email(conn, oid, email_id):
+    if not email_id:
+        return []
+    return conn.execute("SELECT id,filename,mime,size FROM email_attachments WHERE owner_id=? AND email_id=? "
+                        "ORDER BY id", (oid, email_id)).fetchall()
+
+
+def _save_incoming_attachments(msg, conn, oid, email_id):
+    """Walk an incoming MIME message, save real attachments to the persistent
+    disk and record them (direction='in'). Inline images without a filename are
+    skipped. Called once, only when a message is first inserted."""
+    import uuid as _uuid
+    n = 0
+    try:
+        for part in msg.walk():
+            if part.get_content_maintype() == 'multipart':
+                continue
+            fname = part.get_filename()
+            disp = (part.get('Content-Disposition') or '')
+            if not fname or ('attachment' not in disp.lower() and part.get_content_maintype() == 'text'):
+                continue
+            try:
+                data = part.get_payload(decode=True)
+            except Exception:
+                data = None
+            if not data or len(data) > _ATTACH_MAX_BYTES:
+                continue
+            safe = _safe_filename(_email_decode(fname))
+            sub = os.path.join(EMAIL_ATTACH_DIR, str(oid or 0))
+            os.makedirs(sub, exist_ok=True)
+            disk = os.path.join(sub, _uuid.uuid4().hex + '_' + safe)
+            with open(disk, 'wb') as fh:
+                fh.write(data)
+            conn.execute("INSERT INTO email_attachments (owner_id,email_id,direction,filename,mime,size,path,created_at) "
+                         "VALUES (?,?,?,?,?,?,?,?)",
+                         (oid, email_id, 'in', safe, part.get_content_type() or 'application/octet-stream',
+                          len(data), disk, ts()))
+            n += 1
+    except Exception as e:
+        print('[email-service] incoming attach error:', e)
+    return n
 
 
 @app.route('/api/emailbox/rethread', methods=['POST'])
@@ -11683,6 +11822,12 @@ def emailbox_thread():
     else:
         key = _norm_subject(base['subject'])
         thread = [dict(r) for r in rows if _norm_subject(r['subject']) == key]
+    # Attach any files per message (cheap: one small query per message shown).
+    if thread:
+        c2 = get_db()
+        for m in thread:
+            m['attachments'] = [dict(a) for a in _attachments_for_email(c2, oid, m['id'])]
+        c2.close()
     return jsonify({'ok': True, 'thread': thread, 'subject': base['subject']})
 
 
@@ -13193,7 +13338,7 @@ def _text_to_html(text):
 
 def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
                        in_reply_to='', references='', thread_id='', candidate_id=None,
-                       append_signature=True):
+                       append_signature=True, attachment_ids=None, forward_from_email_id=None):
     """THE single outgoing-email pipeline. Builds multipart plain+HTML, sets
     Message-ID / In-Reply-To / References, appends the official signature, sends
     via SMTP, and stores the sent copy in `emails` (+ `email_messages` if linked
@@ -13219,21 +13364,41 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
     if append_signature and sig_html and not _has_signature(body_text or ''):
         html = html + sig_html
 
-    msg = MIMEMultipart('alternative')
-    msg['From'] = f'{dname} <{email_addr}>' if dname else email_addr
-    msg['To'] = to
-    if cc:
-        msg['Cc'] = cc
-    msg['Subject'] = subject
+    # ── Resolve attachments up front (pending uploads + forwarded originals) ──
+    _att_files = []           # {id, filename, mime, path, forward}
+    _pending_ids = []
+    oid_now = effective_company_id()
+    try:
+        _ca = get_db()
+        for _aid in (attachment_ids or []):
+            try:
+                _aid = int(_aid)
+            except Exception:
+                continue
+            _r = _ca.execute("SELECT id,filename,mime,path FROM email_attachments "
+                             "WHERE id=? AND owner_id=? AND email_id IS NULL", (_aid, oid_now)).fetchone()
+            if _r and _r['path'] and os.path.exists(_r['path']):
+                _att_files.append({'id': _r['id'], 'filename': _r['filename'], 'mime': _r['mime'],
+                                   'path': _r['path'], 'forward': False})
+                _pending_ids.append(_r['id'])
+        if forward_from_email_id:
+            for _r in _ca.execute("SELECT filename,mime,path FROM email_attachments WHERE owner_id=? AND email_id=?",
+                                  (oid_now, forward_from_email_id)).fetchall():
+                if _r['path'] and os.path.exists(_r['path']):
+                    _att_files.append({'id': None, 'filename': _r['filename'], 'mime': _r['mime'],
+                                       'path': _r['path'], 'forward': True})
+        _ca.close()
+    except Exception as _ae:
+        print('[email-service] attach resolve error:', _ae)
+
     mid = make_msgid(domain=email_addr.split('@')[-1] if '@' in email_addr else 'hirelab.com')
-    msg['Message-ID'] = mid
-    msg['Date'] = formatdate(localtime=True)
+
     # Build a COMPLETE References chain so Gmail/Outlook thread reliably.
     if in_reply_to and not references:
         try:
             _c0 = get_db()
             _pr = _c0.execute("SELECT refs FROM emails WHERE owner_id=? AND msg_id=? LIMIT 1",
-                              (effective_company_id(), in_reply_to)).fetchone()
+                              (oid_now, in_reply_to)).fetchone()
             _c0.close()
             if _pr and _pr['refs']:
                 references = _pr['refs']
@@ -13245,17 +13410,11 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
             ref_ids.append(chunk)
     refs = ' '.join(ref_ids)
     if in_reply_to:
-        msg['In-Reply-To'] = in_reply_to
         if in_reply_to not in ref_ids:
             ref_ids.append(in_reply_to)
         refs = ' '.join(ref_ids)
-        msg['References'] = refs
-    # ── Quoted history ────────────────────────────────────────────────────
-    # When this is a reply/follow-up (in_reply_to set), append the previous
-    # message as a quoted block so the candidate always sees earlier context —
-    # even if their mail client fails to thread by Message-ID. Central here =>
-    # every reply, follow-up and agent email gets it automatically. Skip if the
-    # draft already contains a quote (don't double up).
+
+    # ── Quoted history (see note above) — operates on text/html before assembly.
     _already_quoted = ('\n> ' in text) or ('wrote:' in text.lower())
     if in_reply_to and not _already_quoted:
         try:
@@ -13263,7 +13422,7 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
             _orig = _cq.execute(
                 "SELECT from_name, from_addr, subject, date_str, body, body_html "
                 "FROM emails WHERE owner_id=? AND msg_id=? LIMIT 1",
-                (effective_company_id(), in_reply_to)).fetchone()
+                (oid_now, in_reply_to)).fetchone()
             _cq.close()
             if _orig and (_orig['body'] or _orig['body_html']):
                 _who = (_orig['from_name'] or _orig['from_addr'] or 'earlier').strip()
@@ -13280,8 +13439,40 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
         except Exception as _qe:
             print('[email-service] quote error:', _qe)
 
-    msg.attach(MIMEText(text, 'plain', 'utf-8'))
-    msg.attach(MIMEText(html, 'html', 'utf-8'))
+    # ── Assemble MIME (mixed wrapper only when there are attachments) ─────────
+    alt = MIMEMultipart('alternative')
+    alt.attach(MIMEText(text, 'plain', 'utf-8'))
+    alt.attach(MIMEText(html, 'html', 'utf-8'))
+    if _att_files:
+        from email.mime.base import MIMEBase
+        from email import encoders as _encoders
+        msg = MIMEMultipart('mixed')
+        msg.attach(alt)
+        for _a in _att_files:
+            try:
+                with open(_a['path'], 'rb') as _fh:
+                    _data = _fh.read()
+                _mt, _, _st = (_a['mime'] or 'application/octet-stream').partition('/')
+                _part = MIMEBase(_mt or 'application', _st or 'octet-stream')
+                _part.set_payload(_data)
+                _encoders.encode_base64(_part)
+                _part.add_header('Content-Disposition', 'attachment', filename=(_a['filename'] or 'file'))
+                msg.attach(_part)
+            except Exception as _fe:
+                print('[email-service] file attach error:', _fe)
+    else:
+        msg = alt
+
+    msg['From'] = f'{dname} <{email_addr}>' if dname else email_addr
+    msg['To'] = to
+    if cc:
+        msg['Cc'] = cc
+    msg['Subject'] = subject
+    msg['Message-ID'] = mid
+    msg['Date'] = formatdate(localtime=True)
+    if in_reply_to:
+        msg['In-Reply-To'] = in_reply_to
+        msg['References'] = refs
 
     rcpts = [to]
     for extra in (cc, bcc):
@@ -13313,11 +13504,32 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
         tid = _conv_thread_id(email_addr, to, subject)
     try:
         conn = get_db(); oid = effective_company_id()
-        conn.execute("INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,cc,bcc,subject,"
+        cur = conn.execute("INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,cc,bcc,subject,"
                      "date_str,date_ts,snippet,body,body_html,in_reply_to,refs,thread_id,candidate_id,is_read,"
                      "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
                      (oid, mid, 'Sent', email_addr, dname or email_addr, to, cc or '', bcc or '', subject,
                       ts(), time.time(), text[:200], text, html, in_reply_to, refs, tid, candidate_id, ts()))
+        new_email_id = cur.lastrowid
+        # Link the pending uploads to this sent email.
+        if _pending_ids:
+            qs = ','.join('?' * len(_pending_ids))
+            conn.execute("UPDATE email_attachments SET email_id=? WHERE owner_id=? AND id IN (" + qs + ")",
+                         tuple([new_email_id, oid] + _pending_ids))
+        # Record copies of any forwarded attachments against this sent email.
+        for _a in _att_files:
+            if _a.get('forward'):
+                try:
+                    import uuid as _uuid2
+                    _sub = os.path.join(EMAIL_ATTACH_DIR, str(oid or 0))
+                    os.makedirs(_sub, exist_ok=True)
+                    _dst = os.path.join(_sub, _uuid2.uuid4().hex + '_' + _safe_filename(_a['filename']))
+                    shutil.copyfile(_a['path'], _dst)
+                    _sz = os.path.getsize(_dst)
+                    conn.execute("INSERT INTO email_attachments (owner_id,email_id,direction,filename,mime,size,path,"
+                                 "created_at) VALUES (?,?,?,?,?,?,?,?)",
+                                 (oid, new_email_id, 'out', _a['filename'], _a['mime'], _sz, _dst, ts()))
+                except Exception as _ce:
+                    print('[email-service] forward-copy error:', _ce)
         if candidate_id:
             conn.execute("INSERT OR IGNORE INTO email_messages (company_id,candidate_id,direction,from_addr,to_addr,"
                          "subject,body,message_id,in_reply_to,sent_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",

@@ -4344,21 +4344,31 @@ async function openEmail(id){
   var qd=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB'):'';
   var quoted='\n\n--- On '+qd+', '+(e.from_name||e.from_addr||'')+' wrote ---\n'+((e.body||e.snippet||'').split('\n').map(function(l){return '> '+l;}).join('\n'));
   window._replyCtx={to:replyTo,sub:rSub,body:quoted,in_reply_to:(e.msg_id||''),thread_id:(e.thread_id||'')};
+  var fwdBody='\n\n---------- Forwarded message ----------\nFrom: '+(e.from_name||e.from_addr||'')+'\nSubject: '+subject+'\nDate: '+qd+'\n\n'+(e.body||e.snippet||'');
+  window._fwdCtx={to:'',sub:(/^fwd:/i.test(subject)?subject:('Fwd: '+subject)),body:fwdBody,forward_from_email_id:e.id};
+  var _attHtml=function(m){
+    var a=m.attachments||[]; if(!a.length) return '';
+    return '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'+a.map(function(x){
+      var kb=x.size?(' <span style=\"color:#aaa\">('+(x.size>=1048576?((x.size/1048576).toFixed(1)+' MB'):(Math.max(1,Math.round(x.size/1024))+' KB'))+')</span>'):'';
+      return '<a href="'+API+'/emailbox/attachment/'+x.id+'" style="display:inline-flex;align-items:center;gap:5px;background:#EEF2F1;border:1px solid #D5E0DC;border-radius:14px;padding:3px 10px;font-size:11.5px;color:#0F6E56;text-decoration:none">&#128206; '+esc(x.filename)+kb+'</a>';
+    }).join('')+'</div>';
+  };
   var msgHtml=msgs.map(function(m){
     var d=m.date_ts?new Date(m.date_ts*1000).toLocaleString('en-GB'):'';
     var content=_emailContent(m);
     return '<div style="border:1px solid #eee;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:'+(m.folder==='Sent'?'#F7F9FF':'#fff')+'">'
-      +'<div style="font-size:11px;color:#666;border-bottom:1px solid #f0f0f0;padding-bottom:6px;margin-bottom:8px"><b>'+esc(m.from_name||m.from_addr||'')+'</b> &rarr; '+esc(m.to_addr||'')+' <span style="color:#aaa">&middot; '+esc(d)+' &middot; '+esc(m.folder||'')+'</span></div>'+content+'</div>';
+      +'<div style="font-size:11px;color:#666;border-bottom:1px solid #f0f0f0;padding-bottom:6px;margin-bottom:8px"><b>'+esc(m.from_name||m.from_addr||'')+'</b> &rarr; '+esc(m.to_addr||'')+' <span style="color:#aaa">&middot; '+esc(d)+' &middot; '+esc(m.folder||'')+'</span></div>'+content+_attHtml(m)+'</div>';
   }).join('');
   var ex=document.getElementById('modal-email'); if(ex) ex.remove();
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-email';
   bg.innerHTML='<div class="modal" style="max-width:760px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">'+esc(subject||'(no subject)')+' <span style="font-size:11px;color:#999">('+msgs.length+')</span></span><button class="modal-x" onclick="document.getElementById(\'modal-email\').remove()">&#10005;</button></div>'
     +'<div class="modal-body" style="max-height:80vh;overflow:auto">'
-    +'<div style="margin-bottom:10px"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="document.getElementById(\'modal-email\').remove();replyFromEmail()">&#8617; Reply</button></div>'
+    +'<div style="margin-bottom:10px"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="document.getElementById(\'modal-email\').remove();replyFromEmail()">&#8617; Reply</button> <button class="btn btn-o" style="font-size:12px" onclick="document.getElementById(\'modal-email\').remove();forwardFromEmail()">&#10150; Forward</button></div>'
     +msgHtml+'</div></div>';
   document.body.appendChild(bg);
 }
 function replyFromEmail(){ var c=window._replyCtx||{}; openCompose(c.to,c.sub,c.body,{in_reply_to:c.in_reply_to||'',thread_id:c.thread_id||''}); }
+function forwardFromEmail(){ var c=window._fwdCtx||{}; openCompose(c.to,c.sub,c.body,{forward_from_email_id:c.forward_from_email_id||null}); }
 async function ebRethread(btn){
   if(btn){ btn.disabled=true; btn.textContent='Fixing...'; }
   var r=await req('POST','/emailbox/rethread',{});
@@ -4388,6 +4398,8 @@ async function saveSignature(btn){
 function openCompose(to, subject, body, meta){
   window._composeMeta = meta || {};
   window._composeDraftId = (meta && meta.draft_id) || null;
+  window._composeAttach = (meta && meta.attach) ? meta.attach.slice() : [];
+  window._composeFwdFrom = (meta && meta.forward_from_email_id) || null;
   var ex=document.getElementById('modal-compose'); if(ex) ex.remove();
   var initHtml=(body||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-compose';
@@ -4397,9 +4409,37 @@ function openCompose(to, subject, body, meta){
     +'<input class="inp" id="cmp-sub" placeholder="Subject" value="'+esc(subject||'')+'" style="width:100%;margin-bottom:8px">'
     +'<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap">'+eBtn('bold','<b>B</b>')+eBtn('italic','<i>I</i>')+eBtn('underline','<u>U</u>')+eBtn('insertUnorderedList','&#8226; List')+eBtn('insertOrderedList','1. List')+'<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="eLink()">&#128279; Link</button></div>'
     +'<div id="cmp-editor" contenteditable="true" style="width:100%;min-height:170px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;outline:none;overflow:auto">'+initHtml+'</div>'
-    +'<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="sendCompose(this)">&#9993; Send</button><button class="btn btn-o" onclick="saveDraft(this)">Save draft</button><span id="cmp-status" style="font-size:11px;color:#0F6E56"></span></div>'
+    +'<input type="file" id="cmp-file" multiple style="display:none" onchange="ebUploadAttach(this)">'
+    +'<div id="cmp-attach-list" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"></div>'
+    +'<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="sendCompose(this)">&#9993; Send</button><button class="btn btn-o" onclick="document.getElementById(\'cmp-file\').click()">&#128206; Attach</button><button class="btn btn-o" onclick="saveDraft(this)">Save draft</button><span id="cmp-status" style="font-size:11px;color:#0F6E56"></span></div>'
     +'</div></div>';
   document.body.appendChild(bg);
+  ebRenderAttachList();
+}
+function ebRenderAttachList(){
+  var box=document.getElementById('cmp-attach-list'); if(!box) return;
+  var list=window._composeAttach||[];
+  box.innerHTML=list.map(function(a){
+    return '<span style="display:inline-flex;align-items:center;gap:6px;background:#EEF2F1;border:1px solid #D5E0DC;border-radius:14px;padding:3px 10px;font-size:11.5px">&#128206; '+esc(a.filename)+' <b style="cursor:pointer;color:#C0392B" onclick="ebRemoveAttach('+a.id+')">&#10005;</b></span>';
+  }).join('');
+}
+async function ebUploadAttach(input){
+  var files=input.files; if(!files||!files.length) return;
+  var st=document.getElementById('cmp-status');
+  for(var i=0;i<files.length;i++){
+    var fd=new FormData(); fd.append('file',files[i]);
+    if(st) st.textContent='Uploading '+files[i].name+'…';
+    var r=await reqFile('/emailbox/attach',fd);
+    if(r&&r.ok){ (window._composeAttach=window._composeAttach||[]).push({id:r.id,filename:r.filename,size:r.size}); ebRenderAttachList(); }
+    else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Upload failed'; } }
+  }
+  if(st&&st.style.color!=='rgb(192, 57, 74)') st.textContent='';
+  input.value='';
+}
+async function ebRemoveAttach(id){
+  await req('DELETE','/emailbox/attachment/'+id,null);
+  window._composeAttach=(window._composeAttach||[]).filter(function(a){return a.id!==id;});
+  ebRenderAttachList();
 }
 function eBtn(cmd,label){ return '<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="document.execCommand(\''+cmd+'\',false,null);document.getElementById(\'cmp-editor\').focus()">'+label+'</button>'; }
 function eLink(){ var u=prompt('Link URL:'); if(u){ document.execCommand('createLink',false,u); } var ed=document.getElementById('cmp-editor'); if(ed) ed.focus(); }
@@ -4409,8 +4449,9 @@ async function sendCompose(btn){
   if(!v.to||!v.sub||!v.text){ toast('EMAIL','To, subject and message are required'); return; }
   var st=document.getElementById('cmp-status'); if(st) st.textContent='Sending...'; if(btn) btn.disabled=true;
   var meta=window._composeMeta||{};
-  var r=await req('POST','/emailbox/send',{to:v.to,subject:v.sub,body:v.text,body_html:v.html,in_reply_to:meta.in_reply_to||'',thread_id:meta.thread_id||''});
-  if(r&&r.ok){ if(window._composeDraftId){ await req('POST','/emailbox/draft/'+window._composeDraftId+'/delete',{}); } if(st) st.textContent='Sent \u2713'; setTimeout(function(){ var m=document.getElementById('modal-compose'); if(m) m.remove(); if(document.getElementById('emailbox-body')) renderEmailBox(); },700); }
+  var attachIds=(window._composeAttach||[]).map(function(a){return a.id;});
+  var r=await req('POST','/emailbox/send',{to:v.to,subject:v.sub,body:v.text,body_html:v.html,in_reply_to:meta.in_reply_to||'',thread_id:meta.thread_id||'',attachment_ids:attachIds,forward_from_email_id:(window._composeFwdFrom||null)});
+  if(r&&r.ok){ if(window._composeDraftId){ await req('POST','/emailbox/draft/'+window._composeDraftId+'/delete',{}); } window._composeAttach=[]; window._composeFwdFrom=null; if(st) st.textContent='Sent \u2713'; setTimeout(function(){ var m=document.getElementById('modal-compose'); if(m) m.remove(); if(document.getElementById('emailbox-body')) renderEmailBox(); },700); }
   else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Send failed'; } if(btn) btn.disabled=false; }
 }
 async function saveDraft(btn){
