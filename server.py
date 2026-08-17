@@ -2626,6 +2626,27 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # already exists
 
+    # Migrate: user-defined CUSTOM FIELDS. A per-company registry of field
+    # definitions (custom_field_defs) drives extra fields on both mandates and
+    # candidates; the values themselves live in a JSON blob column on each.
+    for _cf_tbl in ('mandates', 'candidates'):
+        try:
+            c.execute(f"ALTER TABLE {_cf_tbl} ADD COLUMN custom_fields TEXT DEFAULT '{{}}'")
+        except sqlite3.OperationalError:
+            pass  # already exists
+    c.execute('''CREATE TABLE IF NOT EXISTS custom_field_defs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER NOT NULL,
+        entity TEXT NOT NULL,               -- 'mandate' | 'candidate'
+        label TEXT NOT NULL DEFAULT '',
+        fkey TEXT NOT NULL DEFAULT '',      -- stable slug, unique per owner+entity
+        ftype TEXT NOT NULL DEFAULT 'text', -- text|number|date|select|bool|multi
+        options TEXT DEFAULT '[]',          -- JSON array (select/multi only)
+        sort_order INTEGER DEFAULT 0,
+        active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT ''
+    )''')
+
     # Migrate: add embedding columns to candidates for semantic search
     for col, typ in [('embedding', 'TEXT'), ('embedding_text', 'TEXT'), ('embedded_at', 'TEXT')]:
         try:
@@ -9602,7 +9623,14 @@ def create_mandate():
     c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,status,created_at,owner_id,assigned_user_id,crm_client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
               (d['client'], d['role'], d.get('location',''), d.get('division',''),
                float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('jd',''), 'active', ts(), effective_company_id(), real_user_id(), crm_client_id))
-    mid = c.lastrowid; conn.commit(); conn.close()
+    mid = c.lastrowid
+    if d.get('custom_fields'):
+        try:
+            c.execute('UPDATE mandates SET custom_fields=? WHERE id=?',
+                      (json.dumps(d.get('custom_fields') or {}), mid))
+        except Exception:
+            pass
+    conn.commit(); conn.close()
     log_activity('create_mandate', d['role'] + ' @ ' + d['client'])
     return jsonify({'ok': True, 'id': mid, 'crm_client_id': crm_client_id})
 
@@ -10036,7 +10064,12 @@ def get_mandate(mid):
     # Recruiters can only open mandates assigned to them.
     if not is_company_admin() and r['assigned_user_id'] != real_user_id():
         return jsonify({'error': 'Not found'}), 404
-    return jsonify(dict(r))
+    md = dict(r)
+    try:
+        md['custom_fields'] = json.loads(md.get('custom_fields') or '{}')
+    except Exception:
+        md['custom_fields'] = {}
+    return jsonify(md)
 
 
 @app.route('/api/my-profile', methods=['GET'])
@@ -10140,7 +10173,155 @@ def update_mandate(mid):
     conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,experience=?,jd=?,status=? WHERE id=?',
                  (d.get('client',''), d.get('role',''), d.get('location',''), d.get('division',''),
                   float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('experience',''), d.get('jd',''), d.get('status','active'), mid))
+    if 'custom_fields' in d:
+        try:
+            conn.execute('UPDATE mandates SET custom_fields=? WHERE id=?',
+                         (json.dumps(d.get('custom_fields') or {}), mid))
+        except Exception:
+            pass
     conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+# ── User-defined Custom Fields (per-company field registry) ──────────────────
+_CF_TYPES = ('text', 'number', 'date', 'select', 'bool', 'multi')
+
+
+def _cf_slug(label, existing):
+    """A stable, filesystem-safe key derived from the label, unique within the
+    given set of existing keys."""
+    base = re.sub(r'[^a-z0-9]+', '_', (label or '').lower()).strip('_') or 'field'
+    slug = base
+    i = 2
+    while slug in existing:
+        slug = f'{base}_{i}'
+        i += 1
+    return slug
+
+
+def _cf_norm_options(opts):
+    """Accept a list or a comma/newline string -> clean list of option strings."""
+    if isinstance(opts, str):
+        return [o.strip() for o in re.split(r'[,\n]+', opts) if o.strip()]
+    if isinstance(opts, list):
+        return [str(o).strip() for o in opts if str(o).strip()]
+    return []
+
+
+@app.route('/api/custom-fields', methods=['GET'])
+@login_required
+def list_custom_fields():
+    """All custom-field definitions for this company (optionally one entity)."""
+    entity = (request.args.get('entity') or '').strip()
+    conn = get_db()
+    q = 'SELECT * FROM custom_field_defs WHERE owner_id=?'
+    args = [effective_company_id()]
+    if entity in ('mandate', 'candidate'):
+        q += ' AND entity=?'
+        args.append(entity)
+    q += ' ORDER BY entity, sort_order, id'
+    rows = conn.execute(q, tuple(args)).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d['options'] = json.loads(d.get('options') or '[]')
+        except Exception:
+            d['options'] = []
+        out.append(d)
+    return jsonify({'ok': True, 'fields': out})
+
+
+@app.route('/api/custom-fields', methods=['POST'])
+@login_required
+def create_custom_field():
+    if not is_company_admin():
+        return jsonify({'error': 'Only an admin can manage custom fields'}), 403
+    d = request.json or {}
+    entity = (d.get('entity') or '').strip()
+    label = (d.get('label') or '').strip()
+    ftype = (d.get('ftype') or 'text').strip()
+    if entity not in ('mandate', 'candidate'):
+        return jsonify({'error': 'entity must be mandate or candidate'}), 400
+    if not label:
+        return jsonify({'error': 'Label required'}), 400
+    if ftype not in _CF_TYPES:
+        ftype = 'text'
+    opts = _cf_norm_options(d.get('options'))
+    conn = get_db()
+    company_id = effective_company_id()
+    existing = set(r['fkey'] for r in conn.execute(
+        'SELECT fkey FROM custom_field_defs WHERE owner_id=? AND entity=?',
+        (company_id, entity)).fetchall())
+    fkey = _cf_slug(label, existing)
+    nxt = conn.execute(
+        'SELECT COALESCE(MAX(sort_order),0)+1 n FROM custom_field_defs WHERE owner_id=? AND entity=?',
+        (company_id, entity)).fetchone()['n']
+    cur = conn.execute(
+        'INSERT INTO custom_field_defs (owner_id,entity,label,fkey,ftype,options,sort_order,active,created_at) '
+        'VALUES (?,?,?,?,?,?,?,1,?)',
+        (company_id, entity, label, fkey, ftype, json.dumps(opts), nxt, ts()))
+    nid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': nid, 'fkey': fkey})
+
+
+@app.route('/api/custom-fields/<int:fid>', methods=['PUT'])
+@login_required
+def update_custom_field(fid):
+    if not is_company_admin():
+        return jsonify({'error': 'Only an admin can manage custom fields'}), 403
+    d = request.json or {}
+    conn = get_db()
+    r = conn.execute('SELECT * FROM custom_field_defs WHERE id=? AND owner_id=?',
+                     (fid, effective_company_id())).fetchone()
+    if not r:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    sets = []
+    vals = []
+    if 'label' in d and (d['label'] or '').strip():
+        sets.append('label=?')
+        vals.append(d['label'].strip())
+    if 'options' in d:
+        sets.append('options=?')
+        vals.append(json.dumps(_cf_norm_options(d.get('options'))))
+    if 'ftype' in d and d['ftype'] in _CF_TYPES:
+        sets.append('ftype=?')
+        vals.append(d['ftype'])
+    if 'sort_order' in d:
+        try:
+            sets.append('sort_order=?')
+            vals.append(int(d['sort_order']))
+        except Exception:
+            pass
+    if 'active' in d:
+        sets.append('active=?')
+        vals.append(1 if d['active'] else 0)
+    if sets:
+        vals.append(fid)
+        conn.execute('UPDATE custom_field_defs SET ' + ','.join(sets) + ' WHERE id=?', vals)
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/custom-fields/<int:fid>', methods=['DELETE'])
+@login_required
+def delete_custom_field(fid):
+    if not is_company_admin():
+        return jsonify({'error': 'Only an admin can manage custom fields'}), 403
+    conn = get_db()
+    r = conn.execute('SELECT id FROM custom_field_defs WHERE id=? AND owner_id=?',
+                     (fid, effective_company_id())).fetchone()
+    if not r:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    conn.execute('DELETE FROM custom_field_defs WHERE id=?', (fid,))
+    conn.commit()
+    conn.close()
     return jsonify({'ok': True})
 
 @app.route('/api/mandates/<int:mid>/candidates')
@@ -14030,6 +14211,8 @@ def get_candidate(cid):
     except: d['key_skills'] = []
     try: d['secondary_skills'] = json.loads(d['secondary_skills'] or '[]')
     except: d['secondary_skills'] = []
+    try: d['custom_fields'] = json.loads(d.get('custom_fields') or '{}')
+    except: d['custom_fields'] = {}
     hist = conn.execute('SELECT * FROM stage_history WHERE candidate_id=? ORDER BY created_at', (cid,)).fetchall()
     d['history'] = [dict(h) for h in hist]
     wh = conn.execute('SELECT * FROM work_history WHERE candidate_id=? ORDER BY is_current DESC, sort_order ASC, id ASC', (cid,)).fetchall()
@@ -14075,7 +14258,7 @@ def update_candidate(cid):
     fields = ['name','company','designation','experience','ctc_current','ctc_expected',
               'notice_period','location','preferred_location','phone','email','qualification','specialization','career_summary',
               'key_skills','secondary_skills','recruiter_feedback','client_feedback','general_comments',
-              'linkedin_url','ai_insight_cv']
+              'linkedin_url','ai_insight_cv','custom_fields']
     sets = []; vals = []
     for f in fields:
         if f in d:
