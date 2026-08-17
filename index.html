@@ -4736,25 +4736,14 @@ async function saveInvoice(id){
 }
 
 // ── CANDIDATE PROFILES ─────────────────────────────────────────────────────
-async function renderProfiles(el){
-  el.style.padding='0'; el.style.display='flex'; el.style.flexDirection='column'; el.style.overflow='hidden';
-  var all = await req('GET','/mandates/'+S.activeMandate.id+'/candidates');
-  var inp = (all||[]).filter(function(c){ return c.stage!=='Screened-Out'; });
-  if(!inp.length){
-    el.innerHTML='<div class="empty-state"><div class="empty-icon">&#128100;</div><div class="empty-title">No candidates in pipeline</div><div class="empty-sub">Add from Results tab or via Pipeline.</div></div>';
-    return;
-  }
-  if(!S.selectedCandidateId) S.selectedCandidateId = inp[0].id;
-  var selected = inp.find(function(c){ return c.id===S.selectedCandidateId; }) || inp[0];
-
-  // Group by stage
+// ── Shared builder for the left profile list (used by full render + reflow) ──
+function _profileListHtml(inp, selectedId){
   var grouped = {};
   PIPELINE_STAGES.forEach(function(s){ grouped[s.id] = []; });
   inp.forEach(function(c){
     if(grouped[c.stage]) grouped[c.stage].push(c);
     else { if(!grouped['Other']) grouped['Other']=[]; grouped['Other'].push(c); }
   });
-
   var listHtml = '<div class="prof-list-head" style="display:flex;align-items:center;justify-content:space-between"><span>Pipeline ('+inp.length+')</span></div>';
   PIPELINE_STAGES.forEach(function(stage){
     var cands = grouped[stage.id] || [];
@@ -4765,7 +4754,7 @@ async function renderProfiles(el){
       +'<span style="background:'+stage.color+'22;color:'+stage.color+';border-radius:9px;padding:1px 8px;font-size:11px">'+cands.length+'</span>'
       +'</div>';
     cands.forEach(function(c){
-      var isActive = c.id === selected.id;
+      var isActive = c.id === selectedId;
       var _lst = []; try { _lst = JSON.parse(c.status_tags||'[]'); } catch(e){ _lst = []; }
       var tagChips = _lst.slice(0,3).map(function(t){
         var col = _tagColor(t);
@@ -4782,12 +4771,41 @@ async function renderProfiles(el){
         +'</div>';
     });
   });
-
-  el.innerHTML = '<div class="prof-wrap"><div class="prof-list">'+listHtml+'</div><div class="prof-detail" id="prof-detail"></div></div>';
-
+  return listHtml;
+}
+function _attachProfileListClicks(){
   document.querySelectorAll('.prof-list-item').forEach(function(item){
     item.addEventListener('click', function(){ var pid=parseInt(item.dataset.pid); if(pid) selectProfile(pid); });
   });
+}
+// Rebuild ONLY the left list (re-group by stage) without touching the detail pane.
+async function _reflowProfileList(){
+  if(!S.activeMandate) return;
+  var listEl = document.querySelector('.prof-list');
+  if(!listEl) return;
+  var all = await req('GET','/mandates/'+S.activeMandate.id+'/candidates');
+  var inp = (all||[]).filter(function(c){ return c.stage!=='Screened-Out'; });
+  listEl.innerHTML = _profileListHtml(inp, S.selectedCandidateId);
+  _attachProfileListClicks();
+}
+
+async function renderProfiles(el){
+  el.style.padding='0'; el.style.display='flex'; el.style.flexDirection='column'; el.style.overflow='hidden';
+  var all = await req('GET','/mandates/'+S.activeMandate.id+'/candidates');
+  var inp = (all||[]).filter(function(c){ return c.stage!=='Screened-Out'; });
+  if(!inp.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">&#128100;</div><div class="empty-title">No candidates in pipeline</div><div class="empty-sub">Add from Results tab or via Pipeline.</div></div>';
+    return;
+  }
+  if(!S.selectedCandidateId) S.selectedCandidateId = inp[0].id;
+  var selected = inp.find(function(c){ return c.id===S.selectedCandidateId; }) || inp[0];
+
+  // Group by stage + build list (shared helper — also used by _reflowProfileList)
+  var listHtml = _profileListHtml(inp, selected.id);
+
+  el.innerHTML = '<div class="prof-wrap"><div class="prof-list">'+listHtml+'</div><div class="prof-detail" id="prof-detail"></div></div>';
+
+  _attachProfileListClicks();
 
   var detail = await req('GET','/candidates/'+selected.id);
   renderProfileDetail(detail);
@@ -4826,10 +4844,31 @@ function toggleEdit(section, cancel) {
 }
 
 async function saveProfileSection(section, cid) {
-  // Reuse the existing full-profile save (reads all pf-* fields), then refresh
-  await saveProfile(cid);
-  // Re-open the profile to reflect clean view
-  openProfileById(cid, S.activeMandate ? S.activeMandate.id : null);
+  // Silent save — persist via PUT, then update ONLY this section's read-view in
+  // place. No full profile reload: scroll position, open tab, loaded emails and
+  // reminders all stay exactly as they were.
+  await saveProfile(cid);                       // silent PUT (+ toast + history)
+  var fresh = await req('GET', '/candidates/' + cid);
+  if (fresh && !fresh.error) {
+    if (section === 'pd') {
+      var pv = document.getElementById('pd-view');
+      if (pv) pv.innerHTML = _keyFactsViewHtml(fresh);
+      // Re-bind the WhatsApp buttons inside the freshly rebuilt phone row
+      try { attachWAHandlers(fresh); } catch(e){}
+      // Reflect Company / Designation change in the header subline
+      var sub = document.getElementById('cp-subline-' + cid);
+      if (sub) sub.innerHTML = esc(fresh.designation||'') + (fresh.company?' &middot; '+esc(fresh.company):'');
+      // Keep the left pipeline list in sync (it shows company + CTC)
+      try { _reflowProfileList(); } catch(e){}
+    } else if (section === 'cs') {
+      var cv = document.getElementById('cs-view');
+      if (cv) cv.innerHTML = fresh.career_summary
+        ? '<div style="font-size:13px;color:var(--ink);line-height:1.6;white-space:pre-wrap">'+esc(fresh.career_summary)+'</div>'
+        : '<div style="font-size:12.5px;color:var(--muted);font-style:italic">No summary yet — click \u270e to add</div>';
+    }
+  }
+  // Flip back from edit mode to the clean read view (no page refresh)
+  toggleEdit(section, true);
 }
 
 // ── Work History (multi-company) editing ──────────────────────────────────
@@ -4888,6 +4927,39 @@ function pqPill(icon, text) {
   return '<span class="pq-pill"><span class="pq-ico">' + icon + '</span>' + text + '</span>';
 }
 
+// Builds the inner HTML of the Key Facts read-view (#pd-view). Single source of
+// truth so the initial render AND the silent in-place save produce identical
+// markup (incl. call / WhatsApp / email action buttons).
+function _keyFactsViewHtml(c){
+  var waButtonsHtml = ''
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="msg1">&#128075; Intro</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu1">&#128260; Follow Up 1</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu2">&#128260; Follow Up 2</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu3">&#128260; Follow Up 3</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="interview">&#128197; Interview invite</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="docs">&#128196; Docs request</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="normal">&#128172; Normal chat</button>'
+    +'<div style="border-top:0.5px solid var(--line);margin:4px 0"></div>';
+  var phoneRow = c.phone
+    ? '<div class="info-row"><span class="info-label">Phone</span><span class="info-value" style="display:flex;align-items:center;gap:8px;justify-content:flex-end">'+esc(c.phone)
+      +' <span onclick="pushCall(\''+esc(c.phone).replace(/'/g,'')+'\',\''+esc(c.name||'').replace(/'/g,'')+'\')" title="Call" style="cursor:pointer;color:#0A2540;font-size:14px">&#128222;</span>'
+      +' <span style="position:relative;display:inline-flex"><button onclick="toggleWAPop('+c.id+')" title="WhatsApp — Intro / Follow-ups / AI" style="border:none;background:#25D366;color:#fff;border-radius:6px;padding:3px 7px;cursor:pointer;font-size:12px;line-height:1">&#128172; &#9662;</button><div id="wa-pop-'+c.id+'" class="wa-pop" style="display:none">'+waButtonsHtml+'</div></span>'
+      +'</span></div>'
+    : infoRow('Phone','');
+  var emailRow = c.email
+    ? '<div class="info-row"><span class="info-label">Email</span><span class="info-value" style="display:flex;align-items:center;gap:7px;justify-content:flex-end;word-break:break-all">'+esc(c.email)
+      +' <span onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')" title="Email" style="cursor:pointer;color:#0A2540">&#9993;</span>'
+      +'</span></div>'
+    : infoRow('Email','');
+  return infoRow('Company', c.company) + infoRow('Designation', c.designation)
+    + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
+    + infoRow('Expected CTC', c.ctc_expected?('\u20B9'+c.ctc_expected+' LPA'):'') + infoRow('Notice', c.notice_period?(c.notice_period+' days'):'')
+    + infoRow('Location', c.location) + infoRow('Preferred', c.preferred_location)
+    + infoRow('Qualification', c.qualification) + infoRow('Specialization', c.specialization) + infoRow('Industry', c.industry_background||c.industry)
+    + phoneRow + emailRow
+    + (c.linkedin_url?'<div class="info-row"><span class="info-label">LinkedIn</span><span class="info-value"><a href="'+esc(c.linkedin_url)+'" target="_blank" style="color:#0A66C2;text-decoration:none;word-break:break-all">&#128279; Profile</a></span></div>':'');
+}
+
 function renderProfileDetail(c){
   const el=document.getElementById('prof-detail');if(!el)return;
   if(c && c.name){
@@ -4904,36 +4976,9 @@ function renderProfileDetail(c){
   // ── Reusable section snippets ──────────────────────────────────────────
   // Key Facts (pd-view / pd-edit) with call·WA·email next to phone/email
   var phoneClean=(c.phone||'').replace(/[^0-9]/g,''); var waNum=phoneClean?(phoneClean.length===10?'91'+phoneClean:phoneClean):'';
-  var waButtonsHtml = ''
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="msg1">&#128075; Intro</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu1">&#128260; Follow Up 1</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu2">&#128260; Follow Up 2</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu3">&#128260; Follow Up 3</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="interview">&#128197; Interview invite</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="docs">&#128196; Docs request</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="normal">&#128172; Normal chat</button>'
-    +'<div style="border-top:0.5px solid var(--line);margin:4px 0"></div>'
-    +'';
-  var phoneRow = c.phone
-    ? '<div class="info-row"><span class="info-label">Phone</span><span class="info-value" style="display:flex;align-items:center;gap:8px;justify-content:flex-end">'+esc(c.phone)
-      +' <span onclick="pushCall(\''+esc(c.phone).replace(/'/g,'')+'\',\''+esc(c.name||'').replace(/'/g,'')+'\')" title="Call" style="cursor:pointer;color:#0A2540;font-size:14px">&#128222;</span>'
-      +' <span style="position:relative;display:inline-flex"><button onclick="toggleWAPop('+c.id+')" title="WhatsApp — Intro / Follow-ups / AI" style="border:none;background:#25D366;color:#fff;border-radius:6px;padding:3px 7px;cursor:pointer;font-size:12px;line-height:1">&#128172; &#9662;</button><div id="wa-pop-'+c.id+'" class="wa-pop" style="display:none">'+waButtonsHtml+'</div></span>'
-      +'</span></div>'
-    : infoRow('Phone','');
-  var emailRow = c.email
-    ? '<div class="info-row"><span class="info-label">Email</span><span class="info-value" style="display:flex;align-items:center;gap:7px;justify-content:flex-end;word-break:break-all">'+esc(c.email)
-      +' <span onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')" title="Email" style="cursor:pointer;color:#0A2540">&#9993;</span>'
-      +'</span></div>'
-    : infoRow('Email','');
   var keyFacts='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">Key Facts</div><button class="edit-pencil" onclick="toggleEdit(&#39;pd&#39;)" title="Edit">&#9998;</button></div>'
     +'<div id="pd-view" class="info-grid">'
-    + infoRow('Company', c.company) + infoRow('Designation', c.designation)
-    + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
-    + infoRow('Expected CTC', c.ctc_expected?('\u20B9'+c.ctc_expected+' LPA'):'') + infoRow('Notice', c.notice_period?(c.notice_period+' days'):'')
-    + infoRow('Location', c.location) + infoRow('Preferred', c.preferred_location)
-    + infoRow('Qualification', c.qualification) + infoRow('Specialization', c.specialization) + infoRow('Industry', c.industry_background||c.industry)
-    + phoneRow + emailRow
-    + (c.linkedin_url?'<div class="info-row"><span class="info-label">LinkedIn</span><span class="info-value"><a href="'+esc(c.linkedin_url)+'" target="_blank" style="color:#0A66C2;text-decoration:none;word-break:break-all">&#128279; Profile</a></span></div>':'')
+    + _keyFactsViewHtml(c)
     +'</div>'
     +'<div id="pd-edit" style="display:none">'
     +'<div class="g2">'+sInp('pf-company','Current Company',c.company||'')+sInp('pf-designation','Designation',c.designation||'')+'</div>'
@@ -5039,7 +5084,7 @@ function renderProfileDetail(c){
   html+='<div class="cp-back" onclick="history.back()">&#8592; Back</div>';
   html+='<div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;padding-bottom:14px">';
   html+=avatarHtml(c.name,46);
-  html+='<div style="flex:1;min-width:160px"><div style="font-size:20px;font-weight:700;letter-spacing:-.4px;color:var(--navy)">'+esc(c.name||'')+'</div><div style="font-size:13px;color:var(--muted);margin-top:2px">'+esc(c.designation||'')+(c.company?' &middot; '+esc(c.company):'')+'</div><div id="status-tags-'+c.id+'" style="margin-top:6px">'+statusTagsInner(c.id)+'</div></div>';
+  html+='<div style="flex:1;min-width:160px"><div style="font-size:20px;font-weight:700;letter-spacing:-.4px;color:var(--navy)">'+esc(c.name||'')+'</div><div id="cp-subline-'+c.id+'" style="font-size:13px;color:var(--muted);margin-top:2px">'+esc(c.designation||'')+(c.company?' &middot; '+esc(c.company):'')+'</div><div id="status-tags-'+c.id+'" style="margin-top:6px">'+statusTagsInner(c.id)+'</div></div>';
   html+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
   if(fit>0) html+='<span class="cp-fitpill">'+fit+'% fit</span>';
   html+='<select id="prof-stage-sel" data-cid="'+c.id+'" style="font-size:12.5px;font-weight:600;color:'+stageDot(c.stage||'')+';border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:#fff;cursor:pointer">'+stageOptions+'</select>';
@@ -7151,14 +7196,9 @@ function attachStageDropdown() {
       toast('OK', 'Stage: ' + newStage);
       var fresh = await req('GET', '/candidates/' + cid);
       refreshHistory(fresh.history || []);
-      // Update sidebar list
-      var items = document.querySelectorAll('.prof-list-item');
-      items.forEach(function(item) {
-        if (item.getAttribute('onclick') === 'selectProfile(' + cid + ')') {
-          var sub = item.querySelectorAll('div');
-          if (sub[1]) sub[1].textContent = newStage;
-        }
-      });
+      // Instantly re-group the left list so the candidate jumps to the new
+      // stage section — no manual refresh needed. Detail pane stays intact.
+      _reflowProfileList();
     } else {
       sel.value = sel.dataset.current;
       toast('ERR', 'Stage change failed');
