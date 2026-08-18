@@ -5838,13 +5838,13 @@ function savedTemplatesHTML(s){
     + '<div class="fg-row"><label>Subject</label><input class="inp" id="et-subject" style="font-size:12px" placeholder="{role} opportunity at {client}"></div>'
     + '<label style="font-size:11px;color:#555">Body</label>'
     + '<div style="display:flex;gap:5px;margin:4px 0 6px;flex-wrap:wrap;align-items:center">'
-    +   '<select onmousedown="event.preventDefault()" onchange="etCmd(\'fontName\',this.value);this.selectedIndex=0" class="inp" style="font-size:11px;padding:3px 6px;width:auto"><option value="">Font</option>'+fontOpts+'</select>'
-    +   '<select onmousedown="event.preventDefault()" onchange="etCmd(\'fontSize\',this.value)" class="inp" style="font-size:11px;padding:3px 6px;width:auto">'+sizeOpts+'</select>'
+    +   '<select onchange="etFont(this.value);this.selectedIndex=0" class="inp" style="font-size:11px;padding:3px 6px;width:auto"><option value="">Font</option>'+fontOpts+'</select>'
+    +   '<select onchange="etSize(this.value)" class="inp" style="font-size:11px;padding:3px 6px;width:auto"><option value="">Size</option>'+sizeOpts+'</select>'
     +   etTB('bold','<b>B</b>')+etTB('italic','<i>I</i>')+etTB('underline','<u>U</u>')+etTB('insertUnorderedList','&#8226;')+etTB('insertOrderedList','1.')
     +   '<span style="position:relative;display:inline-block"><button type="button" class="btn btn-o" style="font-size:11px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="etToggleVarMenu()">&#123;&#125; Insert variable &#9662;</button>'
     +   '<div id="et-varmenu" style="display:none;position:absolute;top:100%;left:0;z-index:50;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);min-width:210px;max-height:220px;overflow:auto">'+varBtns+'</div></span>'
     + '</div>'
-    + '<div id="et-body" contenteditable="true" style="min-height:150px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;outline:none;overflow:auto" oninput="etAutoTag()" onkeydown="etTagKey(event)" onblur="setTimeout(etHideTag,150)"></div>'
+    + '<div id="et-body" contenteditable="true" style="min-height:150px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;outline:none;overflow:auto" oninput="etAutoTag()" onkeyup="etSaveRange()" onmouseup="etSaveRange()" onkeydown="etTagKey(event)" onblur="setTimeout(etHideTag,150)"></div>'
     + '<div id="et-tagtip" style="display:none;position:fixed;z-index:9999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);min-width:200px;max-height:200px;overflow:auto"></div>'
     + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px"><button class="btn btn-g" style="font-size:12px" onclick="etSave()">&#128190; Save</button>'
     + '<button class="btn btn-o" style="font-size:12px;color:#C0392B;border-color:#F0C7C2" onclick="etDelete()">&#128465; Delete</button>'
@@ -5863,12 +5863,18 @@ var ET_VARS=[
   {tag:'{notice}', label:'Notice period'}
 ];
 function etTB(cmd,label){ return '<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="etCmd(\''+cmd+'\')">'+label+'</button>'; }
-function etCmd(cmd,val){ document.execCommand(cmd,false,val||null); var ed=document.getElementById('et-body'); if(ed) ed.focus(); }
+var _etRange=null;
+function etSaveRange(){ var s=window.getSelection(); if(s&&s.rangeCount){ var r=s.getRangeAt(0); var ed=document.getElementById('et-body'); if(ed&&ed.contains(r.commonAncestorContainer)){ _etRange=r.cloneRange(); } } }
+function etRestoreRange(){ var ed=document.getElementById('et-body'); if(!ed) return; ed.focus(); if(_etRange){ try{ var s=window.getSelection(); s.removeAllRanges(); s.addRange(_etRange); }catch(e){} } }
+function etCmd(cmd,val){ etRestoreRange(); document.execCommand(cmd,false,val||null); etSaveRange(); var ed=document.getElementById('et-body'); if(ed) ed.focus(); }
+function etFont(val){ if(!val) return; etRestoreRange(); try{document.execCommand('styleWithCSS',false,true);}catch(e){} document.execCommand('fontName',false,val); etSaveRange(); }
+function etSize(val){ if(!val) return; etRestoreRange(); try{document.execCommand('styleWithCSS',false,true);}catch(e){} document.execCommand('fontSize',false,val); etSaveRange(); }
 function etToggleVarMenu(){ var m=document.getElementById('et-varmenu'); if(m) m.style.display=(m.style.display==='none'?'block':'none'); }
 function etInsertVar(tag){
   var m=document.getElementById('et-varmenu'); if(m) m.style.display='none';
-  var ed=document.getElementById('et-body'); if(ed) ed.focus();
+  etRestoreRange();
   document.execCommand('insertText',false,tag);
+  etSaveRange();
 }
 var _emailTpls=[];
 function _etLooksHtml(s){ return /<[a-z!/][\s\S]*>/i.test(s||''); }
@@ -5877,7 +5883,7 @@ function etGetBody(){ var ed=document.getElementById('et-body'); return ed?ed.in
 function etSetBody(v){ var ed=document.getElementById('et-body'); if(ed) ed.innerHTML=_etLooksHtml(v)?v:_etToHtml(v); }
 async function loadEmailTemplates(){
   try{ var r=await req('GET','/email-templates'); _emailTpls=(r&&r.templates)||[]; }catch(e){ _emailTpls=[]; }
-  etRefreshDropdown(-1);
+  etRefreshDropdown(_emailTpls.length?0:-1);
 }
 function etRefreshDropdown(selIdx){
   var sel=document.getElementById('et-sel'); if(!sel) return;
@@ -5933,13 +5939,18 @@ async function etDelete(){
 var _etTag={node:null,start:0,items:[],active:0};
 function etAutoTag(){
   var sel=window.getSelection(); if(!sel||!sel.rangeCount){ etHideTag(); return; }
-  var rng=sel.getRangeAt(0); var node=rng.startContainer;
-  if(node.nodeType!==3){ etHideTag(); return; }
-  var off=rng.startOffset; var textBefore=node.textContent.slice(0,off);
+  var rng=sel.getRangeAt(0); var node=rng.startContainer; var off=rng.startOffset;
+  if(node.nodeType!==3){
+    // caret sits in the element (e.g. just after a <br>) — look at the child text node before it
+    var kids=node.childNodes; var cand=kids[off-1]||kids[off];
+    if(cand && cand.nodeType===3){ node=cand; off=cand.textContent.length; }
+    else { etHideTag(); return; }
+  }
+  var textBefore=node.textContent.slice(0,off);
   var brace=textBefore.lastIndexOf('{');
   if(brace<0){ etHideTag(); return; }
   var q=textBefore.slice(brace+1);
-  if(/[}\s<]/.test(q)){ etHideTag(); return; }   // closed or broken — stop
+  if(/[}\s<]/.test(q)){ etHideTag(); return; }
   var ql=q.toLowerCase();
   var items=ET_VARS.filter(function(v){ return v.tag.toLowerCase().indexOf(ql)>=0 || v.label.toLowerCase().indexOf(ql)>=0; });
   if(!items.length){ etHideTag(); return; }
@@ -5951,10 +5962,12 @@ function etRenderTag(rng){
   tip.innerHTML=_etTag.items.map(function(v,i){
     return '<div class="et-tagrow" data-i="'+i+'" onmousedown="event.preventDefault()" onclick="etPickTag('+i+')" style="padding:6px 10px;cursor:pointer;font-size:12px;'+(i===_etTag.active?'background:#EEF0FB;':'')+'border-bottom:1px solid #f4f4f4"><b style="color:#534AB7">'+v.tag+'</b> <span style="color:#888">'+v.label+'</span></div>';
   }).join('');
-  var rect=rng.getBoundingClientRect();
-  var top=(rect.bottom||rect.top||100)+4, left=(rect.left||100);
-  tip.style.top=Math.min(top, window.innerHeight-210)+'px';
-  tip.style.left=Math.min(left, window.innerWidth-230)+'px';
+  var rect=null; try{ rect=rng.getBoundingClientRect(); }catch(e){}
+  var top,left;
+  if(rect && (rect.top||rect.bottom)){ top=rect.bottom+4; left=rect.left; }
+  else { var ed=document.getElementById('et-body'); var er=ed?ed.getBoundingClientRect():{left:100,bottom:200}; top=er.bottom-20; left=er.left+20; }
+  tip.style.top=Math.max(8,Math.min(top, window.innerHeight-210))+'px';
+  tip.style.left=Math.max(8,Math.min(left, window.innerWidth-240))+'px';
   tip.style.display='block';
 }
 function etHideTag(){ var tip=document.getElementById('et-tagtip'); if(tip) tip.style.display='none'; _etTag.node=null; }
