@@ -2626,27 +2626,6 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # already exists
 
-    # Migrate: user-defined CUSTOM FIELDS. A per-company registry of field
-    # definitions (custom_field_defs) drives extra fields on both mandates and
-    # candidates; the values themselves live in a JSON blob column on each.
-    for _cf_tbl in ('mandates', 'candidates'):
-        try:
-            c.execute(f"ALTER TABLE {_cf_tbl} ADD COLUMN custom_fields TEXT DEFAULT '{{}}'")
-        except sqlite3.OperationalError:
-            pass  # already exists
-    c.execute('''CREATE TABLE IF NOT EXISTS custom_field_defs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        owner_id INTEGER NOT NULL,
-        entity TEXT NOT NULL,               -- 'mandate' | 'candidate'
-        label TEXT NOT NULL DEFAULT '',
-        fkey TEXT NOT NULL DEFAULT '',      -- stable slug, unique per owner+entity
-        ftype TEXT NOT NULL DEFAULT 'text', -- text|number|date|select|bool|multi
-        options TEXT DEFAULT '[]',          -- JSON array (select/multi only)
-        sort_order INTEGER DEFAULT 0,
-        active INTEGER DEFAULT 1,
-        created_at TEXT DEFAULT ''
-    )''')
-
     # Migrate: add embedding columns to candidates for semantic search
     for col, typ in [('embedding', 'TEXT'), ('embedding_text', 'TEXT'), ('embedded_at', 'TEXT')]:
         try:
@@ -9623,14 +9602,7 @@ def create_mandate():
     c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,status,created_at,owner_id,assigned_user_id,crm_client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
               (d['client'], d['role'], d.get('location',''), d.get('division',''),
                float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('jd',''), 'active', ts(), effective_company_id(), real_user_id(), crm_client_id))
-    mid = c.lastrowid
-    if d.get('custom_fields'):
-        try:
-            c.execute('UPDATE mandates SET custom_fields=? WHERE id=?',
-                      (json.dumps(d.get('custom_fields') or {}), mid))
-        except Exception:
-            pass
-    conn.commit(); conn.close()
+    mid = c.lastrowid; conn.commit(); conn.close()
     log_activity('create_mandate', d['role'] + ' @ ' + d['client'])
     return jsonify({'ok': True, 'id': mid, 'crm_client_id': crm_client_id})
 
@@ -10064,12 +10036,7 @@ def get_mandate(mid):
     # Recruiters can only open mandates assigned to them.
     if not is_company_admin() and r['assigned_user_id'] != real_user_id():
         return jsonify({'error': 'Not found'}), 404
-    md = dict(r)
-    try:
-        md['custom_fields'] = json.loads(md.get('custom_fields') or '{}')
-    except Exception:
-        md['custom_fields'] = {}
-    return jsonify(md)
+    return jsonify(dict(r))
 
 
 @app.route('/api/my-profile', methods=['GET'])
@@ -10173,155 +10140,7 @@ def update_mandate(mid):
     conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,experience=?,jd=?,status=? WHERE id=?',
                  (d.get('client',''), d.get('role',''), d.get('location',''), d.get('division',''),
                   float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('experience',''), d.get('jd',''), d.get('status','active'), mid))
-    if 'custom_fields' in d:
-        try:
-            conn.execute('UPDATE mandates SET custom_fields=? WHERE id=?',
-                         (json.dumps(d.get('custom_fields') or {}), mid))
-        except Exception:
-            pass
     conn.commit(); conn.close()
-    return jsonify({'ok': True})
-
-
-# ── User-defined Custom Fields (per-company field registry) ──────────────────
-_CF_TYPES = ('text', 'number', 'date', 'select', 'bool', 'multi')
-
-
-def _cf_slug(label, existing):
-    """A stable, filesystem-safe key derived from the label, unique within the
-    given set of existing keys."""
-    base = re.sub(r'[^a-z0-9]+', '_', (label or '').lower()).strip('_') or 'field'
-    slug = base
-    i = 2
-    while slug in existing:
-        slug = f'{base}_{i}'
-        i += 1
-    return slug
-
-
-def _cf_norm_options(opts):
-    """Accept a list or a comma/newline string -> clean list of option strings."""
-    if isinstance(opts, str):
-        return [o.strip() for o in re.split(r'[,\n]+', opts) if o.strip()]
-    if isinstance(opts, list):
-        return [str(o).strip() for o in opts if str(o).strip()]
-    return []
-
-
-@app.route('/api/custom-fields', methods=['GET'])
-@login_required
-def list_custom_fields():
-    """All custom-field definitions for this company (optionally one entity)."""
-    entity = (request.args.get('entity') or '').strip()
-    conn = get_db()
-    q = 'SELECT * FROM custom_field_defs WHERE owner_id=?'
-    args = [effective_company_id()]
-    if entity in ('mandate', 'candidate'):
-        q += ' AND entity=?'
-        args.append(entity)
-    q += ' ORDER BY entity, sort_order, id'
-    rows = conn.execute(q, tuple(args)).fetchall()
-    conn.close()
-    out = []
-    for r in rows:
-        d = dict(r)
-        try:
-            d['options'] = json.loads(d.get('options') or '[]')
-        except Exception:
-            d['options'] = []
-        out.append(d)
-    return jsonify({'ok': True, 'fields': out})
-
-
-@app.route('/api/custom-fields', methods=['POST'])
-@login_required
-def create_custom_field():
-    if not is_company_admin():
-        return jsonify({'error': 'Only an admin can manage custom fields'}), 403
-    d = request.json or {}
-    entity = (d.get('entity') or '').strip()
-    label = (d.get('label') or '').strip()
-    ftype = (d.get('ftype') or 'text').strip()
-    if entity not in ('mandate', 'candidate'):
-        return jsonify({'error': 'entity must be mandate or candidate'}), 400
-    if not label:
-        return jsonify({'error': 'Label required'}), 400
-    if ftype not in _CF_TYPES:
-        ftype = 'text'
-    opts = _cf_norm_options(d.get('options'))
-    conn = get_db()
-    company_id = effective_company_id()
-    existing = set(r['fkey'] for r in conn.execute(
-        'SELECT fkey FROM custom_field_defs WHERE owner_id=? AND entity=?',
-        (company_id, entity)).fetchall())
-    fkey = _cf_slug(label, existing)
-    nxt = conn.execute(
-        'SELECT COALESCE(MAX(sort_order),0)+1 n FROM custom_field_defs WHERE owner_id=? AND entity=?',
-        (company_id, entity)).fetchone()['n']
-    cur = conn.execute(
-        'INSERT INTO custom_field_defs (owner_id,entity,label,fkey,ftype,options,sort_order,active,created_at) '
-        'VALUES (?,?,?,?,?,?,?,1,?)',
-        (company_id, entity, label, fkey, ftype, json.dumps(opts), nxt, ts()))
-    nid = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return jsonify({'ok': True, 'id': nid, 'fkey': fkey})
-
-
-@app.route('/api/custom-fields/<int:fid>', methods=['PUT'])
-@login_required
-def update_custom_field(fid):
-    if not is_company_admin():
-        return jsonify({'error': 'Only an admin can manage custom fields'}), 403
-    d = request.json or {}
-    conn = get_db()
-    r = conn.execute('SELECT * FROM custom_field_defs WHERE id=? AND owner_id=?',
-                     (fid, effective_company_id())).fetchone()
-    if not r:
-        conn.close()
-        return jsonify({'error': 'Not found'}), 404
-    sets = []
-    vals = []
-    if 'label' in d and (d['label'] or '').strip():
-        sets.append('label=?')
-        vals.append(d['label'].strip())
-    if 'options' in d:
-        sets.append('options=?')
-        vals.append(json.dumps(_cf_norm_options(d.get('options'))))
-    if 'ftype' in d and d['ftype'] in _CF_TYPES:
-        sets.append('ftype=?')
-        vals.append(d['ftype'])
-    if 'sort_order' in d:
-        try:
-            sets.append('sort_order=?')
-            vals.append(int(d['sort_order']))
-        except Exception:
-            pass
-    if 'active' in d:
-        sets.append('active=?')
-        vals.append(1 if d['active'] else 0)
-    if sets:
-        vals.append(fid)
-        conn.execute('UPDATE custom_field_defs SET ' + ','.join(sets) + ' WHERE id=?', vals)
-        conn.commit()
-    conn.close()
-    return jsonify({'ok': True})
-
-
-@app.route('/api/custom-fields/<int:fid>', methods=['DELETE'])
-@login_required
-def delete_custom_field(fid):
-    if not is_company_admin():
-        return jsonify({'error': 'Only an admin can manage custom fields'}), 403
-    conn = get_db()
-    r = conn.execute('SELECT id FROM custom_field_defs WHERE id=? AND owner_id=?',
-                     (fid, effective_company_id())).fetchone()
-    if not r:
-        conn.close()
-        return jsonify({'error': 'Not found'}), 404
-    conn.execute('DELETE FROM custom_field_defs WHERE id=?', (fid,))
-    conn.commit()
-    conn.close()
     return jsonify({'ok': True})
 
 @app.route('/api/mandates/<int:mid>/candidates')
@@ -11730,6 +11549,130 @@ def emailbox_sync():
     if err:
         return jsonify({'error': err}), 502
     return jsonify({'ok': True, 'added': added})
+
+
+# ── Wave F: Email self-test / diagnostics ─────────────────────────────────
+@app.route('/api/email/selftest', methods=['GET'])
+@login_required
+def email_selftest():
+    """Preflight checks — no email is actually sent. Verifies SMTP login, IMAP
+    login, Sent-folder detection, signature, attachment storage and agent cfg."""
+    import imaplib, smtplib, os as _os, uuid as _uuid
+    checks = []
+
+    def add(name, ok, detail=''):
+        checks.append({'name': name, 'ok': bool(ok), 'detail': detail})
+
+    email_addr, pw, host, port, dname = _smtp_params()
+    add('SMTP configured', bool(email_addr and pw),
+        (email_addr + ' via ' + host + ':' + str(port)) if email_addr else 'Add email + app password in Settings → Email')
+
+    if email_addr and pw:
+        try:
+            s = smtplib.SMTP(host, port, timeout=15)
+            s.starttls(); s.login(email_addr, pw); s.quit()
+            add('SMTP login', True, 'Authenticated OK')
+        except smtplib.SMTPAuthenticationError:
+            add('SMTP login', False, 'Auth failed — check the app password (not your normal password)')
+        except Exception as e:
+            add('SMTP login', False, str(e))
+
+        ihost = get_setting('imap_host', 'imap.gmail.com') or 'imap.gmail.com'
+        try:
+            M = imaplib.IMAP4_SSL(ihost, timeout=15); M.login(email_addr, pw.replace(' ', ''))
+            try:
+                sent = _find_sent_folder(M)
+                add('IMAP login', True, 'Connected to ' + ihost)
+                add('Sent folder detected', bool(sent), sent or 'Could not detect a Sent folder')
+            finally:
+                try: M.logout()
+                except Exception: pass
+        except Exception as e:
+            add('IMAP login', False, str(e))
+
+    sig_plain, _ = _build_signature()
+    add('Signature set', bool(get_setting('sig_name', '')),
+        (sig_plain.split(chr(10))[0] if sig_plain else 'Not set — open ✍ Signature'))
+
+    # Attachment storage writable?
+    try:
+        oid = effective_company_id()
+        sub = _os.path.join(EMAIL_ATTACH_DIR, str(oid or 0)); _os.makedirs(sub, exist_ok=True)
+        probe = _os.path.join(sub, '.probe_' + _uuid.uuid4().hex)
+        with open(probe, 'wb') as fh: fh.write(b'ok')
+        _os.remove(probe)
+        add('Attachment storage', True, 'Writable: ' + EMAIL_ATTACH_DIR)
+    except Exception as e:
+        add('Attachment storage', False, str(e))
+
+    cfg = _agent_cfg()
+    add('Agent knowledge base', bool((cfg.get('kb') or '').strip()),
+        (str(len(cfg.get('kb', ''))) + ' chars') if cfg.get('kb') else 'Empty')
+
+    ok_all = all(c['ok'] for c in checks)
+    return jsonify({'ok': True, 'all_passed': ok_all, 'checks': checks})
+
+
+@app.route('/api/email/roundtrip', methods=['POST'])
+@login_required
+def email_roundtrip_start():
+    """Send a tokenised test email to YOURSELF with a small attachment, so the
+    full send → receive → thread → attachment path can be verified end-to-end."""
+    import uuid as _uuid
+    email_addr, pw, host, port, dname = _smtp_params()
+    if not email_addr or not pw:
+        return jsonify({'error': 'Email not configured'}), 400
+    token = 'HLTEST-' + _uuid.uuid4().hex[:10].upper()
+    # tiny attachment so we can confirm attachments survive the round-trip
+    oid = effective_company_id()
+    sub = os.path.join(EMAIL_ATTACH_DIR, str(oid or 0)); os.makedirs(sub, exist_ok=True)
+    disk = os.path.join(sub, _uuid.uuid4().hex + '_selftest.txt')
+    with open(disk, 'wb') as fh:
+        fh.write(('HireLab self-test attachment ' + token).encode('utf-8'))
+    conn = get_db()
+    cur = conn.execute("INSERT INTO email_attachments (owner_id,email_id,direction,filename,mime,size,path,created_at) "
+                       "VALUES (?,?,?,?,?,?,?,?)", (oid, None, 'out', 'selftest.txt', 'text/plain',
+                       os.path.getsize(disk), disk, ts()))
+    aid = cur.lastrowid; conn.commit(); conn.close()
+    ok, err, mid, tid = email_service_send(
+        email_addr, 'HireLab Email Self-Test ' + token,
+        'This is an automated round-trip test from HireLab Screener.\nToken: ' + token +
+        '\nIf you can read this with the attached file, sending works. The app will now sync to confirm delivery.',
+        attachment_ids=[aid], append_signature=False)
+    if not ok:
+        return jsonify({'error': err or 'Send failed'}), 400
+    return jsonify({'ok': True, 'token': token, 'message_id': mid})
+
+
+@app.route('/api/email/roundtrip/check', methods=['GET'])
+@login_required
+def email_roundtrip_check():
+    """After a sync, confirm the tokenised test mail came back and inspect it."""
+    token = (request.args.get('token') or '').strip()
+    if not token:
+        return jsonify({'error': 'token required'}), 400
+    conn = get_db(); oid = effective_company_id()
+    sent = conn.execute("SELECT id,thread_id,msg_id FROM emails WHERE owner_id=? AND folder='Sent' AND subject LIKE ? "
+                        "ORDER BY date_ts DESC LIMIT 1", (oid, '%' + token + '%')).fetchone()
+    recv = conn.execute("SELECT id,thread_id,in_reply_to FROM emails WHERE owner_id=? AND folder='Inbox' AND subject LIKE ? "
+                        "ORDER BY date_ts DESC LIMIT 1", (oid, '%' + token + '%')).fetchone()
+    steps = []
+    steps.append({'name': 'Test email sent', 'ok': bool(sent),
+                  'detail': 'In Sent folder' if sent else 'Not found in Sent'})
+    steps.append({'name': 'Delivered back to inbox', 'ok': bool(recv),
+                  'detail': 'Received' if recv else 'Not yet — give Gmail a few seconds and sync again'})
+    if sent and recv:
+        same = (sent['thread_id'] or '') == (recv['thread_id'] or '') and bool(recv['thread_id'])
+        steps.append({'name': 'Threaded together', 'ok': same,
+                      'detail': ('Same conversation: ' + (recv['thread_id'] or '')) if same else 'Sent and received are in different threads'})
+    if recv:
+        att = _attachments_for_email(conn, oid, recv['id'])
+        steps.append({'name': 'Attachment received', 'ok': bool(att),
+                      'detail': (att[0]['filename'] if att else 'Attachment not captured on the received copy')})
+    conn.close()
+    done = bool(sent and recv)
+    return jsonify({'ok': True, 'complete': done, 'passed': all(s['ok'] for s in steps) if done else False,
+                    'steps': steps})
 
 
 @app.route('/api/emailbox/list', methods=['GET'])
@@ -14211,8 +14154,6 @@ def get_candidate(cid):
     except: d['key_skills'] = []
     try: d['secondary_skills'] = json.loads(d['secondary_skills'] or '[]')
     except: d['secondary_skills'] = []
-    try: d['custom_fields'] = json.loads(d.get('custom_fields') or '{}')
-    except: d['custom_fields'] = {}
     hist = conn.execute('SELECT * FROM stage_history WHERE candidate_id=? ORDER BY created_at', (cid,)).fetchall()
     d['history'] = [dict(h) for h in hist]
     wh = conn.execute('SELECT * FROM work_history WHERE candidate_id=? ORDER BY is_current DESC, sort_order ASC, id ASC', (cid,)).fetchall()
@@ -14258,7 +14199,7 @@ def update_candidate(cid):
     fields = ['name','company','designation','experience','ctc_current','ctc_expected',
               'notice_period','location','preferred_location','phone','email','qualification','specialization','career_summary',
               'key_skills','secondary_skills','recruiter_feedback','client_feedback','general_comments',
-              'linkedin_url','ai_insight_cv','custom_fields']
+              'linkedin_url','ai_insight_cv']
     sets = []; vals = []
     for f in fields:
         if f in d:

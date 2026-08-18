@@ -1781,7 +1781,6 @@ async function init(){
   S.settings = settings || {};
   applyPipelineStages();
   if (S.settings.error) { showConnError(S.settings.error); return; }
-  await ensureCustomFields();   // preload user-defined custom field definitions
 
   document.getElementById('app').style.display = 'flex';
   initSidebarResize();
@@ -3107,7 +3106,6 @@ function renderMandateSetup(el){
     + buildJDEditor('ms-jd', m.jd||'')
     +'</div>'
     +'</div></div>'
-    + '<div id="ms-custom-fields"></div>'
     + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
     + '<span style="font-weight:500">&#128100; Client SPOC <span style="font-size:10.5px;color:var(--muted);font-weight:400">(auto-fills the "To" when you share profiles)</span></span></div>'
     + '<div class="card-body"><div id="ms-spoc-wrap"><div style="font-size:12px;color:var(--muted)">Loading contacts…</div></div></div></div>'
@@ -3128,7 +3126,6 @@ function renderMandateSetup(el){
   loadClientNotes();
   loadSpocOptions();
   loadCcOptions();
-  loadMandateCustomFields();
   if (S.currentUser && S.currentUser.is_company_admin) loadTeamForAssign(m.assigned_user_id);
 }
 
@@ -3540,10 +3537,7 @@ function closeSidebarOnMobile() {
 
 async function saveMandateSetup(){
   const m=S.activeMandate;
-  var _mcf=document.getElementById('cf-mand-scope');
-  var _payload={client:v('ms-client'),role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,experience:v('ms-experience'),jd:vHtml('ms-jd'),status:m.status};
-  if(_mcf) _payload.custom_fields=_cfGather(_mcf);
-  await req('PUT','/mandates/'+m.id,_payload);
+  await req('PUT','/mandates/'+m.id,{client:v('ms-client'),role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,experience:v('ms-experience'),jd:vHtml('ms-jd'),status:m.status});
   S.activeMandate=await req('GET','/mandates/'+m.id);
   S.mandates=S.mandates.map(x=>x.id===m.id?S.activeMandate:x);
   renderSidebar();updateTopbar();toast('✅','Mandate saved');
@@ -4285,7 +4279,7 @@ async function renderEmailBox(){
   window._ebEmails=emails;
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap">'+tab('','All')+tab('Inbox','Inbox')+tab('Unread','Unread')+tab('Sent','Sent')+tab('Drafts','Drafts')+'</div>'
-    +'<div style="display:flex;gap:6px;align-items:center"><input class="inp" id="eb-search" placeholder="Search mail" style="font-size:12px;width:160px;padding:5px 9px" oninput="renderEmailList()"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="openCompose()">&#9998; Compose</button><button class="btn btn-o" style="font-size:12px" onclick="openSignatureEditor()">&#9997; Signature</button><button class="btn btn-o" style="font-size:12px" title="Regroup existing emails into conversations" onclick="ebRethread(this)">&#128260; Fix threads</button><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync</button></div></div>'
+    +'<div style="display:flex;gap:6px;align-items:center"><input class="inp" id="eb-search" placeholder="Search mail" style="font-size:12px;width:160px;padding:5px 9px" oninput="renderEmailList()"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="openCompose()">&#9998; Compose</button><button class="btn btn-o" style="font-size:12px" onclick="openSignatureEditor()">&#9997; Signature</button><button class="btn btn-o" style="font-size:12px" title="Regroup existing emails into conversations" onclick="ebRethread(this)">&#128260; Fix threads</button><button class="btn btn-o" style="font-size:12px" title="Test email sending, receiving, threading and attachments" onclick="openEmailSelfTest()">&#129658; Self-Test</button><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync</button></div></div>'
     +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden" id="eb-list"></div>';
   renderEmailList();
 }
@@ -4380,6 +4374,47 @@ async function ebRethread(btn){
   var r=await req('POST','/emailbox/rethread',{});
   toast('EMAIL', (r&&r.ok)?('Regrouped '+r.rethreaded+' emails into conversations'):'Failed');
   renderEmailBox();
+}
+async function openEmailSelfTest(){
+  var ex=document.getElementById('modal-selftest'); if(ex) ex.remove();
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-selftest';
+  bg.innerHTML='<div class="modal" style="max-width:560px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">&#129658; Email Self-Test</span><button class="modal-x" onclick="document.getElementById(\'modal-selftest\').remove()">&#10005;</button></div>'
+    +'<div class="modal-body">'
+    +'<div style="font-size:11px;color:#888;margin-bottom:10px">Checks your whole email pipeline. Preflight runs instantly. The live round-trip sends a test email to yourself and confirms it comes back with threading + attachment.</div>'
+    +'<div id="st-pre">Running preflight…</div>'
+    +'<div style="margin-top:12px"><button class="btn" id="st-run" style="background:#0F6E56;color:#fff;border:none;font-size:12px" onclick="runRoundTrip(this)">&#9993; Run live round-trip test</button> <span id="st-rt-status" style="font-size:11px;color:#888;margin-left:6px"></span></div>'
+    +'<div id="st-rt" style="margin-top:10px"></div>'
+    +'</div></div>';
+  document.body.appendChild(bg);
+  var r=await req('GET','/email/selftest');
+  var box=document.getElementById('st-pre'); if(!box) return;
+  if(!r||!r.checks){ box.innerHTML='<span style="color:#C0392B">Preflight failed: '+esc((r&&r.error)||'unknown')+'</span>'; return; }
+  box.innerHTML=r.checks.map(_stRow).join('');
+}
+function _stRow(c){
+  var icon=c.ok?'<span style="color:#0F6E56">&#10004;</span>':'<span style="color:#C0392B">&#10007;</span>';
+  return '<div style="display:flex;gap:8px;align-items:flex-start;padding:4px 0;border-bottom:1px solid #f4f4f4"><div style="width:16px">'+icon+'</div><div style="flex:1"><div style="font-size:12.5px;font-weight:600">'+esc(c.name)+'</div><div style="font-size:11px;color:#888">'+esc(c.detail||'')+'</div></div></div>';
+}
+async function runRoundTrip(btn){
+  if(btn) btn.disabled=true;
+  var st=document.getElementById('st-rt-status'); var box=document.getElementById('st-rt');
+  if(st) st.textContent='Sending test email…'; if(box) box.innerHTML='';
+  var r=await req('POST','/email/roundtrip',{});
+  if(!r||!r.ok){ if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Send failed'; } if(btn) btn.disabled=false; return; }
+  var token=r.token;
+  // Poll: sync then check, up to ~6 times (Gmail delivery + IMAP lag).
+  var attempt=0;
+  async function poll(){
+    attempt++;
+    if(st) st.textContent='Waiting for delivery… (try '+attempt+'/6)';
+    await req('POST','/emailbox/sync',{});
+    var c=await req('GET','/email/roundtrip/check?token='+encodeURIComponent(token));
+    if(c&&c.steps&&c.steps.length){ box.innerHTML=c.steps.map(_stRow).join(''); }
+    if(c&&c.complete){ if(st){ st.style.color=c.passed?'#0F6E56':'#C0392B'; st.textContent=c.passed?'Round-trip passed \u2713':'Completed with issues'; } if(btn) btn.disabled=false; return; }
+    if(attempt>=6){ if(st){ st.style.color='#C0392B'; st.textContent='Test email not back yet — sync again in a few seconds.'; } if(btn) btn.disabled=false; return; }
+    setTimeout(poll, 6000);
+  }
+  poll();
 }
 async function openSignatureEditor(){
   var r=await req('GET','/email/signature'); if(!r) r={};
@@ -4742,187 +4777,25 @@ async function saveInvoice(id){
 }
 
 // ── CANDIDATE PROFILES ─────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════
-//  USER-DEFINED CUSTOM FIELDS  (Mandate + Candidate)
-//  Field definitions live per-company; values are stored in a custom_fields
-//  JSON blob on each mandate / candidate. Defs are preloaded once at init.
-// ═══════════════════════════════════════════════════════════════════════════
-async function loadCustomFields(){
-  var m=[], c=[];
-  try{
-    var r = await req('GET','/custom-fields');
-    if(r && r.ok && Array.isArray(r.fields)){
-      r.fields.forEach(function(f){ (f.entity==='mandate'?m:c).push(f); });
-    }
-  }catch(e){}
-  S.customFields = {mandate:m, candidate:c};
-  return S.customFields;
-}
-async function ensureCustomFields(){
-  if(!S.customFields){ await loadCustomFields(); }
-  return S.customFields || {mandate:[],candidate:[]};
-}
-function _cfDefs(entity){
-  var cf = S.customFields || {mandate:[],candidate:[]};
-  return (cf[entity]||[]).filter(function(f){ return f.active!==0 && f.active!==false; })
-    .slice().sort(function(a,b){ return (a.sort_order||0)-(b.sort_order||0); });
-}
-function _cfParseVals(raw){
-  if(raw==null) return {};
-  if(typeof raw==='object') return raw;
-  try{ return JSON.parse(raw||'{}')||{}; }catch(e){ return {}; }
-}
-function _cfIsTrue(v){ return v===true||v===1||v==='1'||v==='Yes'||v==='yes'||v==='true'; }
-function _cfDisplay(def, val){
-  if(val==null||val===''||(Array.isArray(val)&&!val.length)) return '';
-  if(def.ftype==='multi') return (Array.isArray(val)?val:[val]).join(', ');
-  if(def.ftype==='bool') return _cfIsTrue(val)?'Yes':'No';
-  return String(val);
-}
-// Read-view info-rows (only fields that actually have a value)
-function _cfViewRows(entity, storedRaw){
-  var stored=_cfParseVals(storedRaw); var out='';
-  _cfDefs(entity).forEach(function(def){
-    var dv=_cfDisplay(def, stored[def.fkey]);
-    if(dv!=='') out += infoRow(def.label, dv);
-  });
-  return out;
-}
-// One editable input. prefix keeps ids unique (e.g. 'cf-cand-', 'cf-mand-').
-function _cfInput(prefix, def, val){
-  var id = prefix+def.fkey;
-  var lbl = '<div class="lbl">'+esc(def.label)+'</div>';
-  if(def.ftype==='number')
-    return '<div>'+lbl+'<input class="inp cf-input" data-cf="'+esc(def.fkey)+'" data-cft="number" id="'+id+'" type="number" step="any" value="'+esc(val==null?'':val)+'" style="width:100%"></div>';
-  if(def.ftype==='date')
-    return '<div>'+lbl+'<input class="inp cf-input" data-cf="'+esc(def.fkey)+'" data-cft="date" id="'+id+'" type="date" value="'+esc(val||'')+'" style="width:100%"></div>';
-  if(def.ftype==='select'){
-    var opts='<option value="">— Select —</option>';
-    (def.options||[]).forEach(function(o){ opts+='<option value="'+esc(o)+'"'+(String(val)===String(o)?' selected':'')+'>'+esc(o)+'</option>'; });
-    return '<div>'+lbl+'<select class="inp cf-input" data-cf="'+esc(def.fkey)+'" data-cft="select" id="'+id+'" style="width:100%">'+opts+'</select></div>';
+async function renderProfiles(el){
+  el.style.padding='0'; el.style.display='flex'; el.style.flexDirection='column'; el.style.overflow='hidden';
+  var all = await req('GET','/mandates/'+S.activeMandate.id+'/candidates');
+  var inp = (all||[]).filter(function(c){ return c.stage!=='Screened-Out'; });
+  if(!inp.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">&#128100;</div><div class="empty-title">No candidates in pipeline</div><div class="empty-sub">Add from Results tab or via Pipeline.</div></div>';
+    return;
   }
-  if(def.ftype==='bool'){
-    var setv=(val==null||val==='');
-    var yv=_cfIsTrue(val);
-    var opts='<option value=""'+(setv?' selected':'')+'>—</option>'
-      +'<option value="Yes"'+(!setv&&yv?' selected':'')+'>Yes</option>'
-      +'<option value="No"'+(!setv&&!yv?' selected':'')+'>No</option>';
-    return '<div>'+lbl+'<select class="inp cf-input" data-cf="'+esc(def.fkey)+'" data-cft="bool" id="'+id+'" style="width:100%">'+opts+'</select></div>';
-  }
-  if(def.ftype==='multi'){
-    var arr = Array.isArray(val)?val.map(String):[];
-    var boxes = (def.options||[]).map(function(o){
-      var on = arr.indexOf(String(o))>=0;
-      return '<label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;background:#fff;border:1px solid var(--line);border-radius:7px;padding:4px 9px;cursor:pointer;margin:0 6px 6px 0">'
-        +'<input type="checkbox" class="cf-multi" value="'+esc(o)+'"'+(on?' checked':'')+'> '+esc(o)+'</label>';
-    }).join('');
-    return '<div style="grid-column:1/-1">'+lbl+'<div class="cf-input" data-cf="'+esc(def.fkey)+'" data-cft="multi" id="'+id+'" style="display:flex;flex-wrap:wrap;margin-top:2px">'+(boxes||'<span style="font-size:11px;color:var(--muted)">No options defined</span>')+'</div></div>';
-  }
-  // text (default)
-  return '<div>'+lbl+'<input class="inp cf-input" data-cf="'+esc(def.fkey)+'" data-cft="text" id="'+id+'" value="'+esc(val==null?'':val)+'" style="width:100%"></div>';
-}
-// Full grid of edit inputs for an entity. Returns '' when no fields defined.
-function _cfEditRows(prefix, entity, storedRaw){
-  var defs=_cfDefs(entity); if(!defs.length) return '';
-  var stored=_cfParseVals(storedRaw);
-  return defs.map(function(def){ return _cfInput(prefix, def, stored[def.fkey]); }).join('');
-}
-// Collect values from a scope element containing .cf-input nodes -> object.
-function _cfGather(scopeEl){
-  var out={};
-  if(!scopeEl) return out;
-  scopeEl.querySelectorAll('.cf-input').forEach(function(node){
-    var key=node.getAttribute('data-cf'); var t=node.getAttribute('data-cft');
-    if(!key) return;
-    if(t==='multi'){
-      var vals=[]; node.querySelectorAll('.cf-multi:checked').forEach(function(cb){ vals.push(cb.value); });
-      if(vals.length) out[key]=vals;
-    } else if(t==='number'){
-      var nv=(node.value||'').trim(); if(nv!==''){ var num=parseFloat(nv); out[key]=isNaN(num)?nv:num; }
-    } else {
-      var v=(node.value||'').trim(); if(v!=='') out[key]=v;
-    }
-  });
-  return out;
-}
+  if(!S.selectedCandidateId) S.selectedCandidateId = inp[0].id;
+  var selected = inp.find(function(c){ return c.id===S.selectedCandidateId; }) || inp[0];
 
-// ── Settings: Custom Fields manager (admin only) ────────────────────────────
-async function renderCustomFieldsEditor(){
-  var box=document.getElementById('custom-fields-editor'); if(!box) return;
-  var isAdmin = S.currentUser && (S.currentUser.role==='admin' || S.currentUser.is_company_admin);
-  if(!isAdmin){ box.innerHTML=''; return; }
-  await ensureCustomFields();
-  var TL={text:'Text',number:'Number',date:'Date',select:'Dropdown',bool:'Yes/No',multi:'Multi-select'};
-  function rowsFor(entity){
-    var defs=(S.customFields[entity]||[]).slice().sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
-    if(!defs.length) return '<div style="font-size:11.5px;color:var(--muted);padding:4px 0">None yet.</div>';
-    return defs.map(function(f){
-      var optStr=(f.options&&f.options.length)?(' \u00b7 '+f.options.join(', ')):'';
-      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:0.5px solid var(--line);border-radius:8px;margin-bottom:6px">'
-        +'<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600">'+esc(f.label)+'</div>'
-        +'<div style="font-size:10.5px;color:var(--muted)">'+(TL[f.ftype]||f.ftype)+esc(optStr)+'</div></div>'
-        +'<button class="btn btn-o" style="font-size:11px;color:#E24B4A;border-color:#F0C4C4;padding:5px 9px" onclick="deleteCustomField('+f.id+')">Delete</button></div>';
-    }).join('');
-  }
-  box.innerHTML='<div class="card" style="margin-bottom:14px;border-top:2px solid #C7841E"><div class="card-head"><span style="font-weight:500">&#129513; Custom Fields</span></div><div class="card-body">'
-    +'<div style="font-size:11px;color:var(--muted);margin-bottom:12px">Define your own fields for Job Mandates and Candidate profiles. They show up as editable fields on every mandate / candidate.</div>'
-    +'<div class="g2" style="gap:18px">'
-    +'<div><div style="font-size:12px;font-weight:700;color:#534AB7;margin-bottom:6px">Mandate fields</div>'+rowsFor('mandate')+'</div>'
-    +'<div><div style="font-size:12px;font-weight:700;color:#0F6E56;margin-bottom:6px">Candidate fields</div>'+rowsFor('candidate')+'</div>'
-    +'</div>'
-    +'<div style="border-top:1px solid #eee;margin-top:14px;padding-top:12px">'
-    +'<div style="font-size:12px;font-weight:700;margin-bottom:8px">Add a new field</div>'
-    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
-    +'<div style="flex:2;min-width:150px"><div class="lbl">Label</div><input class="inp" id="cf-new-label" placeholder="e.g. Willing to relocate"></div>'
-    +'<div style="flex:1;min-width:120px"><div class="lbl">Applies to</div><select class="inp" id="cf-new-entity"><option value="candidate">Candidate</option><option value="mandate">Mandate</option></select></div>'
-    +'<div style="flex:1;min-width:120px"><div class="lbl">Type</div><select class="inp" id="cf-new-type" onchange="_cfToggleOpts()"><option value="text">Text</option><option value="number">Number</option><option value="date">Date</option><option value="select">Dropdown</option><option value="bool">Yes/No</option><option value="multi">Multi-select</option></select></div>'
-    +'</div>'
-    +'<div id="cf-new-opts-wrap" style="display:none;margin-top:8px"><div class="lbl">Options (comma-separated)</div><input class="inp" id="cf-new-opts" placeholder="e.g. Yes, No, Maybe"></div>'
-    +'<button class="btn btn-g" style="margin-top:10px" onclick="addCustomField()">+ Add Field</button>'
-    +'<span id="cf-add-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
-    +'</div>'
-    +'</div></div>';
-}
-function _cfToggleOpts(){
-  var t=document.getElementById('cf-new-type'); var w=document.getElementById('cf-new-opts-wrap');
-  if(!t||!w) return; w.style.display=(t.value==='select'||t.value==='multi')?'block':'none';
-}
-async function addCustomField(){
-  var g=function(id){ var el=document.getElementById(id); return el?el.value:''; };
-  var label=g('cf-new-label'), entity=g('cf-new-entity')||'candidate', ftype=g('cf-new-type')||'text', opts=g('cf-new-opts');
-  if(!label.trim()){ toast('&#9888;&#65039;','Label likho'); return; }
-  if((ftype==='select'||ftype==='multi') && !opts.trim()){ toast('&#9888;&#65039;','Options add karo'); return; }
-  var st=document.getElementById('cf-add-status'); if(st) st.textContent='Saving…';
-  var r=await req('POST','/custom-fields',{label:label.trim(),entity:entity,ftype:ftype,options:opts});
-  if(r&&r.ok){ await loadCustomFields(); renderCustomFieldsEditor(); toast('\u2705','Field added'); }
-  else { if(st) st.textContent=''; toast('&#9888;&#65039;',(r&&r.error)||'Failed'); }
-}
-async function deleteCustomField(fid){
-  if(!confirm('Delete this custom field? Existing values on records stay saved but hidden.')) return;
-  var r=await req('DELETE','/custom-fields/'+fid);
-  if(r&&r.ok){ await loadCustomFields(); renderCustomFieldsEditor(); toast('\u2705','Deleted'); }
-  else toast('&#9888;&#65039;',(r&&r.error)||'Failed');
-}
-// ── Mandate setup: render + load the mandate custom-field inputs ─────────────
-function loadMandateCustomFields(){
-  var box=document.getElementById('ms-custom-fields'); if(!box) return;
-  var defs=_cfDefs('mandate');
-  if(!defs.length){ box.innerHTML=''; return; }
-  var m=S.activeMandate||{};
-  var rows=_cfEditRows('cf-mand-','mandate', m.custom_fields);
-  box.innerHTML='<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head"><span style="font-weight:500">&#129513; Custom Fields</span>'
-    +'<button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div>'
-    +'<div class="card-body"><div class="g2" id="cf-mand-scope">'+rows+'</div></div></div>';
-}
-
-// ── Shared builder for the left profile list (used by full render + reflow) ──
-function _profileListHtml(inp, selectedId){
+  // Group by stage
   var grouped = {};
   PIPELINE_STAGES.forEach(function(s){ grouped[s.id] = []; });
   inp.forEach(function(c){
     if(grouped[c.stage]) grouped[c.stage].push(c);
     else { if(!grouped['Other']) grouped['Other']=[]; grouped['Other'].push(c); }
   });
+
   var listHtml = '<div class="prof-list-head" style="display:flex;align-items:center;justify-content:space-between"><span>Pipeline ('+inp.length+')</span></div>';
   PIPELINE_STAGES.forEach(function(stage){
     var cands = grouped[stage.id] || [];
@@ -4933,7 +4806,7 @@ function _profileListHtml(inp, selectedId){
       +'<span style="background:'+stage.color+'22;color:'+stage.color+';border-radius:9px;padding:1px 8px;font-size:11px">'+cands.length+'</span>'
       +'</div>';
     cands.forEach(function(c){
-      var isActive = c.id === selectedId;
+      var isActive = c.id === selected.id;
       var _lst = []; try { _lst = JSON.parse(c.status_tags||'[]'); } catch(e){ _lst = []; }
       var tagChips = _lst.slice(0,3).map(function(t){
         var col = _tagColor(t);
@@ -4950,41 +4823,12 @@ function _profileListHtml(inp, selectedId){
         +'</div>';
     });
   });
-  return listHtml;
-}
-function _attachProfileListClicks(){
-  document.querySelectorAll('.prof-list-item').forEach(function(item){
-    item.addEventListener('click', function(){ var pid=parseInt(item.dataset.pid); if(pid) selectProfile(pid); });
-  });
-}
-// Rebuild ONLY the left list (re-group by stage) without touching the detail pane.
-async function _reflowProfileList(){
-  if(!S.activeMandate) return;
-  var listEl = document.querySelector('.prof-list');
-  if(!listEl) return;
-  var all = await req('GET','/mandates/'+S.activeMandate.id+'/candidates');
-  var inp = (all||[]).filter(function(c){ return c.stage!=='Screened-Out'; });
-  listEl.innerHTML = _profileListHtml(inp, S.selectedCandidateId);
-  _attachProfileListClicks();
-}
-
-async function renderProfiles(el){
-  el.style.padding='0'; el.style.display='flex'; el.style.flexDirection='column'; el.style.overflow='hidden';
-  var all = await req('GET','/mandates/'+S.activeMandate.id+'/candidates');
-  var inp = (all||[]).filter(function(c){ return c.stage!=='Screened-Out'; });
-  if(!inp.length){
-    el.innerHTML='<div class="empty-state"><div class="empty-icon">&#128100;</div><div class="empty-title">No candidates in pipeline</div><div class="empty-sub">Add from Results tab or via Pipeline.</div></div>';
-    return;
-  }
-  if(!S.selectedCandidateId) S.selectedCandidateId = inp[0].id;
-  var selected = inp.find(function(c){ return c.id===S.selectedCandidateId; }) || inp[0];
-
-  // Group by stage + build list (shared helper — also used by _reflowProfileList)
-  var listHtml = _profileListHtml(inp, selected.id);
 
   el.innerHTML = '<div class="prof-wrap"><div class="prof-list">'+listHtml+'</div><div class="prof-detail" id="prof-detail"></div></div>';
 
-  _attachProfileListClicks();
+  document.querySelectorAll('.prof-list-item').forEach(function(item){
+    item.addEventListener('click', function(){ var pid=parseInt(item.dataset.pid); if(pid) selectProfile(pid); });
+  });
 
   var detail = await req('GET','/candidates/'+selected.id);
   renderProfileDetail(detail);
@@ -5023,31 +4867,10 @@ function toggleEdit(section, cancel) {
 }
 
 async function saveProfileSection(section, cid) {
-  // Silent save — persist via PUT, then update ONLY this section's read-view in
-  // place. No full profile reload: scroll position, open tab, loaded emails and
-  // reminders all stay exactly as they were.
-  await saveProfile(cid);                       // silent PUT (+ toast + history)
-  var fresh = await req('GET', '/candidates/' + cid);
-  if (fresh && !fresh.error) {
-    if (section === 'pd') {
-      var pv = document.getElementById('pd-view');
-      if (pv) pv.innerHTML = _keyFactsViewHtml(fresh);
-      // Re-bind the WhatsApp buttons inside the freshly rebuilt phone row
-      try { attachWAHandlers(fresh); } catch(e){}
-      // Reflect Company / Designation change in the header subline
-      var sub = document.getElementById('cp-subline-' + cid);
-      if (sub) sub.innerHTML = esc(fresh.designation||'') + (fresh.company?' &middot; '+esc(fresh.company):'');
-      // Keep the left pipeline list in sync (it shows company + CTC)
-      try { _reflowProfileList(); } catch(e){}
-    } else if (section === 'cs') {
-      var cv = document.getElementById('cs-view');
-      if (cv) cv.innerHTML = fresh.career_summary
-        ? '<div style="font-size:13px;color:var(--ink);line-height:1.6;white-space:pre-wrap">'+esc(fresh.career_summary)+'</div>'
-        : '<div style="font-size:12.5px;color:var(--muted);font-style:italic">No summary yet — click \u270e to add</div>';
-    }
-  }
-  // Flip back from edit mode to the clean read view (no page refresh)
-  toggleEdit(section, true);
+  // Reuse the existing full-profile save (reads all pf-* fields), then refresh
+  await saveProfile(cid);
+  // Re-open the profile to reflect clean view
+  openProfileById(cid, S.activeMandate ? S.activeMandate.id : null);
 }
 
 // ── Work History (multi-company) editing ──────────────────────────────────
@@ -5106,40 +4929,6 @@ function pqPill(icon, text) {
   return '<span class="pq-pill"><span class="pq-ico">' + icon + '</span>' + text + '</span>';
 }
 
-// Builds the inner HTML of the Key Facts read-view (#pd-view). Single source of
-// truth so the initial render AND the silent in-place save produce identical
-// markup (incl. call / WhatsApp / email action buttons).
-function _keyFactsViewHtml(c){
-  var waButtonsHtml = ''
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="msg1">&#128075; Intro</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu1">&#128260; Follow Up 1</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu2">&#128260; Follow Up 2</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu3">&#128260; Follow Up 3</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="interview">&#128197; Interview invite</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="docs">&#128196; Docs request</button>'
-    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="normal">&#128172; Normal chat</button>'
-    +'<div style="border-top:0.5px solid var(--line);margin:4px 0"></div>';
-  var phoneRow = c.phone
-    ? '<div class="info-row"><span class="info-label">Phone</span><span class="info-value" style="display:flex;align-items:center;gap:8px;justify-content:flex-end">'+esc(c.phone)
-      +' <span onclick="pushCall(\''+esc(c.phone).replace(/'/g,'')+'\',\''+esc(c.name||'').replace(/'/g,'')+'\')" title="Call" style="cursor:pointer;color:#0A2540;font-size:14px">&#128222;</span>'
-      +' <span style="position:relative;display:inline-flex"><button onclick="toggleWAPop('+c.id+')" title="WhatsApp — Intro / Follow-ups / AI" style="border:none;background:#25D366;color:#fff;border-radius:6px;padding:3px 7px;cursor:pointer;font-size:12px;line-height:1">&#128172; &#9662;</button><div id="wa-pop-'+c.id+'" class="wa-pop" style="display:none">'+waButtonsHtml+'</div></span>'
-      +'</span></div>'
-    : infoRow('Phone','');
-  var emailRow = c.email
-    ? '<div class="info-row"><span class="info-label">Email</span><span class="info-value" style="display:flex;align-items:center;gap:7px;justify-content:flex-end;word-break:break-all">'+esc(c.email)
-      +' <span onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')" title="Email" style="cursor:pointer;color:#0A2540">&#9993;</span>'
-      +'</span></div>'
-    : infoRow('Email','');
-  return infoRow('Company', c.company) + infoRow('Designation', c.designation)
-    + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
-    + infoRow('Expected CTC', c.ctc_expected?('\u20B9'+c.ctc_expected+' LPA'):'') + infoRow('Notice', c.notice_period?(c.notice_period+' days'):'')
-    + infoRow('Location', c.location) + infoRow('Preferred', c.preferred_location)
-    + infoRow('Qualification', c.qualification) + infoRow('Specialization', c.specialization) + infoRow('Industry', c.industry_background||c.industry)
-    + phoneRow + emailRow
-    + (c.linkedin_url?'<div class="info-row"><span class="info-label">LinkedIn</span><span class="info-value"><a href="'+esc(c.linkedin_url)+'" target="_blank" style="color:#0A66C2;text-decoration:none;word-break:break-all">&#128279; Profile</a></span></div>':'')
-    + _cfViewRows('candidate', c.custom_fields);
-}
-
 function renderProfileDetail(c){
   const el=document.getElementById('prof-detail');if(!el)return;
   if(c && c.name){
@@ -5156,16 +4945,42 @@ function renderProfileDetail(c){
   // ── Reusable section snippets ──────────────────────────────────────────
   // Key Facts (pd-view / pd-edit) with call·WA·email next to phone/email
   var phoneClean=(c.phone||'').replace(/[^0-9]/g,''); var waNum=phoneClean?(phoneClean.length===10?'91'+phoneClean:phoneClean):'';
+  var waButtonsHtml = ''
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="msg1">&#128075; Intro</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu1">&#128260; Follow Up 1</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu2">&#128260; Follow Up 2</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu3">&#128260; Follow Up 3</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="interview">&#128197; Interview invite</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="docs">&#128196; Docs request</button>'
+    +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="normal">&#128172; Normal chat</button>'
+    +'<div style="border-top:0.5px solid var(--line);margin:4px 0"></div>'
+    +'';
+  var phoneRow = c.phone
+    ? '<div class="info-row"><span class="info-label">Phone</span><span class="info-value" style="display:flex;align-items:center;gap:8px;justify-content:flex-end">'+esc(c.phone)
+      +' <span onclick="pushCall(\''+esc(c.phone).replace(/'/g,'')+'\',\''+esc(c.name||'').replace(/'/g,'')+'\')" title="Call" style="cursor:pointer;color:#0A2540;font-size:14px">&#128222;</span>'
+      +' <span style="position:relative;display:inline-flex"><button onclick="toggleWAPop('+c.id+')" title="WhatsApp — Intro / Follow-ups / AI" style="border:none;background:#25D366;color:#fff;border-radius:6px;padding:3px 7px;cursor:pointer;font-size:12px;line-height:1">&#128172; &#9662;</button><div id="wa-pop-'+c.id+'" class="wa-pop" style="display:none">'+waButtonsHtml+'</div></span>'
+      +'</span></div>'
+    : infoRow('Phone','');
+  var emailRow = c.email
+    ? '<div class="info-row"><span class="info-label">Email</span><span class="info-value" style="display:flex;align-items:center;gap:7px;justify-content:flex-end;word-break:break-all">'+esc(c.email)
+      +' <span onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')" title="Email" style="cursor:pointer;color:#0A2540">&#9993;</span>'
+      +'</span></div>'
+    : infoRow('Email','');
   var keyFacts='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">Key Facts</div><button class="edit-pencil" onclick="toggleEdit(&#39;pd&#39;)" title="Edit">&#9998;</button></div>'
     +'<div id="pd-view" class="info-grid">'
-    + _keyFactsViewHtml(c)
+    + infoRow('Company', c.company) + infoRow('Designation', c.designation)
+    + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
+    + infoRow('Expected CTC', c.ctc_expected?('\u20B9'+c.ctc_expected+' LPA'):'') + infoRow('Notice', c.notice_period?(c.notice_period+' days'):'')
+    + infoRow('Location', c.location) + infoRow('Preferred', c.preferred_location)
+    + infoRow('Qualification', c.qualification) + infoRow('Specialization', c.specialization) + infoRow('Industry', c.industry_background||c.industry)
+    + phoneRow + emailRow
+    + (c.linkedin_url?'<div class="info-row"><span class="info-label">LinkedIn</span><span class="info-value"><a href="'+esc(c.linkedin_url)+'" target="_blank" style="color:#0A66C2;text-decoration:none;word-break:break-all">&#128279; Profile</a></span></div>':'')
     +'</div>'
     +'<div id="pd-edit" style="display:none">'
     +'<div class="g2">'+sInp('pf-company','Current Company',c.company||'')+sInp('pf-designation','Designation',c.designation||'')+'</div>'
     +'<div class="g3" style="margin-top:8px">'+sNum('pf-exp','Experience (yrs)',c.experience||'')+sNum('pf-ctc','Current CTC (LPA)',c.ctc_current||'')+sNum('pf-ectc','Expected CTC (LPA)',c.ctc_expected||'')+sNum('pf-notice','Notice (days)',c.notice_period||'')+sInp('pf-location','Location',c.location||'')+sInp('pf-preferred_location','Preferred Location',c.preferred_location||'')+sInp('pf-qualification','Qualification',c.qualification||'')+sInp('pf-specialization','Specialization',c.specialization||'')+sInp('pf-phone','Phone',c.phone||'','Add when called')+sInp('pf-email','Email',c.email||'','candidate@email.com')+'</div>'
     +'<div style="margin-top:8px">'+sInp('pf-linkedin_url','LinkedIn URL',c.linkedin_url||'','https://www.linkedin.com/in/...')+'</div>'
     +'<textarea id="pf-ai_insight_cv" class="inp" rows="3" style="width:100%;margin-top:8px;font-size:12px;display:none">'+esc(c.ai_insight_cv||'')+'</textarea>'
-    +(_cfDefs('candidate').length?('<div class="g2" id="cf-cand-scope" style="margin-top:8px">'+_cfEditRows('cf-cand-','candidate',c.custom_fields)+'</div>'):'')
     +'<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-g" style="font-size:11px" onclick="saveProfileSection(&#39;pd&#39;,'+c.id+')">&#128190; Save</button><button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;pd&#39;,true)">Cancel</button></div>'
     +'</div></div>';
 
@@ -5265,7 +5080,7 @@ function renderProfileDetail(c){
   html+='<div class="cp-back" onclick="history.back()">&#8592; Back</div>';
   html+='<div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;padding-bottom:14px">';
   html+=avatarHtml(c.name,46);
-  html+='<div style="flex:1;min-width:160px"><div style="font-size:20px;font-weight:700;letter-spacing:-.4px;color:var(--navy)">'+esc(c.name||'')+'</div><div id="cp-subline-'+c.id+'" style="font-size:13px;color:var(--muted);margin-top:2px">'+esc(c.designation||'')+(c.company?' &middot; '+esc(c.company):'')+'</div><div id="status-tags-'+c.id+'" style="margin-top:6px">'+statusTagsInner(c.id)+'</div></div>';
+  html+='<div style="flex:1;min-width:160px"><div style="font-size:20px;font-weight:700;letter-spacing:-.4px;color:var(--navy)">'+esc(c.name||'')+'</div><div style="font-size:13px;color:var(--muted);margin-top:2px">'+esc(c.designation||'')+(c.company?' &middot; '+esc(c.company):'')+'</div><div id="status-tags-'+c.id+'" style="margin-top:6px">'+statusTagsInner(c.id)+'</div></div>';
   html+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
   if(fit>0) html+='<span class="cp-fitpill">'+fit+'% fit</span>';
   html+='<select id="prof-stage-sel" data-cid="'+c.id+'" style="font-size:12.5px;font-weight:600;color:'+stageDot(c.stage||'')+';border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:#fff;cursor:pointer">'+stageOptions+'</select>';
@@ -5701,16 +5516,13 @@ function refreshHistory(hist){
 }
 async function saveProfile(cid){
   const skills=v('pf-skills').split(',').map(s=>s.trim()).filter(Boolean);
-  const _ccf=document.getElementById('cf-cand-scope');
-  const _payload={
+  const r=await req('PUT','/candidates/'+cid,{
     company:v('pf-company'),designation:v('pf-designation'),experience:parseFloat(v('pf-exp'))||0,
     ctc_current:parseFloat(v('pf-ctc'))||0,ctc_expected:parseFloat(v('pf-ectc'))||0,
     notice_period:parseInt(v('pf-notice'))||0,location:v('pf-location'),preferred_location:v('pf-preferred_location'),qualification:v('pf-qualification'),specialization:v('pf-specialization'),phone:v('pf-phone'),email:v('pf-email'),
     linkedin_url:v('pf-linkedin_url'),ai_insight_cv:v('pf-ai_insight_cv'),
     key_skills:skills,career_summary:v('pf-summary')
-  };
-  if(_ccf) _payload.custom_fields=_cfGather(_ccf);
-  const r=await req('PUT','/candidates/'+cid,_payload);
+  });
   if(r.ok){
     ['pf-skills-status','pf-summary-status','pf-rfb-status','pf-cfb-status','pf-comments-status'].forEach(id=>{const el=document.getElementById(id);if(el){el.textContent='✅ Saved';el.style.color='#1D9E75';setTimeout(()=>{if(el)el.textContent='';},3000);}});
     toast('✅','All fields saved');
@@ -5809,7 +5621,6 @@ function renderSettings(){
   body.innerHTML='<div style="max-width:680px">'
     +'<div id="my-billing-card"></div>'
     +'<div id="pipeline-editor"></div>'
-    +'<div id="custom-fields-editor"></div>'
     // ── My Profile (every user) ──
     +'<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head"><span style="font-weight:500">&#128100; My Profile &amp; Email Signature</span></div><div class="card-body">'
     +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">These details are used automatically in your email signature and AI-composed emails.</div>'
@@ -5881,7 +5692,6 @@ async function loadMyProfile(){
   e('mp-email', p.profile_email);
   loadMyBillingCard();
   renderPipelineEditor();
-  renderCustomFieldsEditor();
 }
 
 var _pipeEdit = null;
@@ -7382,9 +7192,14 @@ function attachStageDropdown() {
       toast('OK', 'Stage: ' + newStage);
       var fresh = await req('GET', '/candidates/' + cid);
       refreshHistory(fresh.history || []);
-      // Instantly re-group the left list so the candidate jumps to the new
-      // stage section — no manual refresh needed. Detail pane stays intact.
-      _reflowProfileList();
+      // Update sidebar list
+      var items = document.querySelectorAll('.prof-list-item');
+      items.forEach(function(item) {
+        if (item.getAttribute('onclick') === 'selectProfile(' + cid + ')') {
+          var sub = item.querySelectorAll('div');
+          if (sub[1]) sub[1].textContent = newStage;
+        }
+      });
     } else {
       sel.value = sel.dataset.current;
       toast('ERR', 'Stage change failed');
