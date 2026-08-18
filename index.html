@@ -4473,8 +4473,8 @@ function cmpApplyTemplate(){
   var t=(window._cmpTpls||[])[i]; if(!t) return;
   var subEl=document.getElementById('cmp-sub'); var ed=document.getElementById('cmp-editor');
   if(subEl && t.subject) subEl.value=t.subject;
-  if(ed){ var htmlBody=(t.body||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
-    ed.innerHTML=htmlBody; }
+  if(ed){ var b=(t.body||'');
+    ed.innerHTML=(/<[a-z!/][\s\S]*>/i.test(b)) ? b : b.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
   sel.value='-1';
 }
 function ebRenderAttachList(){
@@ -5822,23 +5822,59 @@ async function saveMyProfile(){
 }
 
 function savedTemplatesHTML(s){
+  var fonts=['Arial','Calibri','Georgia','Times New Roman','Verdana','Tahoma','Courier New'];
+  var fontOpts=fonts.map(function(f){return '<option value="'+f+'">'+f+'</option>';}).join('');
+  var sizeOpts=[['2','Small'],['3','Normal'],['4','Large'],['5','X-Large'],['6','Huge']].map(function(x){return '<option value="'+x[0]+'"'+(x[0]==='3'?' selected':'')+'>'+x[1]+'</option>';}).join('');
+  var varBtns=ET_VARS.map(function(v){return '<div class="et-var-opt" style="padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid #f4f4f4" onmousedown="event.preventDefault()" onclick="etInsertVar(\''+v.tag+'\')"><b style="color:#534AB7">'+v.tag+'</b> <span style="color:#888">'+v.label+'</span></div>';}).join('');
   return '<div style="margin-top:16px;border-top:1px dashed #ddd;padding-top:14px">'
     + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:14px">&#128196;</span>'
     + '<div style="font-size:13px;font-weight:700;color:var(--navy)">Email Templates</div></div>'
-    + '<div style="font-size:10.5px;color:var(--muted);margin-bottom:10px;line-height:1.5">Reusable email templates. Pick one from the dropdown to view/edit, or create a new one. Use these while composing. Placeholders: <code>{name}</code> <code>{role}</code> <code>{client}</code></div>'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-bottom:10px;line-height:1.5">Pick one from the dropdown to view/edit, or create a new one. Type <b>{</b> in the body to auto-suggest variables, or use <b>Insert variable</b>.</div>'
     + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">'
     + '<select class="inp" id="et-sel" onchange="etSelect()" style="font-size:12px;min-width:220px;flex:1"></select>'
     + '<button class="btn btn-o" style="font-size:12px" onclick="etNew()">&#43; New</button></div>'
     + '<div id="et-editor" style="display:none">'
     + '<div class="fg-row"><label>Template name</label><input class="inp" id="et-title" style="font-size:12px" placeholder="e.g. Share JD"></div>'
     + '<div class="fg-row"><label>Subject</label><input class="inp" id="et-subject" style="font-size:12px" placeholder="{role} opportunity at {client}"></div>'
-    + '<div class="fg-row"><label>Body</label><textarea class="inp" id="et-body" rows="7" style="font-size:12px;line-height:1.5"></textarea></div>'
-    + '<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><button class="btn btn-g" style="font-size:12px" onclick="etSave()">&#128190; Save</button>'
+    + '<label style="font-size:11px;color:#555">Body</label>'
+    + '<div style="display:flex;gap:5px;margin:4px 0 6px;flex-wrap:wrap;align-items:center">'
+    +   '<select onmousedown="event.preventDefault()" onchange="etCmd(\'fontName\',this.value);this.selectedIndex=0" class="inp" style="font-size:11px;padding:3px 6px;width:auto"><option value="">Font</option>'+fontOpts+'</select>'
+    +   '<select onmousedown="event.preventDefault()" onchange="etCmd(\'fontSize\',this.value)" class="inp" style="font-size:11px;padding:3px 6px;width:auto">'+sizeOpts+'</select>'
+    +   etTB('bold','<b>B</b>')+etTB('italic','<i>I</i>')+etTB('underline','<u>U</u>')+etTB('insertUnorderedList','&#8226;')+etTB('insertOrderedList','1.')
+    +   '<span style="position:relative;display:inline-block"><button type="button" class="btn btn-o" style="font-size:11px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="etToggleVarMenu()">&#123;&#125; Insert variable &#9662;</button>'
+    +   '<div id="et-varmenu" style="display:none;position:absolute;top:100%;left:0;z-index:50;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);min-width:210px;max-height:220px;overflow:auto">'+varBtns+'</div></span>'
+    + '</div>'
+    + '<div id="et-body" contenteditable="true" style="min-height:150px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;outline:none;overflow:auto" oninput="etAutoTag()" onkeydown="etTagKey(event)" onblur="setTimeout(etHideTag,150)"></div>'
+    + '<div id="et-tagtip" style="display:none;position:fixed;z-index:9999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);min-width:200px;max-height:200px;overflow:auto"></div>'
+    + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px"><button class="btn btn-g" style="font-size:12px" onclick="etSave()">&#128190; Save</button>'
     + '<button class="btn btn-o" style="font-size:12px;color:#C0392B;border-color:#F0C7C2" onclick="etDelete()">&#128465; Delete</button>'
     + '<span id="et-status" style="font-size:11px;color:#0F6E56;margin-left:4px"></span></div>'
     + '</div></div>';
 }
+var ET_VARS=[
+  {tag:'{name}', label:'Candidate name'},
+  {tag:'{first_name}', label:'Candidate first name'},
+  {tag:'{role}', label:'Role / position'},
+  {tag:'{client}', label:'Client / company'},
+  {tag:'{location}', label:'Job location'},
+  {tag:'{recruiter}', label:'Your name'},
+  {tag:'{company}', label:'Your company'},
+  {tag:'{ctc}', label:'Current CTC'},
+  {tag:'{notice}', label:'Notice period'}
+];
+function etTB(cmd,label){ return '<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="etCmd(\''+cmd+'\')">'+label+'</button>'; }
+function etCmd(cmd,val){ document.execCommand(cmd,false,val||null); var ed=document.getElementById('et-body'); if(ed) ed.focus(); }
+function etToggleVarMenu(){ var m=document.getElementById('et-varmenu'); if(m) m.style.display=(m.style.display==='none'?'block':'none'); }
+function etInsertVar(tag){
+  var m=document.getElementById('et-varmenu'); if(m) m.style.display='none';
+  var ed=document.getElementById('et-body'); if(ed) ed.focus();
+  document.execCommand('insertText',false,tag);
+}
 var _emailTpls=[];
+function _etLooksHtml(s){ return /<[a-z!/][\s\S]*>/i.test(s||''); }
+function _etToHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+function etGetBody(){ var ed=document.getElementById('et-body'); return ed?ed.innerHTML:''; }
+function etSetBody(v){ var ed=document.getElementById('et-body'); if(ed) ed.innerHTML=_etLooksHtml(v)?v:_etToHtml(v); }
 async function loadEmailTemplates(){
   try{ var r=await req('GET','/email-templates'); _emailTpls=(r&&r.templates)||[]; }catch(e){ _emailTpls=[]; }
   etRefreshDropdown(-1);
@@ -5858,13 +5894,13 @@ function etSelect(){
     _emailTpls[prev]={id:_emailTpls[prev].id||('t'+Date.now()),
       title:(document.getElementById('et-title').value||'').trim()||'Untitled template',
       subject:(document.getElementById('et-subject').value||'').trim(),
-      body:document.getElementById('et-body').value||''};
+      body:etGetBody()};
   }
   if(isNaN(i)||i<0){ ed.style.display='none'; sel.setAttribute('data-cur','-1'); return; }
   var t=_emailTpls[i]||{}; ed.style.display='block';
   document.getElementById('et-title').value=t.title||'';
   document.getElementById('et-subject').value=t.subject||'';
-  document.getElementById('et-body').value=t.body||'';
+  etSetBody(t.body||'');
   sel.setAttribute('data-cur',String(i));
   var st=document.getElementById('et-status'); if(st) st.textContent='';
 }
@@ -5878,10 +5914,10 @@ async function etSave(){
   _emailTpls[i]={id:_emailTpls[i].id||('t'+Date.now()),
     title:(document.getElementById('et-title').value||'').trim()||'Untitled template',
     subject:(document.getElementById('et-subject').value||'').trim(),
-    body:document.getElementById('et-body').value||''};
-  var st=document.getElementById('et-status'); if(st) st.textContent='Saving…';
+    body:etGetBody()};
+  var st=document.getElementById('et-status'); if(st){ st.style.color='#0F6E56'; st.textContent='Saving…'; }
   var r=await req('POST','/email-templates',{templates:_emailTpls});
-  if(r&&r.ok){ if(st){ st.style.color='#0F6E56'; st.innerHTML='Saved &#10003;'; } etRefreshDropdown(i); }
+  if(r&&r.ok){ if(st){ st.innerHTML='Saved &#10003;'; } etRefreshDropdown(i); }
   else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Save failed'; } }
 }
 async function etDelete(){
@@ -5892,6 +5928,59 @@ async function etDelete(){
   var r=await req('POST','/email-templates',{templates:_emailTpls});
   if(r&&r.ok){ etRefreshDropdown(-1); }
   else { toast('&#9888;&#65039;',(r&&r.error)||'Delete failed'); }
+}
+// ── Variable autocomplete: type "{" then filter, closest tags appear ──────
+var _etTag={node:null,start:0,items:[],active:0};
+function etAutoTag(){
+  var sel=window.getSelection(); if(!sel||!sel.rangeCount){ etHideTag(); return; }
+  var rng=sel.getRangeAt(0); var node=rng.startContainer;
+  if(node.nodeType!==3){ etHideTag(); return; }
+  var off=rng.startOffset; var textBefore=node.textContent.slice(0,off);
+  var brace=textBefore.lastIndexOf('{');
+  if(brace<0){ etHideTag(); return; }
+  var q=textBefore.slice(brace+1);
+  if(/[}\s<]/.test(q)){ etHideTag(); return; }   // closed or broken — stop
+  var ql=q.toLowerCase();
+  var items=ET_VARS.filter(function(v){ return v.tag.toLowerCase().indexOf(ql)>=0 || v.label.toLowerCase().indexOf(ql)>=0; });
+  if(!items.length){ etHideTag(); return; }
+  _etTag={node:node,start:brace,items:items,active:0};
+  etRenderTag(rng);
+}
+function etRenderTag(rng){
+  var tip=document.getElementById('et-tagtip'); if(!tip) return;
+  tip.innerHTML=_etTag.items.map(function(v,i){
+    return '<div class="et-tagrow" data-i="'+i+'" onmousedown="event.preventDefault()" onclick="etPickTag('+i+')" style="padding:6px 10px;cursor:pointer;font-size:12px;'+(i===_etTag.active?'background:#EEF0FB;':'')+'border-bottom:1px solid #f4f4f4"><b style="color:#534AB7">'+v.tag+'</b> <span style="color:#888">'+v.label+'</span></div>';
+  }).join('');
+  var rect=rng.getBoundingClientRect();
+  var top=(rect.bottom||rect.top||100)+4, left=(rect.left||100);
+  tip.style.top=Math.min(top, window.innerHeight-210)+'px';
+  tip.style.left=Math.min(left, window.innerWidth-230)+'px';
+  tip.style.display='block';
+}
+function etHideTag(){ var tip=document.getElementById('et-tagtip'); if(tip) tip.style.display='none'; _etTag.node=null; }
+function etTagKey(e){
+  var tip=document.getElementById('et-tagtip'); if(!tip||tip.style.display==='none') return;
+  if(e.key==='ArrowDown'){ e.preventDefault(); _etTag.active=(_etTag.active+1)%_etTag.items.length; etRenderTagRefresh(); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); _etTag.active=(_etTag.active-1+_etTag.items.length)%_etTag.items.length; etRenderTagRefresh(); }
+  else if(e.key==='Enter'||e.key==='Tab'){ e.preventDefault(); etPickTag(_etTag.active); }
+  else if(e.key==='Escape'){ etHideTag(); }
+}
+function etRenderTagRefresh(){
+  var tip=document.getElementById('et-tagtip'); if(!tip) return;
+  tip.querySelectorAll('.et-tagrow').forEach(function(r){ r.style.background=(+r.dataset.i===_etTag.active?'#EEF0FB':''); });
+}
+function etPickTag(i){
+  var v=_etTag.items[i]; var node=_etTag.node; if(!v||!node){ etHideTag(); return; }
+  var sel=window.getSelection(); if(!sel||!sel.rangeCount){ etHideTag(); return; }
+  var caret=sel.getRangeAt(0).startOffset;
+  try{
+    var r=document.createRange(); r.setStart(node,_etTag.start); r.setEnd(node,caret);
+    r.deleteContents(); var tn=document.createTextNode(v.tag); r.insertNode(tn);
+    var nr=document.createRange(); nr.setStartAfter(tn); nr.collapse(true);
+    sel.removeAllRanges(); sel.addRange(nr);
+  }catch(err){}
+  etHideTag();
+  var ed=document.getElementById('et-body'); if(ed) ed.focus();
 }
 
 function followUpConfigHTML(s){
