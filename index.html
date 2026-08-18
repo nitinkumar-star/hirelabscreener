@@ -4458,6 +4458,7 @@ function openCompose(to, subject, body, meta){
   document.body.appendChild(bg);
   ebRenderAttachList();
   cmpLoadTemplates();
+  installTagAutocomplete('cmp-editor');
 }
 async function cmpLoadTemplates(){
   var sel=document.getElementById('cmp-tpl'); if(!sel) return;
@@ -5844,8 +5845,8 @@ function savedTemplatesHTML(s){
     +   '<span style="position:relative;display:inline-block"><button type="button" class="btn btn-o" style="font-size:11px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="etToggleVarMenu()">&#123;&#125; Insert variable &#9662;</button>'
     +   '<div id="et-varmenu" style="display:none;position:absolute;top:100%;left:0;z-index:50;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);min-width:210px;max-height:220px;overflow:auto">'+varBtns+'</div></span>'
     + '</div>'
-    + '<div id="et-body" contenteditable="true" style="min-height:150px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;outline:none;overflow:auto" oninput="etAutoTag()" onkeyup="etSaveRange()" onmouseup="etSaveRange()" onkeydown="etTagKey(event)" onblur="setTimeout(etHideTag,150)"></div>'
-    + '<div id="et-tagtip" style="display:none;position:fixed;z-index:9999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);min-width:200px;max-height:200px;overflow:auto"></div>'
+    + '<div id="et-body" contenteditable="true" style="min-height:150px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;outline:none;overflow:auto" onkeyup="etSaveRange()" onmouseup="etSaveRange()"></div>'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:5px">Tip: type <b>{</b> in the body to auto-suggest variables like {client}, {name}, {role}.</div>'
     + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px"><button class="btn btn-g" style="font-size:12px" onclick="etSave()">&#128190; Save</button>'
     + '<button class="btn btn-o" style="font-size:12px;color:#C0392B;border-color:#F0C7C2" onclick="etDelete()">&#128465; Delete</button>'
     + '<span id="et-status" style="font-size:11px;color:#0F6E56;margin-left:4px"></span></div>'
@@ -5884,6 +5885,7 @@ function etSetBody(v){ var ed=document.getElementById('et-body'); if(ed) ed.inne
 async function loadEmailTemplates(){
   try{ var r=await req('GET','/email-templates'); _emailTpls=(r&&r.templates)||[]; }catch(e){ _emailTpls=[]; }
   etRefreshDropdown(_emailTpls.length?0:-1);
+  installTagAutocomplete('et-body');
 }
 function etRefreshDropdown(selIdx){
   var sel=document.getElementById('et-sel'); if(!sel) return;
@@ -5935,65 +5937,63 @@ async function etDelete(){
   if(r&&r.ok){ etRefreshDropdown(-1); }
   else { toast('&#9888;&#65039;',(r&&r.error)||'Delete failed'); }
 }
-// ── Variable autocomplete: type "{" then filter, closest tags appear ──────
-var _etTag={node:null,start:0,items:[],active:0};
-function etAutoTag(){
-  var sel=window.getSelection(); if(!sel||!sel.rangeCount){ etHideTag(); return; }
-  var rng=sel.getRangeAt(0); var node=rng.startContainer; var off=rng.startOffset;
-  if(node.nodeType!==3){
-    // caret sits in the element (e.g. just after a <br>) — look at the child text node before it
-    var kids=node.childNodes; var cand=kids[off-1]||kids[off];
-    if(cand && cand.nodeType===3){ node=cand; off=cand.textContent.length; }
-    else { etHideTag(); return; }
+// ── Variable autocomplete (generic, robust): type "{" then filter ─────────
+var ET_TIP_ID='tag-tip-global';
+function installTagAutocomplete(edId){
+  var ed=document.getElementById(edId); if(!ed||ed._tagInstalled) return; ed._tagInstalled=true;
+  var tip=document.getElementById(ET_TIP_ID);
+  if(!tip){ tip=document.createElement('div'); tip.id=ET_TIP_ID;
+    tip.style.cssText='display:none;position:fixed;z-index:99999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.20);min-width:210px;max-height:230px;overflow:auto;font-family:Arial,Helvetica,sans-serif';
+    document.body.appendChild(tip);
   }
-  var textBefore=node.textContent.slice(0,off);
-  var brace=textBefore.lastIndexOf('{');
-  if(brace<0){ etHideTag(); return; }
-  var q=textBefore.slice(brace+1);
-  if(/[}\s<]/.test(q)){ etHideTag(); return; }
-  var ql=q.toLowerCase();
-  var items=ET_VARS.filter(function(v){ return v.tag.toLowerCase().indexOf(ql)>=0 || v.label.toLowerCase().indexOf(ql)>=0; });
-  if(!items.length){ etHideTag(); return; }
-  _etTag={node:node,start:brace,items:items,active:0};
-  etRenderTag(rng);
-}
-function etRenderTag(rng){
-  var tip=document.getElementById('et-tagtip'); if(!tip) return;
-  tip.innerHTML=_etTag.items.map(function(v,i){
-    return '<div class="et-tagrow" data-i="'+i+'" onmousedown="event.preventDefault()" onclick="etPickTag('+i+')" style="padding:6px 10px;cursor:pointer;font-size:12px;'+(i===_etTag.active?'background:#EEF0FB;':'')+'border-bottom:1px solid #f4f4f4"><b style="color:#534AB7">'+v.tag+'</b> <span style="color:#888">'+v.label+'</span></div>';
-  }).join('');
-  var rect=null; try{ rect=rng.getBoundingClientRect(); }catch(e){}
-  var top,left;
-  if(rect && (rect.top||rect.bottom)){ top=rect.bottom+4; left=rect.left; }
-  else { var ed=document.getElementById('et-body'); var er=ed?ed.getBoundingClientRect():{left:100,bottom:200}; top=er.bottom-20; left=er.left+20; }
-  tip.style.top=Math.max(8,Math.min(top, window.innerHeight-210))+'px';
-  tip.style.left=Math.max(8,Math.min(left, window.innerWidth-240))+'px';
-  tip.style.display='block';
-}
-function etHideTag(){ var tip=document.getElementById('et-tagtip'); if(tip) tip.style.display='none'; _etTag.node=null; }
-function etTagKey(e){
-  var tip=document.getElementById('et-tagtip'); if(!tip||tip.style.display==='none') return;
-  if(e.key==='ArrowDown'){ e.preventDefault(); _etTag.active=(_etTag.active+1)%_etTag.items.length; etRenderTagRefresh(); }
-  else if(e.key==='ArrowUp'){ e.preventDefault(); _etTag.active=(_etTag.active-1+_etTag.items.length)%_etTag.items.length; etRenderTagRefresh(); }
-  else if(e.key==='Enter'||e.key==='Tab'){ e.preventDefault(); etPickTag(_etTag.active); }
-  else if(e.key==='Escape'){ etHideTag(); }
-}
-function etRenderTagRefresh(){
-  var tip=document.getElementById('et-tagtip'); if(!tip) return;
-  tip.querySelectorAll('.et-tagrow').forEach(function(r){ r.style.background=(+r.dataset.i===_etTag.active?'#EEF0FB':''); });
-}
-function etPickTag(i){
-  var v=_etTag.items[i]; var node=_etTag.node; if(!v||!node){ etHideTag(); return; }
-  var sel=window.getSelection(); if(!sel||!sel.rangeCount){ etHideTag(); return; }
-  var caret=sel.getRangeAt(0).startOffset;
-  try{
-    var r=document.createRange(); r.setStart(node,_etTag.start); r.setEnd(node,caret);
-    r.deleteContents(); var tn=document.createTextNode(v.tag); r.insertNode(tn);
-    var nr=document.createRange(); nr.setStartAfter(tn); nr.collapse(true);
-    sel.removeAllRanges(); sel.addRange(nr);
-  }catch(err){}
-  etHideTag();
-  var ed=document.getElementById('et-body'); if(ed) ed.focus();
+  var st={items:[],active:0,node:null,start:0};
+  function hide(){ tip.style.display='none'; st.node=null; }
+  function place(rng){
+    var rect=null; try{ rect=rng.getBoundingClientRect(); }catch(e){}
+    var top,left;
+    if(rect && (rect.bottom||rect.top)){ top=rect.bottom+4; left=rect.left; }
+    else { var er=ed.getBoundingClientRect(); top=er.top+24; left=er.left+16; }
+    tip.style.top=Math.max(8,Math.min(top,window.innerHeight-240))+'px';
+    tip.style.left=Math.max(8,Math.min(left,window.innerWidth-250))+'px';
+  }
+  function render(rng){
+    tip.innerHTML=st.items.map(function(v,i){ return '<div data-i="'+i+'" style="padding:7px 11px;cursor:pointer;font-size:12px;'+(i===st.active?'background:#EEF0FB;':'')+'border-bottom:1px solid #f4f4f4"><b style="color:#534AB7">'+v.tag+'</b> <span style="color:#888">'+v.label+'</span></div>'; }).join('');
+    Array.prototype.forEach.call(tip.children,function(row){ row.onmousedown=function(e){ e.preventDefault(); pick(+row.getAttribute('data-i')); }; });
+    place(rng); tip.style.display='block';
+  }
+  function scan(){
+    var sel=window.getSelection(); if(!sel||!sel.rangeCount){ hide(); return; }
+    var rng=sel.getRangeAt(0); if(!ed.contains(rng.startContainer)){ hide(); return; }
+    var node=rng.startContainer, off=rng.startOffset;
+    if(node.nodeType!==3){ var k=node.childNodes[off-1]; if(k&&k.nodeType===3){ node=k; off=k.textContent.length; } else { hide(); return; } }
+    var tb=node.textContent.slice(0,off);
+    var b=tb.lastIndexOf('{'); if(b<0){ hide(); return; }
+    var q=tb.slice(b+1); if(/[}\s<>]/.test(q)){ hide(); return; }
+    var ql=q.toLowerCase();
+    var items=ET_VARS.filter(function(v){ return v.tag.toLowerCase().indexOf(ql)>=0 || v.label.toLowerCase().indexOf(ql)>=0; });
+    if(!items.length){ hide(); return; }
+    st.items=items; st.active=0; st.node=node; st.start=b;
+    render(rng);
+  }
+  function pick(i){
+    var v=st.items[i]; if(!v||!st.node){ hide(); return; }
+    var sel=window.getSelection(); if(!sel.rangeCount){ hide(); return; }
+    var caret=sel.getRangeAt(0).startOffset;
+    try{ var r=document.createRange(); r.setStart(st.node,st.start); r.setEnd(st.node,caret); r.deleteContents();
+      var tn=document.createTextNode(v.tag); r.insertNode(tn);
+      var nr=document.createRange(); nr.setStartAfter(tn); nr.collapse(true); sel.removeAllRanges(); sel.addRange(nr);
+    }catch(e){}
+    hide(); ed.focus();
+  }
+  ed.addEventListener('input', scan);
+  ed.addEventListener('keydown', function(e){
+    if(tip.style.display==='none') return;
+    if(e.key==='ArrowDown'){ e.preventDefault(); st.active=(st.active+1)%st.items.length; render(window.getSelection().getRangeAt(0)); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); st.active=(st.active-1+st.items.length)%st.items.length; render(window.getSelection().getRangeAt(0)); }
+    else if(e.key==='Enter'||e.key==='Tab'){ e.preventDefault(); pick(st.active); }
+    else if(e.key==='Escape'){ hide(); }
+  });
+  ed.addEventListener('blur', function(){ setTimeout(hide,180); });
 }
 
 function followUpConfigHTML(s){
