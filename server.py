@@ -16195,6 +16195,41 @@ def wa_templates():
     return jsonify({'ok': True, 'templates': WA_DEFAULT_TEMPLATES})
 
 
+EMAIL_DEFAULT_TEMPLATES = [
+    {"id": "jd_share", "title": "Share JD",
+     "subject": "{role} opportunity at {client}",
+     "body": "Hi {name},\n\nI'm reaching out about a {role} position with {client}. Based on your profile it looks like a strong fit.\n\nI've shared the key details below / attached the JD. If this is of interest, could you share your updated CV, current CTC, expected CTC and notice period?\n\nLooking forward to hearing from you."},
+    {"id": "followup", "title": "Follow-up (no reply)",
+     "subject": "Re: {role} opportunity at {client}",
+     "body": "Hi {name},\n\nJust following up on my earlier note about the {role} role with {client}. Do let me know if you'd be open to a quick chat — happy to share more details.\n\nThanks!"},
+    {"id": "interview_invite", "title": "Interview invite",
+     "subject": "Interview — {role} at {client}",
+     "body": "Hi {name},\n\nGood news — {client} would like to take your candidature forward for the {role} position.\n\nCould you share your availability for an interview this week? Once confirmed I'll send the details.\n\nRegards,"},
+]
+
+
+@app.route('/api/email-templates', methods=['GET', 'POST'])
+@login_required
+def email_templates():
+    """User-managed email templates (add / edit / delete). Stored as a JSON list
+    in settings; the whole list is replaced on save, which lets the UI delete an
+    individual template just by omitting it."""
+    if request.method == 'POST':
+        data = request.json or {}
+        tpls = data.get('templates')
+        if not isinstance(tpls, list):
+            return jsonify({'error': 'templates must be a list'}), 400
+        set_setting('email_templates', json.dumps(tpls))
+        return jsonify({'ok': True})
+    raw = get_setting('email_templates', '')
+    if raw:
+        try:
+            return jsonify({'ok': True, 'templates': json.loads(raw)})
+        except Exception:
+            pass
+    return jsonify({'ok': True, 'templates': EMAIL_DEFAULT_TEMPLATES})
+
+
 def _submission_token(mid):
     """Unguessable per-mandate token for the public client-submission link.
     Derived via HMAC(secret, mid) — no storage needed, and an attacker cannot

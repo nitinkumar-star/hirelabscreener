@@ -4448,6 +4448,7 @@ function openCompose(to, subject, body, meta){
     +'<div class="modal-body">'
     +'<input class="inp" id="cmp-to" placeholder="To (email)" value="'+esc(to||'')+'" style="width:100%;margin-bottom:8px">'
     +'<input class="inp" id="cmp-sub" placeholder="Subject" value="'+esc(subject||'')+'" style="width:100%;margin-bottom:8px">'
+    +'<div style="margin-bottom:8px"><select class="inp" id="cmp-tpl" onchange="cmpApplyTemplate()" style="font-size:12px;width:100%"><option value="-1">&#128196; Insert a saved template…</option></select></div>'
     +'<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap">'+eBtn('bold','<b>B</b>')+eBtn('italic','<i>I</i>')+eBtn('underline','<u>U</u>')+eBtn('insertUnorderedList','&#8226; List')+eBtn('insertOrderedList','1. List')+'<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="eLink()">&#128279; Link</button></div>'
     +'<div id="cmp-editor" contenteditable="true" style="width:100%;min-height:170px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;outline:none;overflow:auto">'+initHtml+'</div>'
     +'<input type="file" id="cmp-file" multiple style="display:none" onchange="ebUploadAttach(this)">'
@@ -4456,6 +4457,25 @@ function openCompose(to, subject, body, meta){
     +'</div></div>';
   document.body.appendChild(bg);
   ebRenderAttachList();
+  cmpLoadTemplates();
+}
+async function cmpLoadTemplates(){
+  var sel=document.getElementById('cmp-tpl'); if(!sel) return;
+  var list=[]; try{ var r=await req('GET','/email-templates'); list=(r&&r.templates)||[]; }catch(e){}
+  window._cmpTpls=list;
+  var opts='<option value="-1">&#128196; Insert a saved template…</option>';
+  list.forEach(function(t,i){ opts+='<option value="'+i+'">'+esc(t.title||('Template '+(i+1)))+'</option>'; });
+  sel.innerHTML=opts;
+}
+function cmpApplyTemplate(){
+  var sel=document.getElementById('cmp-tpl'); if(!sel) return;
+  var i=parseInt(sel.value,10); if(isNaN(i)||i<0) return;
+  var t=(window._cmpTpls||[])[i]; if(!t) return;
+  var subEl=document.getElementById('cmp-sub'); var ed=document.getElementById('cmp-editor');
+  if(subEl && t.subject) subEl.value=t.subject;
+  if(ed){ var htmlBody=(t.body||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+    ed.innerHTML=htmlBody; }
+  sel.value='-1';
 }
 function ebRenderAttachList(){
   var box=document.getElementById('cmp-attach-list'); if(!box) return;
@@ -5679,6 +5699,7 @@ function renderSettings(){
   if (S.currentUser && S.currentUser.role==='admin') loadUsersList();
   loadMyProfile();
   renderWaSettings();
+  loadEmailTemplates();
 }
 
 async function loadMyProfile(){
@@ -5801,9 +5822,76 @@ async function saveMyProfile(){
 }
 
 function savedTemplatesHTML(s){
-  return '<div style="margin-top:12px;font-size:11px;color:var(--muted);background:#F3F8FF;border:0.5px solid #C5DEFF;border-radius:8px;padding:10px 12px;color:#1565C0">'
-    + '&#128161; Email templates are now specific to <b>each job position (mandate)</b>. Create or edit templates using "New" / "Update" in the email compose panel.'
-    + '</div>';
+  return '<div style="margin-top:16px;border-top:1px dashed #ddd;padding-top:14px">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:14px">&#128196;</span>'
+    + '<div style="font-size:13px;font-weight:700;color:var(--navy)">Email Templates</div></div>'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-bottom:10px;line-height:1.5">Reusable email templates. Pick one from the dropdown to view/edit, or create a new one. Use these while composing. Placeholders: <code>{name}</code> <code>{role}</code> <code>{client}</code></div>'
+    + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">'
+    + '<select class="inp" id="et-sel" onchange="etSelect()" style="font-size:12px;min-width:220px;flex:1"></select>'
+    + '<button class="btn btn-o" style="font-size:12px" onclick="etNew()">&#43; New</button></div>'
+    + '<div id="et-editor" style="display:none">'
+    + '<div class="fg-row"><label>Template name</label><input class="inp" id="et-title" style="font-size:12px" placeholder="e.g. Share JD"></div>'
+    + '<div class="fg-row"><label>Subject</label><input class="inp" id="et-subject" style="font-size:12px" placeholder="{role} opportunity at {client}"></div>'
+    + '<div class="fg-row"><label>Body</label><textarea class="inp" id="et-body" rows="7" style="font-size:12px;line-height:1.5"></textarea></div>'
+    + '<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><button class="btn btn-g" style="font-size:12px" onclick="etSave()">&#128190; Save</button>'
+    + '<button class="btn btn-o" style="font-size:12px;color:#C0392B;border-color:#F0C7C2" onclick="etDelete()">&#128465; Delete</button>'
+    + '<span id="et-status" style="font-size:11px;color:#0F6E56;margin-left:4px"></span></div>'
+    + '</div></div>';
+}
+var _emailTpls=[];
+async function loadEmailTemplates(){
+  try{ var r=await req('GET','/email-templates'); _emailTpls=(r&&r.templates)||[]; }catch(e){ _emailTpls=[]; }
+  etRefreshDropdown(-1);
+}
+function etRefreshDropdown(selIdx){
+  var sel=document.getElementById('et-sel'); if(!sel) return;
+  var opts='<option value="-1">— Select a template —</option>';
+  _emailTpls.forEach(function(t,i){ opts+='<option value="'+i+'">'+esc(t.title||('Template '+(i+1)))+'</option>'; });
+  sel.innerHTML=opts; sel.setAttribute('data-cur','-1'); sel.value=String(typeof selIdx==='number'?selIdx:-1);
+  etSelect();
+}
+function etSelect(){
+  var sel=document.getElementById('et-sel'); var ed=document.getElementById('et-editor'); if(!sel||!ed) return;
+  var i=parseInt(sel.value,10);
+  var prev=parseInt(sel.getAttribute('data-cur')||'-1',10);
+  if(prev>=0 && prev<_emailTpls.length && prev!==i && ed.style.display!=='none'){
+    _emailTpls[prev]={id:_emailTpls[prev].id||('t'+Date.now()),
+      title:(document.getElementById('et-title').value||'').trim()||'Untitled template',
+      subject:(document.getElementById('et-subject').value||'').trim(),
+      body:document.getElementById('et-body').value||''};
+  }
+  if(isNaN(i)||i<0){ ed.style.display='none'; sel.setAttribute('data-cur','-1'); return; }
+  var t=_emailTpls[i]||{}; ed.style.display='block';
+  document.getElementById('et-title').value=t.title||'';
+  document.getElementById('et-subject').value=t.subject||'';
+  document.getElementById('et-body').value=t.body||'';
+  sel.setAttribute('data-cur',String(i));
+  var st=document.getElementById('et-status'); if(st) st.textContent='';
+}
+function etNew(){
+  _emailTpls.push({id:'t'+Date.now(),title:'Untitled template',subject:'',body:''});
+  etRefreshDropdown(_emailTpls.length-1);
+}
+async function etSave(){
+  var sel=document.getElementById('et-sel'); var i=parseInt(sel.value,10);
+  if(isNaN(i)||i<0){ return; }
+  _emailTpls[i]={id:_emailTpls[i].id||('t'+Date.now()),
+    title:(document.getElementById('et-title').value||'').trim()||'Untitled template',
+    subject:(document.getElementById('et-subject').value||'').trim(),
+    body:document.getElementById('et-body').value||''};
+  var st=document.getElementById('et-status'); if(st) st.textContent='Saving…';
+  var r=await req('POST','/email-templates',{templates:_emailTpls});
+  if(r&&r.ok){ if(st){ st.style.color='#0F6E56'; st.innerHTML='Saved &#10003;'; } etRefreshDropdown(i); }
+  else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Save failed'; } }
+}
+async function etDelete(){
+  var sel=document.getElementById('et-sel'); var i=parseInt(sel.value,10);
+  if(isNaN(i)||i<0){ return; }
+  if(!confirm('Delete this email template?')) return;
+  _emailTpls.splice(i,1);
+  var r=await req('POST','/email-templates',{templates:_emailTpls});
+  if(r&&r.ok){ etRefreshDropdown(-1); }
+  else { toast('&#9888;&#65039;',(r&&r.error)||'Delete failed'); }
 }
 
 function followUpConfigHTML(s){
@@ -5854,16 +5942,18 @@ async function renderWaSettings(){
     +'<div class="fg-row"><label>Listener token</label><input class="inp" readonly value="'+esc(cfg.token||'')+'" onclick="this.select()"></div>'
     +'<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-top:6px">Ye URL + token apne listener config me daalo. Token secret hai — kisi se share mat karo.</div>'
     +'</div></div>';
-  var tpl='<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin:14px 0 8px">&#9998; Message templates</div>';
-  cats.forEach(function(cat,ci){
-    tpl+='<div style="font-size:11.5px;font-weight:700;color:#0F6E56;margin:12px 0 6px">'+esc(cat.cat)+'</div>';
-    (cat.items||[]).forEach(function(t,ti){
-      tpl+='<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--muted);margin-bottom:3px">'+esc(t.title)+'</div>'
-        +'<textarea class="inp wa-tpl-edit" data-ci="'+ci+'" data-ti="'+ti+'" rows="3" style="font-size:12px;width:100%;box-sizing:border-box;resize:vertical">'+esc(t.body||'')+'</textarea></div>';
-    });
-  });
-  tpl+='<div style="font-size:10.5px;color:var(--muted);margin:6px 0 10px">Placeholders: {{Name}} {{You}} {{Role}} {{Location}} {{Date}} {{Time}} {{Mode}} {{DOJ}}</div>';
-  tpl+='<button class="btn btn-g" onclick="saveWaTemplates()">&#128190; Save WhatsApp Templates</button> <span id="wa-tpl-status" style="font-size:11px;color:#888;margin-left:8px"></span>';
+  var tpl='<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin:14px 0 8px">&#9998; Message templates</div>'
+    +'<div style="font-size:10.5px;color:var(--muted);margin:0 0 10px">Pick a category and template to edit or delete, or add a new one. Placeholders: {{Name}} {{You}} {{Role}} {{Location}} {{Date}} {{Time}} {{Mode}} {{DOJ}}</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">'
+    +'<select class="inp" id="wa-cat-sel" onchange="waCatChange()" style="font-size:12px;min-width:150px"></select>'
+    +'<select class="inp" id="wa-tpl-sel" onchange="waTplChange()" style="font-size:12px;min-width:180px;flex:1"></select>'
+    +'<button class="btn btn-o" style="font-size:12px" onclick="waTplNew()">&#43; New</button></div>'
+    +'<div id="wa-tpl-editor" style="display:none">'
+    +'<div class="fg-row"><label>Template name</label><input class="inp" id="wa-tpl-title" style="font-size:12px"></div>'
+    +'<div class="fg-row"><label>Message</label><textarea class="inp" id="wa-tpl-body" rows="4" style="font-size:12px;line-height:1.5"></textarea></div>'
+    +'<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><button class="btn btn-g" style="font-size:12px" onclick="saveWaTemplates()">&#128190; Save</button>'
+    +'<button class="btn btn-o" style="font-size:12px;color:#C0392B;border-color:#F0C7C2" onclick="waTplDelete()">&#128465; Delete</button>'
+    +'<span id="wa-tpl-status" style="font-size:11px;color:#0F6E56;margin-left:4px"></span></div></div>';
   var styleP = '';
   try{ var sp=await req('GET','/settings'); styleP=(sp&&sp.wa_style_profile)||''; }catch(e){}
   var stylecard='<div class="card" style="margin-bottom:14px"><div class="card-body">'
@@ -5874,6 +5964,66 @@ async function renderWaSettings(){
     +'</div></div>';
   box.innerHTML=tpl;
   box._cats=cats;
+  waRenderCatDropdown();
+}
+function _waBox(){ return document.getElementById('wa-settings-box'); }
+function waRenderCatDropdown(){
+  var box=_waBox(); if(!box||!box._cats) return;
+  var sel=document.getElementById('wa-cat-sel'); if(!sel) return;
+  var opts=box._cats.map(function(c,i){return '<option value="'+i+'">'+esc(c.cat)+'</option>';}).join('');
+  opts+='<option value="__new">&#43; New category…</option>';
+  sel.innerHTML=opts; sel.value='0'; waCatChange();
+}
+function waCatChange(){
+  var box=_waBox(); var sel=document.getElementById('wa-cat-sel'); if(!box||!sel) return;
+  if(sel.value==='__new'){
+    var nm=prompt('New category name:');
+    if(nm){ box._cats.push({cat:nm,items:[]}); waRenderCatDropdown(); var cs=document.getElementById('wa-cat-sel'); cs.value=String(box._cats.length-1); waCatChange(); }
+    else { sel.value='0'; waCatChange(); }
+    return;
+  }
+  waRenderTplDropdown(-1);
+}
+function waRenderTplDropdown(selIdx){
+  var box=_waBox(); var csel=document.getElementById('wa-cat-sel'); var tsel=document.getElementById('wa-tpl-sel'); if(!box||!csel||!tsel) return;
+  var ci=parseInt(csel.value,10); var cat=box._cats[ci]||{items:[]};
+  var opts='<option value="-1">— Select a template —</option>';
+  (cat.items||[]).forEach(function(t,i){ opts+='<option value="'+i+'">'+esc(t.title||('Template '+(i+1)))+'</option>'; });
+  tsel.innerHTML=opts; tsel.setAttribute('data-cur','-1'); tsel.setAttribute('data-cat',String(ci));
+  tsel.value=String(typeof selIdx==='number'?selIdx:-1);
+  waTplChange();
+}
+function waTplChange(){
+  var box=_waBox(); var csel=document.getElementById('wa-cat-sel'); var tsel=document.getElementById('wa-tpl-sel'); var ed=document.getElementById('wa-tpl-editor'); if(!box||!csel||!tsel||!ed) return;
+  var ci=parseInt(csel.value,10), ti=parseInt(tsel.value,10);
+  var pci=parseInt(tsel.getAttribute('data-cat')||'-1',10), pti=parseInt(tsel.getAttribute('data-cur')||'-1',10);
+  if(pci>=0 && pti>=0 && (box._cats[pci]||{}).items && (pci!==ci||pti!==ti) && ed.style.display!=='none'){
+    var pit=box._cats[pci].items[pti];
+    if(pit){ pit.title=(document.getElementById('wa-tpl-title').value||'').trim()||'Untitled'; pit.body=document.getElementById('wa-tpl-body').value||''; if(!pit.id) pit.id='wa'+Date.now(); }
+  }
+  if(isNaN(ti)||ti<0){ ed.style.display='none'; tsel.setAttribute('data-cur','-1'); return; }
+  var t=((box._cats[ci]||{}).items||[])[ti]||{}; ed.style.display='block';
+  document.getElementById('wa-tpl-title').value=t.title||'';
+  document.getElementById('wa-tpl-body').value=t.body||'';
+  tsel.setAttribute('data-cur',String(ti)); tsel.setAttribute('data-cat',String(ci));
+  var st=document.getElementById('wa-tpl-status'); if(st) st.textContent='';
+}
+function waTplNew(){
+  var box=_waBox(); var csel=document.getElementById('wa-cat-sel'); if(!box||!csel) return;
+  var ci=parseInt(csel.value,10); if(isNaN(ci)||ci<0){ toast('WA','Pick a category first'); return; }
+  box._cats[ci].items=box._cats[ci].items||[];
+  box._cats[ci].items.push({id:'wa'+Date.now(),title:'Untitled',body:''});
+  waRenderTplDropdown(box._cats[ci].items.length-1);
+}
+async function waTplDelete(){
+  var box=_waBox(); var csel=document.getElementById('wa-cat-sel'); var tsel=document.getElementById('wa-tpl-sel'); if(!box) return;
+  var ci=parseInt(csel.value,10), ti=parseInt(tsel.value,10);
+  if(isNaN(ci)||ci<0||isNaN(ti)||ti<0) return;
+  if(!confirm('Delete this WhatsApp template?')) return;
+  box._cats[ci].items.splice(ti,1);
+  var r=await req('POST','/wa-templates',{templates:box._cats});
+  if(r&&r.ok){ _waTemplatesCache=box._cats; waRenderTplDropdown(-1); }
+  else toast('&#9888;&#65039;',(r&&r.error)||'Delete failed');
 }
 async function waLearnStyle(){
   var btn=document.getElementById('wa-learn-btn'), st=document.getElementById('wa-learn-status');
@@ -5890,16 +6040,19 @@ async function waLearnStyle(){
   if(btn){ btn.disabled=false; }
 }
 async function saveWaTemplates(){
-  var box=document.getElementById('wa-settings-box'); if(!box||!box._cats) return;
-  var cats=box._cats;
-  document.querySelectorAll('.wa-tpl-edit').forEach(function(ta){
-    var ci=+ta.dataset.ci, ti=+ta.dataset.ti;
-    if(cats[ci] && cats[ci].items && cats[ci].items[ti]) cats[ci].items[ti].body=ta.value;
-  });
-  var r=await req('POST','/wa-templates',{templates:cats});
-  var st=document.getElementById('wa-tpl-status');
-  if(r&&r.ok){ _waTemplatesCache=cats; if(st){st.innerHTML='Saved &#10003;';setTimeout(function(){st.textContent='';},2000);} }
-  else toast('&#9888;&#65039;', (r&&r.error)||'Save failed');
+  var box=_waBox(); if(!box||!box._cats) return;
+  var csel=document.getElementById('wa-cat-sel'); var tsel=document.getElementById('wa-tpl-sel');
+  var ci=parseInt(csel.value,10), ti=parseInt(tsel.value,10);
+  if(!isNaN(ci)&&ci>=0&&!isNaN(ti)&&ti>=0){
+    var it=box._cats[ci].items[ti];
+    it.title=(document.getElementById('wa-tpl-title').value||'').trim()||'Untitled';
+    it.body=document.getElementById('wa-tpl-body').value||'';
+    if(!it.id) it.id='wa'+Date.now();
+  }
+  var st=document.getElementById('wa-tpl-status'); if(st){ st.style.color='#0F6E56'; st.textContent='Saving…'; }
+  var r=await req('POST','/wa-templates',{templates:box._cats});
+  if(r&&r.ok){ _waTemplatesCache=box._cats; if(st){ st.innerHTML='Saved &#10003;'; } waRenderTplDropdown(ti); }
+  else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Save failed'; } }
 }
 function emailConfigHTML(s){
   return '<div style="margin:18px 0;border-top:2px solid #534AB7;padding-top:16px">'
