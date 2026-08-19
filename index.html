@@ -4449,8 +4449,8 @@ function openCompose(to, subject, body, meta){
     +'<input class="inp" id="cmp-to" placeholder="To (email)" value="'+esc(to||'')+'" style="width:100%;margin-bottom:8px">'
     +'<input class="inp" id="cmp-sub" placeholder="Subject" value="'+esc(subject||'')+'" style="width:100%;margin-bottom:8px">'
     +'<div style="margin-bottom:8px"><select class="inp" id="cmp-tpl" onchange="cmpApplyTemplate()" style="font-size:12px;width:100%"><option value="-1">&#128196; Insert a saved template…</option></select></div>'
-    +'<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap">'+eBtn('bold','<b>B</b>')+eBtn('italic','<i>I</i>')+eBtn('underline','<u>U</u>')+eBtn('insertUnorderedList','&#8226; List')+eBtn('insertOrderedList','1. List')+'<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="eLink()">&#128279; Link</button></div>'
-    +'<div id="cmp-editor" contenteditable="true" style="width:100%;min-height:170px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;outline:none;overflow:auto">'+initHtml+'</div>'
+    +'<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;align-items:center">'+eBtn('bold','<b>B</b>')+eBtn('italic','<i>I</i>')+eBtn('underline','<u>U</u>')+eBtn('insertUnorderedList','&#8226; List')+eBtn('insertOrderedList','1. List')+'<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="eLink()">&#128279; Link</button><select onchange="cmpInsertVar(this.value);this.selectedIndex=0" class="inp" style="font-size:11px;padding:3px 6px;width:auto" title="Focus and type to jump to the closest variable">'+etVarOptions()+'</select></div>'
+    +'<div id="cmp-editor" contenteditable="true" style="width:100%;min-height:170px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;outline:none;overflow:auto" onkeyup="cmpSaveRange()" onmouseup="cmpSaveRange()">'+initHtml+'</div>'
     +'<input type="file" id="cmp-file" multiple style="display:none" onchange="ebUploadAttach(this)">'
     +'<div id="cmp-attach-list" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"></div>'
     +'<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="sendCompose(this)">&#9993; Send</button><button class="btn btn-o" onclick="document.getElementById(\'cmp-file\').click()">&#128206; Attach</button><button class="btn btn-o" onclick="saveDraft(this)">Save draft</button><span id="cmp-status" style="font-size:11px;color:#0F6E56"></span></div>'
@@ -4505,6 +4505,16 @@ async function ebRemoveAttach(id){
 }
 function eBtn(cmd,label){ return '<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="document.execCommand(\''+cmd+'\',false,null);document.getElementById(\'cmp-editor\').focus()">'+label+'</button>'; }
 function eLink(){ var u=prompt('Link URL:'); if(u){ document.execCommand('createLink',false,u); } var ed=document.getElementById('cmp-editor'); if(ed) ed.focus(); }
+var _cmpRange=null;
+function cmpSaveRange(){ var s=window.getSelection(); if(s&&s.rangeCount){ var r=s.getRangeAt(0); var ed=document.getElementById('cmp-editor'); if(ed&&ed.contains(r.commonAncestorContainer)) _cmpRange=r.cloneRange(); } }
+function cmpInsertVar(tag){
+  if(!tag) return;
+  var ed=document.getElementById('cmp-editor'); if(!ed) return; ed.focus();
+  if(_cmpRange){ try{ var s=window.getSelection(); s.removeAllRanges(); s.addRange(_cmpRange); }catch(e){} }
+  var ok=false; try{ ok=document.execCommand('insertText',false,tag); }catch(e){}
+  if(!ok){ ed.innerHTML+=(ed.innerHTML && !/[\s>]$/.test(ed.innerHTML)?' ':'')+tag; }
+  cmpSaveRange();
+}
 function _cmpVals(){ var ed=document.getElementById('cmp-editor'); return {to:((document.getElementById('cmp-to')||{}).value||'').trim(), sub:((document.getElementById('cmp-sub')||{}).value||'').trim(), html:ed?ed.innerHTML:'', text:(ed?ed.innerText:'').trim()}; }
 async function sendCompose(btn){
   var v=_cmpVals();
@@ -5826,7 +5836,6 @@ function savedTemplatesHTML(s){
   var fonts=['Arial','Calibri','Georgia','Times New Roman','Verdana','Tahoma','Courier New'];
   var fontOpts=fonts.map(function(f){return '<option value="'+f+'">'+f+'</option>';}).join('');
   var sizeOpts=[['2','Small'],['3','Normal'],['4','Large'],['5','X-Large'],['6','Huge']].map(function(x){return '<option value="'+x[0]+'"'+(x[0]==='3'?' selected':'')+'>'+x[1]+'</option>';}).join('');
-  var varBtns=ET_VARS.map(function(v){return '<div class="et-var-opt" style="padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid #f4f4f4" onmousedown="event.preventDefault()" onclick="etInsertVar(\''+v.tag+'\')"><b style="color:#534AB7">'+v.tag+'</b> <span style="color:#888">'+v.label+'</span></div>';}).join('');
   return '<div style="margin-top:16px;border-top:1px dashed #ddd;padding-top:14px">'
     + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:14px">&#128196;</span>'
     + '<div style="font-size:13px;font-weight:700;color:var(--navy)">Email Templates</div></div>'
@@ -5842,8 +5851,7 @@ function savedTemplatesHTML(s){
     +   '<select onchange="etFont(this.value);this.selectedIndex=0" class="inp" style="font-size:11px;padding:3px 6px;width:auto"><option value="">Font</option>'+fontOpts+'</select>'
     +   '<select onchange="etSize(this.value)" class="inp" style="font-size:11px;padding:3px 6px;width:auto"><option value="">Size</option>'+sizeOpts+'</select>'
     +   etTB('bold','<b>B</b>')+etTB('italic','<i>I</i>')+etTB('underline','<u>U</u>')+etTB('insertUnorderedList','&#8226;')+etTB('insertOrderedList','1.')
-    +   '<span style="position:relative;display:inline-block"><button type="button" class="btn btn-o" style="font-size:11px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="etToggleVarMenu()">&#123;&#125; Insert variable &#9662;</button>'
-    +   '<div id="et-varmenu" style="display:none;position:absolute;top:100%;left:0;z-index:50;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);min-width:210px;max-height:220px;overflow:auto">'+varBtns+'</div></span>'
+    +   '<select onchange="etInsertVar(this.value);this.selectedIndex=0" class="inp" style="font-size:11px;padding:3px 6px;width:auto" title="Focus this and type to jump to the closest variable">'+etVarOptions()+'</select>'
     + '</div>'
     + '<div id="et-body" contenteditable="true" style="min-height:150px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;outline:none;overflow:auto" onkeyup="etSaveRange()" onmouseup="etSaveRange()"></div>'
     + '<div style="font-size:10.5px;color:var(--muted);margin-top:5px">Tip: type <b>{</b> in the body to auto-suggest variables like {client}, {name}, {role}.</div>'
@@ -5870,11 +5878,18 @@ function etRestoreRange(){ var ed=document.getElementById('et-body'); if(!ed) re
 function etCmd(cmd,val){ etRestoreRange(); document.execCommand(cmd,false,val||null); etSaveRange(); var ed=document.getElementById('et-body'); if(ed) ed.focus(); }
 function etFont(val){ if(!val) return; etRestoreRange(); try{document.execCommand('styleWithCSS',false,true);}catch(e){} document.execCommand('fontName',false,val); etSaveRange(); }
 function etSize(val){ if(!val) return; etRestoreRange(); try{document.execCommand('styleWithCSS',false,true);}catch(e){} document.execCommand('fontSize',false,val); etSaveRange(); }
-function etToggleVarMenu(){ var m=document.getElementById('et-varmenu'); if(m) m.style.display=(m.style.display==='none'?'block':'none'); }
+function etVarOptions(){
+  var o='<option value="">{ } Insert variable…</option>';
+  ET_VARS.forEach(function(v){ o+='<option value="'+v.tag+'">'+v.tag+' — '+v.label+'</option>'; });
+  return o;
+}
 function etInsertVar(tag){
-  var m=document.getElementById('et-varmenu'); if(m) m.style.display='none';
+  if(!tag) return;
   etRestoreRange();
-  document.execCommand('insertText',false,tag);
+  var ok=false; try{ ok=document.execCommand('insertText',false,tag); }catch(e){}
+  if(!ok){ // fallback: append at end of editor
+    var ed=document.getElementById('et-body'); if(ed){ ed.focus(); ed.innerHTML+= (ed.innerHTML && !/[\s>]$/.test(ed.innerHTML)?' ':'')+tag; }
+  }
   etSaveRange();
 }
 var _emailTpls=[];
