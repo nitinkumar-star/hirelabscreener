@@ -5938,28 +5938,25 @@ async function etDelete(){
   else { toast('&#9888;&#65039;',(r&&r.error)||'Delete failed'); }
 }
 // ── Variable autocomplete (generic, robust): type "{" then filter ─────────
-var ET_TIP_ID='tag-tip-global';
 function installTagAutocomplete(edId){
   var ed=document.getElementById(edId); if(!ed||ed._tagInstalled) return; ed._tagInstalled=true;
-  var tip=document.getElementById(ET_TIP_ID);
-  if(!tip){ tip=document.createElement('div'); tip.id=ET_TIP_ID;
-    tip.style.cssText='display:none;position:fixed;z-index:99999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.20);min-width:210px;max-height:230px;overflow:auto;font-family:Arial,Helvetica,sans-serif';
-    document.body.appendChild(tip);
+  // Wrap the editor in a positioned container so the suggestion box can be an
+  // ABSOLUTE child right below it — no viewport/fixed math, immune to page
+  // transforms/scaling that used to push a fixed tip off-screen.
+  var wrap=ed.parentNode;
+  if(!wrap || !wrap.classList || !wrap.classList.contains('tag-wrap')){
+    wrap=document.createElement('div'); wrap.className='tag-wrap'; wrap.style.position='relative';
+    ed.parentNode.insertBefore(wrap, ed); wrap.appendChild(ed);
   }
+  var tip=document.createElement('div');
+  tip.style.cssText='display:none;position:absolute;left:0;top:100%;margin-top:2px;z-index:99999;background:#fff;border:1px solid #ccc;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.20);min-width:220px;max-height:230px;overflow:auto;font-family:Arial,Helvetica,sans-serif';
+  wrap.appendChild(tip);
   var st={items:[],active:0,node:null,start:0};
   function hide(){ tip.style.display='none'; st.node=null; }
-  function place(rng){
-    var rect=null; try{ rect=rng.getBoundingClientRect(); }catch(e){}
-    var top,left;
-    if(rect && (rect.bottom||rect.top)){ top=rect.bottom+4; left=rect.left; }
-    else { var er=ed.getBoundingClientRect(); top=er.top+24; left=er.left+16; }
-    tip.style.top=Math.max(8,Math.min(top,window.innerHeight-240))+'px';
-    tip.style.left=Math.max(8,Math.min(left,window.innerWidth-250))+'px';
-  }
-  function render(rng){
-    tip.innerHTML=st.items.map(function(v,i){ return '<div data-i="'+i+'" style="padding:7px 11px;cursor:pointer;font-size:12px;'+(i===st.active?'background:#EEF0FB;':'')+'border-bottom:1px solid #f4f4f4"><b style="color:#534AB7">'+v.tag+'</b> <span style="color:#888">'+v.label+'</span></div>'; }).join('');
+  function render(){
+    tip.innerHTML=st.items.map(function(v,i){ return '<div data-i="'+i+'" style="padding:8px 12px;cursor:pointer;font-size:12px;'+(i===st.active?'background:#EEF0FB;':'')+'border-bottom:1px solid #f4f4f4"><b style="color:#534AB7">'+v.tag+'</b> <span style="color:#888">'+v.label+'</span></div>'; }).join('');
     Array.prototype.forEach.call(tip.children,function(row){ row.onmousedown=function(e){ e.preventDefault(); pick(+row.getAttribute('data-i')); }; });
-    place(rng); tip.style.display='block';
+    tip.style.display='block';
   }
   function scan(){
     var sel=window.getSelection(); if(!sel||!sel.rangeCount){ hide(); return; }
@@ -5973,7 +5970,7 @@ function installTagAutocomplete(edId){
     var items=ET_VARS.filter(function(v){ return v.tag.toLowerCase().indexOf(ql)>=0 || v.label.toLowerCase().indexOf(ql)>=0; });
     if(!items.length){ hide(); return; }
     st.items=items; st.active=0; st.node=node; st.start=b;
-    render(rng);
+    render();
   }
   function pick(i){
     var v=st.items[i]; if(!v||!st.node){ hide(); return; }
@@ -5986,10 +5983,11 @@ function installTagAutocomplete(edId){
     hide(); ed.focus();
   }
   ed.addEventListener('input', scan);
+  ed.addEventListener('keyup', function(e){ if(['ArrowLeft','ArrowRight','Home','End'].indexOf(e.key)>=0) scan(); });
   ed.addEventListener('keydown', function(e){
     if(tip.style.display==='none') return;
-    if(e.key==='ArrowDown'){ e.preventDefault(); st.active=(st.active+1)%st.items.length; render(window.getSelection().getRangeAt(0)); }
-    else if(e.key==='ArrowUp'){ e.preventDefault(); st.active=(st.active-1+st.items.length)%st.items.length; render(window.getSelection().getRangeAt(0)); }
+    if(e.key==='ArrowDown'){ e.preventDefault(); st.active=(st.active+1)%st.items.length; render(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); st.active=(st.active-1+st.items.length)%st.items.length; render(); }
     else if(e.key==='Enter'||e.key==='Tab'){ e.preventDefault(); pick(st.active); }
     else if(e.key==='Escape'){ hide(); }
   });
