@@ -4898,10 +4898,32 @@ function toggleEdit(section, cancel) {
 }
 
 async function saveProfileSection(section, cid) {
-  // Reuse the existing full-profile save (reads all pf-* fields), then refresh
+  // Save silently, then update ONLY the affected card in place — no full
+  // profile re-open (which used to scroll to top / reset tabs = "full refresh").
   await saveProfile(cid);
-  // Re-open the profile to reflect clean view
-  openProfileById(cid, S.activeMandate ? S.activeMandate.id : null);
+  if (section === 'cs') {
+    var val = v('pf-summary');
+    var sv = document.getElementById('cs-view');
+    if (sv) sv.innerHTML = val
+      ? '<div style="font-size:13px;color:var(--ink);line-height:1.6;white-space:pre-wrap">'+esc(val)+'</div>'
+      : '<div style="font-size:12.5px;color:var(--muted);font-style:italic">No summary yet — click \u270E to add</div>';
+    toggleEdit('cs', true);
+    return;
+  }
+  // Key Facts: re-render just that one card from fresh data, then re-wire its
+  // WhatsApp buttons. Editor collapses back to view automatically (fresh card).
+  try {
+    var fresh = await req('GET', '/candidates/' + cid);
+    var card = document.getElementById('cp-keyfacts');
+    if (card && fresh && fresh.name) {
+      card.outerHTML = keyFactsCardHTML(fresh);
+      try { attachWAHandlers(fresh); } catch (e) {}
+    } else {
+      toggleEdit(section, true);
+    }
+  } catch (e) {
+    toggleEdit(section, true);
+  }
 }
 
 // ── Work History (multi-company) editing ──────────────────────────────────
@@ -4960,21 +4982,7 @@ function pqPill(icon, text) {
   return '<span class="pq-pill"><span class="pq-ico">' + icon + '</span>' + text + '</span>';
 }
 
-function renderProfileDetail(c){
-  const el=document.getElementById('prof-detail');if(!el)return;
-  if(c && c.name){
-    var mroleT = (S.activeMandate && S.activeMandate.role) ? ' — '+S.activeMandate.role : '';
-    document.title = c.name + mroleT + ' · HireLab';
-  }
-  const skills=c.key_skills||[];
-  const hasCv=!!(c.cv_path&&c.cv_path!=='');
-  var fit=c.ai_score||0;
-  var stageOptions = PIPELINE_STAGES.map(function(s){var sel=(s.id===c.stage)?' selected':'';return '<option value="'+esc(s.id)+'"'+sel+'>'+esc(s.id)+'</option>';}).join('');
-  var _stags=[]; try{_stags=JSON.parse(c.status_tags||'[]');}catch(e){_stags=[];}
-  S.statusTags=S.statusTags||{}; S.statusTags[c.id]=_stags;
-
-  // ── Reusable section snippets ──────────────────────────────────────────
-  // Key Facts (pd-view / pd-edit) with call·WA·email next to phone/email
+function keyFactsCardHTML(c){
   var phoneClean=(c.phone||'').replace(/[^0-9]/g,''); var waNum=phoneClean?(phoneClean.length===10?'91'+phoneClean:phoneClean):'';
   var waButtonsHtml = ''
     +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="msg1">&#128075; Intro</button>'
@@ -4997,7 +5005,7 @@ function renderProfileDetail(c){
       +' <span onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')" title="Email" style="cursor:pointer;color:#0A2540">&#9993;</span>'
       +'</span></div>'
     : infoRow('Email','');
-  var keyFacts='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">Key Facts</div><button class="edit-pencil" onclick="toggleEdit(&#39;pd&#39;)" title="Edit">&#9998;</button></div>'
+  var keyFacts='<div class="cp-card2" id="cp-keyfacts"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">Key Facts</div><button class="edit-pencil" onclick="toggleEdit(&#39;pd&#39;)" title="Edit">&#9998;</button></div>'
     +'<div id="pd-view" class="info-grid">'
     + infoRow('Company', c.company) + infoRow('Designation', c.designation)
     + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
@@ -5014,6 +5022,25 @@ function renderProfileDetail(c){
     +'<textarea id="pf-ai_insight_cv" class="inp" rows="3" style="width:100%;margin-top:8px;font-size:12px;display:none">'+esc(c.ai_insight_cv||'')+'</textarea>'
     +'<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-g" style="font-size:11px" onclick="saveProfileSection(&#39;pd&#39;,'+c.id+')">&#128190; Save</button><button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;pd&#39;,true)">Cancel</button></div>'
     +'</div></div>';
+  return keyFacts;
+}
+
+function renderProfileDetail(c){
+  const el=document.getElementById('prof-detail');if(!el)return;
+  if(c && c.name){
+    var mroleT = (S.activeMandate && S.activeMandate.role) ? ' — '+S.activeMandate.role : '';
+    document.title = c.name + mroleT + ' · HireLab';
+  }
+  const skills=c.key_skills||[];
+  const hasCv=!!(c.cv_path&&c.cv_path!=='');
+  var fit=c.ai_score||0;
+  var stageOptions = PIPELINE_STAGES.map(function(s){var sel=(s.id===c.stage)?' selected':'';return '<option value="'+esc(s.id)+'"'+sel+'>'+esc(s.id)+'</option>';}).join('');
+  var _stags=[]; try{_stags=JSON.parse(c.status_tags||'[]');}catch(e){_stags=[];}
+  S.statusTags=S.statusTags||{}; S.statusTags[c.id]=_stags;
+
+  // ── Reusable section snippets ──────────────────────────────────────────
+  // Key Facts (pd-view / pd-edit) with call·WA·email next to phone/email
+  var keyFacts = keyFactsCardHTML(c);
 
   // Reminders inline (reuses reminder ids so loadCandidateReminders/addReminder work)
   var reminders='<div class="cp-card2"><div class="cp-lbl2">Reminders</div>'
@@ -7453,24 +7480,18 @@ function attachStageDropdown() {
   sel.addEventListener('change', async function() {
     var cid = parseInt(sel.dataset.cid);
     var newStage = sel.value;
+    var prev = sel.dataset.current;
     var r = await req('POST', '/candidates/' + cid + '/stage', {stage: newStage, note: 'Changed from Candidate Profile tab'});
-    if (r.ok) {
+    if (r && !r.error) {
       sel.style.color = stageDot(newStage);
       sel.dataset.current = newStage;
       toast('OK', 'Stage: ' + newStage);
-      var fresh = await req('GET', '/candidates/' + cid);
-      refreshHistory(fresh.history || []);
-      // Update sidebar list
-      var items = document.querySelectorAll('.prof-list-item');
-      items.forEach(function(item) {
-        if (item.getAttribute('onclick') === 'selectProfile(' + cid + ')') {
-          var sub = item.querySelectorAll('div');
-          if (sub[1]) sub[1].textContent = newStage;
-        }
-      });
+      // Keep local caches in sync so other views reflect the new stage without a reload.
+      try { (S.mandateCandidates||[]).forEach(function(c){ if(c.id===cid) c.stage=newStage; }); } catch(e){}
+      try { var fresh = await req('GET', '/candidates/' + cid); refreshHistory(fresh.history || []); } catch(e){}
     } else {
-      sel.value = sel.dataset.current;
-      toast('ERR', 'Stage change failed');
+      sel.value = prev;
+      toast('ERR', (r && r.error) || 'Stage change failed');
     }
   });
 }
