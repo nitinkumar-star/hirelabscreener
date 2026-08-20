@@ -95,7 +95,12 @@ def build_invoice_html(d, for_print=True):
         s_row = '<td class="r">'+inr(taxable)+'</td><td class="c">'+half+'%</td><td class="r">'+inr(cgst)+'</td><td class="c">'+half+'%</td><td class="r">'+inr(sgst)+'</td><td class="r">'+inr(tax_total)+'</td>'
         s_tot = '<td class="r b">'+inr(taxable)+'</td><td></td><td class="r b">'+inr(cgst)+'</td><td></td><td class="r b">'+inr(sgst)+'</td><td class="r b">'+inr(tax_total)+'</td>'
 
-    copy_label = d.get('copy_label', 'ORIGINAL FOR RECIPIENT')
+    is_proforma = str(d.get('doc_type', 'tax')) == 'proforma'
+    doc_title = 'Proforma Invoice' if is_proforma else 'Tax Invoice'
+    default_copy = 'PROFORMA - NOT A TAX INVOICE' if is_proforma else 'ORIGINAL FOR RECIPIENT'
+    copy_label = d.get('copy_label') or default_copy
+    proforma_note = ('<div class="sm" style="margin-top:3px;font-style:italic">This is a Proforma Invoice issued for '
+                     'estimation / approval only. It is not a valid tax invoice and not valid for input tax credit.</div>') if is_proforma else ''
     total_qty = _esc(d.get('total_qty','')).replace(chr(10), '<br>')
     print_bar = ''
     if for_print:
@@ -118,7 +123,7 @@ def build_invoice_html(d, for_print=True):
       '.meta td { padding:2px 5px; font-size:9pt; } .hdr th{font-weight:bold;text-align:center;font-size:9pt;}'
       '.words{font-weight:bold;} .foot{text-align:center;font-size:8.5pt;margin-top:6px;}'
       '</style></head><body>' + print_bar + '<div class="sheet">'
-      '<div style="position:relative"><div class="title">Tax Invoice</div><div class="copy">(' + _esc(copy_label) + ')</div></div>'
+      '<div style="position:relative"><div class="title">' + doc_title + '</div><div class="copy">(' + _esc(copy_label) + ')</div></div>'
       '<table class="inv" style="margin-top:4px"><tr>'
         '<td style="width:55%" class="lh"><table class="nob" style="width:100%"><tr>'
           '<td class="nob" style="width:120px;vertical-align:top"><img src="data:image/png;base64,' + INVOICE_LOGO_B64 + '" style="width:110px"></td>'
@@ -164,7 +169,8 @@ def build_invoice_html(d, for_print=True):
       '<table class="inv" style="margin-top:-0.6pt"><tr><td colspan="2">'
         '<div>Tax Amount (in words) : <span class="b">' + tax_words(tax_total) + '</span></div>'
         '<div class="b">Declaration</div>'
-        '<div class="sm">We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</div></td></tr>'
+        '<div class="sm">We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</div>'
+        + proforma_note + '</td></tr>'
         '<tr><td style="width:55%;height:70px;vertical-align:top">Customer&#39;s Seal and Signature</td>'
         '<td style="vertical-align:top;text-align:right"><div class="b">for ' + _esc(seller['name']) + '</div>'
         '<div style="height:50px"></div>'

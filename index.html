@@ -4556,20 +4556,22 @@ async function renderInvoicing(){
     +_invCard('Total Invoiced',_invRup(sum.invoiced),'#534AB7')
     +_invCard('Received',_invRup(sum.received),'#0F7A52')
     +_invCard('Outstanding',_invRup(sum.outstanding),'#B4690E')
-    +_invCard('Invoices',(sum.count||0),'#555')+'</div>';
+    +((sum.proforma_count||0)>0?_invCard('Projected (Proforma)',_invRup(sum.proforma_projected),'#7A5AF8'):_invCard('Invoices',(sum.count||0),'#555'))+'</div>';
   var rows=invs.map(function(v){
     var gross=Math.round((v.amount||0)*(1+(v.gst_rate||18)/100));
+    var isPro=(v.doc_type==='proforma');
     var stCol={'Paid':'#0F7A52','Overdue':'#C0392B','Sent':'#B4690E','Draft':'#888'}[v.status]||'#888';
-    return '<tr style="border-top:1px solid #f0f0f0">'
-      +'<td style="padding:8px;font-weight:600">'+esc(v.invoice_no||'')+'</td>'
+    var badge=isPro?'<span style="font-size:9px;font-weight:700;color:#fff;background:#B4690E;border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:middle">PROFORMA</span>':'';
+    return '<tr style="border-top:1px solid #f0f0f0'+(isPro?';background:#FFFDF7':'')+'">'
+      +'<td style="padding:8px;font-weight:600">'+esc(v.invoice_no||'')+badge+'</td>'
       +'<td style="padding:8px">'+esc(v.invoice_date||'')+'</td>'
       +'<td style="padding:8px">'+esc(v.buyer_name||'')+(v.candidate_name?'<div style="font-size:10.5px;color:#999">'+esc(v.candidate_name)+'</div>':'')+'</td>'
       +'<td style="padding:8px;text-align:right">'+_invRup(gross)+'</td>'
-      +'<td style="padding:8px"><span style="font-size:10.5px;font-weight:700;color:'+stCol+'">'+esc(v.status||'Draft')+'</span></td>'
+      +'<td style="padding:8px">'+(isPro?'<span style="font-size:10.5px;font-weight:700;color:#B4690E">Estimate</span>':'<span style="font-size:10.5px;font-weight:700;color:'+stCol+'">'+esc(v.status||'Draft')+'</span>')+'</td>'
       +'<td style="padding:8px;text-align:right;white-space:nowrap">'
         +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="printInvoice('+v.id+')">&#128424; Print</button> '
         +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="openInvoiceForm('+v.id+')">Edit</button> '
-        +(v.status!=='Paid'?'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#0F7A52" onclick="markInvoicePaid('+v.id+')">Paid</button> ':'')
+        +(isPro?'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#534AB7;font-weight:700" onclick="convertProforma('+v.id+')">&#8594; Convert to Tax</button> ':(v.status!=='Paid'?'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#0F7A52" onclick="markInvoicePaid('+v.id+')">Paid</button> ':''))
         +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#C0392B" onclick="deleteInvoice('+v.id+')">&#10005;</button>'
       +'</td></tr>';
   }).join('');
@@ -4693,6 +4695,12 @@ async function deleteInvoice(id){
   if(!confirm('Delete this invoice?')) return;
   await req('DELETE','/invoices/'+id); toast('Deleted',''); renderInvoicing();
 }
+async function convertProforma(id){
+  if(!confirm('Is proforma ko real Tax Invoice bana dein? Naya GST invoice number milega.')) return;
+  var r=await req('POST','/invoices/'+id+'/convert',{});
+  if(r&&r.ok){ toast('OK','Tax Invoice ban gayi: '+(r.invoice_no||'')); renderInvoicing(); }
+  else toast('Error',(r&&r.error)||'Convert failed');
+}
 function _invClose(){ var e=document.getElementById('modal-invoice'); if(e) e.remove(); }
 function _invF(id,label,val,ph,w){ return '<div style="'+(w?'grid-column:span 2;':'')+'"><label style="font-size:11px;font-weight:600;color:#555">'+label+'</label><input id="'+id+'" class="inp" style="width:100%;font-size:12.5px" value="'+esc(val||'')+'" placeholder="'+(ph||'')+'"></div>'; }
 async function openInvoiceForm(id){
@@ -4701,8 +4709,9 @@ async function openInvoiceForm(id){
   try{ var cr=await req('GET','/crm/clients-billing'); crmClients=(cr&&cr.clients)||[]; }catch(e){}
   window._invCrmClients=crmClients;
   window._invClientId=0;
+  if(!id){ window._invNewDocType='tax'; }
   if(id){ var r=await req('GET','/invoices/'+id); inv=(r&&r.invoice)||{}; window._invClientId=inv.client_id||0; }
-  else { try{ var nn=await req('GET','/invoices/next-number'); inv.invoice_no=nn.invoice_no; }catch(e){} inv.description='Charge Towards Recruitment Services'; inv.per='CTC'; inv.rate='.1'; inv.gst_rate=18; inv.invoice_date=new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).replace(/ /g,'-'); }
+  else { inv.doc_type=window._invNewDocType||'tax'; try{ var nn=await req('GET','/invoices/next-number?doc_type='+inv.doc_type); inv.invoice_no=nn.invoice_no; }catch(e){} inv.description='Charge Towards Recruitment Services'; inv.per='CTC'; inv.rate='.1'; inv.gst_rate=18; inv.invoice_date=new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).replace(/ /g,'-'); }
   if(!id && window._invPrefill){ inv.candidate_name=window._invPrefill.candidate_name||''; inv.role=window._invPrefill.role||''; if(window._invPrefill.amount) inv.amount=window._invPrefill.amount; window._invCandId=window._invPrefill.candidate_id||0; window._invPrefill=null; }
   else if(!id){ window._invCandId=0; }
   _invClose();
@@ -4710,6 +4719,12 @@ async function openInvoiceForm(id){
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-invoice';
   bg.innerHTML='<div class="modal" style="max-width:760px;width:95%"><div class="modal-head"><span class="modal-title">'+(id?'Edit':'New')+' Invoice</span><button class="modal-x" onclick="_invClose()">&#10005;</button></div>'
     +'<div class="modal-body" style="max-height:78vh;overflow:auto">'
+    +'<div style="display:flex;gap:6px;margin-bottom:12px;background:#F3F2FB;border-radius:8px;padding:4px">'
+      +(function(){ var dt=(inv.doc_type||'tax'); if(id){ return '<div style="flex:1;text-align:center;padding:6px;font-size:12px;font-weight:700;border-radius:6px;background:'+(dt==='proforma'?'#B4690E':'#534AB7')+';color:#fff">'+(dt==='proforma'?'Proforma Invoice':'Tax Invoice')+'</div><input type="hidden" id="inv-doctype" value="'+dt+'">'; }
+        return '<button type="button" id="dt-tax" onclick="_invSetDocType(\'tax\')" style="flex:1;padding:7px;font-size:12px;font-weight:700;border:none;border-radius:6px;cursor:pointer;background:'+(dt!=='proforma'?'#534AB7':'transparent')+';color:'+(dt!=='proforma'?'#fff':'#666')+'">Tax Invoice</button>'
+             +'<button type="button" id="dt-pro" onclick="_invSetDocType(\'proforma\')" style="flex:1;padding:7px;font-size:12px;font-weight:700;border:none;border-radius:6px;cursor:pointer;background:'+(dt==='proforma'?'#B4690E':'transparent')+';color:'+(dt==='proforma'?'#fff':'#666')+'">Proforma</button>'
+             +'<input type="hidden" id="inv-doctype" value="'+dt+'">'; })()
+    +'</div>'
     +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:6px">Invoice</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
       +_invF('inv-no','Invoice No',inv.invoice_no)+_invF('inv-date','Invoice Date',inv.invoice_date,'29-Jul-26')
@@ -4751,6 +4766,16 @@ async function openInvoiceForm(id){
   document.body.appendChild(bg);
   ['inv-qty','inv-rate','inv-amount','inv-gst','inv-bcode'].forEach(function(k){ var e=document.getElementById(k); if(e) e.addEventListener('input',_invCalc); });
   _invCalc();
+}
+async function _invSetDocType(dt){
+  window._invNewDocType=dt;
+  var h=document.getElementById('inv-doctype'); if(h) h.value=dt;
+  var bt=document.getElementById('dt-tax'), bp=document.getElementById('dt-pro');
+  if(bt&&bp){
+    bt.style.background=(dt!=='proforma')?'#534AB7':'transparent'; bt.style.color=(dt!=='proforma')?'#fff':'#666';
+    bp.style.background=(dt==='proforma')?'#B4690E':'transparent'; bp.style.color=(dt==='proforma')?'#fff':'#666';
+  }
+  try{ var nn=await req('GET','/invoices/next-number?doc_type='+dt); var e=document.getElementById('inv-no'); if(e&&nn&&nn.invoice_no) e.value=nn.invoice_no; }catch(e){}
 }
 function _invPickClient(){
   var sel=document.getElementById('inv-crmpick'); if(!sel) return;
@@ -4797,6 +4822,7 @@ async function saveInvoice(id){
     extra_lines:v('inv-extra').split('\n').map(function(x){return x.trim();}).filter(Boolean),
     quantity:v('inv-qty'), rate:v('inv-rate'), per:v('inv-per'), hsn:v('inv-hsn'),
     total_qty:totq, amount:amt||0, gst_rate:parseFloat(v('inv-gst'))||18,
+    doc_type: v('inv-doctype')||'tax',
     candidate_id: window._invCandId||0, client_id: window._invClientId||0
   };
   if(!body.buyer_name){ toast('Client name required',''); return; }
@@ -11919,11 +11945,18 @@ async function openClientForm(clientId){
     +'<div><label class="la-lbl">City</label><input id="cf-city" class="inp" style="width:100%" value="'+esc(client.city||'')+'"></div>'
     +'<div><label class="la-lbl">State</label><input id="cf-state" class="inp" style="width:100%" value="'+esc(client.state||'')+'"></div>'
     +'</div>'
-    +'<div class="g2" style="gap:10px">'
     +'<div><label class="la-lbl">Website</label><input id="cf-website" class="inp" style="width:100%" value="'+esc(client.website||'')+'" placeholder="https://"></div>'
-    +'<div><label class="la-lbl">GSTIN</label><input id="cf-gstin" class="inp" style="width:100%" value="'+esc(client.gstin||'')+'"></div>'
+    +'<div><label class="la-lbl">Address (office / site)</label><input id="cf-address" class="inp" style="width:100%" value="'+esc(client.address||'')+'"></div>'
+    +'<div style="border:1px solid #E4E7EC;border-radius:8px;padding:10px 11px;background:#FAFAFC">'
+      +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:8px">&#128176; Billing &amp; GST <span style="font-weight:500;color:#888">— invoice mein yahi se auto-fill hoga (ek baar bharo)</span></div>'
+      +'<div><label class="la-lbl">GSTIN / UIN</label><input id="cf-gstin" class="inp" style="width:100%" value="'+esc(client.gstin||'')+'" placeholder="e.g. 06AABCU9603R1ZM"></div>'
+      +'<div style="margin-top:8px"><label class="la-lbl">Billing Address (bill-to)</label><input id="cf-bill-address" class="inp" style="width:100%" value="'+esc(client.bill_address||client.address||'')+'" placeholder="GST bill-to address"></div>'
+      +'<div class="g2" style="gap:10px;margin-top:8px">'
+        +'<div><label class="la-lbl">State</label><input id="cf-bill-state" class="inp" style="width:100%" value="'+esc(client.bill_state||client.state||'')+'" placeholder="Haryana"></div>'
+        +'<div><label class="la-lbl">State Code <span style="color:#C0392B">*</span></label><input id="cf-bill-code" class="inp" style="width:100%" value="'+esc(client.bill_state_code||'')+'" placeholder="06"></div>'
+      +'</div>'
+      +'<div style="font-size:10px;color:#98A2B3;margin-top:5px">State Code zaroori hai — yehi decide karta hai invoice mein IGST lage ya CGST+SGST. (Haryana=06, UP=09, Delhi=07, Maharashtra=27)</div>'
     +'</div>'
-    +'<div><label class="la-lbl">Address</label><input id="cf-address" class="inp" style="width:100%" value="'+esc(client.address||'')+'"></div>'
     +'<div><label class="la-lbl">Notes</label><textarea id="cf-notes" class="inp" rows="2" style="width:100%">'+esc(client.notes||'')+'</textarea></div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
     +'<button class="btn btn-o" onclick="_waCloseModal()" style="font-size:11px">Cancel</button>'
@@ -11942,6 +11975,9 @@ async function saveClient(clientId){
     website:document.getElementById('cf-website').value.trim(),
     gstin:document.getElementById('cf-gstin').value.trim(),
     address:document.getElementById('cf-address').value.trim(),
+    bill_address:document.getElementById('cf-bill-address').value.trim(),
+    bill_state:document.getElementById('cf-bill-state').value.trim(),
+    bill_state_code:document.getElementById('cf-bill-code').value.trim(),
     notes:document.getElementById('cf-notes').value.trim()
   };
   if(!payload.name){ toast('ERR','Company name is required'); return; }
@@ -12042,8 +12078,12 @@ function _cdLeftColumn(c){
   html+=row('City',c.city);
   html+=row('State',c.state);
   html+=row('Country',c.country);
-  html+=row('GSTIN',c.gstin);
   html+=row('Address',c.address);
+  html+='<div style="margin-top:12px;font-size:11px;font-weight:700;color:#534AB7;text-transform:uppercase;letter-spacing:.5px">&#128176; Billing &amp; GST</div>';
+  html+=row('GSTIN / UIN',c.gstin);
+  html+=row('Billing Address',c.bill_address||c.address);
+  html+=row('Billing State',c.bill_state||c.state);
+  html+=row('State Code',c.bill_state_code);
   if(c.notes){
     html+='<div style="margin-top:14px"><div style="font-size:10.5px;color:#98A2B3;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Notes</div>'
       +'<div style="font-size:12px;color:#475467;line-height:1.55;background:#F9FAFB;border-radius:8px;padding:10px 12px;white-space:pre-wrap">'+esc(c.notes)+'</div></div>';

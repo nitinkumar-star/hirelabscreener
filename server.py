@@ -2516,6 +2516,16 @@ def init_db():
         );
     """)
 
+    # Migrate: proforma support. doc_type='tax' (real GST invoice, default) or
+    # 'proforma' (estimate/quote — separate number series, kept out of revenue
+    # totals but shown as a projection). converted_from tracks the proforma a
+    # tax invoice was created from.
+    for col, typ in [('doc_type', "TEXT DEFAULT 'tax'"), ('converted_from', 'INTEGER DEFAULT 0')]:
+        try:
+            c.execute(f'ALTER TABLE invoices ADD COLUMN {col} {typ}')
+        except sqlite3.OperationalError:
+            pass
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS vec_chunks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -11086,12 +11096,25 @@ def _invoice_engine_dict(r):
         'hsn': d['hsn'], 'quantity': d['quantity'], 'rate': d['rate'], 'per': d['per'],
         'total_qty': d['total_qty'], 'amount': d['amount'], 'gst_rate': d['gst_rate'],
         'signatory_name': get_setting('invoice_signatory', ''),
+        'doc_type': d.get('doc_type') or 'tax',
     }
 
-def _next_gst_invoice_no(conn, owner_id):
+def _next_gst_invoice_no(conn, owner_id, doc_type='tax'):
+    """Next number for the given doc_type. Tax invoices and proformas keep
+    independent sequences so a proforma never eats a real GST invoice number.
+    Tax  -> 2026-27/0001 ; Proforma -> PI/2026-27/0001"""
     fy = get_setting('invoice_fy', '') or '2026-27'
-    row = conn.execute('SELECT MAX(seq) AS m FROM invoices WHERE owner_id=? AND fy=?',
-                       (owner_id, fy)).fetchone()
+    dt = 'proforma' if str(doc_type) == 'proforma' else 'tax'
+    if dt == 'proforma':
+        row = conn.execute(
+            "SELECT MAX(seq) AS m FROM invoices WHERE owner_id=? AND fy=? AND doc_type='proforma'",
+            (owner_id, fy)).fetchone()
+        seq = (row['m'] or 0) + 1
+        return fy, seq, f"PI/{fy}/{seq:04d}"
+    # tax: legacy rows have NULL doc_type — treat them as tax so the series is continuous
+    row = conn.execute(
+        "SELECT MAX(seq) AS m FROM invoices WHERE owner_id=? AND fy=? AND (doc_type IS NULL OR doc_type='tax')",
+        (owner_id, fy)).fetchone()
     seq = (row['m'] or 0) + 1
     return fy, seq, f"{fy}/{seq:04d}"
 
@@ -11103,11 +11126,12 @@ def create_invoice():
     conn = None
     try:
         conn = get_db(); oid = effective_company_id(); now = ts()
-        fy, seq, inv_no = _next_gst_invoice_no(conn, oid)
+        doc_type = 'proforma' if str(d.get('doc_type', 'tax')) == 'proforma' else 'tax'
+        fy, seq, inv_no = _next_gst_invoice_no(conn, oid, doc_type)
         if (d.get('invoice_no') or '').strip():
             inv_no = d['invoice_no'].strip()
         due = (d.get('due_date') or '').strip()
-        if not due:
+        if not due and doc_type == 'tax':
             import datetime as _dt
             due = (_dt.date.today() + _dt.timedelta(days=45)).isoformat()
         cur = conn.execute("""INSERT INTO invoices
@@ -11115,8 +11139,8 @@ def create_invoice():
              buyer_state, buyer_state_code, consignee_same, con_name, con_address, con_gstin,
              con_state, con_state_code, candidate_name, role, description, extra_lines, hsn, quantity,
              rate, per, total_qty, amount, gst_rate, place_of_supply, ref_no, other_ref, order_no,
-             order_date, status, due_date, client_id, candidate_id, mandate_id, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             order_date, status, due_date, client_id, candidate_id, mandate_id, doc_type, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (oid, inv_no, d.get('invoice_date',''), fy, seq, d.get('buyer_name',''), d.get('buyer_address',''),
              d.get('buyer_gstin',''), d.get('buyer_state',''), d.get('buyer_state_code',''),
              1 if d.get('consignee_same', True) else 0, d.get('con_name',''), d.get('con_address',''),
@@ -11129,7 +11153,7 @@ def create_invoice():
              d.get('place_of_supply',''), d.get('ref_no',''), d.get('other_ref',''), d.get('order_no',''),
              d.get('order_date',''), d.get('status','Sent') or 'Sent', due,
              int(d.get('client_id',0) or 0), int(d.get('candidate_id',0) or 0), int(d.get('mandate_id',0) or 0),
-             now, now))
+             doc_type, now, now))
         conn.commit()
         # Remember this client's billing details on the CRM record (fill-once).
         cli_id = int(d.get('client_id', 0) or 0)
@@ -11195,7 +11219,7 @@ def list_invoices():
         out.append({'id': d['id'], 'invoice_no': d['invoice_no'], 'invoice_date': d['invoice_date'],
                     'buyer_name': d['buyer_name'], 'candidate_name': d['candidate_name'],
                     'amount': taxable, 'total': gross, 'gst_rate': d['gst_rate'],
-                    'status': d['status'], 'due_date': d['due_date'],
+                    'status': d['status'], 'due_date': d['due_date'], 'doc_type': d.get('doc_type') or 'tax',
                     'received_amount': d['received_amount'], 'received_date': d['received_date']})
     return jsonify({'ok': True, 'invoices': out})
 
@@ -11224,6 +11248,45 @@ def mark_invoice_paid(iid):
                   ts(), iid, effective_company_id()))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
+
+
+@app.route('/api/invoices/<int:iid>/convert', methods=['POST'])
+@login_required
+def convert_proforma_to_tax(iid):
+    """One-click: turn a proforma into a real GST tax invoice. Assigns a fresh
+    number from the tax series, stamps today's date + a 45-day due date, and
+    remembers which proforma it came from. Everything else stays as-is."""
+    conn = None
+    try:
+        conn = get_db(); oid = effective_company_id(); now = ts()
+        r = conn.execute('SELECT id, doc_type, seq FROM invoices WHERE id=? AND owner_id=?', (iid, oid)).fetchone()
+        if not r:
+            return jsonify({'error': 'Invoice not found'}), 404
+        if (r['doc_type'] or 'tax') != 'proforma':
+            return jsonify({'error': 'Yeh already Tax Invoice hai.'}), 400
+        proforma_seq = r['seq']
+        fy, seq, inv_no = _next_gst_invoice_no(conn, oid, 'tax')
+        import datetime as _dt
+        due = (_dt.date.today() + _dt.timedelta(days=45)).isoformat()
+        conn.execute(
+            "UPDATE invoices SET doc_type='tax', invoice_no=?, fy=?, seq=?, "
+            "invoice_date=?, due_date=?, status='Sent', converted_from=?, updated_at=? "
+            "WHERE id=? AND owner_id=?",
+            (inv_no, fy, seq,
+             _dt.date.today().strftime('%d-%b-%y'), due, proforma_seq or 0, now, iid, oid))
+        conn.commit()
+        try:
+            log_activity('invoice', f"Proforma converted to Tax Invoice {inv_no}")
+        except Exception:
+            pass
+        return jsonify({'ok': True, 'invoice_no': inv_no})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    finally:
+        if conn is not None:
+            try: conn.close()
+            except Exception: pass
 
 
 @app.route('/api/invoices/<int:iid>', methods=['DELETE'])
@@ -11287,7 +11350,8 @@ def delete_expense(eid):
 @login_required
 def invoice_next_number():
     conn = get_db()
-    _, _, inv_no = _next_gst_invoice_no(conn, effective_company_id())
+    doc_type = request.args.get('doc_type', 'tax')
+    _, _, inv_no = _next_gst_invoice_no(conn, effective_company_id(), doc_type)
     conn.close()
     return jsonify({'ok': True, 'invoice_no': inv_no})
 
@@ -11298,7 +11362,13 @@ def invoicing_summary():
     import datetime as _dt
     conn = get_db(); oid = effective_company_id()
     today = _dt.date.today().isoformat()
-    invs = conn.execute('SELECT invoice_no, buyer_name, amount, gst_rate, status, received_amount, due_date FROM invoices WHERE owner_id=?', (oid,)).fetchall()
+    invs = conn.execute("SELECT invoice_no, buyer_name, amount, gst_rate, status, received_amount, due_date "
+                        "FROM invoices WHERE owner_id=? AND (doc_type IS NULL OR doc_type='tax')", (oid,)).fetchall()
+    # Proformas are estimates only — kept out of real totals, shown as a projection.
+    pro = conn.execute("SELECT amount, gst_rate FROM invoices WHERE owner_id=? AND doc_type='proforma'", (oid,)).fetchall()
+    proforma_projected = 0.0; proforma_count = 0
+    for r in pro:
+        proforma_projected += round((r['amount'] or 0) * (1 + (r['gst_rate'] or 18) / 100)); proforma_count += 1
     exps = conn.execute('SELECT category, amount FROM expenses WHERE owner_id=?', (oid,)).fetchall()
     invoiced = received = outstanding = overdue_amt = 0.0
     n_paid = unpaid_count = overdue_count = 0
@@ -11344,6 +11414,7 @@ def invoicing_summary():
     conn.close()
     return jsonify({'ok': True, 'invoiced': round(invoiced), 'received': round(received),
                     'outstanding': round(outstanding), 'overdue_amount': round(overdue_amt),
+                    'proforma_projected': round(proforma_projected), 'proforma_count': proforma_count,
                     'count': len(invs), 'n_paid': n_paid, 'unpaid_count': unpaid_count, 'overdue_count': overdue_count,
                     'outstanding_list': outstanding_list,
                     'total_expenses': round(total_exp), 'expenses_by_category': exp_by_cat,
@@ -12217,7 +12288,7 @@ def vector_search_ep():
 def _command_overview(conn, oid):
     d = {}
     # Revenue from invoices
-    invs = conn.execute('SELECT amount, gst_rate, status, received_amount, invoice_date FROM invoices WHERE owner_id=?', (oid,)).fetchall()
+    invs = conn.execute("SELECT amount, gst_rate, status, received_amount, invoice_date FROM invoices WHERE owner_id=? AND (doc_type IS NULL OR doc_type='tax')", (oid,)).fetchall()
     invoiced = received = outstanding = 0.0
     for r in invs:
         gross = round((r['amount'] or 0) * (1 + (r['gst_rate'] or 18)/100))
@@ -12405,7 +12476,7 @@ def _work_status_brief(conn, oid):
         pass
     # 2) Invoices — overdue + unpaid
     try:
-        rows = conn.execute("SELECT invoice_no, buyer_name, due_date FROM invoices WHERE owner_id=? AND lower(status)!='paid'", (oid,)).fetchall()
+        rows = conn.execute("SELECT invoice_no, buyer_name, due_date FROM invoices WHERE owner_id=? AND lower(status)!='paid' AND (doc_type IS NULL OR doc_type='tax')", (oid,)).fetchall()
         overdue = [r for r in rows if r['due_date'] and r['due_date'][:10] < today]
         if overdue:
             lines.append("OVERDUE PAYMENTS (chase today): " + '; '.join(f"{r['invoice_no']} {r['buyer_name']} (due {r['due_date'][:10]})" for r in overdue[:8]))
@@ -12497,7 +12568,7 @@ def _work_status_brief(conn, oid):
     try:
         import datetime as _d3
         month_start = _d3.date.today().replace(day=1).isoformat()
-        crows = conn.execute("SELECT buyer_name, SUM(amount*(1+COALESCE(gst_rate,18)/100.0)) billed FROM invoices WHERE owner_id=? AND buyer_name!='' GROUP BY buyer_name ORDER BY billed DESC", (oid,)).fetchall()
+        crows = conn.execute("SELECT buyer_name, SUM(amount*(1+COALESCE(gst_rate,18)/100.0)) billed FROM invoices WHERE owner_id=? AND buyer_name!='' AND (doc_type IS NULL OR doc_type='tax') GROUP BY buyer_name ORDER BY billed DESC", (oid,)).fetchall()
         if crows:
             total_billed = sum((r['billed'] or 0) for r in crows) or 1
             conc = int((crows[0]['billed'] or 0) / total_billed * 100)
@@ -12798,7 +12869,7 @@ def command_weekly_review():
         brief = _work_status_brief(conn, oid)
         extra = []
         try:
-            inv_new = conn.execute("SELECT invoice_no, buyer_name, amount, gst_rate, status, created_at FROM invoices WHERE owner_id=? AND substr(created_at,1,10)>=?", (oid, wk_ago)).fetchall()
+            inv_new = conn.execute("SELECT invoice_no, buyer_name, amount, gst_rate, status, created_at FROM invoices WHERE owner_id=? AND (doc_type IS NULL OR doc_type='tax') AND substr(created_at,1,10)>=?", (oid, wk_ago)).fetchall()
             if inv_new:
                 extra.append("INVOICES RAISED THIS WEEK: " + '; '.join(f"{r['invoice_no']} {r['buyer_name']} ₹{int((r['amount'] or 0)*(1+(r['gst_rate'] or 18)/100)):,} ({r['status']})" for r in inv_new))
             paid_new = conn.execute("SELECT invoice_no, buyer_name, received_amount, received_date FROM invoices WHERE owner_id=? AND lower(status)='paid' AND substr(received_date,1,10)>=?", (oid, wk_ago)).fetchall()
@@ -12909,7 +12980,7 @@ def command_plan():
         # top clients by CRM value / invoice
         try:
             top_clients = conn.execute(
-                'SELECT buyer_name, COUNT(*) n, SUM(amount) amt FROM invoices WHERE owner_id=? GROUP BY buyer_name ORDER BY amt DESC LIMIT 6',
+                "SELECT buyer_name, COUNT(*) n, SUM(amount) amt FROM invoices WHERE owner_id=? AND (doc_type IS NULL OR doc_type='tax') GROUP BY buyer_name ORDER BY amt DESC LIMIT 6",
                 (oid,)).fetchall()
             clients_str = '; '.join(f"{r['buyer_name']} (₹{int(r['amt'] or 0):,}, {r['n']} inv)" for r in top_clients) or 'none yet'
         except Exception:
@@ -13097,8 +13168,11 @@ def crm_clients_billing():
     conn = get_db()
     try:
         rows = conn.execute(
-            'SELECT id, name, gstin, bill_address, bill_state, bill_state_code '
-            'FROM crm_clients WHERE company_id=? AND is_active=1 ORDER BY name',
+            "SELECT id, name, gstin, "
+            "  CASE WHEN COALESCE(bill_address,'')!='' THEN bill_address ELSE COALESCE(address,'') END AS bill_address, "
+            "  CASE WHEN COALESCE(bill_state,'')!='' THEN bill_state ELSE COALESCE(state,'') END AS bill_state, "
+            "  COALESCE(bill_state_code,'') AS bill_state_code "
+            "FROM crm_clients WHERE company_id=? AND is_active=1 ORDER BY name",
             (effective_company_id(),)).fetchall()
     except Exception:
         conn.close()
