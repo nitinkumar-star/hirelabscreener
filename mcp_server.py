@@ -531,6 +531,14 @@ def _base_url(request):
     return f"{proto}://{host}"
 
 
+async def _form_data(request):
+    """Parse an application/x-www-form-urlencoded body WITHOUT needing the
+    python-multipart package (which Starlette's request.form() would require)."""
+    from urllib.parse import parse_qsl
+    raw = (await request.body()).decode("utf-8", "ignore")
+    return dict(parse_qsl(raw, keep_blank_values=True))
+
+
 async def oauth_protected_resource(request):
     base = _base_url(request)
     return JSONResponse({
@@ -596,7 +604,7 @@ async def oauth_authorize(request):
             f'<input type="hidden" name="{k}" value="{v}">' for k, v in params.items())
         return HTMLResponse(_AUTHORIZE_FORM.format(hidden=hidden, error=""))
 
-    form = await request.form()
+    form = await _form_data(request)
     params = _authorize_params(form)
     secret_ok = hmac.compare_digest((form.get("secret") or ""), MCP_SECRET) and bool(MCP_SECRET)
     if not secret_ok:
@@ -619,7 +627,7 @@ async def oauth_authorize(request):
     return RedirectResponse(f"{redirect_uri}{sep}{urlencode(q)}", status_code=302)
 
 async def oauth_token(request):
-    form = await request.form()
+    form = await _form_data(request)
     code = form.get("code", "")
     verifier = form.get("code_verifier", "")
     data = _verify("code", code)
