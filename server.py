@@ -309,6 +309,37 @@ def _tenant_owns_mandate(conn, mid):
     r = conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
     return bool(r) and r['owner_id'] == effective_company_id()
 
+def _tenant_owns_submission(conn, sid):
+    """True if public submission `sid` belongs to the current tenant (company)."""
+    r = conn.execute('SELECT owner_id FROM submissions WHERE id=?', (sid,)).fetchone()
+    return bool(r) and r['owner_id'] == effective_company_id()
+
+def _primary_company_id(conn):
+    """The default tenant a PUBLIC submission belongs to when the apply link
+    carries no explicit company token. Prefers the configured
+    'default_submission_company' setting; otherwise the original (lowest-id)
+    company. Returns 0 only if no company exists yet."""
+    try:
+        r = conn.execute("SELECT value FROM settings WHERE key='default_submission_company'").fetchone()
+        if r and str(r['value']).strip().isdigit():
+            cid = int(r['value'])
+            if conn.execute('SELECT 1 FROM companies WHERE id=?', (cid,)).fetchone():
+                return cid
+    except Exception:
+        pass
+    r = conn.execute('SELECT MIN(id) mid FROM companies').fetchone()
+    return (r['mid'] if r and r['mid'] else 0)
+
+def _resolve_submission_owner(conn, requested=None):
+    """Resolve which company a public submission belongs to. If a valid company
+    id is supplied (via ?c= / company_id form field) use it; otherwise fall back
+    to the primary company so the existing single-company form is unchanged."""
+    if requested is not None and str(requested).strip().isdigit():
+        cid = int(requested)
+        if conn.execute('SELECT 1 FROM companies WHERE id=?', (cid,)).fetchone():
+            return cid
+    return _primary_company_id(conn)
+
 def log_activity(action, detail='', entity_type='', entity_id=0, meta=None,
                  actor_type='user', actor_name=''):
     """Universal activity timeline. Backward-compatible: existing callers that
@@ -2356,6 +2387,28 @@ def init_db():
             pass
     try:
         c.execute("ALTER TABLE submissions ADD COLUMN task_snoozed_until TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    # ── P0: tenant-scope the PUBLIC submissions table (additive) ────────────
+    for _sub_sql in [
+        'ALTER TABLE submissions ADD COLUMN owner_id INTEGER DEFAULT 0',
+        'ALTER TABLE submissions ADD COLUMN mandate_id INTEGER DEFAULT 0',
+    ]:
+        try:
+            c.execute(_sub_sql)
+        except sqlite3.OperationalError:
+            pass
+    try:
+        _pc = c.execute('SELECT MIN(id) mid FROM companies').fetchone()
+        _pcid = (_pc[0] if _pc and _pc[0] else 0)
+        if _pcid:
+            c.execute('UPDATE submissions SET owner_id=? WHERE owner_id IS NULL OR owner_id=0', (_pcid,))
+            c.execute("INSERT OR IGNORE INTO settings (key,value) VALUES ('default_submission_company', ?)",
+                      (str(_pcid),))
+    except Exception as _sub_bf_err:
+        print(f'[migrate] submissions tenancy backfill warning (non-fatal): {_sub_bf_err}')
+    try:
+        c.execute('CREATE INDEX IF NOT EXISTS idx_sub_owner_created ON submissions(owner_id, created_at)')
     except sqlite3.OperationalError:
         pass
     # ── Audit & Activity Foundation (PRD-0) ─────────────────────────────────
@@ -15282,10 +15335,21 @@ def submit_form():
             f.save(os.path.join(CV_DIR, safe))
             cv_path = safe; cv_name = f.filename
     conn = get_db(); c = conn.cursor()
+    _sub_owner = _resolve_submission_owner(conn,
+        request.args.get('c') or request.form.get('company_id'))
+    _sub_mid = request.args.get('m') or request.form.get('mandate_id') or 0
+    try:
+        _sub_mid = int(_sub_mid)
+    except Exception:
+        _sub_mid = 0
+    if _sub_mid:
+        _mrow = conn.execute('SELECT owner_id FROM mandates WHERE id=?', (_sub_mid,)).fetchone()
+        if not _mrow or _mrow['owner_id'] != _sub_owner:
+            _sub_mid = 0
     c.execute('INSERT INTO submissions (name,phone,email,company,designation,experience,'
               'ctc_current,ctc_expected,notice_period,location,key_skills,custom_fields,'
-              'cv_path,cv_original_name,resume_parsed,status,created_at) '
-              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+              'cv_path,cv_original_name,resume_parsed,status,owner_id,mandate_id,created_at) '
+              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         (name, phone, email, company,
          request.form.get('designation', ''),
          float(request.form.get('experience') or 0),
@@ -15295,11 +15359,12 @@ def submit_form():
          request.form.get('location', ''),
          request.form.get('key_skills', '[]'),
          request.form.get('custom_fields', '{}'),
-         cv_path, cv_name, 1 if cv_path else 0, 'new', ts()))
+         cv_path, cv_name, 1 if cv_path else 0, 'new', _sub_owner, _sub_mid, ts()))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
 @app.route('/api/submissions')
+@login_required
 def get_submissions():
     q        = request.args.get('q', '').strip().lower()
     sf       = request.args.get('status', '')
@@ -15310,7 +15375,8 @@ def get_submissions():
     page     = int(request.args.get('page', 1)); per = 30
 
     conn  = get_db()
-    rows  = conn.execute('SELECT * FROM submissions ORDER BY created_at DESC').fetchall()
+    rows  = conn.execute('SELECT * FROM submissions WHERE owner_id=? ORDER BY created_at DESC',
+                         (effective_company_id(),)).fetchall()
     conn.close()
 
     def parse_range(s):
@@ -15371,9 +15437,12 @@ def get_submissions():
                     'submissions': results[(page-1)*per : page*per]})
 
 @app.route('/api/submissions/<int:sid>', methods=['PUT'])
+@login_required
 def update_submission(sid):
     d = request.json or {}
     conn = get_db()
+    if not _tenant_owns_submission(conn, sid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     if 'status' in d:     conn.execute('UPDATE submissions SET status=? WHERE id=?',     (d['status'], sid))
     if 'notes' in d:      conn.execute('UPDATE submissions SET notes=? WHERE id=?',      (d['notes'], sid))
     if 'domain_tags' in d: conn.execute('UPDATE submissions SET domain_tags=? WHERE id=?', (json.dumps(d['domain_tags']), sid))
@@ -15381,19 +15450,24 @@ def update_submission(sid):
     return jsonify({'ok': True})
 
 @app.route('/api/submissions/<int:sid>/add-to-pipeline', methods=['POST'])
+@login_required
 def add_submission_to_pipeline(sid):
     d   = request.json or {}
     mid = d.get('mandate_id')
     if not mid: return jsonify({'error': 'mandate_id required'}), 400
     conn = get_db()
+    if not _tenant_owns_submission(conn, sid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    if not _tenant_owns_mandate(conn, mid):
+        conn.close(); return jsonify({'error': 'Mandate not found'}), 404
     sub  = conn.execute('SELECT * FROM submissions WHERE id=?', (sid,)).fetchone()
     if not sub: conn.close(); return jsonify({'error': 'Not found'}), 404
     c = conn.cursor()
-    c.execute('INSERT INTO candidates (mandate_id,name,company,designation,experience,ctc_current,'
+    c.execute('INSERT INTO candidates (owner_id,mandate_id,name,company,designation,experience,ctc_current,'
               'ctc_expected,notice_period,location,phone,email,key_skills,screening_decision,'
               'ai_reasoning,stage,cv_path,cv_original_name,created_at,updated_at) '
-              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        (mid, sub['name'], sub['company'], sub['designation'], sub['experience'],
+              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        (effective_company_id(), mid, sub['name'], sub['company'], sub['designation'], sub['experience'],
          sub['ctc_current'], sub['ctc_expected'], sub['notice_period'], sub['location'],
          sub['phone'], sub['email'], sub['key_skills'],
          'worth_opening', 'Added from submission form', 'Screening',
