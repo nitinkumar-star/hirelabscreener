@@ -1,11 +1,45 @@
-flask
-flask-cors
-requests
-pdfplumber
-python-docx
-gunicorn
-mammoth
-openpyxl
-cryptography
-PyJWT
-numpy
+# HireLab Screener — pinned dependencies (locked for reproducible deploys).
+# Versions verified: server.py + all modules import and pass smoke tests on
+# these exact versions (Python 3.11 runtime). Do NOT unpin — an unpinned
+# redeploy can silently pull a breaking upstream release.
+# To upgrade a package later: change its pin, redeploy to a test instance,
+# confirm it still works, then promote.
+
+# ── Direct dependencies (imported by the app) ──────────────────────────────
+Flask==3.1.3
+Flask-Cors==6.0.5
+requests==2.34.2
+pdfplumber==0.11.10
+python-docx==1.2.0
+gunicorn==26.1.0
+mammoth==1.12.1
+openpyxl==3.1.5
+cryptography==50.0.0
+PyJWT==2.13.0
+numpy==2.5.2
+
+# ── Flask framework stack (pinned so a new Werkzeug/Jinja can't break Flask) ─
+Werkzeug==3.1.8
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+itsdangerous==2.2.0
+click==8.4.2
+blinker==1.9.0
+
+# ── requests stack ─────────────────────────────────────────────────────────
+certifi==2026.7.22
+charset-normalizer==3.5.1
+idna==3.19
+urllib3==2.7.0
+
+# ── PDF / DOCX / XLSX parsing stack ────────────────────────────────────────
+pdfminer.six==20260107
+pypdfium2==5.13.0
+pillow==12.3.0
+lxml==6.1.2
+cobble==0.1.4
+et-xmlfile==2.0.0
+
+# ── cryptography stack ─────────────────────────────────────────────────────
+cffi==2.1.1
+pycparser==3.0
