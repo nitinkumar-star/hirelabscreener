@@ -3966,14 +3966,23 @@ def _reminder_token(rid):
 
 
 def _reminder_action_ok(rid):
-    """Authorized if the user has a session OR a valid reminder token."""
+    """Authorized if (a) a valid per-reminder token is supplied (mobile/email
+    link), OR (b) the user has a session AND the reminder belongs to their
+    company/tenant. A logged-in user of one agency can no longer action another
+    agency's reminders."""
+    tok = request.values.get('token', '')
+    if tok and tok == _reminder_token(rid):
+        return True
     try:
         if session.get('user_id'):
-            return True
+            conn = get_db()
+            r = conn.execute('SELECT candidate_id FROM reminders WHERE id=?', (rid,)).fetchone()
+            owned = bool(r) and _tenant_owns_candidate(conn, r['candidate_id'])
+            conn.close()
+            return owned
     except Exception:
         pass
-    tok = request.values.get('token', '')
-    return bool(tok) and tok == _reminder_token(rid)
+    return False
 
 
 @app.route('/api/reminders/<int:rid>/done', methods=['POST', 'GET'])
@@ -4054,6 +4063,9 @@ def edit_reminder(rid):
 @login_required
 def delete_reminder(rid):
     conn = get_db()
+    r = conn.execute('SELECT candidate_id FROM reminders WHERE id=?', (rid,)).fetchone()
+    if not r or not _tenant_owns_candidate(conn, r['candidate_id']):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     conn.execute('DELETE FROM reminders WHERE id=?', (rid,))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
@@ -4586,14 +4598,21 @@ def snooze_task():
     if not ttype or not ref_id or not snoozed_until:
         return jsonify({'error': 'type, ref_id and snoozed_until required'}), 400
     conn = get_db()
+    _cc = effective_company_id()
     if ttype == 'reminder':
+        r = conn.execute('SELECT candidate_id FROM reminders WHERE id=?', (ref_id,)).fetchone()
+        if not r or not _tenant_owns_candidate(conn, r['candidate_id']):
+            conn.close(); return jsonify({'error': 'Not found'}), 404
         conn.execute('UPDATE reminders SET due_at=? WHERE id=?', (snoozed_until, ref_id))
     elif ttype in ('stale', 'promise'):
-        conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=?', (snoozed_until, ref_id))
+        conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=? AND owner_id=?', (snoozed_until, ref_id, _cc))
     elif ttype == 'interview':
+        iv = conn.execute('SELECT candidate_id FROM interviews WHERE id=?', (ref_id,)).fetchone()
+        if not iv or not _tenant_owns_candidate(conn, iv['candidate_id']):
+            conn.close(); return jsonify({'error': 'Not found'}), 404
         conn.execute('UPDATE interviews SET task_snoozed_until=? WHERE id=?', (snoozed_until, ref_id))
     elif ttype == 'submission':
-        conn.execute('UPDATE submissions SET task_snoozed_until=? WHERE id=?', (snoozed_until, ref_id))
+        conn.execute('UPDATE submissions SET task_snoozed_until=? WHERE id=? AND owner_id=?', (snoozed_until, ref_id, _cc))
     else:
         conn.close(); return jsonify({'error': 'Unknown task type'}), 400
     conn.commit(); conn.close()
@@ -4609,7 +4628,11 @@ def task_done():
     if not ttype or not ref_id:
         return jsonify({'error': 'type and ref_id required'}), 400
     conn = get_db()
+    _cc = effective_company_id()
     if ttype == 'reminder':
+        r = conn.execute('SELECT candidate_id FROM reminders WHERE id=?', (ref_id,)).fetchone()
+        if not r or not _tenant_owns_candidate(conn, r['candidate_id']):
+            conn.close(); return jsonify({'error': 'Not found'}), 404
         conn.execute('UPDATE reminders SET done=1 WHERE id=?', (ref_id,))
     elif ttype in ('stale', 'promise'):
         # Push the suppression window out by the relevant threshold so it
@@ -4617,13 +4640,16 @@ def task_done():
         # silenced forever.
         days = float(get_setting('stale_days', '7') or 7) if ttype == 'stale' else 1
         push_to = (_ist_now() + datetime.timedelta(days=days)).isoformat()
-        conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=?', (push_to, ref_id))
+        conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=? AND owner_id=?', (push_to, ref_id, _cc))
     elif ttype == 'updated':
-        conn.execute("UPDATE candidates SET update_submitted_at='' WHERE id=?", (ref_id,))
+        conn.execute("UPDATE candidates SET update_submitted_at='' WHERE id=? AND owner_id=?", (ref_id, _cc))
     elif ttype == 'interview':
+        iv = conn.execute('SELECT candidate_id FROM interviews WHERE id=?', (ref_id,)).fetchone()
+        if not iv or not _tenant_owns_candidate(conn, iv['candidate_id']):
+            conn.close(); return jsonify({'error': 'Not found'}), 404
         conn.execute("UPDATE interviews SET status='completed' WHERE id=?", (ref_id,))
     elif ttype == 'submission':
-        conn.execute("UPDATE submissions SET status='reviewed' WHERE id=?", (ref_id,))
+        conn.execute("UPDATE submissions SET status='reviewed' WHERE id=? AND owner_id=?", (ref_id, _cc))
     else:
         conn.close(); return jsonify({'error': 'Unknown task type'}), 400
     conn.commit(); conn.close()
@@ -6394,16 +6420,17 @@ def ai_reindex():
         return jsonify({'error': 'Embedding (Jina) API key not set. Add your Jina key in Settings.'}), 400
 
     conn = get_db()
+    _cc = effective_company_id()
     if force:
-        rows = conn.execute('SELECT * FROM candidates ORDER BY id LIMIT ?', (batch,)).fetchall()
+        rows = conn.execute('SELECT * FROM candidates WHERE owner_id=? ORDER BY id LIMIT ?', (_cc, batch)).fetchall()
         # For force, also clear so they re-embed; but simplest: process those
         # without embedding first; force re-embeds everything across calls by
         # clearing embeddings up front on the first force call.
         if d.get('reset'):
-            conn.execute("UPDATE candidates SET embedding='', embedding_status='pending'")
+            conn.execute("UPDATE candidates SET embedding='', embedding_status='pending' WHERE owner_id=?", (_cc,))
             conn.commit()
-            rows = conn.execute('SELECT * FROM candidates ORDER BY id LIMIT ?', (batch,)).fetchall()
-    rows = conn.execute("SELECT * FROM candidates WHERE embedding='' OR embedding IS NULL ORDER BY id LIMIT ?", (batch,)).fetchall()
+            rows = conn.execute('SELECT * FROM candidates WHERE owner_id=? ORDER BY id LIMIT ?', (_cc, batch)).fetchall()
+    rows = conn.execute("SELECT * FROM candidates WHERE owner_id=? AND (embedding='' OR embedding IS NULL) ORDER BY id LIMIT ?", (_cc, batch)).fetchall()
 
     done, failed, skipped = 0, 0, 0
     first_error = ''
@@ -6426,7 +6453,7 @@ def ai_reindex():
             done += 1
 
     # remaining count
-    pending = conn.execute("SELECT COUNT(*) n FROM candidates WHERE embedding='' OR embedding IS NULL").fetchone()['n']
+    pending = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND (embedding='' OR embedding IS NULL)", (_cc,)).fetchone()['n']
     conn.close()
     return jsonify({'ok': True, 'indexed': done, 'failed': failed, 'skipped': skipped,
                     'pending': pending, 'first_error': first_error})
@@ -8795,10 +8822,10 @@ def ai_vectors_rebuild():
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT c.* FROM candidates c WHERE c.embedding_status='completed' AND c.id NOT IN ("
+            "SELECT c.* FROM candidates c WHERE c.owner_id=? AND c.embedding_status='completed' AND c.id NOT IN ("
             "  SELECT candidate_id FROM candidate_vectors WHERE embedding_text_version=? "
             "  GROUP BY candidate_id HAVING COUNT(DISTINCT facet) >= ?"
-            ") LIMIT ?", (MV_TEXT_TEMPLATE, len(MV_FACETS), cap)).fetchall()
+            ") LIMIT ?", (effective_company_id(), MV_TEXT_TEMPLATE, len(MV_FACETS), cap)).fetchall()
         done = 0
         for c in rows:
             embed_candidate_facets(conn, c, api_key)
@@ -9493,10 +9520,11 @@ def ai_stats():
         return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
 
     conn = get_db()
-    mandates = conn.execute('SELECT id, role, client, location, status, ctc_min, ctc_max FROM mandates').fetchall()
+    _cc = effective_company_id()
+    mandates = conn.execute('SELECT id, role, client, location, status, ctc_min, ctc_max FROM mandates WHERE owner_id=?', (_cc,)).fetchall()
     cands = conn.execute('SELECT name, company, designation, experience, ctc_current, '
                          'ctc_expected, notice_period, location, key_skills, stage, mandate_id '
-                         'FROM candidates').fetchall()
+                         'FROM candidates WHERE owner_id=?', (_cc,)).fetchall()
     conn.close()
 
     m_lines = []
@@ -10268,6 +10296,7 @@ def delete_mandate(mid):
                         (mid, effective_company_id())).fetchone()['n']
     conn.execute('UPDATE candidates SET mandate_id=? WHERE mandate_id=? AND owner_id=?',
                  (central_mid, mid, effective_company_id()))
+    _purge_mandate_children(conn, mid, central_mid)
     conn.execute('DELETE FROM mandates WHERE id=?', (mid,))
     conn.commit(); conn.close()
     log_activity('delete_mandate', f"{m['role']} @ {m['client']} (kept {kept} candidates in Central DB)")
@@ -13361,7 +13390,8 @@ def generate_jd():
 @login_required
 def get_mandate_templates(mid):
     conn = get_db()
-    m = conn.execute('SELECT email_templates FROM mandates WHERE id=?', (mid,)).fetchone()
+    m = conn.execute('SELECT email_templates FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, effective_company_id())).fetchone()
     conn.close()
     if not m:
         return jsonify({'error': 'Mandate not found'}), 404
@@ -13378,6 +13408,8 @@ def save_mandate_templates(mid):
     d = request.json or {}
     templates = d.get('templates', [])
     conn = get_db()
+    if not _tenant_owns_mandate(conn, mid):
+        conn.close(); return jsonify({'error': 'Mandate not found'}), 404
     conn.execute('UPDATE mandates SET email_templates=? WHERE id=?', (json.dumps(templates), mid))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
@@ -13388,6 +13420,8 @@ def save_mandate_templates(mid):
 def candidate_email_history(cid):
     """Return sent email events for a candidate."""
     conn = get_db()
+    if not _tenant_owns_candidate(conn, cid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     rows = conn.execute(
         "SELECT detail, created_at FROM candidate_events WHERE candidate_id=? AND event_type='email' ORDER BY created_at DESC",
         (cid,)
@@ -13402,6 +13436,10 @@ def send_candidate_email(cid):
     """Send an email to a candidate via the user's configured SMTP (Gmail app-password).
     Logs the sent email to the candidate journey."""
     d = request.json or {}
+    _ec = get_db()
+    if not _tenant_owns_candidate(_ec, cid):
+        _ec.close(); return jsonify({'error': 'Not found'}), 404
+    _ec.close()
     to_email = (d.get('to') or '').strip()
     subject = (d.get('subject') or '').strip()
     body = (d.get('body') or '').strip()
@@ -14037,6 +14075,8 @@ def get_audit():
 @login_required
 def list_interviews(cid):
     conn = get_db()
+    if not _tenant_owns_candidate(conn, cid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     rows = conn.execute('SELECT * FROM interviews WHERE candidate_id=? ORDER BY scheduled_at DESC', (cid,)).fetchall()
     conn.close()
     return jsonify({'ok': True, 'interviews': [dict(r) for r in rows]})
@@ -14083,7 +14123,7 @@ def interview_result(iid):
     result = (d.get('result') or '').strip()
     conn = get_db()
     iv = conn.execute('SELECT candidate_id, round_name FROM interviews WHERE id=?', (iid,)).fetchone()
-    if not iv:
+    if not iv or not _tenant_owns_candidate(conn, iv['candidate_id']):
         conn.close(); return jsonify({'error': 'Interview not found'}), 404
     conn.execute('UPDATE interviews SET status=?, result=? WHERE id=?', ('completed', result, iid))
     conn.commit(); conn.close()
@@ -14096,6 +14136,9 @@ def interview_result(iid):
 @login_required
 def delete_interview(iid):
     conn = get_db()
+    iv = conn.execute('SELECT candidate_id FROM interviews WHERE id=?', (iid,)).fetchone()
+    if not iv or not _tenant_owns_candidate(conn, iv['candidate_id']):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     conn.execute('DELETE FROM interviews WHERE id=?', (iid,))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
@@ -14479,7 +14522,8 @@ def move_stage(cid):
         pass
     d = request.json or {}
     conn = get_db()
-    r = conn.execute('SELECT stage FROM candidates WHERE id=?', (cid,)).fetchone()
+    r = conn.execute('SELECT stage FROM candidates WHERE id=? AND owner_id=?',
+                     (cid, effective_company_id())).fetchone()
     if not r: conn.close(); return jsonify({'error': 'Not found'}), 404
     old_stage = r['stage']
     # keep_stage=true means just add a note to history without changing stage
@@ -14531,8 +14575,14 @@ def upload_cv(cid):
     fname = 'c' + str(cid) + '_' + datetime.datetime.now().strftime('%Y%m%d%H%M%S') + ext
     f.save(os.path.join(CV_DIR, fname))
     conn = get_db()
-    old = conn.execute('SELECT cv_path FROM candidates WHERE id=?', (cid,)).fetchone()
-    if old and old['cv_path']:
+    old = conn.execute('SELECT cv_path FROM candidates WHERE id=? AND owner_id=?',
+                       (cid, effective_company_id())).fetchone()
+    if old is None:
+        conn.close()
+        try: os.remove(os.path.join(CV_DIR, fname))
+        except Exception: pass
+        return jsonify({'error': 'Not found'}), 404
+    if old['cv_path']:
         op = os.path.join(CV_DIR, old['cv_path'])
         if os.path.exists(op): os.remove(op)
     conn.execute('UPDATE candidates SET cv_path=?,cv_original_name=?,updated_at=? WHERE id=?', (fname, f.filename, ts(), cid))
@@ -14658,6 +14708,60 @@ def _xp_recompute_safe(cid):
         print(f'[xp] recompute skipped for {cid}: {_e}')
 
 
+def _safe_exec(conn, sql, params=()):
+    """Run a cleanup statement, ignoring missing-table/column errors so that
+    deletion of the parent never fails because an optional child table is absent
+    in this deployment."""
+    try:
+        conn.execute(sql, params)
+    except Exception:
+        pass
+
+
+def _purge_candidate_children(conn, cid):
+    """Remove every row linked to a deleted candidate so nothing orphans in the
+    DB or resurfaces in search/AI. Invoices (financial/legal) are preserved, and
+    email correspondence is detached (candidate_id -> 0), not deleted."""
+    scid = str(cid)
+    for sql in [
+        'DELETE FROM stage_history     WHERE candidate_id=?',
+        'DELETE FROM candidate_events  WHERE candidate_id=?',
+        'DELETE FROM work_history      WHERE candidate_id=?',
+        'DELETE FROM interviews        WHERE candidate_id=?',
+        'DELETE FROM reminders         WHERE candidate_id=?',
+        'DELETE FROM candidate_vectors WHERE candidate_id=?',
+        'DELETE FROM embedding_jobs    WHERE candidate_id=?',
+        'DELETE FROM wa_suggestions    WHERE candidate_id=?',
+        'DELETE FROM wa_outbox         WHERE candidate_id=?',
+        'DELETE FROM wa_conversations  WHERE candidate_id=?',
+        'DELETE FROM wa_agent_feedback WHERE candidate_id=?',
+    ]:
+        _safe_exec(conn, sql, (cid,))
+    _safe_exec(conn, "DELETE FROM vec_chunks WHERE source_type='candidate' AND source_id=?", (cid,))
+    _safe_exec(conn, "DELETE FROM rme_memories WHERE entity_type='candidate' AND entity_id=?", (scid,))
+    _safe_exec(conn, "DELETE FROM rme_events   WHERE entity_type='candidate' AND entity_id=?", (scid,))
+    _safe_exec(conn, "DELETE FROM rme_relationships WHERE (from_type='candidate' AND from_id=?) OR (to_type='candidate' AND to_id=?)", (scid, scid))
+    _safe_exec(conn, 'UPDATE emails SET candidate_id=0 WHERE candidate_id=?', (cid,))
+
+
+def _purge_mandate_children(conn, mid, central_mid):
+    """Clean mandate-specific artifacts when a mandate is deleted. Candidates are
+    already moved to the central pool by the caller; here we drop mandate-only
+    rows and repoint the moved candidates' interviews/reminders to central so
+    nothing dangles. Invoices are preserved."""
+    smid = str(mid)
+    _safe_exec(conn, 'DELETE FROM mandate_vectors      WHERE mandate_id=?', (mid,))
+    _safe_exec(conn, 'DELETE FROM mandate_client_notes WHERE mandate_id=?', (mid,))
+    _safe_exec(conn, "DELETE FROM rme_memories WHERE entity_type='mandate' AND entity_id=?", (smid,))
+    _safe_exec(conn, "DELETE FROM rme_events   WHERE entity_type='mandate' AND entity_id=?", (smid,))
+    _safe_exec(conn, "DELETE FROM rme_relationships WHERE (from_type='mandate' AND from_id=?) OR (to_type='mandate' AND to_id=?)", (smid, smid))
+    _safe_exec(conn, 'UPDATE interviews SET mandate_id=? WHERE mandate_id=?', (central_mid, mid))
+    _safe_exec(conn, 'UPDATE reminders  SET mandate_id=? WHERE mandate_id=?', (central_mid, mid))
+    _safe_exec(conn, 'UPDATE crm_activities    SET mandate_id=0 WHERE mandate_id=?', (mid,))
+    _safe_exec(conn, 'UPDATE submission_drafts SET mandate_id=0 WHERE mandate_id=?', (mid,))
+    _safe_exec(conn, 'UPDATE wa_conversations  SET mandate_id=0 WHERE mandate_id=?', (mid,))
+
+
 @app.route('/api/candidates/<int:cid>', methods=['DELETE'])
 @login_required
 def delete_candidate(cid):
@@ -14672,7 +14776,7 @@ def delete_candidate(cid):
             if os.path.exists(fp):
                 try: os.remove(fp)
                 except: pass
-        conn.execute('DELETE FROM stage_history WHERE candidate_id=?', (cid,))
+        _purge_candidate_children(conn, cid)
         conn.execute('DELETE FROM candidates WHERE id=?', (cid,))
         conn.commit()
     conn.close()
@@ -16605,7 +16709,8 @@ def client_submission(mid):
 @admin_required
 def export_data():
     conn = get_db()
-    candidates = [dict(r) for r in conn.execute('SELECT * FROM candidates').fetchall()]
+    _cc = effective_company_id()
+    candidates = [dict(r) for r in conn.execute('SELECT * FROM candidates WHERE owner_id=?', (_cc,)).fetchall()]
     # Strip platform secrets (API keys / passwords / tokens) from the backup so a
     # shared/leaked export file never exposes credentials.
     def _is_secret(k):
@@ -16619,9 +16724,9 @@ def export_data():
                     if not _is_secret(r['key'])}
     data = {
         'exported_at': ts(), 'app': 'HireLab Screener', 'version': '2.1',
-        'mandates':   [dict(r) for r in conn.execute('SELECT * FROM mandates').fetchall()],
+        'mandates':   [dict(r) for r in conn.execute('SELECT * FROM mandates WHERE owner_id=?', (_cc,)).fetchall()],
         'candidates': candidates,
-        'history':    [dict(r) for r in conn.execute('SELECT * FROM stage_history').fetchall()],
+        'history':    [dict(r) for r in conn.execute('SELECT * FROM stage_history WHERE candidate_id IN (SELECT id FROM candidates WHERE owner_id=?)', (_cc,)).fetchall()],
         'settings':   settings_out,
     }
     conn.close()
