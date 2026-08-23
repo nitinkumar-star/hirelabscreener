@@ -2934,6 +2934,36 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # ── P0: tenant-scope the RME memory tables (additive) ───────────────────
+    for _rme_sql in [
+        'ALTER TABLE rme_memories ADD COLUMN company_id INTEGER DEFAULT 0',
+        'ALTER TABLE rme_events ADD COLUMN company_id INTEGER DEFAULT 0',
+        'ALTER TABLE rme_relationships ADD COLUMN company_id INTEGER DEFAULT 0',
+    ]:
+        try:
+            c.execute(_rme_sql)
+        except sqlite3.OperationalError:
+            pass
+    try:
+        _rpc = c.execute('SELECT MIN(id) mid FROM companies').fetchone()
+        _rpcid = (_rpc[0] if _rpc and _rpc[0] else 0)
+        if _rpcid:
+            for _rt in ('rme_memories', 'rme_events', 'rme_relationships'):
+                c.execute(f'UPDATE {_rt} SET company_id=? WHERE company_id IS NULL OR company_id=0', (_rpcid,))
+    except Exception as _rme_bf_err:
+        print(f'[migrate] RME tenancy backfill warning (non-fatal): {_rme_bf_err}')
+    for _rme_ix in [
+        'DROP INDEX IF EXISTS uq_rme_rel',
+        'CREATE UNIQUE INDEX IF NOT EXISTS uq_rme_rel ON rme_relationships(company_id, from_type, from_id, to_type, to_id, rel_type)',
+        'CREATE INDEX IF NOT EXISTS idx_rme_mem_company ON rme_memories(company_id, entity_type, entity_id)',
+        'CREATE INDEX IF NOT EXISTS idx_rme_evt_company ON rme_events(company_id, entity_type, entity_id)',
+        'CREATE INDEX IF NOT EXISTS idx_rme_rel_company ON rme_relationships(company_id, from_type, from_id)',
+    ]:
+        try:
+            c.execute(_rme_ix)
+        except sqlite3.OperationalError:
+            pass
+
     # ══════════════════════════════════════════════════════════════════
     #  RECRUITMENT KNOWLEDGE GRAPH (Sprint 7) — architecture foundation.
     #  A canonical CONCEPT registry (rkg_entities) + typed edges (rkg_edges).
@@ -8877,17 +8907,28 @@ def _rme_json(v, default):
     return str(v)
 
 
+def _tenant_or_zero():
+    """Company id of the current request's tenant, or 0 when there is no
+    request/session (e.g. a background thread)."""
+    try:
+        cid = effective_company_id()
+        return cid if cid else 0
+    except Exception:
+        return 0
+
+
 def rme_add_memory(conn, entity_type, entity_id, memory_type='fact', title='', content='',
                    source='system', created_by='', visibility='internal', confidence=1.0,
-                   importance=0, tags=None, metadata=None, status='active'):
+                   importance=0, tags=None, metadata=None, status='active', company_id=None):
     """Attach a memory to any entity. Returns the new memory id. This is the
     core primitive future sprints (AI insights, recruiter notes) build on."""
     now = ts()
+    cid = company_id if company_id is not None else _tenant_or_zero()
     cur = conn.execute(
-        "INSERT INTO rme_memories (entity_type, entity_id, memory_type, title, content, source, "
+        "INSERT INTO rme_memories (company_id, entity_type, entity_id, memory_type, title, content, source, "
         "created_by, created_at, updated_at, visibility, confidence, importance, tags, metadata, status) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (str(entity_type), str(entity_id), memory_type, title, content, source, str(created_by),
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (int(cid), str(entity_type), str(entity_id), memory_type, title, content, source, str(created_by),
          now, now, visibility, float(confidence), int(importance),
          _rme_json(tags, '[]'), _rme_json(metadata, '{}'), status))
     conn.commit()
@@ -8895,34 +8936,37 @@ def rme_add_memory(conn, entity_type, entity_id, memory_type='fact', title='', c
 
 
 def rme_add_event(conn, event_type, entity_type, entity_id, actor='system', summary='',
-                  data=None, related_entity_type='', related_entity_id=''):
+                  data=None, related_entity_type='', related_entity_id='', company_id=None):
     """Append an immutable event to the RME timeline. Returns the event id."""
+    cid = company_id if company_id is not None else _tenant_or_zero()
     cur = conn.execute(
-        "INSERT INTO rme_events (event_type, entity_type, entity_id, actor, summary, data, "
-        "related_entity_type, related_entity_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-        (str(event_type), str(entity_type), str(entity_id), str(actor), summary,
+        "INSERT INTO rme_events (company_id, event_type, entity_type, entity_id, actor, summary, data, "
+        "related_entity_type, related_entity_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (int(cid), str(event_type), str(entity_type), str(entity_id), str(actor), summary,
          _rme_json(data, '{}'), str(related_entity_type), str(related_entity_id), ts()))
     conn.commit()
     return cur.lastrowid
 
 
 def rme_set_relationship(conn, from_type, from_id, to_type, to_id, rel_type,
-                         weight=1.0, confidence=1.0, source='system', metadata=None):
-    """Upsert a relationship edge (unique per from/to/rel_type). Returns row id."""
+                         weight=1.0, confidence=1.0, source='system', metadata=None,
+                         company_id=None):
+    """Upsert a relationship edge (unique per tenant + from/to/rel_type). Returns row id."""
     now = ts()
+    cid = company_id if company_id is not None else _tenant_or_zero()
     conn.execute(
-        "INSERT INTO rme_relationships (from_type, from_id, to_type, to_id, rel_type, weight, "
-        "confidence, source, metadata, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
-        "ON CONFLICT(from_type, from_id, to_type, to_id, rel_type) DO UPDATE SET "
+        "INSERT INTO rme_relationships (company_id, from_type, from_id, to_type, to_id, rel_type, weight, "
+        "confidence, source, metadata, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(company_id, from_type, from_id, to_type, to_id, rel_type) DO UPDATE SET "
         "weight=excluded.weight, confidence=excluded.confidence, source=excluded.source, "
         "metadata=excluded.metadata, updated_at=excluded.updated_at, status='active'",
-        (str(from_type), str(from_id), str(to_type), str(to_id), str(rel_type),
+        (int(cid), str(from_type), str(from_id), str(to_type), str(to_id), str(rel_type),
          float(weight), float(confidence), source, _rme_json(metadata, '{}'), now, now))
     conn.commit()
     row = conn.execute(
-        "SELECT id FROM rme_relationships WHERE from_type=? AND from_id=? AND to_type=? "
+        "SELECT id FROM rme_relationships WHERE company_id=? AND from_type=? AND from_id=? AND to_type=? "
         "AND to_id=? AND rel_type=?",
-        (str(from_type), str(from_id), str(to_type), str(to_id), str(rel_type))).fetchone()
+        (int(cid), str(from_type), str(from_id), str(to_type), str(to_id), str(rel_type))).fetchone()
     return row['id'] if row else None
 
 
@@ -8958,8 +9002,8 @@ def rme_memory():
     limit = min(int(request.args.get('limit') or 100), 500)
     conn = get_db()
     rows = conn.execute(
-        "SELECT * FROM rme_memories WHERE entity_type=? AND entity_id=? AND status!='deleted' "
-        "ORDER BY importance DESC, created_at DESC LIMIT ?", (et, eid, limit)).fetchall()
+        "SELECT * FROM rme_memories WHERE company_id=? AND entity_type=? AND entity_id=? AND status!='deleted' "
+        "ORDER BY importance DESC, created_at DESC LIMIT ?", (effective_company_id(), et, eid, limit)).fetchall()
     conn.close()
     return jsonify({'ok': True, 'memories': [_rme_row(r) for r in rows]})
 
@@ -8968,7 +9012,8 @@ def rme_memory():
 @login_required
 def rme_memory_archive(mid):
     conn = get_db()
-    conn.execute("UPDATE rme_memories SET status='archived', updated_at=? WHERE id=?", (ts(), mid))
+    conn.execute("UPDATE rme_memories SET status='archived', updated_at=? WHERE id=? AND company_id=?",
+                 (ts(), mid, effective_company_id()))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
@@ -8995,11 +9040,11 @@ def rme_event():
     limit = min(int(request.args.get('limit') or 100), 500)
     conn = get_db()
     if et and eid:
-        rows = conn.execute("SELECT * FROM rme_events WHERE entity_type=? AND entity_id=? "
-                            "ORDER BY created_at DESC, id DESC LIMIT ?", (et, eid, limit)).fetchall()
+        rows = conn.execute("SELECT * FROM rme_events WHERE company_id=? AND entity_type=? AND entity_id=? "
+                            "ORDER BY created_at DESC, id DESC LIMIT ?", (effective_company_id(), et, eid, limit)).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM rme_events ORDER BY created_at DESC, id DESC LIMIT ?",
-                            (limit,)).fetchall()
+        rows = conn.execute("SELECT * FROM rme_events WHERE company_id=? ORDER BY created_at DESC, id DESC LIMIT ?",
+                            (effective_company_id(), limit)).fetchall()
     conn.close()
     return jsonify({'ok': True, 'events': [_rme_row(r) for r in rows]})
 
@@ -9024,11 +9069,11 @@ def rme_relationship():
     limit = min(int(request.args.get('limit') or 200), 1000)
     conn = get_db()
     if ft and fid:
-        rows = conn.execute("SELECT * FROM rme_relationships WHERE from_type=? AND from_id=? "
-                            "AND status='active' ORDER BY weight DESC LIMIT ?", (ft, fid, limit)).fetchall()
+        rows = conn.execute("SELECT * FROM rme_relationships WHERE company_id=? AND from_type=? AND from_id=? "
+                            "AND status='active' ORDER BY weight DESC LIMIT ?", (effective_company_id(), ft, fid, limit)).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM rme_relationships WHERE status='active' "
-                            "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute("SELECT * FROM rme_relationships WHERE company_id=? AND status='active' "
+                            "ORDER BY id DESC LIMIT ?", (effective_company_id(), limit)).fetchall()
     conn.close()
     return jsonify({'ok': True, 'relationships': [_rme_row(r) for r in rows]})
 
@@ -9039,16 +9084,17 @@ def rme_status():
     """Confirms the RME architecture is live and reports counts. Useful to
     verify the foundation without any memories having been generated yet."""
     conn = get_db()
+    _sc = effective_company_id()
     def _count(t):
         try:
-            return conn.execute(f'SELECT COUNT(*) n FROM {t}').fetchone()['n']
+            return conn.execute(f'SELECT COUNT(*) n FROM {t} WHERE company_id=?', (_sc,)).fetchone()['n']
         except sqlite3.OperationalError:
             return None
     mem_by_type, evt_by_type = {}, {}
     try:
-        for r in conn.execute("SELECT memory_type m, COUNT(*) n FROM rme_memories GROUP BY m"):
+        for r in conn.execute("SELECT memory_type m, COUNT(*) n FROM rme_memories WHERE company_id=? GROUP BY m", (_sc,)):
             mem_by_type[r['m']] = r['n']
-        for r in conn.execute("SELECT event_type e, COUNT(*) n FROM rme_events GROUP BY e"):
+        for r in conn.execute("SELECT event_type e, COUNT(*) n FROM rme_events WHERE company_id=? GROUP BY e", (_sc,)):
             evt_by_type[r['e']] = r['n']
     except sqlite3.OperationalError:
         pass
@@ -9273,9 +9319,9 @@ def rkg_attach_memory(conn, entity_id, memory_type='fact', title='', content='',
                           confidence=confidence, importance=importance, tags=tags, metadata=metadata)
 
 def rkg_memories(conn, entity_id, limit=100):
-    rows = conn.execute("SELECT * FROM rme_memories WHERE entity_type='rkg_entity' AND entity_id=? "
+    rows = conn.execute("SELECT * FROM rme_memories WHERE company_id=? AND entity_type='rkg_entity' AND entity_id=? "
                         "AND status!='deleted' ORDER BY importance DESC, created_at DESC LIMIT ?",
-                        (str(entity_id), limit)).fetchall()
+                        (_tenant_or_zero(), str(entity_id), limit)).fetchall()
     return [_rme_row(r) for r in rows]
 
 
