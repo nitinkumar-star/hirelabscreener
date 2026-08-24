@@ -43,7 +43,7 @@ from flask import Blueprint, request, jsonify, send_file
 
 from modules.shared import (
     get_db, ts, current_user, effective_company_id, real_user_id,
-    login_required, log_activity,
+    login_required, log_activity, central_mandate_id, central_stage,
 )
 from modules import register_migration
 
@@ -891,72 +891,312 @@ def open_mandates():
             '''SELECT id, role, client FROM mandates
                WHERE owner_id=? AND status='active' ORDER BY created_at DESC LIMIT 50''',
             (effective_company_id(),)).fetchall()
-        return jsonify({'mandates': [dict(r) for r in rows]})
+        out = [dict(r) for r in rows]
+        # Most mapped people have no job waiting for them yet. The pool is the
+        # default destination so a map node can become a real candidate record
+        # without inventing a mandate for it.
+        out.insert(0, {'id': 'central', 'role': 'Central Database',
+                       'client': 'no job yet', 'is_central': True})
+        return jsonify({'mandates': out})
     finally:
         conn.close()
+
+
+def _resolve_target_mandate(conn, tenant, raw):
+    """Turn a client-supplied destination into (mandate_id, is_central).
+
+    'central', 0, or nothing at all  ->  this tenant's Central Database pool.
+    Anything else must be a real mandate owned by this tenant.
+    """
+    if raw is None or str(raw).strip() == '' or str(raw).strip().lower() == 'central' \
+            or str(raw).strip() == '0':
+        return central_mandate_id(), True
+    try:
+        mid = int(raw)
+    except (TypeError, ValueError):
+        return None, False
+    row = conn.execute('SELECT id FROM mandates WHERE id=? AND owner_id=?', (mid, tenant)).fetchone()
+    return (mid, False) if row else (None, False)
+
+
+def _create_candidate_for_node(conn, tenant, node, mid, is_central):
+    """Insert a candidate row for a mapped person and link the two.
+
+    Seeds only what the map actually knows. Everything else is filled in later
+    through the Key Facts form, which writes to the candidate record directly.
+    """
+    co = conn.execute('SELECT name FROM org_companies WHERE id=?',
+                      (node['org_company_id'],)).fetchone()
+    cols = _cand_cols(conn)
+    now = ts()
+    cur = conn.cursor()
+    fields = {
+        'mandate_id': mid, 'name': node['name'], 'company': co['name'] if co else '',
+        'designation': node['title'], 'location': node['city'],
+        'phone': node['phone'], 'email': node['email'],
+        'stage': central_stage() if is_central else 'Screening',
+        'created_at': now, 'updated_at': now,
+    }
+    if 'owner_id' in cols:
+        fields['owner_id'] = tenant
+    if 'linkedin_url' in cols:
+        fields['linkedin_url'] = node['linkedin']
+    if 'general_comments' in cols:
+        fields['general_comments'] = ('Sourced from Org Map. ' + (node['notes'] or '')).strip()
+    keys = [k for k in fields if k in cols or k == 'mandate_id']
+    cur.execute('INSERT INTO candidates ({}) VALUES ({})'.format(
+        ','.join(keys), ','.join('?' * len(keys))),
+        tuple(fields[k] for k in keys))
+    cid = cur.lastrowid
+    cur.execute('''INSERT OR IGNORE INTO org_person_links
+        (company_id, org_person_id, candidate_id, link_source, linked_by, linked_at)
+        VALUES (?,?,?,'created_from_map',?,?)''',
+        (tenant, node['id'], cid, real_user_id() or 0, now))
+    try:
+        cur.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) '
+                    'VALUES (?,?,?,?,?)',
+                    (cid, '', fields['stage'],
+                     'Added to Central Database from Org Map' if is_central
+                     else 'Created from Org Map', now))
+    except Exception:
+        pass
+    if (node['status'] or 'none') == 'none':
+        cur.execute('UPDATE org_people SET status="contacted", updated_at=? WHERE id=?',
+                    (now, node['id']))
+    return cid
 
 
 @bp.route('/create-candidate', methods=['POST'])
 @login_required
 @orgmap_required
 def create_candidate_from_node():
-    """Turn a mapped person into a real candidate on a chosen mandate."""
+    """Turn a mapped person into a real candidate — on a mandate, or in the pool."""
     d = request.get_json(silent=True) or {}
     pid = int(d.get('org_person_id') or 0)
-    mid = int(d.get('mandate_id') or 0)
     tenant = effective_company_id()
     conn = get_db()
     try:
         node = conn.execute('SELECT * FROM org_people WHERE id=? AND company_id=?',
                             (pid, tenant)).fetchone()
-        mand = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
-                            (mid, tenant)).fetchone()
-        if not node or not mand:
+        if not node:
+            return jsonify({'error': 'not_found'}), 404
+        mid, is_central = _resolve_target_mandate(conn, tenant, d.get('mandate_id'))
+        if not mid:
             return jsonify({'error': 'not_found'}), 404
 
         dup = conn.execute(
             '''SELECT c.id FROM org_person_links l JOIN candidates c ON c.id=l.candidate_id
                WHERE l.org_person_id=? AND c.mandate_id=?''', (pid, mid)).fetchone()
         if dup:
-            return jsonify({'error': 'already_on_mandate', 'candidate_id': dup['id']}), 409
+            return jsonify({'error': 'already_in_central' if is_central else 'already_on_mandate',
+                            'candidate_id': dup['id']}), 409
 
-        co = conn.execute('SELECT name FROM org_companies WHERE id=?',
-                          (node['org_company_id'],)).fetchone()
-        cols = _cand_cols(conn)
-        now = ts()
-        cur = conn.cursor()
-        fields = {
-            'mandate_id': mid, 'name': node['name'], 'company': co['name'] if co else '',
-            'designation': node['title'], 'location': node['city'],
-            'phone': node['phone'], 'email': node['email'],
-            'stage': 'Screening', 'created_at': now, 'updated_at': now,
-        }
-        if 'owner_id' in cols:
-            fields['owner_id'] = tenant
-        if 'linkedin_url' in cols:
-            fields['linkedin_url'] = node['linkedin']
-        if 'general_comments' in cols:
-            fields['general_comments'] = ('Sourced from Org Map. ' + (node['notes'] or '')).strip()
-        keys = [k for k in fields if k in cols or k == 'mandate_id']
-        cur.execute('INSERT INTO candidates ({}) VALUES ({})'.format(
-            ','.join(keys), ','.join('?' * len(keys))),
-            tuple(fields[k] for k in keys))
-        cid = cur.lastrowid
-        cur.execute('''INSERT OR IGNORE INTO org_person_links
-            (company_id, org_person_id, candidate_id, link_source, linked_by, linked_at)
-            VALUES (?,?,?,'created_from_map',?,?)''',
-            (tenant, pid, cid, real_user_id() or 0, now))
-        if (node['status'] or 'none') == 'none':
-            cur.execute('UPDATE org_people SET status="contacted", updated_at=? WHERE id=?',
-                        (now, pid))
+        cid = _create_candidate_for_node(conn, tenant, node, mid, is_central)
         conn.commit()
         try:
+            label = 'Central Database' if is_central else (
+                conn.execute('SELECT role FROM mandates WHERE id=?', (mid,)).fetchone() or {})['role']
+        except Exception:
+            label = 'Central Database' if is_central else 'mandate'
+        try:
             log_activity('orgmap_create_candidate',
-                         f"{node['name']} -> {mand['role']}", entity_type='candidate',
+                         f"{node['name']} -> {label}", entity_type='candidate',
                          entity_id=cid)
         except Exception:
             pass
-        return jsonify({'ok': True, 'candidate_id': cid})
+        return jsonify({'ok': True, 'candidate_id': cid, 'mandate_id': mid, 'central': is_central})
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  KEY FACTS  (Wave 4)
+#
+#  The map holds org structure; the ATS holds the person's details. Rather
+#  than duplicating CTC/notice/qualification into org_people (two copies that
+#  drift apart), the Key Facts form in the map reads and writes the CANDIDATE
+#  record. If the person has no candidate row yet, saving creates one in the
+#  Central Database — no mandate required.
+# ══════════════════════════════════════════════════════════════════════════
+
+# Person-level facts. These describe the human, not their position on any one
+# pipeline, so they are safe to mirror across every candidate row for this node.
+FACT_TEXT = ('company', 'designation', 'location', 'preferred_location',
+             'qualification', 'specialization', 'industry_background',
+             'phone', 'email', 'linkedin_url')
+FACT_FLOAT = ('experience', 'ctc_current', 'ctc_expected')
+FACT_INT = ('notice_period',)
+
+
+def _fact_payload(cand, cols):
+    out = {}
+    for f in FACT_TEXT + FACT_FLOAT + FACT_INT:
+        out[f] = (cand[f] if f in cols and cand[f] is not None else '')
+    return out
+
+
+def _node_candidates(conn, pid):
+    """Every candidate row linked to this map node, newest activity first."""
+    return conn.execute(
+        '''SELECT c.id, c.stage, c.mandate_id, c.cv_path, c.cv_original_name,
+                  m.role, m.client, COALESCE(m.status,'') AS mstatus
+           FROM org_person_links l JOIN candidates c ON c.id=l.candidate_id
+           LEFT JOIN mandates m ON m.id=c.mandate_id
+           WHERE l.org_person_id=? ORDER BY c.updated_at DESC''', (pid,)).fetchall()
+
+
+@bp.route('/facts', methods=['GET'])
+@login_required
+@orgmap_required
+def get_facts():
+    """Key Facts for a map node, read from its primary candidate record."""
+    tenant = effective_company_id()
+    pid = int(request.args.get('pid') or 0)
+    conn = get_db()
+    try:
+        node = conn.execute('SELECT * FROM org_people WHERE id=? AND company_id=?',
+                            (pid, tenant)).fetchone()
+        if not node:
+            return jsonify({'error': 'not_found'}), 404
+        rows = _node_candidates(conn, pid)
+        if not rows:
+            # Nothing saved yet — pre-fill from what the map already knows so
+            # the recruiter is not retyping the name/title/city.
+            blank = {f: '' for f in FACT_TEXT + FACT_FLOAT + FACT_INT}
+            co = conn.execute('SELECT name FROM org_companies WHERE id=?',
+                              (node['org_company_id'],)).fetchone()
+            blank.update({'company': co['name'] if co else '',
+                          'designation': node['title'] or '',
+                          'location': node['city'] or '',
+                          'phone': node['phone'] or '', 'email': node['email'] or '',
+                          'linkedin_url': node['linkedin'] or ''})
+            return jsonify({'ok': True, 'candidate_id': None, 'name': node['name'],
+                            'facts': blank, 'cv': None, 'rows': []})
+        primary = rows[0]
+        cand = _get_candidate(conn, primary['id'])
+        if not cand:
+            return jsonify({'error': 'not_found'}), 404
+        cols = set(cand.keys())
+        return jsonify({
+            'ok': True, 'candidate_id': primary['id'], 'name': node['name'],
+            'facts': _fact_payload(cand, cols),
+            'stage': primary['stage'],
+            'central': (primary['mstatus'] == 'central'),
+            'cv': ({'name': primary['cv_original_name'] or primary['cv_path']}
+                   if primary['cv_path'] else None),
+            'rows': [{'id': r['id'], 'stage': r['stage'], 'role': r['role'],
+                      'client': r['client'], 'central': (r['mstatus'] == 'central')}
+                     for r in rows],
+        })
+    finally:
+        conn.close()
+
+
+@bp.route('/facts', methods=['POST'])
+@login_required
+@orgmap_required
+def save_facts():
+    """Save Key Facts. Creates the candidate in the pool if there isn't one."""
+    d = request.get_json(silent=True) or {}
+    pid = int(d.get('org_person_id') or 0)
+    facts = d.get('facts') or {}
+    tenant = effective_company_id()
+    conn = get_db()
+    try:
+        node = conn.execute('SELECT * FROM org_people WHERE id=? AND company_id=?',
+                            (pid, tenant)).fetchone()
+        if not node:
+            return jsonify({'error': 'not_found'}), 404
+
+        rows = _node_candidates(conn, pid)
+        created = False
+        if rows:
+            target_ids = [r['id'] for r in rows]
+        else:
+            mid, is_central = _resolve_target_mandate(conn, tenant, d.get('mandate_id'))
+            if not mid:
+                return jsonify({'error': 'not_found'}), 404
+            target_ids = [_create_candidate_for_node(conn, tenant, node, mid, is_central)]
+            created = True
+
+        cols = _cand_cols(conn)
+        sets, vals = [], []
+        for f in FACT_TEXT:
+            if f in facts and f in cols:
+                sets.append(f + '=?'); vals.append(str(facts.get(f) or '').strip())
+        for f in FACT_FLOAT:
+            if f in facts and f in cols:
+                try:
+                    vals.append(float(facts.get(f) or 0))
+                except (TypeError, ValueError):
+                    vals.append(0.0)
+                sets.append(f + '=?')
+        for f in FACT_INT:
+            if f in facts and f in cols:
+                try:
+                    vals.append(int(float(facts.get(f) or 0)))
+                except (TypeError, ValueError):
+                    vals.append(0)
+                sets.append(f + '=?')
+
+        cur = conn.cursor()
+        if sets:
+            sets.append('updated_at=?'); vals.append(ts())
+            # Same human, so the facts apply to every row this node is linked
+            # to. Stage, feedback and comments are per-pipeline and untouched.
+            for cid in target_ids:
+                cur.execute('UPDATE candidates SET {} WHERE id=?'.format(','.join(sets)),
+                            tuple(vals) + (cid,))
+
+        # Keep the map node itself in step with the contact details.
+        nsets, nvals = [], []
+        for nf, cf in (('phone', 'phone'), ('email', 'email'),
+                       ('linkedin', 'linkedin_url'), ('title', 'designation'),
+                       ('city', 'location')):
+            if cf in facts:
+                v = str(facts.get(cf) or '').strip()
+                if v:
+                    nsets.append(nf + '=?'); nvals.append(v)
+        if nsets:
+            nsets.append('updated_at=?'); nvals.append(ts())
+            cur.execute('UPDATE org_people SET {} WHERE id=?'.format(','.join(nsets)),
+                        tuple(nvals) + (pid,))
+
+        conn.commit()
+        try:
+            log_activity('orgmap_save_facts', node['name'],
+                         entity_type='candidate', entity_id=target_ids[0])
+        except Exception:
+            pass
+        return jsonify({'ok': True, 'candidate_id': target_ids[0],
+                        'updated': len(target_ids), 'created': created})
+    finally:
+        conn.close()
+
+
+@bp.route('/ensure-candidate', methods=['POST'])
+@login_required
+@orgmap_required
+def ensure_candidate():
+    """Guarantee a candidate row exists for a node, so a CV has somewhere to go."""
+    d = request.get_json(silent=True) or {}
+    pid = int(d.get('org_person_id') or 0)
+    tenant = effective_company_id()
+    conn = get_db()
+    try:
+        node = conn.execute('SELECT * FROM org_people WHERE id=? AND company_id=?',
+                            (pid, tenant)).fetchone()
+        if not node:
+            return jsonify({'error': 'not_found'}), 404
+        rows = _node_candidates(conn, pid)
+        if rows:
+            return jsonify({'ok': True, 'candidate_id': rows[0]['id'], 'created': False})
+        mid, is_central = _resolve_target_mandate(conn, tenant, d.get('mandate_id'))
+        if not mid:
+            return jsonify({'error': 'not_found'}), 404
+        cid = _create_candidate_for_node(conn, tenant, node, mid, is_central)
+        conn.commit()
+        return jsonify({'ok': True, 'candidate_id': cid, 'created': True})
     finally:
         conn.close()
 

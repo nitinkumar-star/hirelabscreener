@@ -92,3 +92,19 @@ def platform_smtp_send(to_email, subject, plain_body, html_body=None):
 def log_candidate_event(cid, event_type, detail=''):
     """Write to a candidate's journey timeline."""
     return _core().log_candidate_event(cid, event_type, detail)
+
+
+# ── Central Database (the talent pool) ────────────────────────────────────
+def central_mandate_id():
+    """Id of THIS tenant's Central Database pool mandate, created on demand.
+
+    The pool is a normal mandate row holding people who belong to the library
+    but have no job against them yet. Resolved through the core so there is a
+    single implementation.
+    """
+    return _core().get_or_create_central_mandate()
+
+
+def central_stage():
+    """Stage a candidate sits at while parked in the Central Database."""
+    return getattr(_core(), 'CENTRAL_STAGE', 'Central DB')
