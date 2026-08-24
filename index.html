@@ -1189,6 +1189,16 @@ body{font-size:14px !important; line-height:1.5}
         </div>
         <div class="fg-row"><label>Key Skills (comma separated)</label><input class="inp" id="ac-skills"></div>
         <div class="fg-row"><label>Career Summary</label><textarea class="ta" id="ac-summary" rows="2"></textarea></div>
+        <div class="fg-row"><label>Save to</label>
+          <select class="inp" id="ac-dest" onchange="acDestHint()">
+            <option value="mandate">This position — starts at Screening</option>
+            <option value="central">&#128218; Central Database — no position yet</option>
+          </select>
+          <div id="ac-dest-hint" style="display:none;font-size:11px;color:#6b7280;margin-top:5px;line-height:1.45">
+            Saved to your talent library instead of this pipeline. Stays searchable,
+            and you can move them onto a position whenever one opens up.
+          </div>
+        </div>
       </div>
       <div style="padding:10px 16px;border-top:0.5px solid #e8e8e8;display:flex;justify-content:flex-end;gap:8px;background:#f9f9f9">
         <button class="btn btn-o" onclick="clearACForm()">Clear</button>
@@ -5031,7 +5041,12 @@ function keyFactsCardHTML(c){
       +' <span onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')" title="Email" style="cursor:pointer;color:#0A2540">&#9993;</span>'
       +'</span></div>'
     : infoRow('Email','');
-  var keyFacts='<div class="cp-card2" id="cp-keyfacts"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">Key Facts</div><button class="edit-pencil" onclick="toggleEdit(&#39;pd&#39;)" title="Edit">&#9998;</button></div>'
+  // Parked in the talent library rather than on a live pipeline. Flagged so
+  // it is obvious at a glance why this person has no position against them.
+  var centralPill=((c.stage||'')==='Central DB')
+    ? '<span title="In your Central Database — no position yet" style="font-size:9.5px;font-weight:700;letter-spacing:.04em;background:#EEF4FB;color:#2A5580;border:0.5px solid #C6DAF0;border-radius:20px;padding:2px 8px;margin-left:7px;white-space:nowrap">&#128218; CENTRAL DB</span>'
+    : '';
+  var keyFacts='<div class="cp-card2" id="cp-keyfacts"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0;display:flex;align-items:center">Key Facts'+centralPill+'</div><button class="edit-pencil" onclick="toggleEdit(&#39;pd&#39;)" title="Edit">&#9998;</button></div>'
     +'<div id="pd-view" class="info-grid">'
     + infoRow('Company', c.company) + infoRow('Designation', c.designation)
     + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
@@ -6436,7 +6451,8 @@ async function setStatus(status){
 
 // ── ADD CANDIDATE MANUAL ───────────────────────────────────────────────────
 function openAddCandidateModal(){clearACForm();openModal('modal-add-candidate');}
-function clearACForm(){['ac-raw','ac-name','ac-company','ac-phone','ac-email','ac-designation','ac-exp','ac-ctc','ac-ectc','ac-notice','ac-location','ac-skills','ac-summary'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});const s=document.getElementById('ds-status');if(s)s.textContent='';}
+function clearACForm(){['ac-raw','ac-name','ac-company','ac-phone','ac-email','ac-designation','ac-exp','ac-ctc','ac-ectc','ac-notice','ac-location','ac-skills','ac-summary'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});const s=document.getElementById('ds-status');if(s)s.textContent='';
+const dst=document.getElementById('ac-dest');if(dst){dst.value='mandate';acDestHint();}}
 async function parseWithDeepSeek(){
   const raw=v('ac-raw').trim();if(!raw){toast('&#9888;&#65039;','Paste content first');return;}
   const key=S.settings.deepseek_api_key;if(!key){toast('&#128273;','Add DeepSeek API key in Settings');toggleSettings();return;}
@@ -6455,12 +6471,24 @@ async function parseWithDeepSeek(){
   stat.textContent='&#10003; '+filled+' fields extracted';stat.style.color='#1D9E75';
   toast('✅','DeepSeek extracted '+filled+' fields');
 }
+// mandate id 0 is the agreed shorthand for "no position yet — Central Database"
+function acDestHint(){
+  const el=document.getElementById('ac-dest'),h=document.getElementById('ac-dest-hint');
+  if(el&&h) h.style.display=(el.value==='central')?'block':'none';
+}
 async function addCandidateManual(){
   const name=v('ac-name').trim(),company=v('ac-company').trim();
   if(!name||!company){toast('&#9888;&#65039;','Name and Company required');return;}
   const skills=v('ac-skills').split(',').map(s=>s.trim()).filter(Boolean);
-  const r=await req('POST','/mandates/'+S.activeMandate.id+'/candidates/manual',{name,company,phone:v('ac-phone'),email:v('ac-email'),designation:v('ac-designation'),experience:parseFloat(v('ac-exp'))||0,ctc_current:parseFloat(v('ac-ctc'))||0,ctc_expected:parseFloat(v('ac-ectc'))||0,notice_period:parseInt(v('ac-notice'))||0,location:v('ac-location'),career_summary:v('ac-summary'),key_skills:skills});
-  if(r.ok){closeModal('modal-add-candidate');toast('✅',name+' added to Screening');renderPipeline(document.getElementById('content'));}
+  const destEl=document.getElementById('ac-dest');
+  const toCentral=!!(destEl&&destEl.value==='central');
+  const target=toCentral?0:S.activeMandate.id;
+  const r=await req('POST','/mandates/'+target+'/candidates/manual',{name,company,phone:v('ac-phone'),email:v('ac-email'),designation:v('ac-designation'),experience:parseFloat(v('ac-exp'))||0,ctc_current:parseFloat(v('ac-ctc'))||0,ctc_expected:parseFloat(v('ac-ectc'))||0,notice_period:parseInt(v('ac-notice'))||0,location:v('ac-location'),career_summary:v('ac-summary'),key_skills:skills});
+  if(r.ok){
+    closeModal('modal-add-candidate');
+    toast('✅',name+(toCentral?' saved to Central Database':' added to Screening'));
+    if(!toCentral) renderPipeline(document.getElementById('content'));
+  }
   else toast('&#9888;&#65039;',r.error||'Add failed');
 }
 

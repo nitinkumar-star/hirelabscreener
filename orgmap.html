@@ -306,6 +306,7 @@ input,select,textarea{font-family:inherit}
         </div>
         <div class="dbody">
           <div class="fld" id="atsBox" style="margin-bottom:4px"></div>
+          <div class="fld" id="factsBox" style="margin-bottom:4px"></div>
           <div class="fld"><label>Pipeline status</label><div class="seg" id="statusSeg"></div></div>
           <button class="tgt-btn" id="tgtBtn" onclick="toggleTarget()"><span id="tgtStar">☆</span><span id="tgtLbl">Mark as target</span></button>
           <div class="fld"><label>Notes</label><textarea class="txt" id="dNotes" placeholder="Recruiter notes, CTC, notice period, last contact…"></textarea></div>
@@ -816,6 +817,7 @@ function openDrawer(id){
   fillManagerSelect('dManager',p.id,p.managerId);
   document.getElementById('drawer').classList.add('open');
   try{ atsLoad(p); }catch(e){}
+  try{ factsLoad(p); }catch(e){}
 }
 function closeDrawer(){document.getElementById('drawer').classList.remove('open');selId=null;gRoot.selectAll('.node-card').classed('sel',false);}
 let tgtState=false;
@@ -1126,24 +1128,25 @@ async function atsCreate(){
   ex.innerHTML='<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Loading mandates…</div>';
   let m=[];
   try{ const r=await fetch(API+'/mandates'); m=(await r.json()).mandates||[]; }catch(e){}
-  if(!m.length){ ex.innerHTML='<div style="font-size:11.5px;color:var(--muted);margin-top:8px">No active mandates.</div>'; return; }
-  ex.innerHTML='<div style="margin-top:8px"><label>Add to which mandate?</label>'
-   + '<select class="inp" id="atsMandate">'+m.map(x=>'<option value="'+x.id+'">'+_ae(x.role)+(x.client?' — '+_ae(x.client):'')+'</option>').join('')+'</select>'
+  if(!m.length){ ex.innerHTML='<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Nothing to add to.</div>'; return; }
+  ex.innerHTML='<div style="margin-top:8px"><label>Where should this person go?</label>'
+   + '<select class="inp" id="atsMandate">'+m.map(x=>'<option value="'+_ae(String(x.id))+'">'+_ae(x.role)+(x.client?' — '+_ae(x.client):'')+'</option>').join('')+'</select>'
    + '<button class="btn prim" style="width:100%;margin-top:6px" onclick="atsCreateGo()">Create candidate</button></div>';
 }
 
 async function atsCreateGo(){
-  const mid=parseInt((document.getElementById('atsMandate')||{}).value||0,10);
-  if(!mid||!_atsNode) return;
+  const raw=(document.getElementById('atsMandate')||{}).value||'';
+  if(!raw||!_atsNode) return;
   const r=await fetch(API+'/create-candidate',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({org_person_id:_atsNode,mandate_id:mid})});
+    body:JSON.stringify({org_person_id:_atsNode,mandate_id:raw})});
   const d=await r.json();
-  if(d.error==='already_on_mandate'){ toast('Already on that mandate'); atsOpen(d.candidate_id,mid); return; }
+  if(d.error==='already_on_mandate'){ toast('Already on that mandate'); atsOpen(d.candidate_id,d.mandate_id||0); return; }
+  if(d.error==='already_in_central'){ toast('Already in the Central Database'); atsOpen(d.candidate_id,d.mandate_id||0); return; }
   if(!d.ok){ toast('Could not create candidate'); return; }
-  toast('Candidate created');
+  toast(d.central?'Saved to Central Database':'Candidate created');
   const p=people().find(x=>x._pid===_atsNode);
-  if(p){ if((p.status||'none')==='none'){p.status='contacted'; saveStore(); render();} atsLoad(p); }
-  atsOpen(d.candidate_id,mid);
+  if(p){ if((p.status||'none')==='none'){p.status='contacted'; saveStore(); render();} atsLoad(p); factsLoad(p); }
+  atsOpen(d.candidate_id,d.mandate_id||0);
 }
 
 function atsLinkOpen(){
@@ -1172,7 +1175,134 @@ async function atsLinkGo(cid){
     body:JSON.stringify({candidate_id:cid,org_person_id:_atsNode,source:'manual'})});
   if(!(await r.json()).ok){ toast('Could not link'); return; }
   toast('Linked to ATS');
-  const p=people().find(x=>x._pid===_atsNode); if(p) atsLoad(p);
+  const p=people().find(x=>x._pid===_atsNode); if(p){ atsLoad(p); factsLoad(p); }
+}
+
+/* ============ KEY FACTS + CV (Wave 4) ============
+   The same details you fill on a candidate profile in the ATS, editable right
+   here. There is no second copy of this data: it is read from and written to
+   the candidate record. If the person has no candidate row yet, saving makes
+   one in the Central Database — no job needed.
+================================================== */
+let _factsPid=null, _factsCid=null;
+
+const FACT_FIELDS=[
+  ['company','Current Company','text'],   ['designation','Designation','text'],
+  ['experience','Experience (yrs)','num'],['qualification','Qualification','text'],
+  ['ctc_current','Current CTC (LPA)','num'],['ctc_expected','Expected CTC (LPA)','num'],
+  ['notice_period','Notice (days)','num'],['specialization','Specialization','text'],
+  ['location','Location','text'],         ['preferred_location','Preferred Location','text'],
+  ['industry_background','Industry','text'],['phone','Phone','text'],
+  ['email','Email','text'],               ['linkedin_url','LinkedIn URL','text'],
+];
+
+async function factsLoad(p){
+  const box=document.getElementById('factsBox'); if(!box) return;
+  _factsPid=null; _factsCid=null;
+  if(!p||!p._pid){
+    box.innerHTML='<label>Candidate details</label><div style="font-size:11.5px;color:var(--muted)">'
+      +'Available once this person has synced.</div>'; return;
+  }
+  _factsPid=p._pid;
+  box.innerHTML='<label>Candidate details</label><div style="font-size:11.5px;color:var(--muted)">Loading…</div>';
+  let d=null;
+  try{ const r=await fetch(API+'/facts?pid='+encodeURIComponent(p._pid)); d=await r.json(); }catch(e){}
+  if(!d||!d.ok){
+    box.innerHTML='<label>Candidate details</label><div style="font-size:11.5px;color:var(--muted)">'
+      +'Could not load. Try reopening this person.</div>'; return;
+  }
+  if(_factsPid!==p._pid) return;            // a different node was opened meanwhile
+  _factsCid=d.candidate_id||null;
+  const f=d.facts||{};
+  const val=k=>{const v=f[k]; return (v===0||v==='0')?'':(v==null?'':String(v));};
+
+  let h='<label>Candidate details</label>';
+  h+='<div style="font-size:11px;color:var(--muted);margin:-4px 0 8px">'
+   + (_factsCid?('Saved on candidate #'+_factsCid+(d.central?' · Central Database':''))
+               :'Not saved yet — filling this in creates the candidate record')
+   + '</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  FACT_FIELDS.forEach(function(fd){
+    h+='<div><label style="margin-bottom:4px">'+_ae(fd[1])+'</label>'
+     + '<input class="inp" id="kf-'+fd[0]+'"'+(fd[2]==='num'?' inputmode="decimal"':'')
+     + ' value="'+_ae(val(fd[0]))+'"></div>';
+  });
+  h+='</div>';
+  h+='<button class="btn prim" style="width:100%;margin-top:8px" onclick="factsSave()">Save candidate details</button>';
+  h+='<div style="margin-top:8px;display:flex;gap:6px;align-items:center">'
+   + '<button class="btn" style="flex:1" onclick="cvPick()">&#128206; '+(d.cv?'Replace CV':'Upload CV')+'</button>'
+   + '</div>';
+  if(d.cv&&d.cv.name){
+    h+='<div style="font-size:11px;color:var(--muted);margin-top:5px;word-break:break-all">Attached: '+_ae(d.cv.name)+'</div>';
+  }
+  h+='<input type="file" id="cvFile" accept=".pdf,.doc,.docx" style="display:none" onchange="cvUpload(event)">';
+  h+='<div id="factsMsg" style="font-size:11.5px;margin-top:6px;min-height:14px"></div>';
+  box.innerHTML=h;
+}
+
+function factsMsg(t,err){
+  const el=document.getElementById('factsMsg'); if(!el)return;
+  el.style.color=err?'#B4432F':'var(--muted)'; el.textContent=t;
+}
+
+async function factsSave(){
+  if(!_factsPid) return;
+  const facts={};
+  FACT_FIELDS.forEach(function(fd){
+    const el=document.getElementById('kf-'+fd[0]); if(el) facts[fd[0]]=el.value.trim();
+  });
+  factsMsg('Saving…');
+  let d=null;
+  try{
+    const r=await fetch(API+'/facts',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({org_person_id:_factsPid,facts:facts})});
+    d=await r.json();
+  }catch(e){}
+  if(!d||!d.ok){ factsMsg('Could not save',true); return; }
+  _factsCid=d.candidate_id;
+  toast(d.created?'Candidate created in Central Database':'Details saved');
+  // Contact edits belong on the map node too, so mirror them locally.
+  const p=people().find(x=>x._pid===_factsPid);
+  if(p){
+    if(facts.phone) p.phone=facts.phone;
+    if(facts.email) p.email=facts.email;
+    if(facts.linkedin_url) p.linkedin=facts.linkedin_url;
+    saveStore();
+    atsLoad(p); factsLoad(p);
+  }
+}
+
+function cvPick(){
+  const el=document.getElementById('cvFile'); if(el) el.click();
+}
+
+async function cvUpload(ev){
+  const file=ev.target.files&&ev.target.files[0]; if(!file||!_factsPid) return;
+  ev.target.value='';
+  factsMsg('Uploading CV…');
+  // A CV needs a candidate to hang off, so make sure one exists first.
+  let cid=_factsCid;
+  if(!cid){
+    try{
+      const r=await fetch(API+'/ensure-candidate',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({org_person_id:_factsPid})});
+      const d=await r.json();
+      if(d&&d.ok) cid=d.candidate_id;
+    }catch(e){}
+  }
+  if(!cid){ factsMsg('Could not create the candidate record',true); return; }
+  try{
+    const form=new FormData(); form.append('cv',file,file.name);
+    const up=await fetch('/api/candidates/'+cid+'/cv',{method:'POST',body:form});
+    const res=await up.json();
+    if(res&&res.ok){
+      toast('CV attached');
+      const p=people().find(x=>x._pid===_factsPid);
+      if(p){ atsLoad(p); factsLoad(p); }
+    }else{
+      factsMsg((res&&res.error)||'CV upload failed',true);
+    }
+  }catch(e){ factsMsg('CV upload failed',true); }
 }
 
 </script>

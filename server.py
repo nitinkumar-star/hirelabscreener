@@ -4656,13 +4656,26 @@ def extension_push():
     if not mid:
         return jsonify({'error': 'Please select a mandate'}), 400
 
+    # "central" = the talent library, not a job. Resolve it to the tenant's
+    # pool mandate and skip the mandate-ownership check (it is ours by
+    # construction). Everything after this point treats it as a normal mandate.
+    _to_central = str(mid).strip().lower() == 'central'
+    if _to_central:
+        _cu_chk = current_user()
+        if _cu_chk and _cu_chk.get('role') == 'freelancer_sourcer':
+            return jsonify({'error': 'Freelancers can only push to an assigned mandate'}), 403
+        mid = get_or_create_central_mandate()
+
     # Verify the mandate belongs to the current (effective) user.
     # Freelancers are allowed if the mandate is ASSIGNED to them.
     _conn = get_db()
     _own = _conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
     _is_freelancer_upload = False
     _cu = current_user()
-    if _cu and _cu.get('role') == 'freelancer_sourcer':
+    if _to_central:
+        # Resolved from this tenant's own settings a moment ago — nothing to verify.
+        _conn.close()
+    elif _cu and _cu.get('role') == 'freelancer_sourcer':
         _is_freelancer_upload = True
         try:
             from modules.freelancer import freelancer_can_access_mandate
@@ -4767,7 +4780,8 @@ def extension_push():
         (mid, name, d.get('company',''), d.get('designation',''), fnum(d.get('experience')),
          fnum(d.get('ctc_current')), fnum(d.get('ctc_expected')), inum(d.get('notice_period')),
          d.get('location',''), phone, email, d.get('career_summary',''), skills_json,
-         'worth_opening', 'Pushed from Naukri', 'Screening', ts(), ts())
+         'worth_opening', 'Pushed from Naukri',
+         (CENTRAL_STAGE if _to_central else 'Screening'), ts(), ts())
     )
     cid = c.lastrowid
     c.execute('UPDATE candidates SET qualification=?, specialization=?, preferred_location=?, linkedin_url=?, ai_insight_cv=? WHERE id=?',
@@ -4778,7 +4792,9 @@ def extension_push():
         c.execute('UPDATE candidates SET sourced_by=?, sourced_at=? WHERE id=?',
                   (real_user_id(), ts(), cid))
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
-              (cid, '', 'Screening', 'Pushed from Naukri extension', ts()))
+              (cid, '', (CENTRAL_STAGE if _to_central else 'Screening'),
+               ('Pushed from Naukri into Central Database' if _to_central
+                else 'Pushed from Naukri extension'), ts()))
     _save_wh_for(conn, cid, d.get('work_history'))
     conn.commit(); conn.close()
     queue_embedding_job(cid)  # async: enqueue, background worker embeds (never blocks add)
@@ -4813,7 +4829,13 @@ def extension_mandates():
             (effective_user_id(),)
         ).fetchall()
     conn.close()
-    return jsonify({'ok': True, 'mandates': [dict(r) for r in rows]})
+    out = [dict(r) for r in rows]
+    # Freelancers push only into the mandates assigned to them; the shared
+    # talent library is not theirs to fill.
+    if not (cu and cu.get('role') == 'freelancer_sourcer'):
+        out.insert(0, {'id': 'central', 'role': 'Central Database',
+                       'client': 'save for later', 'location': '', 'is_central': True})
+    return jsonify({'ok': True, 'mandates': out})
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  AI INSIGHTS — Semantic Search (embeddings) + Stats (SQL + LLM summary)
@@ -9661,12 +9683,17 @@ def save_settings():
 @login_required
 def list_mandates():
     conn = get_db()
+    # The Central Database pool is a real mandate row, but it is a talent
+    # library — not a job. It stays out of the Jobs list, dashboards and
+    # every other place mandates are listed.
     if is_company_admin():
-        rows = conn.execute('SELECT * FROM mandates WHERE owner_id=? ORDER BY created_at DESC',
+        rows = conn.execute("SELECT * FROM mandates WHERE owner_id=? AND COALESCE(status,'')!='central' "
+                            'ORDER BY created_at DESC',
                             (effective_company_id(),)).fetchall()
     else:
         # Recruiter: only mandates assigned to them within their company.
-        rows = conn.execute('SELECT * FROM mandates WHERE owner_id=? AND assigned_user_id=? ORDER BY created_at DESC',
+        rows = conn.execute("SELECT * FROM mandates WHERE owner_id=? AND assigned_user_id=? "
+                            "AND COALESCE(status,'')!='central' ORDER BY created_at DESC",
                             (effective_company_id(), real_user_id())).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
@@ -14367,11 +14394,11 @@ def move_candidate(cid):
     if not target_mid:
         return jsonify({'error': 'Target mandate required'}), 400
     conn = get_db()
-    cand = conn.execute('SELECT mandate_id, name FROM candidates WHERE id=?', (cid,)).fetchone()
+    cand = conn.execute('SELECT mandate_id, name, stage FROM candidates WHERE id=?', (cid,)).fetchone()
     if not cand:
         conn.close(); return jsonify({'error': 'Candidate not found'}), 404
     # Verify target mandate belongs to this tenant
-    tgt = conn.execute('SELECT id, role, client, owner_id FROM mandates WHERE id=?', (target_mid,)).fetchone()
+    tgt = conn.execute('SELECT id, role, client, owner_id, status FROM mandates WHERE id=?', (target_mid,)).fetchone()
     if not tgt or tgt['owner_id'] != effective_company_id():
         conn.close(); return jsonify({'error': 'Target mandate not found'}), 404
     old = conn.execute('SELECT role FROM mandates WHERE id=?', (cand['mandate_id'],)).fetchone()
@@ -14379,6 +14406,13 @@ def move_candidate(cid):
     conn.execute('UPDATE candidates SET mandate_id=?, updated_at=? WHERE id=?', (target_mid, ts(), cid))
     conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
                  (cid, '', '', f'Moved from "{old_label}" to "{tgt["role"]}"', ts()))
+    # Leaving the library for a real job: the pool stage means nothing on a
+    # pipeline, so the candidate starts the normal journey at Screening.
+    if (cand['stage'] or '') == CENTRAL_STAGE and (tgt['status'] or '') != 'central':
+        conn.execute('UPDATE candidates SET stage=?, updated_at=? WHERE id=?', ('Screening', ts(), cid))
+        conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) '
+                     'VALUES (?,?,?,?,?)',
+                     (cid, CENTRAL_STAGE, 'Screening', 'Picked from Central Database', ts()))
     conn.commit(); conn.close()
     log_candidate_event(cid, 'note', f'Moved to mandate: {tgt["role"]} ({tgt["client"]})')
     return jsonify({'ok': True, 'mandate_id': target_mid})
@@ -14487,8 +14521,15 @@ def add_manual(mid):
     d = request.json or {}
     if not d.get('name') or not d.get('company'):
         return jsonify({'error': 'Name and Company are required'}), 400
+    # mid=0 is the agreed shorthand for "no job yet — put this person in the
+    # Central Database". Resolved before the ownership check because the pool
+    # is looked up from this tenant's own settings.
+    to_central = (int(mid or 0) == 0)
+    if to_central:
+        mid = get_or_create_central_mandate()
+    stage = CENTRAL_STAGE if to_central else 'Screening'
     conn = get_db(); c = conn.cursor()
-    if not _tenant_owns_mandate(conn, mid):
+    if not to_central and not _tenant_owns_mandate(conn, mid):
         conn.close(); return jsonify({'error': 'Mandate not found'}), 404
     c.execute(
         'INSERT INTO candidates (mandate_id,name,company,designation,experience,ctc_current,'
@@ -14497,14 +14538,15 @@ def add_manual(mid):
         (mid, d['name'], d['company'], d.get('designation',''), float(d.get('experience') or 0),
          float(d.get('ctc_current') or 0), float(d.get('ctc_expected') or 0), int(d.get('notice_period') or 0),
          d.get('location',''), d.get('phone',''), d.get('email',''), d.get('career_summary',''),
-         json.dumps(d.get('key_skills') or []), 'worth_opening', 'Manually added', 'Screening', ts(), ts()))
+         json.dumps(d.get('key_skills') or []), 'worth_opening', 'Manually added', stage, ts(), ts()))
     cid = c.lastrowid
     c.execute('UPDATE candidates SET qualification=?, preferred_location=? WHERE id=?',
               (d.get('qualification',''), d.get('preferred_location',''), cid))
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
-              (cid, '', 'Screening', 'Manually added to pipeline', ts()))
+              (cid, '', stage,
+               'Added to Central Database' if to_central else 'Manually added to pipeline', ts()))
     conn.commit(); conn.close()
-    return jsonify({'ok': True, 'id': cid})
+    return jsonify({'ok': True, 'id': cid, 'mandate_id': mid, 'central': to_central})
 
 # CV
 @app.route('/api/candidates/<int:cid>/cv', methods=['POST', 'OPTIONS'])
@@ -15087,21 +15129,60 @@ def serve_call(filename):
 #  CENTRAL DATABASE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+CENTRAL_STAGE = 'Central DB'          # stage a candidate sits at while in the pool
+
+
 def get_or_create_central_mandate():
-    """Returns the ID of the Central Database mandate."""
+    """ID of the Central Database pool mandate FOR THE CURRENT TENANT.
+
+    The pool is stored as a normal mandate row so that every existing feature
+    (profile page, CV upload, email box, search, tags) works on pool candidates
+    with no special-casing. Two things keep it out of the way:
+      • status='central'  -> excluded from every status='active' query
+      • excluded by name in /api/mandates so it never shows in the Jobs list
+
+    Tenancy: the id lives in tenant_settings (per company). Older builds kept a
+    single global settings key with an unowned mandate row; that row is adopted
+    by the first tenant that asks for it, and its candidates are back-filled.
+    """
+    tenant = effective_company_id()
     conn = get_db()
-    r = conn.execute("SELECT value FROM settings WHERE key='central_mandate_id'").fetchone()
-    if r and r['value']:
+    try:
+        c = conn.cursor()
+        row = c.execute("SELECT value FROM tenant_settings WHERE company_id=? AND key='central_mandate_id'",
+                        (tenant,)).fetchone()
+        if row and row['value']:
+            ok = c.execute('SELECT id FROM mandates WHERE id=? AND owner_id=?',
+                           (int(row['value']), tenant)).fetchone()
+            if ok:
+                return int(row['value'])
+
+        # Legacy global row: adopt it only if it is unowned or already ours.
+        legacy = c.execute("SELECT value FROM settings WHERE key='central_mandate_id'").fetchone()
+        if legacy and legacy['value']:
+            m = c.execute('SELECT id, owner_id FROM mandates WHERE id=?', (int(legacy['value']),)).fetchone()
+            if m and (not m['owner_id'] or m['owner_id'] == tenant):
+                mid = int(m['id'])
+                c.execute("UPDATE mandates SET owner_id=?, status='central' WHERE id=?", (tenant, mid))
+                # Candidates parked here before owner_id existed would be invisible
+                # to every tenant-scoped query, including Central Database search.
+                c.execute('UPDATE candidates SET owner_id=? WHERE mandate_id=? '
+                          'AND (owner_id IS NULL OR owner_id=0)', (tenant, mid))
+                c.execute("INSERT OR REPLACE INTO tenant_settings (company_id,key,value) "
+                          "VALUES (?,'central_mandate_id',?)", (tenant, str(mid)))
+                conn.commit()
+                return mid
+
+        c.execute('INSERT INTO mandates (client,role,location,ctc_min,ctc_max,status,owner_id,created_at) '
+                  'VALUES (?,?,?,?,?,?,?,?)',
+                  ('HireLab', 'Central Database', 'All', 0, 99, 'central', tenant, ts()))
+        mid = c.lastrowid
+        c.execute("INSERT OR REPLACE INTO tenant_settings (company_id,key,value) "
+                  "VALUES (?,'central_mandate_id',?)", (tenant, str(mid)))
+        conn.commit()
+        return mid
+    finally:
         conn.close()
-        return int(r['value'])
-    # Create central mandate
-    c = conn.cursor()
-    c.execute("INSERT INTO mandates (client,role,location,ctc_min,ctc_max,status,created_at) VALUES (?,?,?,?,?,?,?)",
-              ('HireLab', 'Central Database', 'All', 0, 99, 'active', ts()))
-    mid = c.lastrowid
-    c.execute("INSERT OR REPLACE INTO settings (key,value) VALUES ('central_mandate_id',?)", (str(mid),))
-    conn.commit(); conn.close()
-    return mid
 
 @app.route('/api/central-db/search')
 @login_required
