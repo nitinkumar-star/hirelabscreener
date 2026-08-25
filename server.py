@@ -2714,6 +2714,52 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # already exists
 
+    # Migrate: experience as a real min/max range (was free text like "8-12 years"),
+    # plus the client-submission layout (extra blank columns / trailing blank rows).
+    # The old `experience` text column stays untouched so nothing that reads it breaks.
+    for col, typ in [('exp_min', 'REAL DEFAULT 0'), ('exp_max', 'REAL DEFAULT 0'),
+                     ('share_extra_cols', "TEXT DEFAULT '[]'"),
+                     ('share_blank_rows', 'INTEGER DEFAULT 0')]:
+        try:
+            c.execute(f'ALTER TABLE mandates ADD COLUMN {col} {typ}')
+        except sqlite3.OperationalError:
+            pass  # already exists
+
+    # Back-fill the range from whatever free text is already stored, once.
+    # "8-12 years" -> 8/12 · "5+ years" -> 5/0 · "10 years" -> 10/10
+    try:
+        pending = c.execute(
+            "SELECT id, experience FROM mandates "
+            "WHERE COALESCE(exp_min,0)=0 AND COALESCE(exp_max,0)=0 "
+            "AND COALESCE(experience,'') != ''").fetchall()
+        for row in pending:
+            txt = str(row['experience'] or '')
+            rng = re.search(r'(\d+(?:\.\d+)?)\s*(?:-|to|–|—)\s*(\d+(?:\.\d+)?)', txt, re.I)
+            if rng:
+                lo, hi = float(rng.group(1)), float(rng.group(2))
+            else:
+                one = re.search(r'(\d+(?:\.\d+)?)', txt)
+                if not one:
+                    continue
+                lo = float(one.group(1))
+                hi = 0.0 if '+' in txt else lo
+            c.execute('UPDATE mandates SET exp_min=?, exp_max=? WHERE id=?', (lo, hi, row['id']))
+    except sqlite3.OperationalError:
+        pass
+
+    # Which mandate each user last pushed to, so the extension can float the
+    # ones they actually use to the top of a long dropdown.
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS mandate_usage (
+            user_id INTEGER NOT NULL,
+            mandate_id INTEGER NOT NULL,
+            used_at TEXT DEFAULT '',
+            uses INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, mandate_id)
+        )''')
+    except sqlite3.OperationalError:
+        pass
+
     # Migrate: add embedding columns to candidates for semantic search
     for col, typ in [('embedding', 'TEXT'), ('embedding_text', 'TEXT'), ('embedded_at', 'TEXT')]:
         try:
@@ -4797,12 +4843,35 @@ def extension_push():
                 else 'Pushed from Naukri extension'), ts()))
     _save_wh_for(conn, cid, d.get('work_history'))
     conn.commit(); conn.close()
+    _touch_mandate_usage(mid)
     queue_embedding_job(cid)  # async: enqueue, background worker embeds (never blocks add)
     resp = {'ok': True, 'action': 'added', 'candidate_id': cid, 'name': name}
     if other_mandates:
         resp['also_in'] = other_mandates
         resp['message'] = 'Added here. This person also exists in: ' + ', '.join(other_mandates)
     return jsonify(resp)
+
+def _touch_mandate_usage(mid):
+    """Note that this user just pushed into this mandate.
+
+    Recruiters with dozens of open positions were hunting through a long
+    alphabetical dropdown every time. Recording use here lets the extension put
+    the handful they are actually working on at the top. Stored server-side, so
+    it survives an extension reinstall and follows them to another machine.
+    """
+    try:
+        uid = real_user_id()
+        if not uid or not mid:
+            return
+        conn = get_db()
+        conn.execute(
+            'INSERT INTO mandate_usage (user_id, mandate_id, used_at, uses) VALUES (?,?,?,1) '
+            'ON CONFLICT(user_id, mandate_id) DO UPDATE SET used_at=excluded.used_at, uses=uses+1',
+            (uid, int(mid), ts()))
+        conn.commit(); conn.close()
+    except Exception:
+        pass  # never let bookkeeping break a successful push
+
 
 @app.route('/api/extension/mandates', methods=['GET', 'OPTIONS'])
 def extension_mandates():
@@ -4830,6 +4899,24 @@ def extension_mandates():
         ).fetchall()
     conn.close()
     out = [dict(r) for r in rows]
+
+    # Most-recently-used first, the rest keep their existing order. Marked so
+    # the popup can show them under a "Recent" heading.
+    try:
+        uconn = get_db()
+        used = {r['mandate_id']: r['used_at'] for r in uconn.execute(
+            'SELECT mandate_id, used_at FROM mandate_usage WHERE user_id=? '
+            'ORDER BY used_at DESC LIMIT 5', (real_user_id(),)).fetchall()}
+        uconn.close()
+        if used:
+            recent = [x for x in out if x['id'] in used]
+            recent.sort(key=lambda x: used.get(x['id'], ''), reverse=True)
+            for x in recent:
+                x['is_recent'] = True
+            out = recent + [x for x in out if x['id'] not in used]
+    except Exception:
+        pass
+
     # Freelancers push only into the mandates assigned to them; the shared
     # talent library is not theirs to fill.
     if not (cu and cu.get('role') == 'freelancer_sourcer'):
@@ -9760,9 +9847,12 @@ def create_mandate():
             crm_client_id = _match_crm_client_by_name(conn, effective_company_id(), d['client'])
         except Exception:
             crm_client_id = 0
-    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,status,created_at,owner_id,assigned_user_id,crm_client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,exp_min,exp_max,experience,jd,status,created_at,owner_id,assigned_user_id,crm_client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
               (d['client'], d['role'], d.get('location',''), d.get('division',''),
-               float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('jd',''), 'active', ts(), effective_company_id(), real_user_id(), crm_client_id))
+               float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)),
+               float(d.get('exp_min', 0) or 0), float(d.get('exp_max', 0) or 0),
+               d.get('experience', ''),
+               d.get('jd',''), 'active', ts(), effective_company_id(), real_user_id(), crm_client_id))
     mid = c.lastrowid; conn.commit(); conn.close()
     log_activity('create_mandate', d['role'] + ' @ ' + d['client'])
     return jsonify({'ok': True, 'id': mid, 'crm_client_id': crm_client_id})
@@ -10290,6 +10380,59 @@ def delete_mandate(mid):
     return jsonify({'ok': True, 'candidates_kept': kept})
 
 
+@app.route('/api/mandates/<int:mid>/duplicate', methods=['POST'])
+@login_required
+def duplicate_mandate(mid):
+    """Clone a position's whole setup into a new one.
+
+    Built for the common case where the same role opens at another location:
+    everything that describes the job is copied (JD, SOP, pitch, templates,
+    SPOC/CC, client notes, custom field values), while everything that belongs
+    to the *running* of the old position is not — candidates, activity,
+    submissions, invoices. The new mandate therefore starts with an empty
+    pipeline.
+    """
+    d = request.json or {}
+    conn = get_db(); c = conn.cursor()
+    src = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                       (mid, effective_company_id())).fetchone()
+    if not src:
+        conn.close(); return jsonify({'error': 'Mandate not found'}), 404
+
+    cols = [r['name'] for r in conn.execute('PRAGMA table_info(mandates)').fetchall()]
+    # Identity and lifecycle stay with the original; everything else rides along.
+    skip = {'id', 'created_at', 'status', 'recruiter_pitch'}
+    payload = {k: src[k] for k in cols if k not in skip}
+    for f in ('location', 'division', 'client', 'role'):
+        if f in d and str(d.get(f) or '').strip():
+            payload[f] = str(d[f]).strip()
+    payload['status'] = 'active'
+    payload['created_at'] = ts()
+    keys = list(payload.keys())
+    c.execute('INSERT INTO mandates ({}) VALUES ({})'.format(
+        ','.join(keys), ','.join('?' * len(keys))), tuple(payload[k] for k in keys))
+    new_id = c.lastrowid
+
+    # Private client notes travel with the client, not the vacancy.
+    copied_notes = 0
+    try:
+        notes = conn.execute(
+            'SELECT note, created_by FROM mandate_client_notes '
+            'WHERE mandate_id=? AND is_active=1 ORDER BY id ASC', (mid,)).fetchall()
+        for n in notes:
+            c.execute('INSERT INTO mandate_client_notes (mandate_id,note,created_at,created_by,is_active) '
+                      'VALUES (?,?,?,?,1)', (new_id, n['note'], ts(), n['created_by']))
+            copied_notes += 1
+    except sqlite3.OperationalError:
+        pass
+
+    conn.commit(); conn.close()
+    log_activity('duplicate_mandate',
+                 f"{src['role']} @ {src['client']} -> new position #{new_id}",
+                 entity_type='mandate', entity_id=new_id)
+    return jsonify({'ok': True, 'id': new_id, 'notes_copied': copied_notes})
+
+
 @app.route('/api/mandates/<int:mid>', methods=['PUT'])
 @login_required
 def update_mandate(mid):
@@ -10298,9 +10441,11 @@ def update_mandate(mid):
     own = conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
     if not own or own['owner_id'] != effective_user_id():
         conn.close(); return jsonify({'error': 'Not found'}), 404
-    conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,experience=?,jd=?,status=? WHERE id=?',
+    conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,exp_min=?,exp_max=?,experience=?,jd=?,status=? WHERE id=?',
                  (d.get('client',''), d.get('role',''), d.get('location',''), d.get('division',''),
-                  float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)), d.get('experience',''), d.get('jd',''), d.get('status','active'), mid))
+                  float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)),
+                  float(d.get('exp_min', 0) or 0), float(d.get('exp_max', 0) or 0),
+                  d.get('experience',''), d.get('jd',''), d.get('status','active'), mid))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
@@ -10552,7 +10697,7 @@ def submission_excel(mid):
     from openpyxl.utils import get_column_letter
 
     conn = get_db()
-    m = conn.execute('SELECT role, client FROM mandates WHERE id=? AND owner_id=?',
+    m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
                      (mid, effective_company_id())).fetchone()
     if not m:
         conn.close(); return jsonify({'error': 'Mandate not found'}), 404
@@ -10575,6 +10720,17 @@ def submission_excel(mid):
                'Current Company', 'Total Experience', 'Current CTC', 'Expected CTC',
                'Current Location', 'Preferred Location', 'Notice Period']
     widths = [26.5, 16, 31.5, 25.7, 31, 16.5, 27.7, 32.5, 16.3, 18.3, 28.3]
+
+    # Same blank columns / rows the client sees in the emailed table, so the
+    # sheet and the email stay in step.
+    _extra_cols, _blank_rows = _share_layout(m, {
+        'extra_cols': ([x.strip() for x in request.args.get('extra_cols', '').split('||') if x.strip()]
+                       if request.args.get('extra_cols') is not None else None),
+        'blank_rows': (request.args.get('blank_rows')
+                       if request.args.get('blank_rows') is not None else None),
+    })
+    headers += _extra_cols
+    widths += [22] * len(_extra_cols)
 
     header_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
     header_font = Font(bold=True, size=10, color='222222')
@@ -10617,9 +10773,16 @@ def submission_excel(mid):
             fmt_exp(d.get('experience')), fmt_ctc(d.get('ctc_current')),
             fmt_ctc(d.get('ctc_expected')), d.get('location', ''),
             d.get('preferred_location', ''), fmt_notice(d.get('notice_period')),
-        ]
+        ] + [''] * len(_extra_cols)
         for i, val in enumerate(vals, 1):
             cell = ws.cell(row=r, column=i, value=val)
+            cell.border = border; cell.alignment = center; cell.font = Font(size=10)
+        r += 1
+
+    # Bordered empty rows the client can fill in by hand.
+    for _ in range(_blank_rows):
+        for i in range(1, len(headers) + 1):
+            cell = ws.cell(row=r, column=i, value='')
             cell.border = border; cell.alignment = center; cell.font = Font(size=10)
         r += 1
 
@@ -10677,15 +10840,49 @@ def _sub_row_values(m, c):
         d.get('preferred_location', ''), _sub_fmt_notice(d.get('notice_period')),
     ]
 
-def _submission_table_html(m, rows):
+def _share_layout(m, override=None):
+    """Extra blank columns + trailing blank rows for a client submission.
+
+    Clients often want somewhere to write their own verdict against each name,
+    so the recruiter can append named-but-empty columns and a few empty rows.
+    Saved on the mandate, so the same client gets the same sheet next time; a
+    per-send override wins when supplied.
+    """
+    cols, rows = [], 0
+    try:
+        cols = json.loads((m['share_extra_cols'] if 'share_extra_cols' in m.keys() else '') or '[]')
+    except Exception:
+        cols = []
+    try:
+        rows = int((m['share_blank_rows'] if 'share_blank_rows' in m.keys() else 0) or 0)
+    except Exception:
+        rows = 0
+    if override:
+        if override.get('extra_cols') is not None:
+            cols = override.get('extra_cols') or []
+        if override.get('blank_rows') is not None:
+            try:
+                rows = int(override.get('blank_rows') or 0)
+            except Exception:
+                rows = 0
+    cols = [str(x).strip() for x in cols if str(x or '').strip()][:6]
+    return cols, max(0, min(rows, 20))
+
+
+def _submission_table_html(m, rows, layout=None):
     th = ('<th style="background:#FFFF00;border:1px solid #999;padding:6px 8px;'
           'font-size:12px;font-weight:bold;text-align:left;color:#222">')
     td = '<td style="border:1px solid #bbb;padding:6px 8px;font-size:12px;color:#222">'
-    head = ''.join(th + _sub_esc(h) + '</th>' for h in _SUB_COLS)
+    extra_cols, blank_rows = layout if layout is not None else ([], 0)
+    head = ''.join(th + _sub_esc(h) + '</th>' for h in (list(_SUB_COLS) + extra_cols))
     body = ''
     for c in rows:
-        vals = _sub_row_values(m, c)
+        vals = _sub_row_values(m, c) + [''] * len(extra_cols)
         body += '<tr>' + ''.join(td + _sub_esc(v) + '</td>' for v in vals) + '</tr>'
+    # Empty rows the client can type into, kept the same width as the table.
+    span = len(_SUB_COLS) + len(extra_cols)
+    for _ in range(blank_rows):
+        body += '<tr>' + (td + '&nbsp;</td>') * span + '</tr>'
     return ('<table style="border-collapse:collapse;border:1px solid #999;'
             'font-family:Calibri,Arial,sans-serif"><thead><tr>' + head
             + '</tr></thead><tbody>' + body + '</tbody></table>')
@@ -10992,7 +11189,17 @@ def submission_preview(mid):
             'SELECT * FROM candidates WHERE mandate_id=? AND owner_id=? AND id IN (%s) '
             'ORDER BY name' % ','.join('?' * len(cand_ids)),
             tuple([mid, company_id] + cand_ids)).fetchall()
-    table = _submission_table_html(m, rows) if rows else \
+    layout = _share_layout(m, d)
+    # Remember the recruiter's choice so the same client gets the same sheet
+    # shape next time without re-configuring it.
+    try:
+        if d.get('extra_cols') is not None or d.get('blank_rows') is not None:
+            conn.execute('UPDATE mandates SET share_extra_cols=?, share_blank_rows=? WHERE id=?',
+                         (json.dumps(layout[0]), layout[1], mid))
+            conn.commit()
+    except Exception:
+        pass
+    table = _submission_table_html(m, rows, layout) if rows else \
         '<div style="color:#999;font-size:12px;padding:8px 0">(No candidates selected yet)</div>'
     sig = _submission_signature_html()
     conn.close()
@@ -11140,7 +11347,7 @@ def submit_to_client(mid):
         if body_html:
             final_html = body_html
         else:
-            table = _submission_table_html(m, rows)
+            table = _submission_table_html(m, rows, _share_layout(m, d))
             sig = _submission_signature_html()
             final_html = (
                 '<p style="font-family:Calibri,Arial,sans-serif;font-size:14px">' + _sub_esc(greeting) + '</p>'

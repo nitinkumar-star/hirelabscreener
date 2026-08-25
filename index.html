@@ -1112,6 +1112,8 @@ body{font-size:14px !important; line-height:1.5}
         <div class="fg-row"><label>Division</label><input class="inp" id="m-division" placeholder="e.g. LV Switchgear"></div>
         <div class="fg-row"><label>CTC Min (LPA)</label><input class="inp" id="m-ctcmin" type="number" placeholder="8"></div>
         <div class="fg-row"><label>CTC Max (LPA)</label><input class="inp" id="m-ctcmax" type="number" placeholder="18"></div>
+        <div class="fg-row"><label>Experience Min (Yrs)</label><input class="inp" id="m-expmin" type="number" step="0.5" placeholder="8"></div>
+        <div class="fg-row"><label>Experience Max (Yrs)</label><input class="inp" id="m-expmax" type="number" step="0.5" placeholder="12"></div>
       </div>
       <div class="fg-row"><label>Job Description</label><textarea class="ta" id="m-jd" rows="5" placeholder="Paste JD..."></textarea></div>
     </div>
@@ -2538,8 +2540,7 @@ function downloadSubmissionExcel(){
 
 function doDownloadSubmissionExcel(stage){
   var m = document.getElementById('xl-stage-modal'); if(m) m.remove();
-  var url = '/api/mandates/' + S.activeMandate.id + '/submission-excel';
-  if(stage) url += '?stage=' + encodeURIComponent(stage);
+  var url = '/api/mandates/' + S.activeMandate.id + '/submission-excel';  if(stage) url += '?stage=' + encodeURIComponent(stage);
   window.open(url, '_blank');
 }
 // ── Interview scheduling ──────────────────────────────────────────────────
@@ -3102,6 +3103,7 @@ function renderMandateSetup(el){
       + '<div style="margin-top:18px;padding-top:14px;border-top:0.5px solid var(--line)">'
       + '<div style="font-size:12px;color:#A32D2D;font-weight:600;margin-bottom:6px">Danger zone</div>'
       + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Deleting this job removes the mandate, but its candidates stay safe in your Central Database.</div>'
+      + '<button class="btn btn-o" onclick="openDuplicateMandate()">&#128203; Duplicate this Job</button>'
       + '<button class="btn btn-o" style="color:#A32D2D;border-color:#E8C4C4" onclick="deleteJob()">&#128465; Delete this Job</button>'
       + '</div>'
       + '</div></div>';
@@ -3111,7 +3113,7 @@ function renderMandateSetup(el){
     +field('ms-client',wfL().client,m.client||'')+field('ms-role','Role',m.role||'')
     +field('ms-loc','Location',m.location||'')+field('ms-div','Division',m.division||'')
     +numfield('ms-cmin','CTC Min (LPA)',m.ctc_min||'')+numfield('ms-cmax','CTC Max (LPA)',m.ctc_max||'')
-    +field('ms-experience','Experience (e.g. 8-12 years)',m.experience||'')
+    +numfield('ms-expmin','Experience Min (Yrs)',m.exp_min||'')+numfield('ms-expmax','Experience Max (Yrs)',m.exp_max||'')
     +'</div><div class="fg-row"><label>Job Description</label>'
     + buildJDEditor('ms-jd', m.jd||'')
     +'</div>'
@@ -3366,7 +3368,8 @@ async function generateJDForEditor(targetId){
   if(!role){ toast('Role chahiye','Pehle Role field bharo, phir AI Write JD'); return; }
   var notes=prompt('Koi extra detail JD ke liye? (optional — jaise specific skills, shift, projects)\n\nBlank chhod sakte ho.','')||'';
   var payload={ role:role, client:g(['ms-client','m-client']), location:g(['ms-loc','m-location']),
-    experience:g(['ms-experience']), ctc_min:g(['ms-cmin','m-ctcmin']), ctc_max:g(['ms-cmax','m-ctcmax']),
+    experience:(g(['ms-expmin'])||g(['m-expmin']))?expRangeText(g(['ms-expmin','m-expmin']),g(['ms-expmax','m-expmax'])):'',
+    ctc_min:g(['ms-cmin','m-ctcmin']), ctc_max:g(['ms-cmax','m-ctcmax']),
     division:g(['ms-div','m-division']), notes:notes };
   var prev=ed.innerHTML;
   ed.innerHTML='<p style="color:#888">&#10024; AI JD likh raha hai… (~15-30s)</p>';
@@ -3547,13 +3550,92 @@ function closeSidebarOnMobile() {
 
 async function saveMandateSetup(){
   const m=S.activeMandate;
-  await req('PUT','/mandates/'+m.id,{client:v('ms-client'),role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,experience:v('ms-experience'),jd:vHtml('ms-jd'),status:m.status});
+  const emin=parseFloat(v('ms-expmin'))||0, emax=parseFloat(v('ms-expmax'))||0;
+  if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
+  await req('PUT','/mandates/'+m.id,{client:v('ms-client'),role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:vHtml('ms-jd'),status:m.status});
   S.activeMandate=await req('GET','/mandates/'+m.id);
   S.mandates=S.mandates.map(x=>x.id===m.id?S.activeMandate:x);
   renderSidebar();updateTopbar();toast('✅','Mandate saved');
 }
 
 // ── SOP ────────────────────────────────────────────────────────────────────
+// ── Pipeline: list view ────────────────────────────────────────────────
+// A flat sortable table for when the Kanban board has too many cards to scan.
+// Same data, same click-through to the profile; the preference sticks.
+function plView(){ try{ return localStorage.getItem('hl_pipeline_view')==='list'?'list':'board'; }catch(e){ return 'board'; } }
+function setPipelineView(v){
+  try{ localStorage.setItem('hl_pipeline_view', v); }catch(e){}
+  renderPipeline(document.getElementById('content'));
+}
+var _plSort={key:'name',dir:1};
+function plSortBy(key){
+  _plSort = (_plSort.key===key) ? {key:key,dir:-_plSort.dir} : {key:key,dir:1};
+  renderPipeline(document.getElementById('content'));
+}
+
+function renderPipelineList(el, rows){
+  var wrap=el.querySelector('.pl-wrap');
+  if(!wrap) return;
+  var COLS=[
+    ['name','Name'],['company','Company'],['designation','Designation'],
+    ['experience','Exp'],['ctc_current','Current CTC'],['ctc_expected','Expected CTC'],
+    ['notice_period','Notice'],['location','Location'],['stage','Stage'],
+    ['phone','Phone'],['cv','CV']
+  ];
+  var num={experience:1,ctc_current:1,ctc_expected:1,notice_period:1};
+  var data=(rows||[]).slice().sort(function(a,b){
+    var k=_plSort.key;
+    var x=a[k],y=b[k];
+    if(num[k]){ x=parseFloat(x)||0; y=parseFloat(y)||0; return (x-y)*_plSort.dir; }
+    x=String(x==null?'':x).toLowerCase(); y=String(y==null?'':y).toLowerCase();
+    return (x<y?-1:x>y?1:0)*_plSort.dir;
+  });
+
+  var arrow=function(k){ return _plSort.key===k?(_plSort.dir>0?' \u25B2':' \u25BC'):''; };
+  var th='padding:8px 10px;font-size:10.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#6b7280;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;cursor:pointer;background:#FAFAFC;position:sticky;top:0;z-index:1';
+  var td='padding:8px 10px;font-size:12.5px;color:#333;border-bottom:0.5px solid #f0f0f0;white-space:nowrap';
+
+  var head='<tr>'+COLS.map(function(c){
+    return '<th style="'+th+'" onclick="plSortBy(\''+c[0]+'\')">'+esc(c[1])+arrow(c[0])+'</th>';
+  }).join('')+'</tr>';
+
+  var stageOpts=function(cur){
+    return PIPELINE_STAGES.map(function(s){
+      return '<option value="'+esc(s.id)+'"'+(s.id===cur?' selected':'')+'>'+esc(s.id)+'</option>';
+    }).join('');
+  };
+
+  var body=data.map(function(c){
+    var phone=(c.phone||'').replace(/\D/g,'');
+    var dp=phone.length>=10?phone.slice(-10).replace(/(\d{5})(\d{5})/,'$1 $2'):'';
+    var open='onclick="openProfile('+c.id+')" style="cursor:pointer"';
+    var cell=function(val){ return '<td style="'+td+'" '+open+'>'+esc(val==null||val===''?'—':String(val))+'</td>'; };
+    return '<tr onmouseover="this.style.background=\'#FAFAFC\'" onmouseout="this.style.background=\'transparent\'">'
+      +'<td style="'+td+';font-weight:600;color:var(--navy)" '+open+'>'+esc(c.name||'—')+'</td>'
+      +cell(c.company)+cell(c.designation)
+      +cell(c.experience?c.experience+'y':'')
+      +cell(c.ctc_current?c.ctc_current+' LPA':'')
+      +cell(c.ctc_expected?c.ctc_expected+' LPA':'')
+      +cell(c.notice_period?c.notice_period+'d':'')
+      +cell(c.location)
+      +'<td style="'+td+'"><select onchange="plChangeStage('+c.id+',this.value)" style="font-size:11.5px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer">'+stageOpts(c.stage)+'</select></td>'
+      +'<td style="'+td+'">'+(dp?'<a href="tel:'+esc(phone)+'" style="color:#2D6FB3;text-decoration:none">'+esc(dp)+'</a>':'—')+'</td>'
+      +'<td style="'+td+'">'+(c.cv_path?'<a href="/api/candidates/'+c.id+'/cv" target="_blank" style="color:#0F6E56;text-decoration:none">&#128206; Open</a>':'<span style="color:#bbb">—</span>')+'</td>'
+      +'</tr>';
+  }).join('');
+
+  wrap.innerHTML = data.length
+    ? '<div style="overflow:auto;height:100%"><table style="width:100%;border-collapse:collapse;background:#fff">'
+      +'<thead>'+head+'</thead><tbody>'+body+'</tbody></table></div>'
+    : '<div style="padding:40px;text-align:center;color:#aaa;font-size:13px">No candidates in this pipeline yet</div>';
+}
+
+async function plChangeStage(cid, stage){
+  var r=await req('POST','/candidates/'+cid+'/stage',{stage:stage,note:'Changed from List view'});
+  if(r&&r.ok){ toast('✅','Moved to '+stage); renderPipeline(document.getElementById('content')); }
+  else toast('&#9888;&#65039;',(r&&r.error)||'Could not change stage');
+}
+
 async function renderPipeline(el){
   el.style.padding='0'; el.style.display='flex'; el.style.flexDirection='column'; el.style.overflow='hidden';
   S.sortables.forEach(s=>{try{s.destroy();}catch(e){}});S.sortables=[];
@@ -3574,7 +3656,11 @@ async function renderPipeline(el){
     +'<span style="font-size:11px;color:#888">'+inPipeline.length+' in pipeline</span>'
     +(sharedCnt?'<span class="pill pill-p" style="font-size:10px">'+sharedCnt+' shared</span>':'')
     +(placedCnt?'<span class="pill pill-g" style="font-size:10px">'+placedCnt+' placed</span>':'')
-    +'<div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap">'
+    +'<div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap;align-items:center">'
+    +'<div style="display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden">'
+      +'<button onclick="setPipelineView(\'board\')" style="font-size:11px;padding:4px 11px;border:none;cursor:pointer;background:'+(plView()==='board'?'#0F6E56':'#fff')+';color:'+(plView()==='board'?'#fff':'#666')+'">&#9638; Board</button>'
+      +'<button onclick="setPipelineView(\'list\')" style="font-size:11px;padding:4px 11px;border:none;cursor:pointer;background:'+(plView()==='list'?'#0F6E56':'#fff')+';color:'+(plView()==='list'?'#fff':'#666')+'">&#9776; List</button>'
+    +'</div>'
     +'<button class="btn btn-o" style="font-size:11px" onclick="renderPipeline(document.getElementById(\'content\'))">&#8635; Refresh</button>'
     +'<button class="btn btn-o" style="font-size:11px" onclick="openAddCandidateModal()">+ Add Manually</button>'
     +'<button class="btn" style="font-size:11px;background:#1D9E75;color:#fff" onclick="downloadSubmissionExcel()">&#128229; Submission Excel</button>'
@@ -3583,6 +3669,8 @@ async function renderPipeline(el){
     +(sharedCnt?'<button class="btn" style="font-size:11px;background:#534AB7;color:#fff" onclick="openSubmissionSheet()">&#128203; Client Sheet</button>':'')
     +'</div></div>'
     +'<div class="pl-wrap"><div class="pl-cols" id="pl-cols"></div></div>';
+
+  if(plView()==='list'){ renderPipelineList(el, inPipeline); return; }
 
   const cols=document.getElementById('pl-cols');
   PIPELINE_STAGES.forEach(stage=>{
@@ -3743,6 +3831,22 @@ function _shareModalHtml(m, r, preselectStage, draft){
     +'<div style="margin-top:10px"><label style="font-size:11px;font-weight:600;color:#555">Subject</label><input id="share-subject" style="'+inp+'" value="'+esc(subjVal)+'"></div>'
     +'<div style="margin-top:10px"><label style="font-size:11px;font-weight:600;color:#555">Greeting</label><input id="share-greeting" style="'+inp+'" value="'+esc(greetVal)+'"></div>'
     +'<div style="margin-top:10px"><label style="font-size:11px;font-weight:600;color:#555">Intro line</label><input id="share-intro" style="'+inp+'" value="'+esc(introVal)+'"></div>'
+    +'<div style="margin-top:12px;border:1px solid #eee;border-radius:9px;padding:10px 12px;background:#FAFAFC">'
+      +'<label style="font-size:11px;font-weight:700;color:#555">Blank columns for the client to fill</label>'
+      +'<div style="font-size:10.5px;color:#999;margin:3px 0 7px">Pick a heading or type your own. These go into the emailed table and the Submission Excel.</div>'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:7px">'
+        + ['Client Feedback','Interview Date','Shortlisted (Y/N)','Interview Mode','Remarks','Round 1 Status']
+            .map(function(x){return '<button type="button" class="btn btn-o" style="font-size:10.5px;padding:3px 9px" onclick="_shareAddCol(\''+x.replace(/'/g,"\\'")+'\')">+ '+x+'</button>';}).join('')
+      +'</div>'
+      +'<div style="display:flex;gap:6px"><input id="share-newcol" placeholder="Or type a heading and press Enter" style="'+inp+';flex:1" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_shareAddCol(this.value);this.value=\'\';}">'
+      +'<button type="button" class="btn btn-o" style="font-size:11px;white-space:nowrap" onclick="var e=document.getElementById(\'share-newcol\');_shareAddCol(e.value);e.value=\'\';">Add</button></div>'
+      +'<div id="share-colchips" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div>'
+      +'<div style="margin-top:10px;display:flex;align-items:center;gap:8px">'
+        +'<label style="font-size:11px;font-weight:700;color:#555">Blank rows at the bottom</label>'
+        +'<input id="share-blankrows" type="number" min="0" max="20" value="'+(parseInt(m.share_blank_rows)||0)+'" style="'+inp+';width:70px" onchange="_shareLayoutChanged()">'
+        +'<span style="font-size:10.5px;color:#999">Empty rows the client can type names into</span>'
+      +'</div>'
+    +'</div>'
     +'<div style="margin-top:14px;display:flex;align-items:center;justify-content:space-between">'
       +'<label style="font-size:11px;font-weight:700;color:#555">Select candidates to submit</label>'
       +'<span id="share-count" style="font-size:11px;color:#534AB7;font-weight:600">0 selected</span></div>'
@@ -3798,12 +3902,39 @@ async function openShareToClient(preselectStage, draft){
   });
   // editable body: mark dirty on manual edit so auto-refresh won't wipe edits
   window._shareBodyDirty=false;
+  try{ _shareExtraCols=JSON.parse(m.share_extra_cols||'[]')||[]; }catch(e){ _shareExtraCols=[]; }
+  _shareRenderChips();
   var pv=document.getElementById('share-preview');
   if(pv) pv.addEventListener('input', function(){ window._shareBodyDirty=true; });
   _shareSyncCount();
   if(draft && draft.body_html){ if(pv){ pv.innerHTML=draft.body_html; } window._shareBodyDirty=true; }
   else { _sharePreview(true); }
 }
+var _shareExtraCols=[];
+function _shareRenderChips(){
+  var box=document.getElementById('share-colchips'); if(!box) return;
+  box.innerHTML=_shareExtraCols.length
+    ? _shareExtraCols.map(function(c,i){
+        return '<span style="display:inline-flex;align-items:center;gap:5px;background:#EEF4FB;border:1px solid #C6DAF0;color:#2A5580;border-radius:20px;padding:3px 6px 3px 10px;font-size:11px">'
+          + esc(c) + '<button type="button" onclick="_shareRemoveCol('+i+')" style="border:0;background:none;cursor:pointer;color:#2A5580;font-size:13px;line-height:1;padding:0 3px">&times;</button></span>';
+      }).join('')
+    : '<span style="font-size:10.5px;color:#bbb">No blank columns added</span>';
+}
+function _shareAddCol(name){
+  name=(name||'').trim(); if(!name) return;
+  if(_shareExtraCols.length>=6){ toast('&#9888;&#65039;','Maximum 6 blank columns'); return; }
+  if(_shareExtraCols.some(function(c){return c.toLowerCase()===name.toLowerCase();})) return;
+  _shareExtraCols.push(name); _shareRenderChips(); _shareLayoutChanged();
+}
+function _shareRemoveCol(i){ _shareExtraCols.splice(i,1); _shareRenderChips(); _shareLayoutChanged(); }
+function _shareBlankRows(){
+  var el=document.getElementById('share-blankrows');
+  return Math.max(0,Math.min(20,parseInt(el&&el.value)||0));
+}
+// Layout changes rebuild the table even if the body was hand-edited —
+// otherwise the new columns would never appear.
+function _shareLayoutChanged(){ _shareRefreshPreview(); }
+
 var _sharePreviewTimer=null;
 function _sharePreviewDebounced(){ clearTimeout(_sharePreviewTimer); _sharePreviewTimer=setTimeout(function(){ _sharePreview(false); }, 400); }
 function _shareRefreshPreview(){ window._shareBodyDirty=false; _sharePreview(true); }
@@ -3812,7 +3943,8 @@ async function _sharePreview(force){
   var box=document.getElementById('share-preview'); if(!box) return;
   if(window._shareBodyDirty && !force) return; // don't clobber manual edits
   var g=document.getElementById('share-greeting'), i=document.getElementById('share-intro');
-  var p={ greeting:g?g.value:'', intro:i?i.value:'', candidate_ids:_shareSelectedIds() };
+  var p={ greeting:g?g.value:'', intro:i?i.value:'', candidate_ids:_shareSelectedIds(),
+          extra_cols:_shareExtraCols, blank_rows:_shareBlankRows() };
   var r;
   try{ r=await req('POST','/mandates/'+m.id+'/submission-preview',p); }catch(e){ return; }
   if(r && r.html){ box.innerHTML=r.html; window._shareBodyDirty=false; }
@@ -6431,7 +6563,9 @@ async function saveMandate(){
   // Prevent double-click
   var btn=document.querySelector('#modal-mandate .btn-g');
   if(btn){if(btn.disabled)return; btn.disabled=true; btn.textContent='Creating...';}
-  const r=await req('POST','/mandates',{client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,jd:v('m-jd')});
+  const emin=parseFloat(v('m-expmin'))||0, emax=parseFloat(v('m-expmax'))||0;
+  if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
+  const r=await req('POST','/mandates',{client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd')});
   if(r.ok){closeModal('modal-mandate');await loadMandates();await selectMandate(r.id);S.activeTab='Mandate Setup';renderTabs();renderContent();toast('✅','Mandate created!');}
   else {toast('&#9888;&#65039;',r.error||'Create failed');if(btn){btn.disabled=false;btn.textContent='Create Mandate →';}}
 }
@@ -7109,7 +7243,65 @@ function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
 function ini(name){return name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()||'?';}
 function fmtDate(dt){if(!dt)return '';try{const d=new Date(dt);return d.toLocaleDateString('en-IN',{day:'numeric',month:'short'})+' &middot; '+d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});}catch{return dt;}}
 function stageDot(stage){return(PIPELINE_STAGES.find(s=>s.id===stage)||{color:'#888'}).color;}
+// ── Duplicate a position ────────────────────────────────────────────────
+// Same role, different city is the common case, so the whole setup is cloned
+// server-side (JD, SOP, pitch, templates, SPOC/CC, client notes) and only the
+// few fields worth changing are offered here. The pipeline starts empty.
+function openDuplicateMandate(){
+  const m=S.activeMandate; if(!m) return;
+  const bd=document.getElementById('dupMandateBd');
+  if(bd) bd.remove();
+  const el=document.createElement('div');
+  el.id='dupMandateBd';
+  el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  el.innerHTML='<div style="background:#fff;border-radius:10px;max-width:460px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.2)">'
+   +'<div style="padding:16px 18px;border-bottom:1px solid #eee;font-weight:600">Duplicate this position</div>'
+   +'<div style="padding:18px">'
+   +'<div style="font-size:12px;color:#6b7280;line-height:1.5;margin-bottom:14px">'
+   +'Copies the JD, screening SOP, recruiter pitch, email templates, SPOC and CC list, and client notes. '
+   +'Candidates, activity and submissions are <b>not</b> copied &mdash; the new pipeline starts empty.</div>'
+   +'<div class="fg-row"><label>Client</label><input class="inp" id="dup-client" value="'+esc(m.client||'')+'"></div>'
+   +'<div class="fg-row"><label>Role / Position</label><input class="inp" id="dup-role" value="'+esc(m.role||'')+'"></div>'
+   +'<div class="fg-row"><label>Location</label><input class="inp" id="dup-loc" value="'+esc(m.location||'')+'" placeholder="e.g. Pune"></div>'
+   +'<div class="fg-row"><label>Division</label><input class="inp" id="dup-div" value="'+esc(m.division||'')+'"></div>'
+   +'</div>'
+   +'<div style="padding:12px 18px;border-top:1px solid #eee;display:flex;gap:8px;justify-content:flex-end">'
+   +'<button class="btn btn-o" onclick="document.getElementById(\'dupMandateBd\').remove()">Cancel</button>'
+   +'<button class="btn btn-g" id="dup-go" onclick="doDuplicateMandate()">Create duplicate &#8594;</button>'
+   +'</div></div>';
+  document.body.appendChild(el);
+  setTimeout(function(){var f=document.getElementById('dup-loc'); if(f){f.focus();f.select();}},50);
+}
+
+async function doDuplicateMandate(){
+  const m=S.activeMandate; if(!m) return;
+  const btn=document.getElementById('dup-go');
+  if(btn){ btn.disabled=true; btn.textContent='Creating…'; }
+  const r=await req('POST','/mandates/'+m.id+'/duplicate',{
+    client:v('dup-client'), role:v('dup-role'), location:v('dup-loc'), division:v('dup-div')});
+  if(!r||!r.ok){
+    if(btn){ btn.disabled=false; btn.textContent='Create duplicate →'; }
+    toast('&#9888;&#65039;',(r&&r.error)||'Duplicate failed'); return;
+  }
+  const bd=document.getElementById('dupMandateBd'); if(bd) bd.remove();
+  toast('✅','Position duplicated');
+  S.mandates=await req('GET','/mandates');
+  const fresh=(S.mandates||[]).find(x=>x.id===r.id);
+  if(fresh){ S.activeMandate=fresh; }
+  renderSidebar(); updateTopbar();
+  if(fresh) selectMandate(fresh.id);
+}
+
 function field(id,lbl,val){return '<div class="fg-row"><label>'+lbl+'</label><input class="inp" id="'+id+'" value="'+esc(val)+'"></div>';}
+// The old free-text `experience` column is still read by JD generation and the
+// AI screening prompts, so the range is mirrored back into it on every save.
+function expRangeText(mn,mx){
+  mn=parseFloat(mn)||0; mx=parseFloat(mx)||0;
+  if(mn&&mx) return mn===mx?(mn+' years'):(mn+'-'+mx+' years');
+  if(mn) return mn+'+ years';
+  if(mx) return 'up to '+mx+' years';
+  return '';
+}
 function numfield(id,lbl,val){return '<div class="fg-row"><label>'+lbl+'</label><input class="inp" id="'+id+'" type="number" step="0.5" value="'+esc(val)+'"></div>';}
 function sInp(id,lbl,val,ph){return '<div><div class="lbl">'+lbl+'</div><input class="inp" id="'+id+'" value="'+esc(val)+'"'+(ph?' placeholder="'+esc(ph)+'"':'')+' style="width:100%"></div>';}
 function sNum(id,lbl,val){return '<div><div class="lbl">'+lbl+'</div><input class="inp" id="'+id+'" type="number" step="0.5" value="'+esc(val)+'" style="width:100%"></div>';}
