@@ -1433,10 +1433,127 @@ def compute_company_bill(company_id, days=30):
         'subtotal_inr': subtotal, 'gst_rate': gst_rate, 'gst_inr': gst, 'total_inr': total,
         'trial_ends_at': comp['trial_ends_at'], 'trial_days_left': trial_left,
         'is_owner': (comp['plan'] == 'owner' or comp['billing_status'] == 'owner'),
+        'workspace_mode': ((comp['workspace_mode'] if 'workspace_mode' in comp.keys() else '') or 'agency'),
         'token_cap': company_token_cap(company_id),
         'tokens_used_month': tokens_used_this_month(company_id),
         'user_limit': company_user_limit(company_id),
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  WORKSPACE MODE + VOCABULARY
+#
+#  The same ATS is sold to two kinds of buyer:
+#    agency    — recruits FOR client companies; the client is a paying customer
+#    corporate — hires for its OWN company; the "client" is an internal colleague
+#
+#  Sourcing, screening and the pipeline are identical for both, so the product
+#  is one codebase. What differs is the words on screen and which commercial
+#  modules make sense. Both are data-driven rather than hard-coded, so onboarding
+#  a new tenant never needs a code change.
+#
+#  The mode lives on the COMPANY row and only the platform owner can set it —
+#  it is what the tenant bought, not a preference they toggle.
+# ══════════════════════════════════════════════════════════════════════════
+
+VOCAB_DEFAULTS = {
+    'agency': {
+        'mandate': 'Mandate', 'mandate_plural': 'Mandates', 'mandate_new': 'New Mandate',
+        'client': 'Client', 'client_plural': 'Clients',
+        'client_field': 'Client Name', 'client_hint': 'e.g. Legrand India',
+        'share': 'Share to Client', 'crm': 'Clients (CRM)',
+        'placed': 'Placed',
+    },
+    'corporate': {
+        'mandate': 'Requisition', 'mandate_plural': 'Requisitions', 'mandate_new': 'New Requisition',
+        'client': 'Department', 'client_plural': 'Departments',
+        'client_field': 'Department / Hiring Manager', 'client_hint': 'e.g. Engineering / Mr. Sharma',
+        'share': 'Share with Hiring Manager', 'crm': 'Departments',
+        'placed': 'Hired',
+    },
+}
+
+# Modules that only make sense when you are selling recruitment as a service.
+# Hidden (not deleted) in corporate mode — a tenant switched back gets them intact.
+AGENCY_ONLY_MODULES = ['invoicing', 'bd', 'command', 'freelancers']
+
+
+def workspace_mode(company_id=None):
+    """'agency' or 'corporate' for a tenant. Falls back to agency."""
+    try:
+        cid = company_id if company_id is not None else effective_company_id()
+        if not cid:
+            return 'agency'
+        conn = get_db()
+        row = conn.execute('SELECT workspace_mode FROM companies WHERE id=?', (cid,)).fetchone()
+        conn.close()
+        mode = (row['workspace_mode'] if row else '') or 'agency'
+        return mode if mode in VOCAB_DEFAULTS else 'agency'
+    except Exception:
+        return 'agency'
+
+
+def workspace_vocab(company_id=None):
+    """Label set for a tenant: mode defaults, with their own overrides on top."""
+    mode = workspace_mode(company_id)
+    vocab = dict(VOCAB_DEFAULTS[mode])
+    try:
+        raw = get_setting('vocab_overrides', '') or ''
+        if raw:
+            for k, v in (json.loads(raw) or {}).items():
+                if k in vocab and str(v or '').strip():
+                    vocab[k] = str(v).strip()
+    except Exception:
+        pass
+    return mode, vocab
+
+
+@app.route('/api/workspace', methods=['GET'])
+@login_required
+def get_workspace():
+    """Mode, labels and hidden modules for the current tenant — read at boot."""
+    mode, vocab = workspace_vocab()
+    return jsonify({'ok': True, 'mode': mode, 'vocab': vocab,
+                    'hidden_modules': AGENCY_ONLY_MODULES if mode == 'corporate' else [],
+                    'can_edit_vocab': bool(is_company_admin())})
+
+
+@app.route('/api/workspace/vocab', methods=['POST'])
+@login_required
+def set_workspace_vocab():
+    """A tenant admin renames labels to match their own house language.
+    They cannot change the MODE — that is what they bought from the platform."""
+    if not is_company_admin():
+        return jsonify({'error': 'Not allowed'}), 403
+    d = request.json or {}
+    mode = workspace_mode()
+    clean = {}
+    for k, v in (d.get('vocab') or {}).items():
+        if k in VOCAB_DEFAULTS[mode] and str(v or '').strip():
+            clean[k] = str(v).strip()[:40]
+    set_setting('vocab_overrides', json.dumps(clean))
+    log_activity('set_vocab', f'{len(clean)} label(s) customised')
+    _mode, vocab = workspace_vocab()
+    return jsonify({'ok': True, 'vocab': vocab})
+
+
+@app.route('/api/admin/companies/<int:cid>/workspace-mode', methods=['POST'])
+@admin_required
+def set_company_workspace_mode(cid):
+    """Platform owner decides whether a tenant gets the agency or corporate ATS."""
+    d = request.json or {}
+    mode = (d.get('mode') or '').strip().lower()
+    if mode not in VOCAB_DEFAULTS:
+        return jsonify({'error': 'mode must be agency or corporate'}), 400
+    conn = get_db()
+    if not conn.execute('SELECT id FROM companies WHERE id=?', (cid,)).fetchone():
+        conn.close(); return jsonify({'error': 'Company not found'}), 404
+    conn.execute('UPDATE companies SET workspace_mode=? WHERE id=?', (mode, cid))
+    # Their old label overrides belong to the previous mode's vocabulary.
+    conn.execute("DELETE FROM tenant_settings WHERE company_id=? AND key='vocab_overrides'", (cid,))
+    conn.commit(); conn.close()
+    log_activity('set_workspace_mode', f'company {cid} -> {mode}')
+    return jsonify({'ok': True, 'mode': mode})
 
 
 @app.route('/api/admin/companies/<int:cid>/limits', methods=['POST'])
@@ -1504,14 +1621,17 @@ def create_agency():
     except Exception:
         trial_days = 14
     trial_end = (datetime.datetime.now() + datetime.timedelta(days=trial_days)).isoformat()
-    conn.execute("INSERT INTO companies (name,status,plan,billing_status,trial_ends_at,created_at,token_cap,user_limit) VALUES (?,?,?,?,?,?,?,?)",
-                 (company_name, 'active', 'standard', 'trial', trial_end, ts(), token_cap, user_limit))
+    ws_mode = (d.get('workspace_mode') or 'agency').strip().lower()
+    if ws_mode not in VOCAB_DEFAULTS:
+        ws_mode = 'agency'
+    conn.execute("INSERT INTO companies (name,status,plan,billing_status,trial_ends_at,created_at,token_cap,user_limit,workspace_mode) VALUES (?,?,?,?,?,?,?,?,?)",
+                 (company_name, 'active', 'standard', 'trial', trial_end, ts(), token_cap, user_limit, ws_mode))
     new_cid = conn.execute('SELECT id FROM companies ORDER BY id DESC LIMIT 1').fetchone()['id']
     conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,company_id,is_company_admin,email) VALUES (?,?,?,?,?,?,?,?,1,?)',
                  (username, hash_password(password), display, 'user', ts(), 'approved', company_name, new_cid, email))
     conn.commit(); conn.close()
-    log_activity('create_agency', f'{company_name} (admin: {username})')
-    return jsonify({'ok': True, 'company_id': new_cid})
+    log_activity('create_agency', f'{company_name} (admin: {username}, {ws_mode})')
+    return jsonify({'ok': True, 'company_id': new_cid, 'workspace_mode': ws_mode})
 
 
 @app.route('/api/admin/billing', methods=['GET'])
@@ -2492,6 +2612,10 @@ def init_db():
         ('gstin', "TEXT DEFAULT ''"),
         ('token_cap', 'INTEGER DEFAULT 0'),   # monthly AI token limit; 0 = unlimited
         ('user_limit', 'INTEGER DEFAULT 0'),  # max approved users (recruiters); 0 = unlimited
+        # Which product this tenant bought: 'agency' (recruit for client companies)
+        # or 'corporate' (hire for your own company). Set by the platform owner
+        # when the tenant is created — tenants cannot switch themselves.
+        ('workspace_mode', "TEXT DEFAULT 'agency'"),
     ]:
         try:
             c.execute(f'ALTER TABLE companies ADD COLUMN {col} {defn}')
@@ -4946,7 +5070,8 @@ TENANT_SETTINGS = {
     'seller_reg_office', 'invoice_signatory', 'invoice_hsn', 'invoice_prefix', 'seller_name',
     'template_msg1', 'template_fu1', 'template_fu2',
     'fu1_hours', 'fu2_hours',
-    'workflow_mode',   # 'agency' (default) or 'corporate'
+    'workflow_mode',   # legacy label toggle; superseded by companies.workspace_mode
+    'vocab_overrides',  # JSON: this tenant's own wording for mandate/client/etc
     'pipeline_stages',  # JSON array of custom stages before the fixed Placed/Joined
     'smtp_email', 'smtp_app_password', 'smtp_display_name',
     'imap_enabled', 'imap_last_uid',

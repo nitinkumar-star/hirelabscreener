@@ -1507,7 +1507,8 @@ const TABS = ['Mandate Setup','Pipeline','Candidate Profiles','Recruiter Pitch']
 let S = {
   currentUser:null, viewingAs:null,
   mandates:[],activeMandate:null,activeTab:'Mandate Setup',settingsOpen:false,settings:{},collapsedStages:{},
-  sopMsgs:[],batchResult:null,selectedCandidateId:null,waData:null,ncCid:null,statusMid:null,sortables:[]
+  sopMsgs:[],batchResult:null,selectedCandidateId:null,waData:null,ncCid:null,statusMid:null,sortables:[],
+  ws:{mode:'agency',vocab:{},hidden_modules:[]}
 };
 
 async function req(method,path,body){
@@ -1781,6 +1782,10 @@ async function init(){
   S.currentUser = status.user || null;
   S.viewingAs = status.viewing_as || null;
   S.pendingCount = status.pending_count || 0;
+
+  // ── Workspace mode (agency vs corporate) drives labels + which modules show.
+  // Loaded before the first render so nothing flashes the wrong wording.
+  await loadWorkspace();
 
   // ── Freelancer Sourcer gets a completely separate, restricted interface ──
   if (S.currentUser && S.currentUser.role === 'freelancer_sourcer') {
@@ -3664,7 +3669,7 @@ async function renderPipeline(el){
     +'<button class="btn btn-o" style="font-size:11px" onclick="renderPipeline(document.getElementById(\'content\'))">&#8635; Refresh</button>'
     +'<button class="btn btn-o" style="font-size:11px" onclick="openAddCandidateModal()">+ Add Manually</button>'
     +'<button class="btn" style="font-size:11px;background:#1D9E75;color:#fff" onclick="downloadSubmissionExcel()">&#128229; Submission Excel</button>'
-    +'<button class="btn" style="font-size:11px;background:#0F6E56;color:#fff" onclick="openShareToClient()">&#9993; Share to Client</button>'
+    +'<button class="btn" style="font-size:11px;background:#0F6E56;color:#fff" onclick="openShareToClient()">&#9993; '+esc(T('share','Share to Client'))+'</button>'
     +'<button class="btn btn-o" style="font-size:11px" onclick="openSubmissionDrafts()" title="Saved submission drafts">&#128196; Drafts</button>'
     +(sharedCnt?'<button class="btn" style="font-size:11px;background:#534AB7;color:#fff" onclick="openSubmissionSheet()">&#128203; Client Sheet</button>':'')
     +'</div></div>'
@@ -5864,15 +5869,27 @@ function renderSettings(){
     +'<button class="btn btn-g" style="margin-top:8px" onclick="saveMyProfile()">Save My Profile</button>'
     +'<span id="mp-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
     +'</div></div>'
-    // ── Workspace Type ──
+    // ── Workspace Type (read-only) + tenant's own wording ──
     +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Workspace Type</span></div><div class="card-body">'
-    +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Choose how this workspace works. <b>Agency</b> = you recruit for client companies. <b>Corporate</b> = you hire for your own company.</div>'
-    +'<div style="display:flex;gap:10px">'
-    +'<label style="flex:1;border:1.5px solid '+((s.workflow_mode||"agency")==="agency"?"#1D9E75":"var(--line)")+';border-radius:10px;padding:10px 12px;cursor:pointer;display:flex;gap:8px;align-items:center">'
-    +'<input type="radio" name="wfmode" value="agency" '+((s.workflow_mode||"agency")==="agency"?"checked":"")+'><div><div style="font-size:13px;font-weight:600">Recruitment Agency</div><div style="font-size:10.5px;color:var(--muted)">Mandates from clients</div></div></label>'
-    +'<label style="flex:1;border:1.5px solid '+(s.workflow_mode==="corporate"?"#1D9E75":"var(--line)")+';border-radius:10px;padding:10px 12px;cursor:pointer;display:flex;gap:8px;align-items:center">'
-    +'<input type="radio" name="wfmode" value="corporate" '+(s.workflow_mode==="corporate"?"checked":"")+'><div><div style="font-size:13px;font-weight:600">Corporate / Company</div><div style="font-size:10.5px;color:var(--muted)">Hiring for your own company</div></div></label>'
-    +'</div></div></div>'
+    +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+      +'<span style="font-size:13px;font-weight:700;padding:4px 12px;border-radius:20px;background:#E1F5EE;color:#0F6E56">'
+      +(wsMode()==='corporate'?'Corporate / In-house hiring':'Recruitment Agency')+'</span>'
+      +'<span style="font-size:11px;color:var(--muted)">'
+      +(wsMode()==='corporate'?'You hire for your own company.':'You recruit for client companies.')
+      +' Set by HireLab — contact support to change.</span>'
+    +'</div>'
+    +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Prefer different words? Rename them here and the whole app follows. Leave blank to keep the default.</div>'
+    +'<div class="g2">'
+      +'<div class="fg-row"><label>A job is called</label><input class="inp" id="vc-mandate" value="'+esc(T('mandate',''))+'"></div>'
+      +'<div class="fg-row"><label>Plural</label><input class="inp" id="vc-mandate_plural" value="'+esc(T('mandate_plural',''))+'"></div>'
+      +'<div class="fg-row"><label>Who you hire for</label><input class="inp" id="vc-client" value="'+esc(T('client',''))+'"></div>'
+      +'<div class="fg-row"><label>That field\'s label</label><input class="inp" id="vc-client_field" value="'+esc(T('client_field',''))+'"></div>'
+      +'<div class="fg-row"><label>Sharing profiles is called</label><input class="inp" id="vc-share" value="'+esc(T('share',''))+'"></div>'
+      +'<div class="fg-row"><label>A successful hire is called</label><input class="inp" id="vc-placed" value="'+esc(T('placed',''))+'"></div>'
+    +'</div>'
+    +'<button class="btn btn-g" onclick="saveVocab()">Save wording</button>'
+    +'<span id="vc-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
+    +'</div></div>'
     +'<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;box-shadow:var(--shadow-sm)">'
     +'<div><div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:2px">Export &amp; Import Data</div><div style="color:var(--muted);font-size:11.5px">Export before updates — import after</div></div>'
     +'<div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-g" onclick="exportAll()">&#8595; Export JSON</button><label class="btn btn-o" style="cursor:pointer">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="importAll(this)"></label></div></div>'
@@ -6532,9 +6549,26 @@ async function deleteUser(uid, username) {
   if (r.ok) { toast('OK','User deleted'); loadUsersList(); }
   else toast('ERR', r.error||'Failed');
 }
+// The tenant's own wording. The MODE itself is not editable here — it is what
+// they bought, and only the platform owner can change it.
+async function saveVocab(){
+  var keys=['mandate','mandate_plural','client','client_field','share','placed'];
+  var vocab={};
+  keys.forEach(function(k){ var el=document.getElementById('vc-'+k); if(el&&el.value.trim()) vocab[k]=el.value.trim(); });
+  var st=document.getElementById('vc-status'); if(st) st.textContent='Saving…';
+  var r=await req('POST','/workspace/vocab',{vocab:vocab});
+  if(r&&r.ok){
+    S.ws.vocab=r.vocab; applyWorkspace();
+    if(st){ st.textContent='Saved ✓'; setTimeout(function(){st.textContent='';},2000); }
+    toast('✅','Wording updated');
+  } else {
+    if(st) st.textContent='';
+    toast('&#9888;&#65039;',(r&&r.error)||'Could not save wording');
+  }
+}
+
 async function saveSettings(){
-  const wf=(document.querySelector('input[name="wfmode"]:checked')||{}).value||'agency';
-  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),workflow_mode:wf,smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),submission_cc_emails:v('s-submission_cc_emails'),company_website:v('s-company_website'),submission_signature:v('s-submission_signature'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template')};
+  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),submission_cc_emails:v('s-submission_cc_emails'),company_website:v('s-company_website'),submission_signature:v('s-submission_signature'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template')};
   const r=await req('POST','/settings',data);
   if(r.ok){S.settings=data;applyPipelineStages();toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }
@@ -7202,17 +7236,57 @@ async function sendEmailFromPanel(){
   }
 }
 
-function wfMode(){ return (S.settings && S.settings.workflow_mode) || (S.currentUser && S.currentUser.workflow_mode) || 'agency'; }
+// ── Workspace mode + vocabulary ────────────────────────────────────────
+// The same ATS ships to agencies and to corporate in-house teams. What the
+// tenant bought lives on their company row (set by the platform owner), and
+// the wording comes from the server so a new customer never needs a code
+// change. S.ws is filled once at boot by loadWorkspace().
+function wsMode(){ return (S.ws && S.ws.mode) || 'agency'; }
+function T(key, fallback){
+  return (S.ws && S.ws.vocab && S.ws.vocab[key]) || fallback || key;
+}
+function wfMode(){ return wsMode(); }   // kept: older code calls this name
 function wfL(){
-  var corp = wfMode()==='corporate';
+  var corp = wsMode()==='corporate';
   return {
     corp: corp,
-    mandate: corp?'Job Opening':'Mandate',
-    newMandate: corp?'New Job Opening':'New Mandate',
-    client: corp?'Department / Hiring Manager':'Client Name',
-    clientPlaceholder: corp?'e.g. Engineering Dept / Mr. Sharma':'e.g. Legrand India'
+    mandate: T('mandate','Mandate'),
+    newMandate: T('mandate_new','New Mandate'),
+    client: T('client_field','Client Name'),
+    clientPlaceholder: T('client_hint','e.g. Legrand India')
   };
 }
+
+async function loadWorkspace(){
+  try{
+    var r = await req('GET','/workspace');
+    if(r && r.ok) S.ws = r;
+  }catch(e){}
+  applyWorkspace();
+}
+
+// Relabel the static chrome and hide the modules that only make sense when
+// recruitment is being sold as a service. Hidden, never deleted — a tenant
+// switched back to agency gets everything intact.
+function applyWorkspace(){
+  var hidden = (S.ws && S.ws.hidden_modules) || [];
+  ['invoicing','bd','command','freelancers'].forEach(function(m){
+    var el = document.getElementById('sb-'+m);
+    if(el) el.style.display = (hidden.indexOf(m)>=0) ? 'none' : '';
+  });
+  var relabel = [
+    ['sb-mandates', T('mandate_plural','Mandates')],
+    ['sb-jobs',     T('mandate_plural','Mandates')],
+    ['sb-crm',      T('crm','Clients (CRM)')]
+  ];
+  relabel.forEach(function(p){
+    var el = document.getElementById(p[0]); if(!el) return;
+    var t = el.querySelector('.sb-nav-title');
+    if(t) t.textContent = p[1];
+  });
+  document.body.setAttribute('data-ws-mode', wsMode());
+}
+
 function openModal(id){
   if(id==='modal-mandate'){
     var L=wfL();
@@ -9754,6 +9828,18 @@ async function loadBilling() {
       + '<button class="btn btn-o" style="font-size:10px;padding:3px 8px" onclick="saveLimits('+b.company_id+')">Save limits</button>'
       + '<span style="font-size:9px;color:#aaa">0 = unlimited</span>'
       + '</div>';
+    // Which product this tenant bought. Changing it relabels their whole app
+    // and shows/hides the agency-only modules on their next page load.
+    var wsm = b.workspace_mode || 'agency';
+    lim += '<div style="display:flex;gap:6px;align-items:center;margin-top:7px;flex-wrap:wrap;padding-top:7px;border-top:0.5px dashed #eee">'
+      + '<span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Product</span>'
+      + '<select id="wsm-'+b.company_id+'" style="font-size:11px;padding:3px 6px;border:0.5px solid #ddd;border-radius:6px">'
+      + '<option value="agency"'+(wsm==='agency'?' selected':'')+'>Agency ATS</option>'
+      + '<option value="corporate"'+(wsm==='corporate'?' selected':'')+'>Corporate ATS</option>'
+      + '</select>'
+      + '<button class="btn btn-o" style="font-size:10px;padding:3px 8px" onclick="saveWorkspaceMode('+b.company_id+')">Apply</button>'
+      + '<span style="font-size:9px;color:#aaa">Corporate hides Invoicing, BD, Command Center &amp; Freelancers</span>'
+      + '</div>';
     h += '<div style="padding:11px 16px;border-bottom:0.5px solid #f5f5f5">'
       + '<div style="display:flex;align-items:center;gap:14px">'
       + avatarHtml(b.company, 32)
@@ -9787,14 +9873,29 @@ async function saveLimits(cid) {
   else toast('ERR', r.error || 'Failed');
 }
 
+async function saveWorkspaceMode(cid) {
+  var mode = (document.getElementById('wsm-'+cid)||{}).value || 'agency';
+  var label = mode === 'corporate' ? 'Corporate ATS' : 'Agency ATS';
+  if (!confirm('Switch this tenant to ' + label + '?\n\nTheir labels change and any custom wording they set is reset. '
+    + 'No data is deleted — hidden modules come back if you switch them again.')) { loadBilling(); return; }
+  var r = await req('POST', '/admin/companies/' + cid + '/workspace-mode', {mode: mode});
+  if (r.ok) { toast('OK', 'Now on ' + label); loadBilling(); }
+  else toast('ERR', r.error || 'Failed');
+}
+
 function showCreateAgency() {
   var ex = document.getElementById('ca-overlay'); if (ex) ex.remove();
   var ov = document.createElement('div');
   ov.id = 'ca-overlay';
   ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(10,20,40,.55);display:flex;align-items:center;justify-content:center;padding:20px';
   ov.innerHTML = '<div style="background:#fff;border-radius:14px;width:100%;max-width:420px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
-    + '<div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:4px">Create new agency</div>'
-    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:16px">Creates an isolated company + its admin login, active immediately. Set a token cap and user limit up front.</div>'
+    + '<div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:4px">Create new tenant</div>'
+    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:16px">Creates an isolated company + its admin login, active immediately. Pick which product they get, plus a token cap and user limit.</div>'
+    + '<label style="font-size:10.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">Product</label>'
+    + '<select class="inp" id="ca-mode" style="width:100%;margin:4px 0 9px;box-sizing:border-box">'
+    +   '<option value="agency">Agency ATS &mdash; recruits for client companies</option>'
+    +   '<option value="corporate">Corporate ATS &mdash; hires for its own company</option>'
+    + '</select>'
     + '<input class="inp" id="ca-company" placeholder="Agency / company name" style="width:100%;margin-bottom:9px;box-sizing:border-box">'
     + '<input class="inp" id="ca-user" placeholder="Admin username (login)" style="width:100%;margin-bottom:9px;box-sizing:border-box">'
     + '<input class="inp" id="ca-email" type="email" placeholder="Admin email (for password reset)" style="width:100%;margin-bottom:9px;box-sizing:border-box">'
@@ -9815,7 +9916,8 @@ async function submitCreateAgency() {
     email: (document.getElementById('ca-email').value || '').trim(),
     password: document.getElementById('ca-pass').value || '',
     token_cap: parseInt(document.getElementById('ca-cap').value) || 0,
-    user_limit: parseInt(document.getElementById('ca-ulim').value) || 0
+    user_limit: parseInt(document.getElementById('ca-ulim').value) || 0,
+    workspace_mode: (document.getElementById('ca-mode')||{}).value || 'agency'
   };
   if (!payload.company_name || !payload.username || payload.password.length < 4) {
     err.textContent = 'Company name, admin username and a password (min 4) are required'; return;
