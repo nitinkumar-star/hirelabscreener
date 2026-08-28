@@ -3133,14 +3133,26 @@ function renderMandateSetup(el){
       + '</div>'
       + '</div></div>';
   }
-  el.innerHTML=approvalBarHtml(m)+'<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
+  el.innerHTML=approvalBarHtml(m)+orgSummaryHtml(m)+'<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
     +'<div class="g2">'
     +field('ms-client',wfL().client,m.client||'')+field('ms-role','Role',m.role||'')
     +field('ms-loc','Location',m.location||'')+field('ms-div','Division',m.division||'')
     +numfield('ms-cmin','CTC Min (LPA)',m.ctc_min||'')+numfield('ms-cmax','CTC Max (LPA)',m.ctc_max||'')
     +numfield('ms-expmin','Experience Min (Yrs)',m.exp_min||'')+numfield('ms-expmax','Experience Max (Yrs)',m.exp_max||'')
     +(wsMode()==='corporate' ? numfield('ms-headcount','Headcount (positions)',m.headcount||1) : '')
-    +'</div><div class="fg-row"><label>Job Description</label>'
+    +'</div>'
+    // Corporate organisational block. Department and Hiring Manager are two
+    // distinct fields and two distinct records — never one combined string.
+    +(wsMode()==='corporate'
+      ? '<div id="ms-org" style="margin-top:4px"><div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#6b7280;margin:14px 0 8px">Organisation</div>'
+        +'<div class="g2">'
+          +'<div class="fg-row"><label>Department</label><select class="inp" id="ms-department"><option value="">Loading…</option></select></div>'
+          +'<div class="fg-row"><label>Hiring Manager</label><select class="inp" id="ms-hm"><option value="">Loading…</option></select></div>'
+          +'<div class="fg-row"><label>Recruiter / TA Owner</label><select class="inp" id="ms-recruiter"><option value="">Loading…</option></select></div>'
+          +'<div class="fg-row"><label>HRBP</label><select class="inp" id="ms-hrbp"><option value="">Loading…</option></select></div>'
+        +'</div></div>'
+      : '')
+    +'<div class="fg-row"><label>Job Description</label>'
     + buildJDEditor('ms-jd', m.jd||'')
     +'</div>'
     +'</div></div>'
@@ -3164,7 +3176,104 @@ function renderMandateSetup(el){
   loadClientNotes();
   loadSpocOptions();
   loadCcOptions();
+  if (wsMode()==='corporate') loadOrgOptions(m);
   if (S.currentUser && S.currentUser.is_company_admin) loadTeamForAssign(m.assigned_user_id);
+}
+
+// Read-only summary of who owns this requisition. Rendered from ids resolved
+// server-side, so a name only ever appears if the record belongs to this tenant.
+function orgSummaryHtml(m){
+  if(wsMode()!=='corporate' || !m) return '';
+  var row=function(label,val,muted){
+    return '<div style="display:flex;gap:10px;padding:5px 0;font-size:12.5px">'
+      +'<span style="min-width:150px;color:#6b7280">'+esc(label)+'</span>'
+      +'<span style="color:'+(val?'var(--ink)':'#bbb')+(muted?';font-style:italic':'')+'">'
+      +esc(val||'Not set')+'</span></div>';
+  };
+  return '<div id="org-summary">'+orgSummaryInner(m)+'</div>';
+}
+
+function orgSummaryInner(m){
+  if(wsMode()!=='corporate' || !m) return '';
+  var row=function(label,val,muted){
+    return '<div style="display:flex;gap:10px;padding:5px 0;font-size:12.5px">'
+      +'<span style="min-width:150px;color:#6b7280">'+esc(label)+'</span>'
+      +'<span style="color:'+(val?'var(--ink)':'#bbb')+(muted?';font-style:italic':'')+'">'
+      +esc(val||'Not set')+(muted?' (inactive)':'')+'</span></div>';
+  };
+  var d=window._orgResolved||{};
+  return '<div class="card" style="max-width:580px;margin-bottom:14px"><div class="card-head">'
+    +'<span style="font-weight:500">'+esc(T('mandate','Requisition'))+'</span></div>'
+    +'<div class="card-body" style="padding-top:10px">'
+    + row('Job Title', m.role)
+    + row('Department', d.department, d.department_inactive)
+    + row('Hiring Manager', d.hiring_manager)
+    + row('Recruiter / TA Owner', d.recruiter)
+    + row('HRBP', d.hrbp)
+    + row('Location', m.location)
+    +'</div></div>';
+}
+
+// ── Corporate organisation selectors ───────────────────────────────────
+// Department, Hiring Manager, Recruiter/TA Owner and HRBP are four separate
+// relationships. Every list is tenant-scoped server-side; the dropdowns are
+// convenience, not the security boundary — the API re-validates on save.
+var _orgResolved={};
+async function loadOrgOptions(m){
+  _orgResolved={};
+  var opt = function(v, label, sel){
+    return '<option value="'+v+'"'+(String(sel||'')===String(v)?' selected':'')+'>'+esc(label)+'</option>';
+  };
+  var fill = function(id, html){ var e=document.getElementById(id); if(e) e.innerHTML=html; };
+
+  try{
+    var dr = await req('GET','/departments');
+    var list = (dr && dr.departments) || [];
+    var cur = m.department_id;
+    // A requisition already linked to a since-deactivated department keeps
+    // showing it, so saving the form does not silently clear the link.
+    var hasCur = list.some(function(x){ return String(x.id)===String(cur); });
+    if(cur && !hasCur){
+      var all = await req('GET','/departments?all=1');
+      var found = ((all && all.departments)||[]).find(function(x){ return String(x.id)===String(cur); });
+      if(found) list = list.concat([Object.assign({}, found, {name: found.name+' (inactive)'})]);
+    }
+    fill('ms-department', opt('','— none —',cur)
+      + list.map(function(x){ return opt(x.id, x.name, cur); }).join(''));
+    var dsel=list.find(function(x){ return String(x.id)===String(cur); });
+    _orgResolved.department = dsel ? dsel.name.replace(' (inactive)','') : '';
+    _orgResolved.department_inactive = !!(dsel && dsel.name.indexOf('(inactive)')>=0);
+  }catch(e){ fill('ms-department', '<option value="">Could not load</option>'); }
+
+  try{
+    var hr = await req('GET','/hiring-managers');
+    var people=(hr && hr.people)||[];
+    fill('ms-hm', opt('','— none —',m.hiring_manager_id)
+      + people.map(function(p){
+          return opt(p.id, p.name + (p.designation?(' — '+p.designation):''), m.hiring_manager_id);
+        }).join(''));
+    var hsel=people.find(function(p){ return String(p.id)===String(m.hiring_manager_id); });
+    _orgResolved.hiring_manager = hsel ? hsel.name : '';
+  }catch(e){ fill('ms-hm', '<option value="">Could not load</option>'); }
+
+  try{
+    var ur = await req('GET','/company-users');
+    var users = (ur && ur.users) || [];
+    var mk = function(sel){
+      return opt('','— none —',sel) + users.map(function(u){
+        return opt(u.id, u.display_name || u.username, sel);
+      }).join('');
+    };
+    fill('ms-recruiter', mk(m.assigned_user_id));
+    fill('ms-hrbp', mk(m.hrbp_user_id));
+    var byId=function(id){ var u=users.find(function(x){return String(x.id)===String(id);});
+                           return u?(u.display_name||u.username):''; };
+    _orgResolved.recruiter=byId(m.assigned_user_id);
+    _orgResolved.hrbp=byId(m.hrbp_user_id);
+  }catch(e){}
+  // Names arrive after the selectors load, so refresh the summary in place.
+  var box=document.getElementById('org-summary');
+  if(box) box.innerHTML=orgSummaryInner(m);
 }
 
 async function loadSpocOptions(){
@@ -3578,7 +3687,17 @@ async function saveMandateSetup(){
   const m=S.activeMandate;
   const emin=parseFloat(v('ms-expmin'))||0, emax=parseFloat(v('ms-expmax'))||0;
   if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
-  await req('PUT','/mandates/'+m.id,{client:v('ms-client'),role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status});
+  var payload={client:v('ms-client'),role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status};
+  // Only sent in Corporate mode, so an Agency save can never null these out.
+  if(wsMode()==='corporate'){
+    ['department_id:ms-department','hiring_manager_id:ms-hm','hrbp_user_id:ms-hrbp','assigned_user_id:ms-recruiter']
+      .forEach(function(pair){
+        var parts=pair.split(':'), el=document.getElementById(parts[1]);
+        if(el) payload[parts[0]]=el.value||'';
+      });
+  }
+  var sr=await req('PUT','/mandates/'+m.id,payload);
+  if(sr&&sr.error){ toast('&#9888;&#65039;',sr.error); return; }
   S.activeMandate=await req('GET','/mandates/'+m.id);
   S.mandates=S.mandates.map(x=>x.id===m.id?S.activeMandate:x);
   renderSidebar();updateTopbar();toast('✅','Mandate saved');
@@ -6015,6 +6134,22 @@ function renderSettings(){
     +'<span id="vc-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
     +'</div></div>'
 
+    // ── Departments (Corporate only) ──
+    +(wsMode()==='corporate'
+      ? '<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Departments</span></div><div class="card-body">'
+        +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Departments your '
+        + esc(String(T('mandate_plural','requisitions')).toLowerCase()) + ' belong to. '
+        +'Deactivating one keeps existing '+esc(String(T('mandate_plural','requisitions')).toLowerCase())
+        +' intact \u2014 it just stops appearing in the picker.</div>'
+        +'<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">'
+          +'<input class="inp" id="dept-new-name" placeholder="Department name" style="flex:1;min-width:160px">'
+          +'<input class="inp" id="dept-new-code" placeholder="Code (optional)" style="width:130px">'
+          +'<button class="btn btn-g" onclick="createDepartment()">Add</button>'
+        +'</div>'
+        +'<div id="dept-list"><div style="font-size:12px;color:var(--muted)">Loading\u2026</div></div>'
+        +'</div></div>'
+      : '')
+
     // ── Public careers page ──
     +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Careers Page</span></div><div class="card-body">'
     +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">A public page listing your open '
@@ -6084,6 +6219,7 @@ function renderSettings(){
   loadMyProfile();
   renderWaSettings();
   loadEmailTemplates();
+  if (wsMode()==='corporate') loadDepartments();
 }
 
 async function loadMyProfile(){
@@ -6721,6 +6857,61 @@ async function saveVocab(){
     if(st) st.textContent='';
     toast('&#9888;&#65039;',(r&&r.error)||'Could not save wording');
   }
+}
+
+// ── Department management (Corporate) ──────────────────────────────────
+// Deactivate rather than delete: a requisition already linked to a department
+// must keep displaying it, so the organisational history stays readable.
+async function loadDepartments(){
+  var box=document.getElementById('dept-list'); if(!box) return;
+  var r;
+  try{ r=await req('GET','/departments?all=1'); }catch(e){ r=null; }
+  var list=(r&&r.departments)||[];
+  if(!list.length){
+    box.innerHTML='<div style="font-size:12px;color:#aaa;padding:8px 0">No departments yet.</div>';
+    return;
+  }
+  box.innerHTML=list.map(function(d){
+    var off=!d.is_active;
+    return '<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:0.5px solid #f0f0f0">'
+      +'<span style="flex:1;font-size:12.5px;color:'+(off?'#aaa':'var(--ink)')+'">'+esc(d.name)
+      +(d.code?'<span style="color:#999;font-size:11px"> \u00b7 '+esc(d.code)+'</span>':'')
+      +(off?'<span style="font-size:10px;background:#F1F0EC;color:#888;border-radius:20px;padding:1px 8px;margin-left:7px">inactive</span>':'')
+      +'</span>'
+      +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 9px" onclick="renameDepartment('+d.id+',\''+esc(String(d.name).replace(/'/g,""))+'\')">Rename</button>'
+      +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 9px" onclick="setDeptActive('+d.id+','+(off?1:0)+')">'
+      +(off?'Activate':'Deactivate')+'</button>'
+      +'</div>';
+  }).join('');
+}
+
+async function createDepartment(){
+  var name=v('dept-new-name').trim();
+  if(!name){ toast('&#9888;&#65039;','Department name is required'); return; }
+  var r=await req('POST','/departments',{name:name, code:v('dept-new-code')});
+  if(r&&r.ok){
+    document.getElementById('dept-new-name').value='';
+    document.getElementById('dept-new-code').value='';
+    toast('\u2705','Department added'); loadDepartments();
+  } else toast('&#9888;&#65039;',(r&&r.error)||'Could not add');
+}
+
+async function renameDepartment(id, cur){
+  var name=prompt('Department name:', cur||''); if(name===null) return;
+  if(!name.trim()){ toast('&#9888;&#65039;','Name cannot be blank'); return; }
+  var r=await req('PUT','/departments/'+id,{name:name.trim()});
+  if(r&&r.ok){ toast('\u2705','Renamed'); loadDepartments(); }
+  else toast('&#9888;&#65039;',(r&&r.error)||'Could not rename');
+}
+
+async function setDeptActive(id, active){
+  var r=await req('POST','/departments/'+id+'/status',{is_active:!!active});
+  if(r&&r.ok){
+    toast('\u2705', active?'Activated':'Deactivated');
+    if(!active && r.requisitions_linked)
+      toast('\u2139\ufe0f', r.requisitions_linked+' existing '+String(T('mandate_plural','requisitions')).toLowerCase()+' keep this department');
+    loadDepartments();
+  } else toast('&#9888;&#65039;',(r&&r.error)||'Could not update');
 }
 
 function careersUrl(){

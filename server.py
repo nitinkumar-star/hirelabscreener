@@ -2971,6 +2971,64 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # ══════════════════════════════════════════════════════════════════════
+    #  CORPORATE ORGANISATIONAL HIERARCHY
+    #
+    #  Company/Tenant -> Department -> Requisition -> {Hiring Manager,
+    #  Recruiter/TA Owner, HRBP}. Shared tables, not a parallel Corporate
+    #  engine: `mandates` stays the requisition, `crm_contacts` stays the
+    #  person. Every column below is nullable so Agency rows are untouched.
+    #
+    #  Tenant ownership on `departments` is an explicit NOT NULL company_id —
+    #  never derived through a parent and never set by a trigger.
+    # ══════════════════════════════════════════════════════════════════════
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS departments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,              -- tenant, explicit
+            name TEXT NOT NULL,
+            name_key TEXT DEFAULT '',                 -- normalised name for dedup
+            code TEXT DEFAULT '',
+            business_unit TEXT DEFAULT '',
+            head_user_id INTEGER DEFAULT 0,           -- FK -> users.id (nullable)
+            is_active INTEGER DEFAULT 1,              -- soft disable, never deleted
+            created_by INTEGER DEFAULT 0,
+            updated_by INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT ''
+        )''')
+        # Tenant-scoped uniqueness: "Engineering" may exist once per company,
+        # and in every company. Deliberately NOT globally unique.
+        c.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_departments_unique '
+                  'ON departments(company_id, name_key)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_departments_company '
+                  'ON departments(company_id, is_active)')
+    except sqlite3.OperationalError:
+        pass
+
+    for col, typ in [('department_id', 'INTEGER'),      # -> departments.id
+                     ('hiring_manager_id', 'INTEGER'),  # -> crm_contacts.id
+                     ('hrbp_user_id', 'INTEGER')]:      # -> users.id
+        try:
+            c.execute(f'ALTER TABLE mandates ADD COLUMN {col} {typ} DEFAULT NULL')
+        except sqlite3.OperationalError:
+            pass
+
+    # A hiring manager who later gets an ATS login stays the SAME person record
+    # rather than splitting into a contact and a user.
+    try:
+        c.execute('ALTER TABLE crm_contacts ADD COLUMN user_id INTEGER DEFAULT NULL')
+    except sqlite3.OperationalError:
+        pass
+
+    # Marks the one CRM organisation that represents the tenant itself, so
+    # Corporate people can hang off crm_contacts (client_id is NOT NULL)
+    # without making that column nullable on a live Agency table.
+    try:
+        c.execute('ALTER TABLE crm_clients ADD COLUMN is_internal INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+
     # Which mandate each user last pushed to, so the extension can float the
     # ones they actually use to the top of a long dropdown.
     try:
@@ -10251,13 +10309,20 @@ def create_mandate():
         _headcount = max(1, int(d.get('headcount') or 1))
     except (TypeError, ValueError):
         _headcount = 1
-    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,exp_min,exp_max,experience,jd,status,created_at,owner_id,assigned_user_id,crm_client_id,approval_status,headcount,requested_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    # Every organisational link must belong to the SAME tenant as this
+    # requisition. Validated server-side; the UI is not a security boundary.
+    _ok, _err = _validate_org_links(conn, d, effective_company_id())
+    if not _ok:
+        conn.close(); return jsonify({'error': _err}), 400
+    _nid = lambda k: (int(d[k]) if str(d.get(k) or '').strip() not in ('', '0') else None)
+    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,exp_min,exp_max,experience,jd,status,created_at,owner_id,assigned_user_id,crm_client_id,approval_status,headcount,requested_by,department_id,hiring_manager_id,hrbp_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
               (d['client'], d['role'], d.get('location',''), d.get('division',''),
                float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)),
                float(d.get('exp_min', 0) or 0), float(d.get('exp_max', 0) or 0),
                d.get('experience', ''),
                d.get('jd',''), 'active', ts(), effective_company_id(), real_user_id(), crm_client_id,
-               _approval, _headcount, real_user_id() or 0))
+               _approval, _headcount, real_user_id() or 0,
+               _nid('department_id'), _nid('hiring_manager_id'), _nid('hrbp_user_id')))
     mid = c.lastrowid; conn.commit(); conn.close()
     log_activity('create_mandate', d['role'] + ' @ ' + d['client'])
     return jsonify({'ok': True, 'id': mid, 'crm_client_id': crm_client_id})
@@ -10284,7 +10349,7 @@ def _match_crm_client_by_name(conn, company_id, client_name):
     if not target:
         return 0
     rows = conn.execute(
-        'SELECT id, name FROM crm_clients WHERE company_id=? AND is_active=1',
+        'SELECT id, name FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0',
         (company_id,)).fetchall()
     for r in rows:
         if _norm_client_name(r['name']) == target:
@@ -10304,7 +10369,7 @@ def link_mandate_client(mid):
         conn.close(); return jsonify({'error': 'Mandate not found'}), 404
     # Validate the client belongs to this tenant (if non-zero)
     if crm_client_id:
-        cl = conn.execute('SELECT id FROM crm_clients WHERE id=? AND company_id=? AND is_active=1',
+        cl = conn.execute('SELECT id FROM crm_clients WHERE id=? AND company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0',
                           (crm_client_id, effective_company_id())).fetchone()
         if not cl:
             conn.close(); return jsonify({'error': 'CRM client not found'}), 404
@@ -10564,7 +10629,7 @@ def _crm_resolve_client_id(conn, company_id, entity_type, entity_id):
             (entity_id, company_id)).fetchone()
         return row['client_id'] if row else 0
     row = conn.execute(
-        'SELECT id FROM crm_clients WHERE id=? AND company_id=? AND is_active=1',
+        'SELECT id FROM crm_clients WHERE id=? AND company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0',
         (entity_id, company_id)).fetchone()
     return row['id'] if row else 0
 
@@ -10818,6 +10883,301 @@ def mandate_approval(mid):
     return jsonify({'ok': True, 'approval_status': new_status})
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  CORPORATE ORGANISATION — departments, hiring managers, HRBP
+#
+#  Tenant isolation here is explicit and repeated deliberately: every read
+#  filters on company_id, and every relationship assignment re-checks that the
+#  related row belongs to the SAME tenant as the requisition. The foreign key
+#  alone is not a tenant boundary — SQLite will happily point a Company A
+#  requisition at a Company B department.
+# ══════════════════════════════════════════════════════════════════════════
+
+def _dept_key(name):
+    """Normalised department name for tenant-scoped duplicate detection."""
+    return re.sub(r'[^a-z0-9]+', ' ', (name or '').lower()).strip()
+
+
+def _internal_client_id(conn, company_id):
+    """The one CRM organisation representing the tenant itself.
+
+    Corporate hiring managers are people inside the tenant, but crm_contacts
+    requires a client_id. Rather than make that column nullable on a live
+    Agency table, each Corporate tenant gets a single is_internal=1 row.
+    It is excluded from every client-facing list — see _crm_external_filter.
+    """
+    row = conn.execute('SELECT id FROM crm_clients WHERE company_id=? AND is_internal=1 '
+                       'ORDER BY id LIMIT 1', (company_id,)).fetchone()
+    if row:
+        return row['id']
+    comp = conn.execute('SELECT name FROM companies WHERE id=?', (company_id,)).fetchone()
+    name = (comp['name'] if comp else '') or 'Internal'
+    cur = conn.cursor()
+    cur.execute("INSERT INTO crm_clients (company_id,name,status,name_key,is_active,"
+                "is_internal,created_at,updated_at) VALUES (?,?,'active',?,1,1,?,?)",
+                (company_id, name, '__internal__', ts(), ts()))
+    return cur.lastrowid
+
+
+def _validate_department(conn, dept_id, company_id, allow_inactive=False):
+    """(ok, error). Department must exist, belong to this tenant, and be active."""
+    if dept_id in (None, '', 0, '0'):
+        return True, None                      # clearing the field is allowed
+    row = conn.execute('SELECT id, company_id, is_active FROM departments WHERE id=?',
+                       (int(dept_id),)).fetchone()
+    if not row or row['company_id'] != company_id:
+        return False, 'Department not found'   # same message for both: no probing
+    if not allow_inactive and not row['is_active']:
+        return False, 'That department is inactive'
+    return True, None
+
+
+def _validate_hiring_manager(conn, contact_id, company_id):
+    """(ok, error). Must be an active internal person of THIS tenant.
+
+    A contact belonging to an external Agency client is rejected: a client's
+    employee is not a hiring manager for the tenant's own requisition.
+    """
+    if contact_id in (None, '', 0, '0'):
+        return True, None
+    row = conn.execute(
+        '''SELECT ct.id, ct.company_id, ct.is_active, COALESCE(cl.is_internal,0) AS internal
+           FROM crm_contacts ct LEFT JOIN crm_clients cl ON cl.id = ct.client_id
+           WHERE ct.id=?''', (int(contact_id),)).fetchone()
+    if not row or row['company_id'] != company_id:
+        return False, 'Hiring manager not found'
+    if not row['is_active']:
+        return False, 'That person is inactive'
+    if not row['internal']:
+        return False, 'That contact belongs to an external client, not your organisation'
+    return True, None
+
+
+def _validate_company_user(conn, user_id, company_id, label='User'):
+    """(ok, error). Used for both HRBP and recruiter/TA owner assignment."""
+    if user_id in (None, '', 0, '0'):
+        return True, None
+    row = conn.execute('SELECT id, company_id, status FROM users WHERE id=?',
+                       (int(user_id),)).fetchone()
+    if not row or row['company_id'] != company_id:
+        return False, f'{label} not found'
+    if (row['status'] or 'approved') != 'approved':
+        return False, f'{label} is not an active user'
+    return True, None
+
+
+def _validate_org_links(conn, d, company_id):
+    """Validate every organisational relationship on a requisition payload.
+
+    Returns (ok, error). Each related row must belong to the same tenant as the
+    requisition — checked explicitly, not left to the foreign key.
+    """
+    for field, fn, args in (
+            ('department_id', _validate_department, (company_id,)),
+            ('hiring_manager_id', _validate_hiring_manager, (company_id,)),
+            ('hrbp_user_id', _validate_company_user, (company_id, 'HRBP')),
+            ('assigned_user_id', _validate_company_user, (company_id, 'Recruiter')),
+    ):
+        if field not in d:
+            continue
+        ok, err = fn(conn, d.get(field), *args)
+        if not ok:
+            return False, err
+    return True, None
+
+
+@app.route('/api/departments', methods=['GET'])
+@login_required
+def list_departments():
+    """Departments for the current tenant. Inactive ones only on request."""
+    conn = get_db()
+    try:
+        include_inactive = request.args.get('all') == '1'
+        sql = 'SELECT * FROM departments WHERE company_id=?'
+        if not include_inactive:
+            sql += ' AND is_active=1'
+        rows = conn.execute(sql + ' ORDER BY name', (effective_company_id(),)).fetchall()
+        return jsonify({'ok': True, 'departments': [dict(r) for r in rows]})
+    finally:
+        conn.close()
+
+
+@app.route('/api/departments', methods=['POST'])
+@login_required
+def create_department():
+    if not is_company_admin():
+        return jsonify({'error': 'Only a company admin can manage departments'}), 403
+    d = request.json or {}
+    name = str(d.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'Department name is required'}), 400
+    key = _dept_key(name)
+    if not key:
+        return jsonify({'error': 'Department name is required'}), 400
+
+    cid = effective_company_id()
+    conn = get_db()
+    try:
+        # Tenant-scoped duplicate check. The same name in another company is fine.
+        dup = conn.execute('SELECT id FROM departments WHERE company_id=? AND name_key=?',
+                           (cid, key)).fetchone()
+        if dup:
+            return jsonify({'error': 'A department with that name already exists'}), 409
+        ok, err = _validate_company_user(conn, d.get('head_user_id'), cid, 'Department head')
+        if not ok:
+            return jsonify({'error': err}), 400
+        cur = conn.cursor()
+        cur.execute('INSERT INTO departments (company_id,name,name_key,code,business_unit,'
+                    'head_user_id,is_active,created_by,created_at,updated_at) '
+                    'VALUES (?,?,?,?,?,?,1,?,?,?)',
+                    (cid, name, key, str(d.get('code') or '').strip()[:40],
+                     str(d.get('business_unit') or '').strip()[:80],
+                     int(d.get('head_user_id') or 0), real_user_id() or 0, ts(), ts()))
+        new_id = cur.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+    log_activity('create_department', name, entity_type='department', entity_id=new_id)
+    return jsonify({'ok': True, 'id': new_id})
+
+
+@app.route('/api/departments/<int:did>', methods=['PUT'])
+@login_required
+def update_department(did):
+    if not is_company_admin():
+        return jsonify({'error': 'Only a company admin can manage departments'}), 403
+    d = request.json or {}
+    cid = effective_company_id()
+    conn = get_db()
+    try:
+        row = conn.execute('SELECT id, company_id FROM departments WHERE id=?', (did,)).fetchone()
+        if not row or row['company_id'] != cid:
+            return jsonify({'error': 'Department not found'}), 404
+
+        sets, vals = [], []
+        if 'name' in d:
+            name = str(d.get('name') or '').strip()
+            key = _dept_key(name)
+            if not key:
+                return jsonify({'error': 'Department name cannot be blank'}), 400
+            dup = conn.execute('SELECT id FROM departments WHERE company_id=? AND name_key=? '
+                               'AND id!=?', (cid, key, did)).fetchone()
+            if dup:
+                return jsonify({'error': 'A department with that name already exists'}), 409
+            sets += ['name=?', 'name_key=?']; vals += [name, key]
+        for f, cap in (('code', 40), ('business_unit', 80)):
+            if f in d:
+                sets.append(f + '=?'); vals.append(str(d.get(f) or '').strip()[:cap])
+        if 'head_user_id' in d:
+            ok, err = _validate_company_user(conn, d.get('head_user_id'), cid, 'Department head')
+            if not ok:
+                return jsonify({'error': err}), 400
+            sets.append('head_user_id=?'); vals.append(int(d.get('head_user_id') or 0))
+        if not sets:
+            return jsonify({'ok': True})
+        sets += ['updated_by=?', 'updated_at=?']; vals += [real_user_id() or 0, ts()]
+        conn.execute('UPDATE departments SET {} WHERE id=?'.format(','.join(sets)),
+                     tuple(vals) + (did,))
+        conn.commit()
+    finally:
+        conn.close()
+    log_activity('update_department', str(did), entity_type='department', entity_id=did)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/departments/<int:did>/status', methods=['POST'])
+@login_required
+def set_department_status(did):
+    """Activate or deactivate. Never deletes — requisitions already linked to a
+    deactivated department stay intact and keep displaying it."""
+    if not is_company_admin():
+        return jsonify({'error': 'Only a company admin can manage departments'}), 403
+    active = 1 if (request.json or {}).get('is_active') else 0
+    cid = effective_company_id()
+    conn = get_db()
+    try:
+        row = conn.execute('SELECT id, company_id, name FROM departments WHERE id=?', (did,)).fetchone()
+        if not row or row['company_id'] != cid:
+            return jsonify({'error': 'Department not found'}), 404
+        conn.execute('UPDATE departments SET is_active=?, updated_by=?, updated_at=? WHERE id=?',
+                     (active, real_user_id() or 0, ts(), did))
+        in_use = conn.execute('SELECT COUNT(*) n FROM mandates WHERE department_id=? AND owner_id=?',
+                              (did, cid)).fetchone()['n']
+        conn.commit()
+    finally:
+        conn.close()
+    log_activity('department_' + ('activate' if active else 'deactivate'), row['name'],
+                 entity_type='department', entity_id=did)
+    return jsonify({'ok': True, 'is_active': active, 'requisitions_linked': in_use})
+
+
+@app.route('/api/hiring-managers', methods=['GET'])
+@login_required
+def list_hiring_managers():
+    """People inside this tenant who can be named as hiring manager."""
+    cid = effective_company_id()
+    conn = get_db()
+    try:
+        internal_id = _internal_client_id(conn, cid)
+        conn.commit()
+        rows = conn.execute(
+            'SELECT id, name, designation, email, phone, department, user_id '
+            'FROM crm_contacts WHERE company_id=? AND client_id=? AND is_active=1 '
+            'ORDER BY name', (cid, internal_id)).fetchall()
+        return jsonify({'ok': True, 'internal_client_id': internal_id,
+                        'people': [dict(r) for r in rows]})
+    finally:
+        conn.close()
+
+
+@app.route('/api/hiring-managers', methods=['POST'])
+@login_required
+def create_hiring_manager():
+    """Add an internal person. Reuses crm_contacts — no separate person model."""
+    if not is_company_admin():
+        return jsonify({'error': 'Only a company admin can manage hiring managers'}), 403
+    d = request.json or {}
+    name = str(d.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'Name is required'}), 400
+    cid = effective_company_id()
+    conn = get_db()
+    try:
+        internal_id = _internal_client_id(conn, cid)
+        ok, err = _validate_company_user(conn, d.get('user_id'), cid, 'Linked user')
+        if not ok:
+            return jsonify({'error': err}), 400
+        cur = conn.cursor()
+        cur.execute('INSERT INTO crm_contacts (company_id,client_id,name,designation,email,phone,'
+                    'department,user_id,is_active,created_by,created_at,updated_at) '
+                    'VALUES (?,?,?,?,?,?,?,?,1,?,?,?)',
+                    (cid, internal_id, name, str(d.get('designation') or '').strip(),
+                     str(d.get('email') or '').strip(), str(d.get('phone') or '').strip(),
+                     str(d.get('department') or '').strip(),
+                     int(d.get('user_id') or 0) or None, real_user_id() or 0, ts(), ts()))
+        new_id = cur.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+    log_activity('create_hiring_manager', name, entity_type='contact', entity_id=new_id)
+    return jsonify({'ok': True, 'id': new_id})
+
+
+@app.route('/api/company-users', methods=['GET'])
+@login_required
+def list_company_users():
+    """Approved users of this tenant — for HRBP and recruiter selectors."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, display_name, username, role FROM users "
+            "WHERE company_id=? AND status='approved' ORDER BY display_name, username",
+            (effective_company_id(),)).fetchall()
+        return jsonify({'ok': True, 'users': [dict(r) for r in rows]})
+    finally:
+        conn.close()
+
+
 @app.route('/api/mandates/<int:mid>/duplicate', methods=['POST'])
 @login_required
 def duplicate_mandate(mid):
@@ -10879,12 +11239,24 @@ def update_mandate(mid):
     own = conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
     if not own or own['owner_id'] != effective_user_id():
         conn.close(); return jsonify({'error': 'Not found'}), 404
+    # Checked before any write, so a rejected cross-tenant link leaves the
+    # requisition completely unmodified.
+    _ok, _err = _validate_org_links(conn, d, effective_company_id())
+    if not _ok:
+        conn.close(); return jsonify({'error': _err}), 400
     conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,exp_min=?,exp_max=?,experience=?,jd=?,status=?,headcount=? WHERE id=?',
                  (d.get('client',''), d.get('role',''), d.get('location',''), d.get('division',''),
                   float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)),
                   float(d.get('exp_min', 0) or 0), float(d.get('exp_max', 0) or 0),
                   d.get('experience',''), d.get('jd',''), d.get('status','active'),
                   max(1, int(d.get('headcount') or 1)), mid))
+    # Organisational links are updated only when the caller sends them, so an
+    # Agency save can never null them out. Same-tenant validated above.
+    for _f in ('department_id', 'hiring_manager_id', 'hrbp_user_id', 'assigned_user_id'):
+        if _f in d:
+            _v = str(d.get(_f) or '').strip()
+            conn.execute(f'UPDATE mandates SET {_f}=? WHERE id=?',
+                         (int(_v) if _v not in ('', '0') else None, mid))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
@@ -13298,7 +13670,7 @@ def _work_status_brief(conn, oid):
             per_month = gap / months_left if months_left else gap
             # active clients + open mandates for growth context
             try:
-                nclients = conn.execute("SELECT COUNT(*) n FROM crm_clients WHERE company_id=? AND is_active=1", (oid,)).fetchone()['n']
+                nclients = conn.execute("SELECT COUNT(*) n FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0", (oid,)).fetchone()['n']
             except Exception:
                 nclients = 0
             lines.append(f"TARGET & GAP (think strategically about this every day): this-year target {_r(yt)}, "
@@ -14004,7 +14376,7 @@ def crm_clients_billing():
             "  CASE WHEN COALESCE(bill_address,'')!='' THEN bill_address ELSE COALESCE(address,'') END AS bill_address, "
             "  CASE WHEN COALESCE(bill_state,'')!='' THEN bill_state ELSE COALESCE(state,'') END AS bill_state, "
             "  COALESCE(bill_state_code,'') AS bill_state_code "
-            "FROM crm_clients WHERE company_id=? AND is_active=1 ORDER BY name",
+            "FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0 ORDER BY name",
             (effective_company_id(),)).fetchall()
     except Exception:
         conn.close()
