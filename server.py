@@ -2923,6 +2923,32 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Structured interview feedback, one row per panelist.
+    #
+    # `interviews.interviewer` is a single free-text name and `result` a single
+    # verdict, which fits one recruiter phoning one manager. A corporate panel
+    # is 2-4 people who each rate independently, and the hiring decision is the
+    # consolidated view of those ratings. Kept as its own table so an interview
+    # can gather feedback over days without the row being rewritten.
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS interview_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            interview_id INTEGER NOT NULL,
+            candidate_id INTEGER NOT NULL,
+            owner_id INTEGER DEFAULT 0,
+            panelist TEXT DEFAULT '',
+            rating INTEGER DEFAULT 0,
+            recommendation TEXT DEFAULT '',
+            strengths TEXT DEFAULT '',
+            concerns TEXT DEFAULT '',
+            created_by INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT ''
+        )''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_ifb_cand ON interview_feedback(candidate_id)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_ifb_iv ON interview_feedback(interview_id)')
+    except sqlite3.OperationalError:
+        pass
+
     # Which mandate each user last pushed to, so the extension can float the
     # ones they actually use to the top of a long dropdown.
     try:
@@ -14670,11 +14696,99 @@ def interview_result(iid):
     return jsonify({'ok': True})
 
 
+RECOMMENDATIONS = ('strong_yes', 'yes', 'hold', 'no')
+
+
+@app.route('/api/interviews/<int:iid>/feedback', methods=['POST'])
+@login_required
+def add_interview_feedback(iid):
+    """Record one panelist's verdict on an interview round."""
+    d = request.json or {}
+    conn = get_db()
+    iv = conn.execute('SELECT id, candidate_id, round_name, owner_id FROM interviews WHERE id=?',
+                      (iid,)).fetchone()
+    if not iv or (iv['owner_id'] and iv['owner_id'] != effective_company_id()):
+        conn.close(); return jsonify({'error': 'Interview not found'}), 404
+
+    panelist = str(d.get('panelist') or '').strip()[:120]
+    rec = (d.get('recommendation') or '').strip().lower()
+    if not panelist:
+        conn.close(); return jsonify({'error': 'Panelist name is required'}), 400
+    if rec not in RECOMMENDATIONS:
+        conn.close(); return jsonify({'error': 'Pick a recommendation'}), 400
+    try:
+        rating = max(0, min(5, int(d.get('rating') or 0)))
+    except (TypeError, ValueError):
+        rating = 0
+
+    conn.execute('INSERT INTO interview_feedback (interview_id,candidate_id,owner_id,panelist,rating,'
+                 'recommendation,strengths,concerns,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                 (iid, iv['candidate_id'], effective_company_id(), panelist, rating, rec,
+                  str(d.get('strengths') or '').strip()[:1500],
+                  str(d.get('concerns') or '').strip()[:1500],
+                  real_user_id() or 0, ts()))
+    conn.commit(); conn.close()
+    log_candidate_event(iv['candidate_id'], 'note',
+                        f'{iv["round_name"]} feedback from {panelist}: {rec.replace("_", " ")}')
+    return jsonify({'ok': True})
+
+
+@app.route('/api/interviews/feedback/<int:fid>', methods=['DELETE'])
+@login_required
+def delete_interview_feedback(fid):
+    conn = get_db()
+    row = conn.execute('SELECT owner_id FROM interview_feedback WHERE id=?', (fid,)).fetchone()
+    if not row or row['owner_id'] != effective_company_id():
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    conn.execute('DELETE FROM interview_feedback WHERE id=?', (fid,))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/candidates/<int:cid>/feedback', methods=['GET'])
+@login_required
+def candidate_feedback(cid):
+    """All panel feedback for a candidate, plus the consolidated picture.
+
+    The summary is deliberately arithmetic, not a verdict: it reports what the
+    panel said and flags disagreement. Deciding is the hiring manager's job,
+    and a split panel is a signal worth seeing rather than averaging away.
+    """
+    conn = get_db()
+    rows = conn.execute(
+        '''SELECT f.*, i.round_name, i.scheduled_at
+           FROM interview_feedback f LEFT JOIN interviews i ON i.id=f.interview_id
+           WHERE f.candidate_id=? AND f.owner_id=? ORDER BY f.created_at ASC''',
+        (cid, effective_company_id())).fetchall()
+    conn.close()
+    fb = [dict(r) for r in rows]
+    counts = {k: 0 for k in RECOMMENDATIONS}
+    ratings = []
+    for f in fb:
+        if f['recommendation'] in counts:
+            counts[f['recommendation']] += 1
+        if f['rating']:
+            ratings.append(f['rating'])
+    positive = counts['strong_yes'] + counts['yes']
+    negative = counts['no']
+    return jsonify({'ok': True, 'feedback': fb, 'summary': {
+        'count': len(fb),
+        'avg_rating': round(sum(ratings) / len(ratings), 1) if ratings else None,
+        'counts': counts,
+        'split': bool(positive and negative),   # panel disagrees — worth surfacing
+    }})
+
+
 @app.route('/api/interviews/<int:iid>', methods=['DELETE'])
 @login_required
 def delete_interview(iid):
     conn = get_db()
     conn.execute('DELETE FROM interviews WHERE id=?', (iid,))
+    # Feedback belongs to the round; leaving it behind would orphan it.
+    try:
+        conn.execute('DELETE FROM interview_feedback WHERE interview_id=?', (iid,))
+    except sqlite3.OperationalError:
+        pass
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 

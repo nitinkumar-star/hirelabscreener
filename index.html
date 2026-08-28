@@ -5706,12 +5706,107 @@ async function cpLoadInterviews(cid){
   try{ r=await req('GET','/candidates/'+cid+'/interviews'); }catch(e){ box.innerHTML='<div style="color:#B42318;font-size:12px;padding:12px">Could not load interviews: '+esc(String(e))+'</div>'; return; }
   var ivs=(r&&r.interviews)||[];
   if(!ivs.length){ box.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px">No interviews scheduled yet. Click <b>Schedule interview</b> above — you can send the invite by WhatsApp or email.</div>'; return; }
-  box.innerHTML=ivs.map(function(iv){
+  var fbAll={}, summary=null;
+  try{
+    var fr=await req('GET','/candidates/'+cid+'/feedback');
+    if(fr&&fr.ok){ summary=fr.summary; (fr.feedback||[]).forEach(function(f){ (fbAll[f.interview_id]=fbAll[f.interview_id]||[]).push(f); }); }
+  }catch(e){}
+
+  box.innerHTML=cpPanelSummary(summary)+ivs.map(function(iv){
     var dt=''; try{dt=new Date(iv.scheduled_at).toLocaleString('en-IN',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});}catch(e){}
     var done=iv.status==='completed';
     var badge=done?'<span style="font-size:10px;background:#E8F4EE;color:#127A57;padding:2px 8px;border-radius:6px">Done</span>':'<span style="font-size:10px;background:#FFF3E0;color:#C7841E;padding:2px 8px;border-radius:6px">Scheduled</span>';
-    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:11px 0;border-bottom:0.5px solid var(--line)"><div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--ink)">'+esc(iv.round_name||'Interview')+'</div><div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+esc(dt)+(iv.mode?' &middot; '+esc(iv.mode):'')+(iv.location?' &middot; '+esc(iv.location):'')+'</div>'+(iv.result?'<div style="font-size:11px;color:#555;margin-top:2px">Result: '+esc(iv.result)+'</div>':'')+'</div>'+badge+'</div>';
+    return '<div style="padding:11px 0;border-bottom:0.5px solid var(--line)">'
+      +'<div style="display:flex;align-items:flex-start;gap:10px"><div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--ink)">'+esc(iv.round_name||'Interview')+'</div><div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+esc(dt)+(iv.mode?' &middot; '+esc(iv.mode):'')+(iv.location?' &middot; '+esc(iv.location):'')+'</div>'+(iv.result?'<div style="font-size:11px;color:#555;margin-top:2px">Result: '+esc(iv.result)+'</div>':'')+'</div>'+badge+'</div>'
+      +cpFeedbackList(fbAll[iv.id]||[], cid)
+      +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 10px;margin-top:7px" onclick="cpFeedbackForm('+iv.id+','+cid+')">+ Add panel feedback</button>'
+      +'<div id="fbform-'+iv.id+'"></div>'
+      +'</div>';
   }).join('');
+}
+
+// ── Interview panel feedback ───────────────────────────────────────────
+// One row per panelist rather than a single verdict, because a corporate
+// panel is 2-4 people who each judge independently. The summary reports
+// what they said and flags disagreement; it never decides for them.
+var REC_LOOK={
+  strong_yes:{t:'Strong yes',bg:'#E1F5EE',fg:'#0F6E56'},
+  yes       :{t:'Yes',       bg:'#EDF6EE',fg:'#2C6B39'},
+  hold      :{t:'Hold',      bg:'#FFF8E6',fg:'#8A6512'},
+  no        :{t:'No',        bg:'#FDEEEE',fg:'#A32D2D'}
+};
+
+function cpPanelSummary(sm){
+  if(!sm||!sm.count) return '';
+  var bits=[];
+  ['strong_yes','yes','hold','no'].forEach(function(k){
+    if(sm.counts[k]) bits.push('<span style="font-size:10.5px;background:'+REC_LOOK[k].bg+';color:'+REC_LOOK[k].fg+';border-radius:20px;padding:2px 9px;margin-right:5px">'+REC_LOOK[k].t+' '+sm.counts[k]+'</span>');
+  });
+  return '<div style="background:#FAFAFC;border:0.5px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:10px">'
+    +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+      +'<span style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.04em">Panel</span>'
+      +bits.join('')
+      +(sm.avg_rating!=null?'<span style="font-size:11.5px;color:#555;margin-left:auto">Avg '+sm.avg_rating+'/5</span>':'')
+    +'</div>'
+    +(sm.split?'<div style="font-size:11px;color:#8A6512;margin-top:6px">&#9888;&#65039; The panel is split \u2014 worth reading both sides before deciding.</div>':'')
+    +'</div>';
+}
+
+function cpFeedbackList(list, cid){
+  if(!list.length) return '';
+  return '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">'+list.map(function(f){
+    var L=REC_LOOK[f.recommendation]||{t:f.recommendation,bg:'#F1F0EC',fg:'#555'};
+    return '<div style="background:#FAFAFC;border-left:2px solid '+L.fg+';border-radius:0 7px 7px 0;padding:8px 11px">'
+      +'<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">'
+        +'<span style="font-size:12px;font-weight:600;color:var(--ink)">'+esc(f.panelist||'')+'</span>'
+        +'<span style="font-size:10px;background:'+L.bg+';color:'+L.fg+';border-radius:20px;padding:1px 8px">'+esc(L.t)+'</span>'
+        +(f.rating?'<span style="font-size:11px;color:#888">'+f.rating+'/5</span>':'')
+        +'<button title="Remove" onclick="cpDelFeedback('+f.id+','+cid+')" style="margin-left:auto;border:0;background:none;color:#bbb;cursor:pointer;font-size:13px;line-height:1">&times;</button>'
+      +'</div>'
+      +(f.strengths?'<div style="font-size:11.5px;color:#444;margin-top:4px"><b>Strengths:</b> '+esc(f.strengths)+'</div>':'')
+      +(f.concerns?'<div style="font-size:11.5px;color:#444;margin-top:3px"><b>Concerns:</b> '+esc(f.concerns)+'</div>':'')
+      +'</div>';
+  }).join('')+'</div>';
+}
+
+function cpFeedbackForm(iid, cid){
+  var box=document.getElementById('fbform-'+iid); if(!box) return;
+  if(box.innerHTML){ box.innerHTML=''; return; }
+  var inp='width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:7px;font-size:12px;font-family:inherit;outline:none;box-sizing:border-box';
+  box.innerHTML='<div style="background:#fff;border:0.5px solid var(--line);border-radius:9px;padding:11px;margin-top:8px">'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'
+      +'<input id="fb-name-'+iid+'" placeholder="Panelist name" style="'+inp+'">'
+      +'<select id="fb-rec-'+iid+'" style="'+inp+'"><option value="">Recommendation…</option>'
+        +'<option value="strong_yes">Strong yes</option><option value="yes">Yes</option>'
+        +'<option value="hold">Hold</option><option value="no">No</option></select>'
+    +'</div>'
+    +'<select id="fb-rate-'+iid+'" style="'+inp+';margin-bottom:8px"><option value="0">Rating (optional)</option>'
+      +'<option value="5">5 — Outstanding</option><option value="4">4 — Strong</option>'
+      +'<option value="3">3 — Adequate</option><option value="2">2 — Weak</option>'
+      +'<option value="1">1 — Poor</option></select>'
+    +'<textarea id="fb-str-'+iid+'" rows="2" placeholder="Strengths" style="'+inp+';margin-bottom:8px"></textarea>'
+    +'<textarea id="fb-con-'+iid+'" rows="2" placeholder="Concerns" style="'+inp+';margin-bottom:8px"></textarea>'
+    +'<button class="btn btn-g" style="font-size:11px" onclick="cpSaveFeedback('+iid+','+cid+')">Save feedback</button>'
+    +'<button class="btn btn-o" style="font-size:11px;margin-left:6px" onclick="cpFeedbackForm('+iid+','+cid+')">Cancel</button>'
+    +'</div>';
+  var n=document.getElementById('fb-name-'+iid); if(n) n.focus();
+}
+
+async function cpSaveFeedback(iid, cid){
+  var g=function(p){ var e=document.getElementById(p+'-'+iid); return e?e.value.trim():''; };
+  if(!g('fb-name')){ toast('&#9888;&#65039;','Panelist name is required'); return; }
+  if(!g('fb-rec')){ toast('&#9888;&#65039;','Pick a recommendation'); return; }
+  var r=await req('POST','/interviews/'+iid+'/feedback',{
+    panelist:g('fb-name'), recommendation:g('fb-rec'), rating:parseInt(g('fb-rate'))||0,
+    strengths:g('fb-str'), concerns:g('fb-con')});
+  if(r&&r.ok){ toast('✅','Feedback saved'); cpLoadInterviews(cid); }
+  else toast('&#9888;&#65039;',(r&&r.error)||'Could not save feedback');
+}
+
+async function cpDelFeedback(fid, cid){
+  if(!confirm('Remove this feedback?')) return;
+  var r=await req('DELETE','/interviews/feedback/'+fid);
+  if(r&&r.ok){ cpLoadInterviews(cid); } else toast('&#9888;&#65039;','Could not remove');
 }
 
 async function cpAddNote(cid){
