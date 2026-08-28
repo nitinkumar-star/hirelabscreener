@@ -337,6 +337,19 @@ AUDIT_CONTACT_FIELDS = ['name', 'designation', 'email', 'phone', 'is_primary',
                         'is_decision_maker', 'linkedin', 'notes']
 
 
+def _CL():
+    """What this tenant calls the organisation they recruit for.
+
+    Agency: "Client". Corporate: "Department". Used only in messages the user
+    reads — the table, columns and API shape are unchanged.
+    """
+    try:
+        from modules.shared import _core
+        return _core().workspace_vocab()[1].get('client', 'Client')
+    except Exception:
+        return 'Client'
+
+
 class ClientService:
     @staticmethod
     def create(conn, payload):
@@ -345,7 +358,7 @@ class ClientService:
         now = ts()
         name = (payload.get('name') or '').strip()
         if not name:
-            raise ValidationError('Client name is required.')
+            raise ValidationError(f'{_CL()} name is required.')
         status = (payload.get('status') or 'active').strip().lower()
         if status not in VALID_CLIENT_STATUS:
             raise ValidationError('Invalid status.')
@@ -383,14 +396,14 @@ class ClientService:
         now = ts()
         existing = ClientRepo.get(conn, company_id, cid)
         if not existing:
-            raise ValidationError('Client not found.', 404)
+            raise ValidationError(f'{_CL()} not found.', 404)
         before = dict(existing)
 
         fields = {}
         if 'name' in payload:
             name = (payload.get('name') or '').strip()
             if not name:
-                raise ValidationError('Client name cannot be empty.')
+                raise ValidationError(f'{_CL()} name cannot be empty.')
             name_key = _norm_name(name)
             dup = ClientRepo.find_by_namekey(conn, company_id, name_key, exclude_id=cid)
             if dup:
@@ -426,7 +439,7 @@ class ClientService:
         company_id = effective_company_id()
         existing = ClientRepo.get(conn, company_id, cid)
         if not existing:
-            raise ValidationError('Client not found.', 404)
+            raise ValidationError(f'{_CL()} not found.', 404)
         ClientRepo.soft_delete(conn, cid, real_user_id(), ts())
         conn.commit()
         log_activity('client.deleted', f'Deleted client "{existing["name"]}"',
@@ -437,7 +450,7 @@ class ClientService:
         company_id = effective_company_id()
         existing = ClientRepo.get(conn, company_id, cid, include_deleted=True)
         if not existing:
-            raise ValidationError('Client not found.', 404)
+            raise ValidationError(f'{_CL()} not found.', 404)
         ClientRepo.restore(conn, cid, real_user_id(), ts())
         conn.commit()
         log_activity('client.restored', f'Restored client "{existing["name"]}"',
@@ -452,7 +465,7 @@ class ContactService:
         now = ts()
         client = ClientRepo.get(conn, company_id, client_id)
         if not client:
-            raise ValidationError('Client not found.', 404)
+            raise ValidationError(f'{_CL()} not found.', 404)
         name = (payload.get('name') or '').strip()
         if not name:
             raise ValidationError('Contact name is required.')
@@ -625,7 +638,7 @@ def get_client(cid):
     conn = get_db()
     row = ClientRepo.get(conn, effective_company_id(), cid)
     if not row:
-        conn.close(); return jsonify({'error': 'Client not found.'}), 404
+        conn.close(); return jsonify({'error': f'{_CL()} not found.'}), 404
     contacts = ContactRepo.list_for_client(conn, effective_company_id(), cid)
     conn.close()
     return jsonify({'ok': True, 'client': _client_public(row),
@@ -720,7 +733,7 @@ def client_org_chart(cid):
     conn = get_db()
     client = ClientRepo.get(conn, company_id, cid)
     if not client:
-        conn.close(); return jsonify({'error': 'Client not found.'}), 404
+        conn.close(); return jsonify({'error': f'{_CL()} not found.'}), 404
     contacts = [_contact_public(c) for c in
                 ContactRepo.list_for_client(conn, company_id, cid)]
     conn.close()
