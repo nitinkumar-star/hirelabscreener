@@ -943,6 +943,8 @@ def _create_candidate_for_node(conn, tenant, node, mid, is_central):
         fields['linkedin_url'] = node['linkedin']
     if 'general_comments' in cols:
         fields['general_comments'] = ('Sourced from Org Map. ' + (node['notes'] or '')).strip()
+    if 'source_channel' in cols:
+        fields['source_channel'] = 'orgmap'
     keys = [k for k in fields if k in cols or k == 'mandate_id']
     cur.execute('INSERT INTO candidates ({}) VALUES ({})'.format(
         ','.join(keys), ','.join('?' * len(keys))),
