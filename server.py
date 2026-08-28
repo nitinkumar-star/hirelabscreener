@@ -2900,7 +2900,12 @@ def init_db():
     # breaks the moment that text changes. It also cannot express referral,
     # which is 30-40% of corporate hiring and the cheapest channel there is.
     for col, typ in [('source_channel', "TEXT DEFAULT ''"),
-                     ('referrer_name', "TEXT DEFAULT ''")]:
+                     ('referrer_name', "TEXT DEFAULT ''"),
+                     # What was actually offered, as against what they asked for.
+                     # ctc_expected is the candidate's ask; this is the company's
+                     # commitment, and only this can be compared to the budget.
+                     ('ctc_offered', 'REAL DEFAULT 0'),
+                     ('offer_date', "TEXT DEFAULT ''")]:
         try:
             c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {typ}')
         except sqlite3.OperationalError:
@@ -4601,6 +4606,40 @@ def analytics():
                       'approval_status': appr})
     aging.sort(key=lambda x: -x['days_open'])
 
+    # ── Budget adherence ────────────────────────────────────────────────
+    # A requisition carries a budget (ctc_max). An offer is what was actually
+    # committed. Corporate finance asks whether hiring stayed inside the
+    # envelope, and until now nothing recorded the offer at all.
+    within = over = unknown = 0
+    offer_vals, over_by = [], []
+    for c in cands:
+        if (c['stage'] or '').strip().lower() not in ('placed', 'joined'):
+            continue
+        try:
+            offered = float(c['ctc_offered'] or 0)
+        except (IndexError, KeyError, TypeError, ValueError):
+            offered = 0
+        if not offered:
+            unknown += 1
+            continue
+        offer_vals.append(offered)
+        m = mandate_by_id.get(c['mandate_id'])
+        budget = float((m['ctc_max'] if m else 0) or 0)
+        if not budget:
+            continue
+        if offered > budget:
+            over += 1
+            over_by.append(offered - budget)
+        else:
+            within += 1
+
+    budget_block = {
+        'within': within, 'over': over, 'unknown': unknown,
+        'avg_offer': round(sum(offer_vals) / len(offer_vals), 1) if offer_vals else None,
+        'avg_over_by': round(sum(over_by) / len(over_by), 1) if over_by else None,
+        'annual_cost': round(sum(offer_vals), 1) if offer_vals else None,
+    }
+
     corporate = {
         # None (not 0) when there is nothing to average — the UI shows a dash
         # rather than implying a real measurement of zero.
@@ -4617,6 +4656,7 @@ def analytics():
         'seats_open': seats_open,
         'seats_total': seats_total,
         'pending_approval': pending_approval,
+        'budget': budget_block,
     }
 
     conn.close()
@@ -15106,7 +15146,8 @@ def update_candidate(cid):
     fields = ['name','company','designation','experience','ctc_current','ctc_expected',
               'notice_period','location','preferred_location','phone','email','qualification','specialization','career_summary',
               'key_skills','secondary_skills','recruiter_feedback','client_feedback','general_comments',
-              'linkedin_url','ai_insight_cv']
+              'linkedin_url','ai_insight_cv','ctc_offered','offer_date',
+              'source_channel','referrer_name']
     sets = []; vals = []
     for f in fields:
         if f in d:
@@ -15123,6 +15164,7 @@ def update_candidate(cid):
         labels = {
             'name':'Name','company':'Company','designation':'Designation',
             'experience':'Experience','ctc_current':'Current CTC','ctc_expected':'Expected CTC',
+            'ctc_offered':'Offered CTC','offer_date':'Offer date',
             'notice_period':'Notice period','location':'Location','preferred_location':'Preferred location','phone':'Phone','email':'Email',
             'qualification':'Qualification','specialization':'Specialization','career_summary':'Summary',
             'linkedin_url':'LinkedIn URL','ai_insight_cv':'AI Insight (CV)'
@@ -17323,6 +17365,138 @@ def _submission_token(mid):
     if isinstance(key, str):
         key = key.encode()
     return hmac.new(key, ('submission:%d' % mid).encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def _review_token(mid):
+    """Unguessable per-mandate token for the hiring-manager review link.
+
+    Same HMAC pattern as the client-submission link, with a different prefix so
+    the two links can never be swapped for one another. Nothing is stored, so
+    there is no table to leak; rotating app.secret_key invalidates every link.
+    """
+    key = app.secret_key or 'fallback'
+    if isinstance(key, str):
+        key = key.encode()
+    return hmac.new(key, ('review:%d' % mid).encode(), hashlib.sha256).hexdigest()[:24]
+
+
+@app.route('/api/mandates/<int:mid>/review-link')
+@login_required
+def mandate_review_link(mid):
+    """Link a recruiter sends to a hiring manager or interview panelist.
+
+    Corporate hiring falls down here: the manager who decides is not a user of
+    the ATS, so their verdict arrives by WhatsApp and the recruiter retypes it
+    — or it is never recorded. This gives them a page they can open without an
+    account, see the shortlist, and leave feedback that lands straight on the
+    candidate record.
+
+    A tokenised link rather than a new user role: no password to manage, no
+    permission surface to get wrong, and it only ever exposes one requisition.
+    """
+    conn = get_db()
+    if not _tenant_owns_mandate(conn, mid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    conn.close()
+    base = request.host_url.rstrip('/')
+    return jsonify({'ok': True,
+                    'url': f'{base}/review?m={mid}&t={_review_token(mid)}'})
+
+
+@app.route('/review')
+def review_page():
+    return send_file('review.html')
+
+
+def _review_ok(mid):
+    t = (request.args.get('t') or '').strip()
+    return bool(t) and hmac.compare_digest(t, _review_token(mid))
+
+
+@app.route('/api/review/<int:mid>', methods=['GET'])
+def review_data(mid):
+    """Shortlist for a hiring manager. Token-gated, read-only, no contacts."""
+    if not _review_ok(mid):
+        return jsonify({'error': 'Invalid or expired link'}), 403
+    conn = get_db()
+    try:
+        m = conn.execute('SELECT id, role, client, location, owner_id FROM mandates WHERE id=?',
+                         (mid,)).fetchone()
+        if not m:
+            return jsonify({'error': 'Not found'}), 404
+        _mode, vocab = workspace_vocab(m['owner_id'])
+        # Only people actually put forward for a decision. Phone, email and
+        # CTC stay out — a panelist judging fit has no need for them, and the
+        # link travels outside the company.
+        rows = conn.execute(
+            """SELECT id, name, designation, company, experience, location,
+                      qualification, career_summary, key_skills, stage, cv_path
+               FROM candidates
+               WHERE mandate_id=? AND stage IN ('Shared with Client','Interview Inprocess','Placed','Joined')
+               ORDER BY name""", (mid,)).fetchall()
+        out = []
+        for c in rows:
+            try:
+                skills = json.loads(c['key_skills'] or '[]')
+            except Exception:
+                skills = []
+            fb = conn.execute(
+                'SELECT panelist, rating, recommendation, strengths, concerns '
+                'FROM interview_feedback WHERE candidate_id=? ORDER BY created_at', (c['id'],)).fetchall()
+            out.append({'id': c['id'], 'name': c['name'], 'designation': c['designation'],
+                        'company': c['company'], 'experience': c['experience'],
+                        'location': c['location'], 'qualification': c['qualification'],
+                        'summary': (c['career_summary'] or '')[:600],
+                        'skills': skills[:12], 'stage': c['stage'],
+                        'has_cv': bool(c['cv_path']),
+                        'feedback': [dict(f) for f in fb]})
+        return jsonify({'ok': True, 'role': m['role'], 'location': m['location'],
+                        'label': vocab.get('mandate', 'Requisition'),
+                        'candidates': out})
+    finally:
+        conn.close()
+
+
+@app.route('/api/review/<int:mid>/feedback', methods=['POST'])
+def review_feedback(mid):
+    """A hiring manager's verdict, written to the same table as internal feedback."""
+    if not _review_ok(mid):
+        return jsonify({'error': 'Invalid or expired link'}), 403
+    if not _rate_ok('review_fb', 60, 3600):
+        return jsonify({'error': 'Too many submissions. Please try again later.'}), 429
+    d = request.json or {}
+    panelist = str(d.get('panelist') or '').strip()[:120]
+    rec = (d.get('recommendation') or '').strip().lower()
+    if not panelist:
+        return jsonify({'error': 'Please enter your name'}), 400
+    if rec not in RECOMMENDATIONS:
+        return jsonify({'error': 'Please pick a recommendation'}), 400
+    try:
+        rating = max(0, min(5, int(d.get('rating') or 0)))
+    except (TypeError, ValueError):
+        rating = 0
+
+    conn = get_db()
+    try:
+        cand = conn.execute('SELECT id, mandate_id, owner_id, name FROM candidates WHERE id=?',
+                            (int(d.get('candidate_id') or 0),)).fetchone()
+        # The token is for ONE requisition, so a candidate on another one
+        # cannot be reached by editing the id in the request.
+        if not cand or cand['mandate_id'] != mid:
+            return jsonify({'error': 'Candidate not found'}), 404
+        iv = conn.execute('SELECT id FROM interviews WHERE candidate_id=? ORDER BY scheduled_at DESC LIMIT 1',
+                          (cand['id'],)).fetchone()
+        conn.execute('INSERT INTO interview_feedback (interview_id,candidate_id,owner_id,panelist,rating,'
+                     'recommendation,strengths,concerns,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,0,?)',
+                     (iv['id'] if iv else 0, cand['id'], cand['owner_id'], panelist, rating, rec,
+                      str(d.get('strengths') or '').strip()[:1500],
+                      str(d.get('concerns') or '').strip()[:1500], ts()))
+        conn.commit()
+    finally:
+        conn.close()
+    log_candidate_event(int(d.get('candidate_id')), 'note',
+                        f'Review-link feedback from {panelist}: {rec.replace("_", " ")}')
+    return jsonify({'ok': True})
 
 
 @app.route('/api/mandates/<int:mid>/share-link')

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Candidate Review</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI",sans-serif;background:#f5f5f5;color:#1a1a1a;min-height:100vh}
+.header{background:#0a2540;padding:22px 20px;text-align:center;color:#fff}
+.header h1{font-size:18px;font-weight:700;color:#1D9E75}
+.header p{font-size:12.5px;opacity:.75;margin-top:5px}
+.container{max-width:760px;margin:22px auto;padding:0 16px 48px}
+.note{background:#EEF4FB;border:1px solid #C6DAF0;color:#2A5580;font-size:12px;line-height:1.5;
+  padding:10px 14px;border-radius:9px;margin-bottom:16px}
+.card{background:#fff;border-radius:11px;padding:18px 20px;margin-bottom:13px;box-shadow:0 1px 6px rgba(0,0,0,.06)}
+.top{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.nm{font-size:16px;font-weight:650;color:#0a2540}
+.sub{font-size:12.5px;color:#666;margin-top:3px}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+.chip{font-size:10.5px;background:#F1F0EC;color:#555;border-radius:20px;padding:3px 9px}
+.sum{font-size:12.5px;color:#555;line-height:1.55;margin-top:10px}
+.done{background:#EDF6EE;border:1px solid #C6E0CB;color:#2C6B39;font-size:12px;
+  padding:8px 12px;border-radius:8px;margin-top:11px}
+.given{background:#FAFAFC;border-left:2px solid #ccc;border-radius:0 7px 7px 0;padding:7px 11px;
+  margin-top:7px;font-size:12px;color:#444}
+.btn{border:none;border-radius:7px;padding:8px 18px;font-size:12.5px;font-weight:600;
+  cursor:pointer;font-family:inherit}
+.btn-p{background:#1D9E75;color:#fff}
+.btn-p:hover{background:#178A65}
+.btn-o{background:#fff;color:#555;border:1px solid #ddd}
+.form{border-top:0.5px solid #eee;margin-top:13px;padding-top:13px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:9px}
+input,select,textarea{width:100%;padding:8px 11px;border:1px solid #ddd;border-radius:7px;
+  font-size:12.5px;font-family:inherit;outline:none}
+input:focus,select:focus,textarea:focus{border-color:#1D9E75}
+.state{background:#fff;border-radius:11px;padding:44px 24px;text-align:center;box-shadow:0 1px 6px rgba(0,0,0,.06)}
+.state .ic{font-size:32px;margin-bottom:10px}
+.state h3{font-size:15px;font-weight:600;margin-bottom:6px}
+.state p{font-size:13px;color:#888;line-height:1.55}
+.foot{text-align:center;font-size:11px;color:#aaa;margin-top:26px}
+@media(max-width:520px){.g2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1 id="role">Candidate Review</h1>
+  <p id="sub"></p>
+</div>
+
+<div class="container">
+  <div id="list"><div class="state"><div class="ic">&#8987;</div><h3>Loading…</h3></div></div>
+  <div class="foot">Powered by HireLab</div>
+</div>
+
+<script>
+// Token-gated review page. No login: the link itself is the credential, and it
+// only ever reaches one requisition. Contact details and salary are not sent
+// by the server at all, so they cannot leak through this page.
+var P = new URLSearchParams(location.search);
+var MID = P.get('m') || '';
+var TOK = P.get('t') || '';
+var DATA = null;
+var SENT = {};   // candidate ids this browser has already reviewed
+
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, function(m){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
+  });
+}
+function state(ic,t,m){
+  document.getElementById('list').innerHTML =
+    '<div class="state"><div class="ic">'+ic+'</div><h3>'+esc(t)+'</h3>'+(m?'<p>'+esc(m)+'</p>':'')+'</div>';
+}
+
+var REC = {strong_yes:'Strong yes', yes:'Yes', hold:'Hold', no:'No'};
+
+function card(c){
+  var chips = '';
+  if (c.experience) chips += '<span class="chip">'+esc(c.experience)+' yrs</span>';
+  if (c.location)   chips += '<span class="chip">&#128205; '+esc(c.location)+'</span>';
+  if (c.qualification) chips += '<span class="chip">'+esc(c.qualification)+'</span>';
+  (c.skills||[]).forEach(function(s){ chips += '<span class="chip">'+esc(s)+'</span>'; });
+
+  var given = (c.feedback||[]).map(function(f){
+    return '<div class="given"><b>'+esc(f.panelist||'')+'</b> — '+esc(REC[f.recommendation]||f.recommendation)
+      + (f.rating?(' · '+f.rating+'/5'):'')
+      + (f.strengths?('<br>'+esc(f.strengths)):'') + '</div>';
+  }).join('');
+
+  var body;
+  if (SENT[c.id]) {
+    body = '<div class="done">&#10004; Thank you — your feedback has been recorded.</div>';
+  } else {
+    body = '<button class="btn btn-p" style="margin-top:12px" onclick="openForm('+c.id+')">Give feedback</button>'
+         + '<div id="f-'+c.id+'"></div>';
+  }
+
+  return '<div class="card">'
+    + '<div class="top"><div style="flex:1;min-width:200px">'
+      + '<div class="nm">'+esc(c.name)+'</div>'
+      + '<div class="sub">'+esc(c.designation||'')+(c.company?(' at '+esc(c.company)):'')+'</div>'
+    + '</div></div>'
+    + (chips ? '<div class="chips">'+chips+'</div>' : '')
+    + (c.summary ? '<div class="sum">'+esc(c.summary)+'</div>' : '')
+    + given
+    + body
+    + '</div>';
+}
+
+function render(){
+  document.getElementById('list').innerHTML = DATA.candidates.map(card).join('');
+}
+
+function openForm(cid){
+  var box = document.getElementById('f-'+cid);
+  if (!box) return;
+  if (box.innerHTML){ box.innerHTML=''; return; }
+  box.innerHTML = '<div class="form">'
+    + '<div class="g2">'
+      + '<input id="n-'+cid+'" placeholder="Your name" autocomplete="name">'
+      + '<select id="r-'+cid+'"><option value="">Your recommendation…</option>'
+        + '<option value="strong_yes">Strong yes</option><option value="yes">Yes</option>'
+        + '<option value="hold">Hold</option><option value="no">No</option></select>'
+    + '</div>'
+    + '<select id="rt-'+cid+'" style="margin-bottom:9px"><option value="0">Rating (optional)</option>'
+      + '<option value="5">5 — Outstanding</option><option value="4">4 — Strong</option>'
+      + '<option value="3">3 — Adequate</option><option value="2">2 — Weak</option>'
+      + '<option value="1">1 — Poor</option></select>'
+    + '<textarea id="s-'+cid+'" rows="2" placeholder="What stood out" style="margin-bottom:9px"></textarea>'
+    + '<textarea id="c-'+cid+'" rows="2" placeholder="Any concerns" style="margin-bottom:10px"></textarea>'
+    + '<button class="btn btn-p" onclick="send('+cid+')">Submit feedback</button>'
+    + '<button class="btn btn-o" style="margin-left:7px" onclick="openForm('+cid+')">Cancel</button>'
+    + '<div id="e-'+cid+'" style="font-size:12px;color:#A32D2D;margin-top:8px"></div>'
+    + '</div>';
+  var n = document.getElementById('n-'+cid);
+  // Panelists usually review several people in one sitting, so carry the name.
+  if (n){ if (window._lastName) n.value = window._lastName; n.focus(); }
+}
+
+async function send(cid){
+  var g = function(p){ var e=document.getElementById(p+'-'+cid); return e?e.value.trim():''; };
+  var err = document.getElementById('e-'+cid);
+  if (!g('n')){ err.textContent='Please enter your name.'; return; }
+  if (!g('r')){ err.textContent='Please pick a recommendation.'; return; }
+  err.textContent = 'Sending…'; err.style.color = '#888';
+  window._lastName = g('n');
+  var res;
+  try {
+    var q = await fetch('/api/review/'+encodeURIComponent(MID)+'/feedback?t='+encodeURIComponent(TOK), {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({candidate_id:cid, panelist:g('n'), recommendation:g('r'),
+        rating: parseInt(g('rt'))||0, strengths:g('s'), concerns:g('c')})
+    });
+    res = await q.json();
+  } catch(e){ err.style.color='#A32D2D'; err.textContent='Could not send. Please try again.'; return; }
+  if (!res || !res.ok){
+    err.style.color='#A32D2D'; err.textContent=(res && res.error) || 'Could not send. Please try again.'; return;
+  }
+  SENT[cid] = true;
+  render();
+}
+
+(async function(){
+  if (!MID || !TOK){ state('&#128274;','This link is incomplete','Please use the full link you were sent.'); return; }
+  var r;
+  try {
+    var q = await fetch('/api/review/'+encodeURIComponent(MID)+'?t='+encodeURIComponent(TOK));
+    r = await q.json();
+  } catch(e){ state('&#9888;&#65039;','Could not load','Please refresh in a moment.'); return; }
+
+  if (!r || !r.ok){
+    state('&#128274;','This link is not valid', (r && r.error) || 'It may have expired. Ask the recruiter for a fresh link.');
+    return;
+  }
+  DATA = r;
+  document.getElementById('role').textContent = r.role || 'Candidate Review';
+  document.getElementById('sub').textContent =
+    (r.label || 'Requisition') + (r.location ? (' · ' + r.location) : '');
+
+  if (!(r.candidates||[]).length){
+    state('&#128100;','No candidates to review yet','The recruiter will share profiles here as they are shortlisted.');
+    return;
+  }
+  document.getElementById('list').innerHTML =
+    '<div class="note">Please review the shortlist below and give your feedback on each candidate. '
+    + 'You do not need an account — this link is just for you.</div>';
+  var d = document.createElement('div');
+  d.innerHTML = DATA.candidates.map(card).join('');
+  document.getElementById('list').appendChild(d);
+  render = function(){
+    d.innerHTML = DATA.candidates.map(card).join('');
+  };
+})();
+</script>
+</body>
+</html>

@@ -3127,6 +3127,7 @@ function renderMandateSetup(el){
       + '<div style="margin-top:18px;padding-top:14px;border-top:0.5px solid var(--line)">'
       + '<div style="font-size:12px;color:#A32D2D;font-weight:600;margin-bottom:6px">Danger zone</div>'
       + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Deleting this job removes the mandate, but its candidates stay safe in your Central Database.</div>'
+      + '<button class="btn btn-o" onclick="copyReviewLink()">&#128279; Reviewer link</button>'
       + '<button class="btn btn-o" onclick="openDuplicateMandate()">&#128203; Duplicate this Job</button>'
       + '<button class="btn btn-o" style="color:#A32D2D;border-color:#E8C4C4" onclick="deleteJob()">&#128465; Delete this Job</button>'
       + '</div>'
@@ -5213,6 +5214,7 @@ function keyFactsCardHTML(c){
     + infoRow('Company', c.company) + infoRow('Designation', c.designation)
     + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
     + infoRow('Expected CTC', c.ctc_expected?('\u20B9'+c.ctc_expected+' LPA'):'') + infoRow('Notice', c.notice_period?(c.notice_period+' days'):'')
+    + (c.ctc_offered?infoRow('Offered CTC','\u20B9'+c.ctc_offered+' LPA'+(c.offer_date?(' \u00b7 '+esc(c.offer_date)):'')):'')
     + infoRow('Location', c.location) + infoRow('Preferred', c.preferred_location)
     + infoRow('Qualification', c.qualification) + infoRow('Specialization', c.specialization) + infoRow('Industry', c.industry_background||c.industry)
     + phoneRow + emailRow
@@ -5221,6 +5223,7 @@ function keyFactsCardHTML(c){
     +'<div id="pd-edit" style="display:none">'
     +'<div class="g2">'+sInp('pf-company','Current Company',c.company||'')+sInp('pf-designation','Designation',c.designation||'')+'</div>'
     +'<div class="g3" style="margin-top:8px">'+sNum('pf-exp','Experience (yrs)',c.experience||'')+sNum('pf-ctc','Current CTC (LPA)',c.ctc_current||'')+sNum('pf-ectc','Expected CTC (LPA)',c.ctc_expected||'')+sNum('pf-notice','Notice (days)',c.notice_period||'')+sInp('pf-location','Location',c.location||'')+sInp('pf-preferred_location','Preferred Location',c.preferred_location||'')+sInp('pf-qualification','Qualification',c.qualification||'')+sInp('pf-specialization','Specialization',c.specialization||'')+sInp('pf-phone','Phone',c.phone||'','Add when called')+sInp('pf-email','Email',c.email||'','candidate@email.com')+'</div>'
+    +'<div class="g2" style="margin-top:8px">'+sNum('pf-ctc_offered','Offered CTC (LPA)',c.ctc_offered||'')+sInp('pf-offer_date','Offer date',c.offer_date||'','e.g. 12 Aug 2026')+'</div>'
     +'<div style="margin-top:8px">'+sInp('pf-linkedin_url','LinkedIn URL',c.linkedin_url||'','https://www.linkedin.com/in/...')+'</div>'
     +'<textarea id="pf-ai_insight_cv" class="inp" rows="3" style="width:100%;margin-top:8px;font-size:12px;display:none">'+esc(c.ai_insight_cv||'')+'</textarea>'
     +'<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-g" style="font-size:11px" onclick="saveProfileSection(&#39;pd&#39;,'+c.id+')">&#128190; Save</button><button class="btn btn-o" style="font-size:11px" onclick="toggleEdit(&#39;pd&#39;,true)">Cancel</button></div>'
@@ -5877,6 +5880,7 @@ async function saveProfile(cid){
     ctc_current:parseFloat(v('pf-ctc'))||0,ctc_expected:parseFloat(v('pf-ectc'))||0,
     notice_period:parseInt(v('pf-notice'))||0,location:v('pf-location'),preferred_location:v('pf-preferred_location'),qualification:v('pf-qualification'),specialization:v('pf-specialization'),phone:v('pf-phone'),email:v('pf-email'),
     linkedin_url:v('pf-linkedin_url'),ai_insight_cv:v('pf-ai_insight_cv'),
+    ctc_offered:parseFloat(v('pf-ctc_offered'))||0,offer_date:v('pf-offer_date'),
     key_skills:skills,career_summary:v('pf-summary')
   });
   if(r.ok){
@@ -7495,6 +7499,22 @@ function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
 function ini(name){return name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()||'?';}
 function fmtDate(dt){if(!dt)return '';try{const d=new Date(dt);return d.toLocaleDateString('en-IN',{day:'numeric',month:'short'})+' &middot; '+d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});}catch{return dt;}}
 function stageDot(stage){return(PIPELINE_STAGES.find(s=>s.id===stage)||{color:'#888'}).color;}
+// A hiring manager or panelist who has no ATS login can still review the
+// shortlist and leave feedback through this link. Their verdict lands on the
+// candidate record like any other panel feedback.
+async function copyReviewLink(){
+  var m=S.activeMandate; if(!m) return;
+  var r=await req('GET','/mandates/'+m.id+'/review-link');
+  if(!r||!r.ok){ toast('&#9888;&#65039;',(r&&r.error)||'Could not get the link'); return; }
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(r.url).then(function(){
+      toast('✅','Reviewer link copied — send it to the hiring manager');
+    });
+  } else {
+    prompt('Send this link to the reviewer:', r.url);
+  }
+}
+
 // ── Duplicate a position ────────────────────────────────────────────────
 // Same role, different city is the common case, so the whole setup is cloned
 // server-side (JD, SOP, pitch, templates, SPOC/CC, client notes) and only the
@@ -11486,6 +11506,33 @@ async function renderAnalytics(){
           + '&bull; ' + esc(a.role||'') + '<span style="opacity:.7"> \u00b7 ' + esc(a.client||'')
           + (a.location?(' \u00b7 '+esc(a.location)):'') + '</span></div>';
       });
+      html += '</div>';
+    }
+
+    // Budget adherence: what was committed against what the requisition
+    // was allowed to spend. Shown only once some offers carry a figure.
+    var bg = cp.budget || {};
+    if ((bg.within||0)+(bg.over||0) > 0) {
+      html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:20px">';
+      html += '<div style="font-size:13px;font-weight:600;margin-bottom:4px">Budget adherence</div>';
+      html += '<div style="font-size:11px;color:var(--muted);margin-bottom:12px">Offered CTC against each '
+        + esc(String(T('mandate','requisition')).toLowerCase()) + '\u2019s maximum.</div>';
+      html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">';
+      html += '<div><div style="font-size:20px;font-weight:700;color:#0F6E56">'+bg.within+'</div>'
+        + '<div style="font-size:11px;color:var(--muted)">within budget</div></div>';
+      html += '<div><div style="font-size:20px;font-weight:700;color:'+(bg.over?'#A32D2D':'#6b7280')+'">'+bg.over+'</div>'
+        + '<div style="font-size:11px;color:var(--muted)">over'+(bg.avg_over_by!=null?(' \u00b7 avg +\u20B9'+bg.avg_over_by+'L'):'')+'</div></div>';
+      html += '<div><div style="font-size:20px;font-weight:700;color:var(--navy)">'
+        + (bg.avg_offer!=null?('\u20B9'+bg.avg_offer+'L'):'\u2014') + '</div>'
+        + '<div style="font-size:11px;color:var(--muted)">average offer</div></div>';
+      html += '</div>';
+      if (bg.annual_cost!=null) {
+        html += '<div style="font-size:11.5px;color:var(--muted);margin-top:11px">Committed annual cost of these hires: <b style="color:var(--navy)">\u20B9'+bg.annual_cost+' L</b></div>';
+      }
+      if (bg.unknown) {
+        html += '<div style="font-size:11px;color:#8A6512;margin-top:7px">'+bg.unknown+' offer'+(bg.unknown===1?'':'s')
+          + ' have no CTC recorded, so they are not counted. Add it on the profile under Key Facts.</div>';
+      }
       html += '</div>';
     }
 
