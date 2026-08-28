@@ -186,7 +186,7 @@ def _contact_public(row):
 class ClientRepo:
     @staticmethod
     def find_by_namekey(conn, company_id, name_key, exclude_id=None):
-        q = 'SELECT * FROM crm_clients WHERE company_id=? AND name_key=? AND is_active=1'
+        q = 'SELECT * FROM crm_clients WHERE company_id=? AND name_key=? AND is_active=1 AND COALESCE(is_internal,0)=0'
         params = [company_id, name_key]
         if exclude_id:
             q += ' AND id!=?'; params.append(exclude_id)
@@ -230,7 +230,9 @@ class ClientRepo:
 
     @staticmethod
     def search(conn, company_id, filters):
-        where = ['company_id=?', 'is_active=?']
+        # The internal record representing the tenant itself is not a client;
+        # it exists only so Corporate hiring managers can be crm_contacts.
+        where = ['company_id=?', 'is_active=?', 'COALESCE(is_internal,0)=0']
         params = [company_id, 0 if filters.get('deleted') else 1]
         if filters.get('q'):
             where.append('(name LIKE ? OR city LIKE ? OR industry LIKE ? OR gstin LIKE ?)')
@@ -769,10 +771,10 @@ def crm_meta():
     company_id = effective_company_id()
     conn = get_db()
     industries = [r['industry'] for r in conn.execute(
-        "SELECT DISTINCT industry FROM crm_clients WHERE company_id=? AND is_active=1 AND industry!='' ORDER BY industry",
+        "SELECT DISTINCT industry FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0 AND industry!='' ORDER BY industry",
         (company_id,)).fetchall()]
     cities = [r['city'] for r in conn.execute(
-        "SELECT DISTINCT city FROM crm_clients WHERE company_id=? AND is_active=1 AND city!='' ORDER BY city",
+        "SELECT DISTINCT city FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0 AND city!='' ORDER BY city",
         (company_id,)).fetchall()]
     conn.close()
     return jsonify({'ok': True, 'industries': industries, 'cities': cities,

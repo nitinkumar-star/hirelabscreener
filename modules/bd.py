@@ -188,7 +188,7 @@ class ActivityService:
             raise ValidationError('client_id is required.')
         # Verify client belongs to tenant
         client = conn.execute(
-            'SELECT id, name FROM crm_clients WHERE id=? AND company_id=? AND is_active=1',
+            'SELECT id, name FROM crm_clients WHERE id=? AND company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0',
             (client_id, company_id)).fetchone()
         if not client:
             raise ValidationError('Client not found.', 404)
@@ -315,7 +315,7 @@ class ActivityService:
 # ══════════════════════════════════════════════════════════════════════════
 def _client_name_map(conn, company_id):
     rows = conn.execute(
-        'SELECT id, name, status FROM crm_clients WHERE company_id=? AND is_active=1',
+        'SELECT id, name, status FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0',
         (company_id,)).fetchall()
     return {r['id']: {'name': r['name'], 'status': r['status']} for r in rows}
 
@@ -444,7 +444,7 @@ def client_timeline(client_id):
     company_id = effective_company_id()
     conn = get_db()
     client = conn.execute(
-        'SELECT name FROM crm_clients WHERE id=? AND company_id=? AND is_active=1',
+        'SELECT name FROM crm_clients WHERE id=? AND company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0',
         (client_id, company_id)).fetchone()
     if not client:
         conn.close(); return jsonify({'error': 'Client not found'}), 404
