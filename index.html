@@ -997,7 +997,7 @@ body{font-size:14px !important; line-height:1.5}
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <button class="btn btn-o" onclick="autoMapJobs()" style="font-size:11px" title="Link existing job postings to CRM clients by name">&#128279; Auto-map Jobs</button>
-        <button class="btn" onclick="openClientForm()" style="background:#2D6FB3;color:#fff;border:none;font-size:12px">&#43; Add Client</button>
+        <button class="btn" onclick="openClientForm()" data-vocab-tpl="+ Add {client}" style="background:#2D6FB3;color:#fff;border:none;font-size:12px">&#43; Add Client</button>
         <button class="btn btn-o" onclick="renderCrm()" style="font-size:11px">&#8635;</button>
         <button class="btn btn-o" onclick="closeCrm()">&#10005; Close</button>
       </div>
@@ -1103,10 +1103,10 @@ body{font-size:14px !important; line-height:1.5}
 <!-- Modals -->
 <div class="modal-bg" id="modal-mandate">
   <div class="modal">
-    <div class="modal-head"><span class="modal-title" id="mandate-modal-title">New Mandate</span><button class="modal-x" onclick="closeModal('modal-mandate')">&#10005;</button></div>
+    <div class="modal-head"><span class="modal-title" id="mandate-modal-title" data-vocab-tpl="{mandate_new}">New Mandate</span><button class="modal-x" onclick="closeModal('modal-mandate')">&#10005;</button></div>
     <div class="modal-body">
       <div class="g2">
-        <div class="fg-row"><label>Client Name *</label><input class="inp" id="m-client" placeholder="e.g. Legrand India"></div>
+        <div class="fg-row"><label data-vocab-tpl="{client_field} *">Client Name *</label><input class="inp" id="m-client" data-vocab-ph="client_hint" placeholder="e.g. Legrand India"></div>
         <div class="fg-row"><label>Role / Position *</label><input class="inp" id="m-role" placeholder="e.g. Sr. Sales Manager"></div>
         <div class="fg-row"><label>Location</label><input class="inp" id="m-location" placeholder="e.g. Noida"></div>
         <div class="fg-row"><label>Division</label><input class="inp" id="m-division" placeholder="e.g. LV Switchgear"></div>
@@ -2843,7 +2843,7 @@ async function selectMandate(id){
   _hideAllViews();
   document.getElementById('mandate-view').style.display='flex';
   S.activeMandate=S.mandates.find(m=>m.id===id);
-  if(S.activeMandate){ document.title = (S.activeMandate.role||'Mandate')+' · '+(S.activeMandate.client||'')+' · HireLab'; }
+  if(S.activeMandate){ document.title = (S.activeMandate.role||T('mandate','Mandate'))+' · '+(S.activeMandate.client||'')+' · HireLab'; }
   S.settingsOpen=false; S.batchResult=null; S.sopMsgs=[]; S.selectedCandidateId=null;
   S.sortables.forEach(s=>{try{s.destroy();}catch(e){}});S.sortables=[];
   document.getElementById('sb-gear').className='sb-gear';
@@ -2864,10 +2864,13 @@ function renderTabs(){
   const bar=document.getElementById('tabs');
   var mid = S.activeMandate ? S.activeMandate.id : '';
   var subOf = function(t){ return t==='Pipeline'?'pipeline':t==='Candidate Profiles'?'profiles':t==='Recruiter Pitch'?'pitch':'setup'; };
+  // The tab NAME is an internal key used for routing and state — never
+  // translate it. Only what the user reads is swapped.
+  var labelOf = function(t){ return t==='Mandate Setup' ? (T('mandate','Mandate')+' Setup') : t; };
   bar.innerHTML=TABS.map(function(t){
     var href = mid ? ('#mandate/'+mid+'/'+subOf(t)) : '#';
     return '<a href="'+href+'" class="tab-btn'+(t===S.activeTab?' active':'')
-      +'" onclick="return tabClick(event,\''+t+'\')">'+t+'</a>';
+      +'" onclick="return tabClick(event,\''+t+'\')">'+esc(labelOf(t))+'</a>';
   }).join('');
 }
 // Normal click → SPA switch (no reload). Ctrl/Cmd/middle-click → let the browser open a new tab.
@@ -3036,7 +3039,7 @@ async function renderDashboard(el){
     +'<div style="display:flex;flex-wrap:wrap;gap:8px">'
     +'<button class="btn" onclick="openModal(\'modal-mandate\')" style="background:#534AB7;color:#fff;border:none;font-size:12px">+ New Job</button>'
     +'<button class="btn btn-o" onclick="openCentralDB()" style="font-size:12px">Search Talent</button>'
-    +'<button class="btn btn-o" onclick="openCrm()" style="font-size:12px">Clients</button>'
+    +'<button class="btn btn-o" onclick="openCrm()" style="font-size:12px">'+esc(T('client_plural','Clients'))+'</button>'
     +'<button class="btn btn-o" onclick="openAnalytics()" style="font-size:12px">View insights</button>'
     +'</div></div>';
 
@@ -3113,7 +3116,7 @@ function renderMandateSetup(el){
       + '</div>'
       + '</div></div>';
   }
-  el.innerHTML='<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">Mandate Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
+  el.innerHTML='<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
     +'<div class="g2">'
     +field('ms-client',wfL().client,m.client||'')+field('ms-role','Role',m.role||'')
     +field('ms-loc','Location',m.location||'')+field('ms-div','Division',m.division||'')
@@ -3837,10 +3840,10 @@ function _shareModalHtml(m, r, preselectStage, draft){
     +'<div style="margin-top:10px"><label style="font-size:11px;font-weight:600;color:#555">Greeting</label><input id="share-greeting" style="'+inp+'" value="'+esc(greetVal)+'"></div>'
     +'<div style="margin-top:10px"><label style="font-size:11px;font-weight:600;color:#555">Intro line</label><input id="share-intro" style="'+inp+'" value="'+esc(introVal)+'"></div>'
     +'<div style="margin-top:12px;border:1px solid #eee;border-radius:9px;padding:10px 12px;background:#FAFAFC">'
-      +'<label style="font-size:11px;font-weight:700;color:#555">Blank columns for the client to fill</label>'
+      +'<label style="font-size:11px;font-weight:700;color:#555">Blank columns for the '+esc(String(T('client','client')).toLowerCase())+' to fill</label>'
       +'<div style="font-size:10.5px;color:#999;margin:3px 0 7px">Pick a heading or type your own. These go into the emailed table and the Submission Excel.</div>'
       +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:7px">'
-        + ['Client Feedback','Interview Date','Shortlisted (Y/N)','Interview Mode','Remarks','Round 1 Status']
+        + [T('client','Client')+' Feedback','Interview Date','Shortlisted (Y/N)','Interview Mode','Remarks','Round 1 Status']
             .map(function(x){return '<button type="button" class="btn btn-o" style="font-size:10.5px;padding:3px 9px" onclick="_shareAddCol(\''+x.replace(/'/g,"\\'")+'\')">+ '+x+'</button>';}).join('')
       +'</div>'
       +'<div style="display:flex;gap:6px"><input id="share-newcol" placeholder="Or type a heading and press Enter" style="'+inp+';flex:1" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_shareAddCol(this.value);this.value=\'\';}">'
@@ -6398,7 +6401,7 @@ function emailConfigHTML(s){
     + '<div class="fg-row"><label>Gmail Address</label><input class="inp" id="s-smtp_email" value="' + esc(s.smtp_email||'') + '" placeholder="you@gmail.com"></div>'
     + '<div class="fg-row"><label>App Password</label><input class="inp" id="s-smtp_app_password" type="password" value="' + esc(s.smtp_app_password||'') + '" placeholder="xxxx xxxx xxxx xxxx"></div>'
     + '<div class="fg-row"><label>Display Name (optional)</label><input class="inp" id="s-smtp_display_name" value="' + esc(s.smtp_display_name||'') + '" placeholder="e.g. HireLab Talent"></div>'
-    + '<div style="border-top:1px dashed #ddd;margin:14px 0 10px;padding-top:12px"><div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:2px">&#9993; Client Submission (Share to Client)</div>'
+    + '<div style="border-top:1px dashed #ddd;margin:14px 0 10px;padding-top:12px"><div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:2px">&#9993; '+esc(T('share','Share to Client'))+'</div>'
     + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Used when you share candidate profiles to a client from the Pipeline.</div>'
     + '<div class="fg-row"><label>Internal team CC (auto-CC on every submission)</label><input class="inp" id="s-submission_cc_emails" value="' + esc(s.submission_cc_emails||'') + '" placeholder="soni@hirelabtalent.com, shikhar@hirelabtalent.com"></div>'
     + '<div class="fg-row"><label>Company Website (shown in signature, W:)</label><input class="inp" id="s-company_website" value="' + esc(s.company_website||'') + '" placeholder="www.hirelabtalent.com"></div>'
@@ -6600,7 +6603,7 @@ async function saveMandate(){
   const emin=parseFloat(v('m-expmin'))||0, emax=parseFloat(v('m-expmax'))||0;
   if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
   const r=await req('POST','/mandates',{client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd')});
-  if(r.ok){closeModal('modal-mandate');await loadMandates();await selectMandate(r.id);S.activeTab='Mandate Setup';renderTabs();renderContent();toast('✅','Mandate created!');}
+  if(r.ok){closeModal('modal-mandate');await loadMandates();await selectMandate(r.id);S.activeTab='Mandate Setup';renderTabs();renderContent();toast('✅',T('mandate','Mandate')+' created!');}
   else {toast('&#9888;&#65039;',r.error||'Create failed');if(btn){btn.disabled=false;btn.textContent='Create Mandate →';}}
 }
 
@@ -7284,7 +7287,24 @@ function applyWorkspace(){
     var t = el.querySelector('.sb-nav-title');
     if(t) t.textContent = p[1];
   });
+
+  // Static markup opts in by declaring its own wording, so a new label never
+  // needs another line in here:
+  //   <label data-vocab-tpl="{client_field} *">Client Name *</label>
+  //   <input data-vocab-ph="client_hint" placeholder="e.g. Legrand India">
+  document.querySelectorAll('[data-vocab-tpl]').forEach(function(el){
+    el.textContent = vocabFill(el.getAttribute('data-vocab-tpl'));
+  });
+  document.querySelectorAll('[data-vocab-ph]').forEach(function(el){
+    el.setAttribute('placeholder', T(el.getAttribute('data-vocab-ph'), el.getAttribute('placeholder')||''));
+  });
+
   document.body.setAttribute('data-ws-mode', wsMode());
+}
+
+// "Add {client}" -> "Add Department". Unknown keys are left alone.
+function vocabFill(tpl){
+  return String(tpl||'').replace(/\{([a-z_]+)\}/g, function(m, k){ return T(k, m); });
 }
 
 function openModal(id){
@@ -12156,7 +12176,7 @@ async function renderCrm(){
       +'<div style="font-size:32px;margin-bottom:10px">&#127970;</div>'
       +'<div style="font-size:15px;font-weight:600;color:#101828">'+(_crmState.q||_crmState.status?'No clients match':'Start your client list')+'</div>'
       +'<div style="font-size:13px;margin-top:6px;color:#667085">'+(_crmState.q||_crmState.status?'Try clearing filters':'Add your first company to begin.')+'</div>'
-      +(!(_crmState.q||_crmState.status)?'<button class="btn" onclick="openClientForm()" style="margin-top:14px;background:#2D6FB3;color:#fff;border:none;font-size:12.5px">+ Add Client</button>':'')
+      +(!(_crmState.q||_crmState.status)?'<button class="btn" onclick="openClientForm()" style="margin-top:14px;background:#2D6FB3;color:#fff;border:none;font-size:12.5px">+ Add '+esc(T('client','Client'))+'</button>':'')
       +'</div>';
     html+='</div>'; body.innerHTML=html; return;
   }
@@ -12282,9 +12302,9 @@ async function openClientForm(clientId){
     +'<div><label class="la-lbl">Notes</label><textarea id="cf-notes" class="inp" rows="2" style="width:100%">'+esc(client.notes||'')+'</textarea></div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
     +'<button class="btn btn-o" onclick="_waCloseModal()" style="font-size:11px">Cancel</button>'
-    +'<button class="btn" onclick="saveClient('+(clientId||'null')+')" style="background:#2D6FB3;color:#fff;border:none;font-size:11px">'+(isEdit?'Save Changes':'Add Client')+'</button>'
+    +'<button class="btn" onclick="saveClient('+(clientId||'null')+')" style="background:#2D6FB3;color:#fff;border:none;font-size:11px">'+(isEdit?'Save Changes':'Add '+esc(T('client','Client')))+'</button>'
     +'</div></div>';
-  _waOpenModal(isEdit?'Edit Client':'Add New Client', inner);
+  _waOpenModal(isEdit?('Edit '+T('client','Client')):('Add New '+T('client','Client')), inner);
 }
 
 async function saveClient(clientId){
