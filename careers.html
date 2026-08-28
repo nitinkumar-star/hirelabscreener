@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Careers</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI",sans-serif;background:#f5f5f5;color:#1a1a1a;min-height:100vh}
+.header{background:#0a2540;padding:26px 20px;text-align:center;color:#fff}
+.header h1{font-size:21px;font-weight:700;color:#1D9E75}
+.header p{font-size:13px;opacity:.75;margin-top:6px;max-width:520px;margin-left:auto;margin-right:auto;line-height:1.5}
+.container{max-width:720px;margin:24px auto;padding:0 16px 48px}
+.bar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.bar input,.bar select{padding:9px 12px;border:1px solid #ddd;border-radius:7px;font-size:13px;
+  font-family:inherit;outline:none;background:#fff}
+.bar input{flex:1;min-width:190px}
+.bar input:focus,.bar select:focus{border-color:#1D9E75}
+.count{font-size:12px;color:#888;margin-bottom:12px}
+.job{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:12px;
+  box-shadow:0 1px 6px rgba(0,0,0,.06);transition:box-shadow .15s}
+.job:hover{box-shadow:0 3px 14px rgba(0,0,0,.10)}
+.job-top{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.job h2{font-size:15.5px;font-weight:650;color:#0a2540;flex:1;min-width:180px}
+.meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.chip{font-size:11px;background:#F1F0EC;color:#555;border-radius:20px;padding:3px 10px;white-space:nowrap}
+.chip.ctc{background:#E1F5EE;color:#0F6E56}
+.jd{font-size:12.5px;color:#666;line-height:1.55;margin-top:11px;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.apply{background:#1D9E75;color:#fff;border:none;border-radius:7px;padding:9px 20px;
+  font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:none;
+  display:inline-block;white-space:nowrap}
+.apply:hover{background:#178A65}
+.state{background:#fff;border-radius:10px;padding:44px 24px;text-align:center;
+  box-shadow:0 1px 6px rgba(0,0,0,.06)}
+.state .ic{font-size:34px;margin-bottom:10px}
+.state h3{font-size:15px;font-weight:600;color:#333;margin-bottom:6px}
+.state p{font-size:13px;color:#888;line-height:1.55}
+.foot{text-align:center;font-size:11px;color:#aaa;margin-top:28px}
+@media(max-width:520px){.apply{width:100%;text-align:center;margin-top:12px}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1 id="co">Careers</h1>
+  <p id="intro"></p>
+</div>
+
+<div class="container">
+  <div id="bar" class="bar" style="display:none">
+    <input id="q" placeholder="Search role or keyword" autocomplete="off">
+    <select id="loc"><option value="">All locations</option></select>
+  </div>
+  <div id="count" class="count"></div>
+  <div id="list">
+    <div class="state"><div class="ic">&#8987;</div><h3>Loading openings…</h3></div>
+  </div>
+  <div class="foot">Powered by HireLab</div>
+</div>
+
+<script>
+// Public page: no auth, no tenant data beyond what the server chooses to
+// publish. The company is identified by ?c= so one deployment serves every
+// tenant's careers page.
+var params = new URLSearchParams(location.search);
+var CID = params.get('c') || '';
+var JOBS = [];
+
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, function(m){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
+  });
+}
+
+function state(icon, title, msg){
+  document.getElementById('list').innerHTML =
+    '<div class="state"><div class="ic">'+icon+'</div><h3>'+esc(title)+'</h3>'
+    + (msg ? '<p>'+esc(msg)+'</p>' : '') + '</div>';
+  document.getElementById('count').textContent = '';
+}
+
+function applyUrl(job){
+  var u = '/apply?m=' + encodeURIComponent(job.id);
+  if (CID) u += '&c=' + encodeURIComponent(CID);
+  u += '&src=careers';
+  return u;
+}
+
+function render(){
+  var q = (document.getElementById('q').value || '').trim().toLowerCase();
+  var loc = document.getElementById('loc').value || '';
+  var shown = JOBS.filter(function(j){
+    if (loc && (j.location||'') !== loc) return false;
+    if (!q) return true;
+    return (j.role+' '+(j.division||'')+' '+(j.jd||'')).toLowerCase().indexOf(q) >= 0;
+  });
+
+  document.getElementById('count').textContent =
+    shown.length + (shown.length === 1 ? ' opening' : ' openings');
+
+  if (!shown.length){
+    state('&#128269;', 'Nothing matches that', 'Try a different keyword or clear the filters.');
+    return;
+  }
+
+  document.getElementById('list').innerHTML = shown.map(function(j){
+    var chips = '';
+    if (j.location)   chips += '<span class="chip">&#128205; '+esc(j.location)+'</span>';
+    if (j.experience) chips += '<span class="chip">'+esc(j.experience)+'</span>';
+    if (j.division)   chips += '<span class="chip">'+esc(j.division)+'</span>';
+    if (j.ctc)        chips += '<span class="chip ctc">'+esc(j.ctc)+'</span>';
+    return '<div class="job">'
+      + '<div class="job-top"><h2>'+esc(j.role)+'</h2>'
+      + '<a class="apply" href="'+esc(applyUrl(j))+'">Apply</a></div>'
+      + (chips ? '<div class="meta">'+chips+'</div>' : '')
+      + (j.jd ? '<div class="jd">'+esc(j.jd)+'</div>' : '')
+      + '</div>';
+  }).join('');
+}
+
+(async function(){
+  var r;
+  try {
+    var res = await fetch('/api/public/openings' + (CID ? ('?c='+encodeURIComponent(CID)) : ''));
+    r = await res.json();
+  } catch(e){
+    state('&#9888;&#65039;', 'Could not load openings', 'Please refresh the page in a moment.');
+    return;
+  }
+  if (!r || !r.ok){
+    state('&#9888;&#65039;', 'Could not load openings', 'Please refresh the page in a moment.');
+    return;
+  }
+  if (r.enabled === false){
+    document.getElementById('co').textContent = 'Careers';
+    state('&#128274;', 'This careers page is not published', 'Please check the link, or get in touch with the recruiter directly.');
+    return;
+  }
+
+  if (r.company){
+    document.getElementById('co').textContent = r.company + ' — Careers';
+    document.title = r.company + ' — Careers';
+  }
+  if (r.intro) document.getElementById('intro').textContent = r.intro;
+
+  JOBS = r.openings || [];
+  if (!JOBS.length){
+    state('&#128188;', 'No open positions right now', 'Do check back — new roles are posted here as they open.');
+    return;
+  }
+
+  var locs = [];
+  JOBS.forEach(function(j){ if (j.location && locs.indexOf(j.location) < 0) locs.push(j.location); });
+  locs.sort();
+  var sel = document.getElementById('loc');
+  locs.forEach(function(l){
+    var o = document.createElement('option'); o.value = l; o.textContent = l; sel.appendChild(o);
+  });
+  // Filters only earn their space once there is enough to filter.
+  if (JOBS.length > 3 || locs.length > 1) document.getElementById('bar').style.display = 'flex';
+
+  document.getElementById('q').addEventListener('input', render);
+  sel.addEventListener('change', render);
+  render();
+})();
+</script>
+</body>
+</html>

@@ -1518,6 +1518,7 @@ def get_workspace():
     return jsonify({'ok': True, 'mode': mode, 'vocab': vocab,
                     'hidden_modules': AGENCY_ONLY_MODULES if mode == 'corporate' else [],
                     'can_approve': bool(is_company_admin()),
+                    'company_id': effective_company_id(),
                     'can_edit_vocab': bool(is_company_admin())})
 
 
@@ -2904,6 +2905,10 @@ def init_db():
             c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {typ}')
         except sqlite3.OperationalError:
             pass  # already exists
+    try:
+        c.execute("ALTER TABLE submissions ADD COLUMN source_channel TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
 
     # Back-fill once from the old free text, so historical source reporting
     # keeps working instead of showing every past candidate as "Other".
@@ -5253,6 +5258,8 @@ TENANT_SETTINGS = {
     'fu1_hours', 'fu2_hours',
     'workflow_mode',   # legacy label toggle; superseded by companies.workspace_mode
     'vocab_overrides',  # JSON: this tenant's own wording for mandate/client/etc
+    'form_config',      # JSON: fields shown on this tenant's public application form
+    'careers_enabled', 'careers_show_ctc', 'careers_intro',
     'pipeline_stages',  # JSON array of custom stages before the fixed Placed/Joined
     'smtp_email', 'smtp_app_password', 'smtp_display_name',
     'imap_enabled', 'imap_last_uid',
@@ -15965,6 +15972,11 @@ def wa_queue(mid):
 #  CANDIDATE SUBMISSION FORM
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+@app.route('/careers')
+def careers_page():
+    return send_file('careers.html')
+
+
 @app.route('/apply')
 def apply_form():
     return send_file('apply.html')
@@ -16049,6 +16061,14 @@ def submit_form():
          request.form.get('key_skills', '[]'),
          request.form.get('custom_fields', '{}'),
          cv_path, cv_name, 1 if cv_path else 0, 'new', _sub_owner, _sub_mid, ts()))
+    _sub_id = c.lastrowid
+    # Remember whether this arrived via the careers page, so source reporting
+    # can tell an inbound applicant from someone the recruiter went out and found.
+    try:
+        _src = 'careers' if (request.args.get('src') or request.form.get('src')) == 'careers' else 'applied'
+        c.execute('UPDATE submissions SET source_channel=? WHERE id=?', (_src, _sub_id))
+    except sqlite3.OperationalError:
+        pass
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
@@ -16165,22 +16185,112 @@ def add_submission_to_pipeline(sid):
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) '
               'VALUES (?,?,?,?,?)', (cid, '', 'Screening', 'Added from submission form', ts()))
     conn.execute('UPDATE submissions SET status=? WHERE id=?', ('added_to_pipeline', sid))
+    # Keep the channel the applicant actually arrived through, rather than
+    # letting them all read as generic inbound once they reach the pipeline.
+    try:
+        _sr = conn.execute('SELECT source_channel FROM submissions WHERE id=?', (sid,)).fetchone()
+        conn.execute('UPDATE candidates SET source_channel=? WHERE id=?',
+                     ((_sr['source_channel'] if _sr else '') or 'careers', cid))
+    except sqlite3.OperationalError:
+        pass
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'candidate_id': cid})
 
 @app.route('/api/form-config', methods=['GET', 'POST'])
 def form_config():
+    """Public application-form config.
+
+    Was stored in the global `settings` table, so every tenant on the platform
+    shared one form. Now scoped per company: writes go to the logged-in
+    tenant, reads use ?c= (the company the applicant is applying to) and fall
+    back to the legacy global row so existing forms keep working.
+    """
     conn = get_db()
     if request.method == 'POST':
         if not current_user():          # only logged-in staff may change the form
             conn.close(); return jsonify({'error': 'Unauthorized'}), 401
-        conn.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)',
-                     ('form_config', json.dumps(request.json or {})))
+        conn.execute('INSERT OR REPLACE INTO tenant_settings (company_id,key,value) VALUES (?,?,?)',
+                     (effective_company_id(), 'form_config', json.dumps(request.json or {})))
         conn.commit(); conn.close()
         return jsonify({'ok': True})
-    r = conn.execute("SELECT value FROM settings WHERE key='form_config'").fetchone()
+
+    cid = _resolve_submission_owner(conn, request.args.get('c'))
+    r = conn.execute("SELECT value FROM tenant_settings WHERE company_id=? AND key='form_config'",
+                     (cid,)).fetchone()
+    if not r:
+        r = conn.execute("SELECT value FROM settings WHERE key='form_config'").fetchone()
     conn.close()
     return jsonify({'ok': True, 'config': json.loads(r['value'] if r else '{}')})
+
+
+@app.route('/api/public/openings', methods=['GET'])
+def public_openings():
+    """Jobs a tenant is willing to show publicly, for their careers page.
+
+    Deliberately narrow: only active requisitions, and in corporate mode only
+    ones that have cleared approval — an unapproved headcount must never leak
+    onto a public page. No contact details, no client notes, no CTC unless the
+    tenant chose to publish it.
+    """
+    cid = None
+    conn = get_db()
+    try:
+        cid = _resolve_submission_owner(conn, request.args.get('c'))
+        # Off by default. A tenant opts in before their requisitions are
+        # reachable by anyone with the URL.
+        if get_setting_for(conn, cid, 'careers_enabled', '0') != '1':
+            return jsonify({'ok': True, 'enabled': False, 'company': '', 'openings': []})
+        comp = conn.execute('SELECT name, workspace_mode FROM companies WHERE id=?', (cid,)).fetchone()
+        show_ctc = (get_setting_for(conn, cid, 'careers_show_ctc', '0') == '1')
+        rows = conn.execute(
+            "SELECT id, role, client, location, division, exp_min, exp_max, ctc_min, ctc_max, jd, "
+            "COALESCE(approval_status,'approved') AS appr, COALESCE(status,'') AS st "
+            "FROM mandates WHERE owner_id=? AND COALESCE(status,'')='active' "
+            "ORDER BY created_at DESC LIMIT 60", (cid,)).fetchall()
+        out = []
+        for m in rows:
+            if m['appr'] != 'approved':
+                continue
+            job = {'id': m['id'], 'role': m['role'], 'location': m['location'],
+                   'division': m['division'] or '',
+                   'experience': _exp_label(m['exp_min'], m['exp_max']),
+                   'jd': _strip_html(m['jd'] or '')[:900]}
+            if show_ctc and (m['ctc_min'] or m['ctc_max']):
+                job['ctc'] = _ctc_label(m['ctc_min'], m['ctc_max'])
+            out.append(job)
+        return jsonify({'ok': True, 'enabled': True,
+                        'company': comp['name'] if comp else '',
+                        'intro': get_setting_for(conn, cid, 'careers_intro', ''),
+                        'company_id': cid, 'openings': out})
+    finally:
+        conn.close()
+
+
+def get_setting_for(conn, company_id, key, default=''):
+    """Read a tenant setting without needing a request session."""
+    r = conn.execute('SELECT value FROM tenant_settings WHERE company_id=? AND key=?',
+                     (company_id, key)).fetchone()
+    return r['value'] if r and r['value'] is not None else default
+
+
+def _exp_label(lo, hi):
+    lo, hi = float(lo or 0), float(hi or 0)
+    if lo and hi:
+        return f'{lo:g} years' if lo == hi else f'{lo:g}-{hi:g} years'
+    if lo:
+        return f'{lo:g}+ years'
+    return ''
+
+
+def _ctc_label(lo, hi):
+    lo, hi = float(lo or 0), float(hi or 0)
+    if lo and hi:
+        return f'{lo:g}-{hi:g} LPA'
+    return f'{lo or hi:g} LPA' if (lo or hi) else ''
+
+
+def _strip_html(s):
+    return re.sub(r'<[^>]+>', ' ', s or '').replace('&nbsp;', ' ').strip()
 
 
 # Intelligence

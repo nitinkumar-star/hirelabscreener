@@ -5915,6 +5915,26 @@ function renderSettings(){
     +'<button class="btn btn-g" onclick="saveVocab()">Save wording</button>'
     +'<span id="vc-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
     +'</div></div>'
+
+    // ── Public careers page ──
+    +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Careers Page</span></div><div class="card-body">'
+    +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">A public page listing your open '
+    + esc(String(T('mandate_plural','positions')).toLowerCase())
+    +'. Only active, approved ones appear \u2014 nothing else about them is exposed.</div>'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:8px;cursor:pointer">'
+      +'<input type="checkbox" id="s-careers_enabled"'+((s.careers_enabled==='1')?' checked':'')+'> Publish my careers page</label>'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:10px;cursor:pointer">'
+      +'<input type="checkbox" id="s-careers_show_ctc"'+((s.careers_show_ctc==='1')?' checked':'')+'> Show salary range on it</label>'
+    +'<div class="fg-row"><label>Intro line (optional)</label>'
+      +'<input class="inp" id="s-careers_intro" value="'+esc(s.careers_intro||'')+'" placeholder="e.g. Build the future of solar with us."></div>'
+    +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Your link:</div>'
+    +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+      +'<code id="careers-url" style="font-size:11.5px;background:#F1F0EC;padding:5px 9px;border-radius:6px;word-break:break-all">'+esc(careersUrl())+'</code>'
+      +'<button class="btn btn-o" style="font-size:11px" onclick="copyCareersUrl()">Copy</button>'
+      +'<a class="btn btn-o" style="font-size:11px;text-decoration:none" href="'+esc(careersUrl())+'" target="_blank">Preview</a>'
+    +'</div>'
+    +'<div style="font-size:11px;color:var(--muted);margin-top:7px">Save settings below to apply changes.</div>'
+    +'</div></div>'
     +'<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;box-shadow:var(--shadow-sm)">'
     +'<div><div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:2px">Export &amp; Import Data</div><div style="color:var(--muted);font-size:11.5px">Export before updates — import after</div></div>'
     +'<div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-g" onclick="exportAll()">&#8595; Export JSON</button><label class="btn btn-o" style="cursor:pointer">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="importAll(this)"></label></div></div>'
@@ -6592,8 +6612,18 @@ async function saveVocab(){
   }
 }
 
+function careersUrl(){
+  var cid = (S.ws && S.ws.company_id) || '';
+  return location.origin + '/careers' + (cid ? ('?c=' + cid) : '');
+}
+function copyCareersUrl(){
+  var u = careersUrl();
+  if (navigator.clipboard) navigator.clipboard.writeText(u).then(function(){ toast('✅','Link copied'); });
+  else toast('&#9888;&#65039;', u);
+}
+
 async function saveSettings(){
-  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),submission_cc_emails:v('s-submission_cc_emails'),company_website:v('s-company_website'),submission_signature:v('s-submission_signature'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template')};
+  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),submission_cc_emails:v('s-submission_cc_emails'),company_website:v('s-company_website'),submission_signature:v('s-submission_signature'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template'),careers_enabled:(document.getElementById('s-careers_enabled')||{}).checked?'1':'0',careers_show_ctc:(document.getElementById('s-careers_show_ctc')||{}).checked?'1':'0',careers_intro:v('s-careers_intro')};
   const r=await req('POST','/settings',data);
   if(r.ok){S.settings=data;applyPipelineStages();toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }
