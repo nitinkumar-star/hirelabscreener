@@ -6034,6 +6034,18 @@ function renderSettings(){
     +'</div>'
     +'<div style="font-size:11px;color:var(--muted);margin-top:7px">Save settings below to apply changes.</div>'
     +'</div></div>'
+
+    // ── Applicant replies ──
+    +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Applicant Replies</span></div><div class="card-body">'
+    +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Use <b>{name}</b>, <b>{role}</b> and <b>{company}</b> \u2014 they are filled in automatically. Leave blank to use the built-in wording.</div>'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:10px;cursor:pointer">'
+      +'<input type="checkbox" id="s-ack_enabled"'+((s.ack_enabled==='1')?' checked':'')+'> Auto-acknowledge every application</label>'
+    +'<div class="fg-row"><label>Acknowledgement email</label>'
+      +'<textarea class="ta" id="s-ack_template" rows="4" placeholder="Leave blank for the default wording">'+esc(s.ack_template||'')+'</textarea></div>'
+    +'<div class="fg-row"><label>Regret email</label>'
+      +'<textarea class="ta" id="s-regret_template" rows="5" placeholder="Leave blank for the default wording">'+esc(s.regret_template||'')+'</textarea></div>'
+    +'<div style="font-size:11px;color:var(--muted)">Regret emails are sent one at a time from the Submissions list \u2014 never in bulk without you looking at the person first.</div>'
+    +'</div></div>'
     +'<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;box-shadow:var(--shadow-sm)">'
     +'<div><div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:2px">Export &amp; Import Data</div><div style="color:var(--muted);font-size:11.5px">Export before updates — import after</div></div>'
     +'<div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-g" onclick="exportAll()">&#8595; Export JSON</button><label class="btn btn-o" style="cursor:pointer">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="importAll(this)"></label></div></div>'
@@ -6722,7 +6734,7 @@ function copyCareersUrl(){
 }
 
 async function saveSettings(){
-  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),submission_cc_emails:v('s-submission_cc_emails'),company_website:v('s-company_website'),submission_signature:v('s-submission_signature'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template'),careers_enabled:(document.getElementById('s-careers_enabled')||{}).checked?'1':'0',careers_show_ctc:(document.getElementById('s-careers_show_ctc')||{}).checked?'1':'0',careers_intro:v('s-careers_intro')};
+  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),submission_cc_emails:v('s-submission_cc_emails'),company_website:v('s-company_website'),submission_signature:v('s-submission_signature'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template'),careers_enabled:(document.getElementById('s-careers_enabled')||{}).checked?'1':'0',careers_show_ctc:(document.getElementById('s-careers_show_ctc')||{}).checked?'1':'0',careers_intro:v('s-careers_intro'),ack_enabled:(document.getElementById('s-ack_enabled')||{}).checked?'1':'0',ack_template:v('s-ack_template'),regret_template:v('s-regret_template')};
   const r=await req('POST','/settings',data);
   if(r.ok){S.settings=data;applyPipelineStages();toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
 }
@@ -9550,6 +9562,11 @@ async function renderResponses() {
     });
     html += '</select>';
     html += '<button class="btn btn-g" style="font-size:12px;padding:6px 13px" onclick="addSubToPipeline(' + s.id + ')">+ Add to pipeline</button>';
+    if (s.email && s.status !== 'regretted') {
+      html += '<button class="btn btn-o" style="font-size:12px;padding:6px 13px;margin-left:7px" onclick="sendRegret(' + s.id + ',\'' + esc(String(s.name||'').replace(/'/g,"")) + '\')">Send regret</button>';
+    } else if (s.status === 'regretted') {
+      html += '<span style="font-size:11.5px;color:#888;margin-left:9px">Regret sent</span>';
+    }
     if (s.cv_path) html += '<a href="/api/cv/' + esc(s.cv_path) + '" target="_blank" class="btn btn-o" style="font-size:12px;text-decoration:none;padding:6px 13px">&#8595; CV</a>';
     html += '</div></div>';
   });
@@ -9577,6 +9594,15 @@ async function renderResponses() {
       else toast('ERR', 'Failed');
     });
   });
+}
+
+// One at a time, with the person's name in the confirmation. Declining
+// someone should require looking at who they are, so there is no bulk action.
+async function sendRegret(sid, name) {
+  if (!confirm('Send a polite regret email to ' + name + '?\n\nThey will be told they are not moving forward for this role.')) return;
+  var r = await req('POST', '/submissions/' + sid + '/regret', {});
+  if (r && r.ok) { toast('OK', 'Regret email sent to ' + name); renderResponses(); }
+  else toast('ERR', (r && r.error) || 'Could not send');
 }
 
 function copyApplyLink() {

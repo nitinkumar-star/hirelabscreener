@@ -5326,6 +5326,7 @@ TENANT_SETTINGS = {
     'vocab_overrides',  # JSON: this tenant's own wording for mandate/client/etc
     'form_config',      # JSON: fields shown on this tenant's public application form
     'careers_enabled', 'careers_show_ctc', 'careers_intro',
+    'ack_enabled', 'ack_template', 'regret_template',
     'pipeline_stages',  # JSON array of custom stages before the fixed Placed/Joined
     'smtp_email', 'smtp_app_password', 'smtp_display_name',
     'imap_enabled', 'imap_last_uid',
@@ -16226,6 +16227,10 @@ def submit_form():
     except sqlite3.OperationalError:
         pass
     conn.commit(); conn.close()
+    # Close the loop with the applicant. Fire-and-forget: their application is
+    # already saved, so a mail failure must not surface as a failed submission.
+    if email:
+        _ack_applicant(_sub_owner, _sub_mid, name, email)
     return jsonify({'ok': True})
 
 @app.route('/api/submissions')
@@ -17378,6 +17383,149 @@ def _review_token(mid):
     if isinstance(key, str):
         key = key.encode()
     return hmac.new(key, ('review:%d' % mid).encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def _send_tenant_email(company_id, to_email, subject, html_body):
+    """Send a simple HTML email using a specific tenant's SMTP settings.
+
+    `_send_submission_email` reads settings through the session, which does not
+    exist on a public request like a careers-page application. This reads the
+    tenant's settings directly so an applicant can be answered without anyone
+    being logged in. Returns (ok, error).
+    """
+    conn = get_db()
+    try:
+        smtp_email = get_setting_for(conn, company_id, 'smtp_email', '')
+        smtp_pass = get_setting_for(conn, company_id, 'smtp_app_password', '')
+        smtp_name = (get_setting_for(conn, company_id, 'smtp_display_name', '')
+                     or get_setting_for(conn, company_id, 'company_name', '') or smtp_email)
+    finally:
+        conn.close()
+    if not smtp_email or not smtp_pass or not to_email:
+        return False, 'Email not configured'
+    try:
+        import email.utils as _eut
+        msg = MIMEMultipart('alternative')
+        msg['From'] = f'{smtp_name} <{smtp_email}>' if smtp_name else smtp_email
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        domain = smtp_email.split('@')[-1] if '@' in smtp_email else 'hirelab.local'
+        msg['Message-ID'] = _eut.make_msgid(domain=domain)
+        msg['Date'] = _eut.formatdate(localtime=True)
+        msg.attach(MIMEText(re.sub('<[^<]+?>', '', html_body), 'plain', 'utf-8'))
+        msg.attach(MIMEText('<div style="font-family:Calibri,Arial,sans-serif;font-size:14px">'
+                            + html_body + '</div>', 'html', 'utf-8'))
+        # Same provider detection the submission mailer uses, so a tenant on
+        # Outlook or Yahoo is not silently forced through Gmail.
+        low = smtp_email.lower()
+        if '@outlook' in low or '@hotmail' in low or '@live' in low:
+            host = 'smtp-mail.outlook.com'
+        elif '@yahoo' in low:
+            host = 'smtp.mail.yahoo.com'
+        else:
+            host = 'smtp.gmail.com'
+        srv = smtplib.SMTP(host, 587, timeout=20)
+        try:
+            srv.starttls()
+            srv.login(smtp_email, smtp_pass)
+            srv.sendmail(smtp_email, [to_email], msg.as_string())
+        finally:
+            try: srv.quit()
+            except Exception: pass
+        return True, ''
+    except Exception as e:
+        return False, str(e)
+
+
+def _fill_tokens(text, **kw):
+    """Replace {name} / {role} / {company} in a template. Unknown tokens stay."""
+    out = str(text or '')
+    for k, v in kw.items():
+        out = out.replace('{' + k + '}', str(v or ''))
+    return out
+
+
+ACK_DEFAULT = ("Hi {name},<br><br>Thank you for applying"
+               " for the {role} position at {company}. We have received your application"
+               " and our team is reviewing it.<br><br>If your profile matches what we are"
+               " looking for, we will be in touch shortly.<br><br>Warm regards,<br>{company}")
+
+REGRET_DEFAULT = ("Hi {name},<br><br>Thank you for your interest in the {role} position"
+                  " at {company}, and for the time you gave us.<br><br>After careful"
+                  " consideration we have decided to move ahead with other candidates whose"
+                  " experience is closer to what this role needs. This is not a reflection of"
+                  " your abilities, and we would be glad to consider you for future"
+                  " openings.<br><br>We wish you the very best.<br><br>Warm regards,<br>{company}")
+
+
+def _ack_applicant(company_id, mandate_id, name, email_addr):
+    """Acknowledge a public application, in the background.
+
+    Sent on a thread so a slow or misconfigured mail server can never make an
+    applicant's submission appear to fail. Silence is the correct failure mode
+    here: the application is already saved.
+    """
+    import threading
+
+    def _bg():
+        try:
+            conn = get_db()
+            try:
+                if get_setting_for(conn, company_id, 'ack_enabled', '0') != '1':
+                    return
+                tpl = get_setting_for(conn, company_id, 'ack_template', '') or ACK_DEFAULT
+                comp = conn.execute('SELECT name FROM companies WHERE id=?', (company_id,)).fetchone()
+                role = ''
+                if mandate_id:
+                    mr = conn.execute('SELECT role FROM mandates WHERE id=?', (mandate_id,)).fetchone()
+                    role = mr['role'] if mr else ''
+            finally:
+                conn.close()
+            cname = comp['name'] if comp else ''
+            body = _fill_tokens(tpl, name=name, role=role or 'the role', company=cname)
+            subject = f'We received your application' + (f' — {role}' if role else '')
+            _send_tenant_email(company_id, email_addr, subject, body)
+        except Exception:
+            pass
+    threading.Thread(target=_bg, daemon=True).start()
+
+
+@app.route('/api/submissions/<int:sid>/regret', methods=['POST'])
+@login_required
+def send_regret(sid):
+    """Politely close the loop with an applicant who is not moving forward.
+
+    Corporate customers care about this: an unanswered applicant is a public
+    review waiting to happen, and inbound volume from a careers page makes
+    silence the default unless declining is one click.
+    """
+    conn = get_db()
+    sub = conn.execute('SELECT * FROM submissions WHERE id=? AND owner_id=?',
+                       (sid, effective_company_id())).fetchone()
+    if not sub:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    if not (sub['email'] or '').strip():
+        conn.close(); return jsonify({'error': 'This applicant has no email address'}), 400
+    cid = effective_company_id()
+    tpl = get_setting_for(conn, cid, 'regret_template', '') or REGRET_DEFAULT
+    comp = conn.execute('SELECT name FROM companies WHERE id=?', (cid,)).fetchone()
+    role = ''
+    if sub['mandate_id']:
+        mr = conn.execute('SELECT role FROM mandates WHERE id=?', (sub['mandate_id'],)).fetchone()
+        role = mr['role'] if mr else ''
+    conn.close()
+
+    body = _fill_tokens(tpl, name=sub['name'], role=role or 'the role',
+                        company=(comp['name'] if comp else ''))
+    ok, err = _send_tenant_email(cid, sub['email'],
+                                 'Update on your application' + (f' — {role}' if role else ''), body)
+    if not ok:
+        return jsonify({'error': err or 'Could not send'}), 400
+    conn = get_db()
+    conn.execute('UPDATE submissions SET status=? WHERE id=?', ('regretted', sid))
+    conn.commit(); conn.close()
+    log_activity('send_regret', f"{sub['name']}" + (f' — {role}' if role else ''))
+    return jsonify({'ok': True})
 
 
 @app.route('/api/mandates/<int:mid>/review-link')
