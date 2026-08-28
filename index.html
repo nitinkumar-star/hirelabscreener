@@ -754,7 +754,7 @@ body{font-size:14px !important; line-height:1.5}
   </div>
   <div class="sb-user" id="sb-user">
     <div class="sb-user-av" id="sb-user-av">NK</div>
-    <div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;line-height:1.1;color:var(--ink)" id="sb-user-name">Nitin Kumar</div><div style="font-size:11px;color:#A8A498;margin-top:2px" id="sb-user-role">HireLab Talent</div></div>
+    <div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;line-height:1.1;color:var(--ink)" id="sb-user-name"></div><div style="font-size:11px;color:#A8A498;margin-top:2px" id="sb-user-role">HireLab Talent</div></div>
     <button onclick="doLogout()" title="Log out" style="border:none;background:transparent;color:#B4B0A6;font-size:13px;cursor:pointer;padding:4px">&#9211;</button>
   </div>
 </div>
@@ -5932,7 +5932,7 @@ function buildWAMsg(c,type){
   var role      = S.activeMandate ? S.activeMandate.role : '';
   var loc       = S.activeMandate ? S.activeMandate.location : '';
   var client    = S.activeMandate ? S.activeMandate.client : '';
-  var recruiter = S.settings.recruiter_name || 'Nitin';
+  var recruiter = S.settings.recruiter_name || '';
 
   var candidateCompany = c.company || '';
 
@@ -5985,9 +5985,9 @@ function renderSettings(){
     +'<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head"><span style="font-weight:500">&#128100; My Profile &amp; Email Signature</span></div><div class="card-body">'
     +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">These details are used automatically in your email signature and AI-composed emails.</div>'
     +'<div class="g2">'
-    +'<div class="fg-row"><label>Full Name</label><input class="inp" id="mp-name" value="" placeholder="e.g. Nitin Kumar"></div>'
+    +'<div class="fg-row"><label>Full Name</label><input class="inp" id="mp-name" value="" placeholder="e.g. your full name"></div>'
     +'<div class="fg-row"><label>Designation / Title</label><input class="inp" id="mp-designation" value="" placeholder="e.g. Practice Lead | Talent Acquisition"></div>'
-    +'<div class="fg-row"><label>Phone / Mobile</label><input class="inp" id="mp-phone" value="" placeholder="e.g. 8950122628"></div>'
+    +'<div class="fg-row"><label>Phone / Mobile</label><input class="inp" id="mp-phone" value="" placeholder="e.g. 90000 00000"></div>'
     +'<div class="fg-row"><label>Email</label><input class="inp" id="mp-email" value="" placeholder="e.g. nitin@hirelab.com"></div>'
     +'</div>'
     +'<button class="btn btn-g" style="margin-top:8px" onclick="saveMyProfile()">Save My Profile</button>'
@@ -6556,9 +6556,9 @@ function emailConfigHTML(s){
     + '<div class="fg-row"><label>Display Name (optional)</label><input class="inp" id="s-smtp_display_name" value="' + esc(s.smtp_display_name||'') + '" placeholder="e.g. HireLab Talent"></div>'
     + '<div style="border-top:1px dashed #ddd;margin:14px 0 10px;padding-top:12px"><div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:2px">&#9993; '+esc(T('share','Share to Client'))+'</div>'
     + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Used when you share candidate profiles to a client from the Pipeline.</div>'
-    + '<div class="fg-row"><label>Internal team CC (auto-CC on every submission)</label><input class="inp" id="s-submission_cc_emails" value="' + esc(s.submission_cc_emails||'') + '" placeholder="soni@hirelabtalent.com, shikhar@hirelabtalent.com"></div>'
-    + '<div class="fg-row"><label>Company Website (shown in signature, W:)</label><input class="inp" id="s-company_website" value="' + esc(s.company_website||'') + '" placeholder="www.hirelabtalent.com"></div>'
-    + '<div class="fg-row"><label>Email Signature (optional — leave blank to auto-build)</label><textarea class="inp" id="s-submission_signature" rows="4" placeholder="Nitin Kumar&#10;Practice Lead | HireLab | Talent Acquisition&#10;E: nitin.kumar@hirelabtalent.com  M: 8950122628  W: www.hirelabtalent.com">' + esc(s.submission_signature||'') + '</textarea></div>'
+    + '<div class="fg-row"><label>Internal team CC (auto-CC on every submission)</label><input class="inp" id="s-submission_cc_emails" value="' + esc(s.submission_cc_emails||'') + '" placeholder="teammate@example.com, colleague@example.com"></div>'
+    + '<div class="fg-row"><label>Company Website (shown in signature, W:)</label><input class="inp" id="s-company_website" value="' + esc(s.company_website||'') + '" placeholder="www.example.com"></div>'
+    + '<div class="fg-row"><label>Email Signature (optional — leave blank to auto-build)</label><textarea class="inp" id="s-submission_signature" rows="4" placeholder="Your Name&#10;Your Title | Your Company&#10;E: you@example.com  M: 00000 00000  W: www.example.com">' + esc(s.submission_signature||'') + '</textarea></div>'
     + '</div>'
     + '<div style="background:#F3F8FF;border:0.5px solid #C5DEFF;border-radius:8px;padding:12px;margin-top:10px;font-size:11px;color:#1565C0;line-height:1.6">'
     + '<div style="font-weight:700;margin-bottom:4px">&#128273; How to create a Gmail App Password:</div>'
@@ -9204,7 +9204,7 @@ function attachEmailHandler(cand) {
       var ctcMin = m.ctc_min || '';
       var ctcMax = m.ctc_max || '';
       var jd   = m.jd || '';
-      var recruiter = (S.settings && S.settings.recruiter_name) || 'Nitin Kumar';
+      var recruiter = (S.settings && S.settings.recruiter_name) || '';
 
       // Build subject
       var subject = 'Job Opportunity: ' + role + (client ? ' at ' + client : '') + (loc ? ' | ' + loc : '');
@@ -9369,10 +9369,17 @@ function attachEmailHandler(cand) {
       body += 'If this opportunity interests you, I would be glad to connect for a brief call.\n\n';
       body += 'Please feel free to reply to this email or reach out on WhatsApp.\n\n';
       body += 'Warm regards,\n';
-      body += recruiter + '\n';
-      body += 'Recruitment Consultant | HireLab Talent Resource\n';
-      body += 'Email: nitin.kumar@hirelabtalent.com\n';
-      body += 'Web:   hirelabtalent.com';
+      // Signature was hardcoded to the platform owner, so every tenant's
+      // candidate outreach went out under his name, firm and email address.
+      // Taken from this tenant's own settings; each line is omitted if unset.
+      var _st = S.settings || {};
+      var _co = _st.seller_name || _st.company_name || '';
+      var _em = _st.smtp_email || '';
+      var _web = _st.company_website || '';
+      if (recruiter) body += recruiter + '\n';
+      if (_co)  body += 'Recruitment Consultant | ' + _co + '\n';
+      if (_em)  body += 'Email: ' + _em + '\n';
+      if (_web) body += 'Web:   ' + _web;
 
       // Use Gmail compose URL — works directly in browser without email client
       var gmailUrl = 'https://mail.google.com/mail/?view=cm'

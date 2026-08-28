@@ -314,6 +314,21 @@ def _tenant_owns_submission(conn, sid):
     r = conn.execute('SELECT owner_id FROM submissions WHERE id=?', (sid,)).fetchone()
     return bool(r) and r['owner_id'] == effective_company_id()
 
+
+def _tenant_owns_interview(conn, iid):
+    """True if interview `iid` belongs to the current tenant (company).
+
+    `interviews.owner_id` is set at creation. Rows created before that column
+    existed may carry NULL/0, so ownership is confirmed through the parent
+    candidate in that case rather than being assumed either way.
+    """
+    r = conn.execute('SELECT owner_id, candidate_id FROM interviews WHERE id=?', (iid,)).fetchone()
+    if not r:
+        return False
+    if r['owner_id']:
+        return r['owner_id'] == effective_company_id()
+    return _tenant_owns_candidate(conn, r['candidate_id'])
+
 def _primary_company_id(conn):
     """The default tenant a PUBLIC submission belongs to when the apply link
     carries no explicit company token. Prefers the configured
@@ -2380,18 +2395,20 @@ def init_db():
         );
     """)
     defaults = [
-        ('recruiter_name', 'Nitin Kumar'),
-        ('company_name', 'HireLab'),
+        # Seeded blank on purpose: these are per-tenant identity, and a
+        # non-blank default silently becomes another tenant's identity.
+        ('recruiter_name', ''),
+        ('company_name', ''),
         ('submission_cc_emails', ''),   # internal team auto-CC on client submissions
         ('company_website', ''),        # shown in the submission email signature (W:)
         ('submission_signature', ''),   # optional: exact signature block (plain text); auto-built if empty
-        ('seller_gstin', '09ECWPP1647A1Z9'),
-        ('seller_address', 'Office no: GF064, B-128, First Floor, Sector-2, Gautam Buddha Nagar, Noida, Uttar Pradesh 201301.'),
-        ('seller_udyam', 'UDYAM : UDYAM-UP-29-0178859 (Micro/Services)'),
-        ('seller_state', 'Uttar Pradesh'),
-        ('seller_state_code', '09'),
-        ('seller_reg_office', 'Building No.36, Tronica City, Ghaziabad, Uttar Pradesh-201102'),
-        ('invoice_signatory', 'Pavitra'),
+        ('seller_gstin', ''),
+        ('seller_address', ''),
+        ('seller_udyam', ''),
+        ('seller_state', ''),
+        ('seller_state_code', ''),
+        ('seller_reg_office', ''),
+        ('invoice_signatory', ''),
         ('invoice_hsn', '998512'),
         ('invoice_fy', '2026-27'),
         ('imap_host', 'imap.gmail.com'),
@@ -2401,14 +2418,14 @@ def init_db():
         ('cc_notes', ''), ('cc_last_plan', ''), ('cc_task_prefs', ''), ('cc_last_review', ''),
         ('embedding_api_key', ''), ('embedding_base_url', 'https://api.jina.ai/v1'),
         ('embedding_model', 'jina-embeddings-v3'), ('rag_enabled', '1'),
-        ('seller_name', 'HireLab Talent Resource'),
-        ('seller_gstin', '09ECWPP1647A1Z9'),
-        ('seller_address', 'Office no: GF064, B-128, First Floor, Sector-2, Gautam Buddha Nagar, Noida, Uttar Pradesh 201301.'),
-        ('seller_udyam', 'UDYAM : UDYAM-UP-29-0178859 (Micro/Services)'),
-        ('seller_state', 'Uttar Pradesh'),
-        ('seller_state_code', '09'),
-        ('seller_reg_office', 'Building No.36, Tronica City, Ghaziabad, Uttar Pradesh-201102'),
-        ('invoice_signatory', 'Pavitra'),
+        ('seller_name', ''),
+        ('seller_gstin', ''),
+        ('seller_address', ''),
+        ('seller_udyam', ''),
+        ('seller_state', ''),
+        ('seller_state_code', ''),
+        ('seller_reg_office', ''),
+        ('invoice_signatory', ''),
         ('invoice_hsn', '998512'),
         ('invoice_prefix', ''),   # optional prefix like "2026-27/"; auto-computed from FY if blank
         ('claude_api_key', os.environ.get('CLAUDE_API_KEY', '')),
@@ -7798,7 +7815,7 @@ def skill_graph_list():
 def skill_graph_add():
     """Add or extend a skill node for THIS tenant (owner_id = company). Merges
     aliases/parents/related into any existing tenant node with the same canonical.
-    Lets Nitin grow the graph as he learns his market — this is the moat compounding."""
+    Lets the recruiter grow the graph as they learn their market — this is the moat compounding."""
     d = request.json or {}
     can = (d.get('canonical') or '').strip().lower()
     if not can:
@@ -12806,9 +12823,9 @@ def emailbox_thread():
 
 
 # ── CEO Command Center (strategic brain toward the ₹100 Cr goal) ─────────────
-CEO_BRAIN_PROMPT = """You are not an AI assistant. You are the Executive Leadership Team of HireLab, acting simultaneously as CEO, COO, CRO, CFO, Head of Recruitment, Delivery Manager, Account Director, and Business Strategist. Your only responsibility is to maximize the long-term enterprise value of HireLab. Ignore vanity metrics. Every recommendation must increase one or more of: Revenue, Gross Profit, Cash Flow, Placement Success, Client Retention, Candidate Quality, Recruiter Productivity, Business Scalability. Never optimize for activity — always optimize for business outcomes.
+CEO_BRAIN_PROMPT = """You are not an AI assistant. You are the Executive Leadership Team of [[COMPANY]], acting simultaneously as CEO, COO, CRO, CFO, Head of Recruitment, Delivery Manager, Account Director, and Business Strategist. Your only responsibility is to maximize the long-term enterprise value of [[COMPANY]]. Ignore vanity metrics. Every recommendation must increase one or more of: Revenue, Gross Profit, Cash Flow, Placement Success, Client Retention, Candidate Quality, Recruiter Productivity, Business Scalability. Never optimize for activity — always optimize for business outcomes.
 
-COMPANY CONTEXT: HireLab Recruitment. Founder: Nitin Kumar. Stage: founder-led recruitment agency. Vision: become India's leading Engineering Recruitment Company. Current annual target: Rs 1 Crore revenue. Long-term goal: Rs 100 Crore revenue. Industries: Solar, Electrical, Automation, Renewable Energy, Data Centers, Mechanical Design. Model: Permanent Recruitment + Executive Search now; Contract Staffing, RPO and a Technology Platform in future.
+COMPANY CONTEXT: [[COMPANY]]. Founder: [[FOUNDER]]. Stage: founder-led recruitment agency. Vision: become India's leading Engineering Recruitment Company. Current annual target: Rs 1 Crore revenue. Long-term goal: Rs 100 Crore revenue. Industries: Solar, Electrical, Automation, Renewable Energy, Data Centers, Mechanical Design. Model: Permanent Recruitment + Executive Search now; Contract Staffing, RPO and a Technology Platform in future.
 
 THINKING PROCESS whenever ATS data is received: (1) Understand cash, revenue, active positions, placement probability, client dependency, delivery bottlenecks, recruiter workload, candidate pipeline, risks. (2) Find bottlenecks: revenue, delivery, sales, cash, operational, technology, founder. (3) Rank every opportunity by Impact x Confidence x Ease — highest impact first. (4) Generate actions — never busy work; every action must produce measurable business value.
 
@@ -13120,9 +13137,45 @@ def _command_overview(conn, oid):
     return d
 
 
-CEO_CHAT_PROMPT = """You are not an AI assistant. You are the Executive Leadership Team of HireLab, acting simultaneously as CEO, COO, CRO, CFO, Head of Recruitment, Delivery Manager, Account Director, and Business Strategist. Your only responsibility is to maximize the long-term enterprise value of HireLab. Ignore vanity metrics. Every recommendation must increase one or more of: Revenue, Gross Profit, Cash Flow, Placement Success, Client Retention, Candidate Quality, Recruiter Productivity, Business Scalability. Never optimize for activity — always optimize for business outcomes.
+def _tenant_identity():
+    """(company name, person name) for the tenant making this request.
 
-COMPANY CONTEXT: HireLab Recruitment. Founder: Nitin Kumar. Stage: founder-led recruitment agency. Vision: become India's leading Engineering Recruitment Company. Current annual target: Rs 1 Crore revenue. Long-term goal: Rs 100 Crore revenue. Industries: Solar, Electrical, Automation, Renewable Energy, Data Centers, Mechanical Design. Model: Permanent Recruitment + Executive Search now; Contract Staffing, RPO and a Technology Platform in future.
+    Falls back to neutral wording rather than to the platform owner's details.
+    """
+    person = (get_setting('recruiter_name', '') or '').strip()
+    company = (get_setting('company_name', '') or '').strip()
+    if not company:
+        try:
+            conn = get_db()
+            row = conn.execute('SELECT name FROM companies WHERE id=?',
+                               (effective_company_id(),)).fetchone()
+            conn.close()
+            company = (row['name'] if row else '') or ''
+        except Exception:
+            company = ''
+    return company, person
+
+
+def _personalise(prompt):
+    """Fill the tenant-neutral identity tokens in a strategy prompt.
+
+    The prompts themselves contain no person or company name — only [[FOUNDER]]
+    and [[COMPANY]] placeholders — so the source is tenant-neutral before this
+    runs. Two tenants therefore receive two different prompts, and a tenant who
+    has set nothing gets neutral wording rather than someone else's identity.
+
+    [[…]] rather than {…} so a future .format() on these strings cannot consume
+    the tokens.
+    """
+    company, person = _tenant_identity()
+    return (prompt
+            .replace('[[FOUNDER]]', person or 'the founder')
+            .replace('[[COMPANY]]', company or 'this company'))
+
+
+CEO_CHAT_PROMPT = """You are not an AI assistant. You are the Executive Leadership Team of [[COMPANY]], acting simultaneously as CEO, COO, CRO, CFO, Head of Recruitment, Delivery Manager, Account Director, and Business Strategist. Your only responsibility is to maximize the long-term enterprise value of [[COMPANY]]. Ignore vanity metrics. Every recommendation must increase one or more of: Revenue, Gross Profit, Cash Flow, Placement Success, Client Retention, Candidate Quality, Recruiter Productivity, Business Scalability. Never optimize for activity — always optimize for business outcomes.
+
+COMPANY CONTEXT: [[COMPANY]]. Founder: [[FOUNDER]]. Stage: founder-led recruitment agency. Vision: become India's leading Engineering Recruitment Company. Current annual target: Rs 1 Crore revenue. Long-term goal: Rs 100 Crore revenue. Industries: Solar, Electrical, Automation, Renewable Energy, Data Centers, Mechanical Design. Model: Permanent Recruitment + Executive Search now; Contract Staffing, RPO and a Technology Platform in future.
 
 THINKING PROCESS whenever ATS data is received: (1) Understand cash, revenue, active positions, placement probability, client dependency, delivery bottlenecks, recruiter workload, candidate pipeline, risks. (2) Find bottlenecks: revenue, delivery, sales, cash, operational, technology, founder. (3) Rank every opportunity by Impact x Confidence x Ease — highest impact first. (4) Generate actions — never busy work; every action must produce measurable business value.
 
@@ -13133,10 +13186,10 @@ OUTPUT STYLE: Be brutally honest. Challenge assumptions. Disagree when necessary
 GOLDEN RULE: The founder's time is the scarcest resource — protect it. Never recommend work that can be automated, delegated, or eliminated.
 
 === FOUNDER CHAT / DAILY DASHBOARD ===
-You are talking directly with founder Nitin Kumar as his executive team. INTERPRET the ATS — don't just summarize. When he asks about the business, answer: what changed and why, is the business healthier, are we growing, where are we losing money, which client/recruiter/position/invoice/candidate needs immediate attention, and what decision a world-class CEO would make today. Rank opportunities and risks. Treat facts he tells you as current truth.
+You are talking directly with [[FOUNDER]], the founder, as their executive team. INTERPRET the ATS — don't just summarize. When he asks about the business, answer: what changed and why, is the business healthier, are we growing, where are we losing money, which client/recruiter/position/invoice/candidate needs immediate attention, and what decision a world-class CEO would make today. Rank opportunities and risks. Treat facts he tells you as current truth.
 
 Before answering ANY question, run it through these filters — does it (1) increase revenue, (2) improve cash flow, (3) protect existing placements, (4) improve client relationships, (5) improve recruiter productivity, (6) reduce founder workload, (7) can be automated, (8) can be delegated, (9) align with the Rs 1 Crore annual goal, (10) align with the Rs 100 Crore vision. If the answer is NO to all — do not recommend it.
-Keep replies tight and practical, in Nitin's Hinglish/English mix."""
+Keep replies tight and practical, in the founder's own language and tone."""
 
 
 def _command_chat_history(conn, oid, limit=24):
@@ -13190,7 +13243,7 @@ def command_chat():
         rag = _vector_search(conn, oid, msg, 8)
         if rag:
             live += "\n\nRELEVANT RECORDS (semantic search of candidates/positions/emails for this question):\n" + '\n---\n'.join(rag)
-        messages = [{'role': 'system', 'content': CEO_CHAT_PROMPT + "\n\n" + live}]
+        messages = [{'role': 'system', 'content': _personalise(CEO_CHAT_PROMPT) + "\n\n" + live}]
         messages += hist
         messages.append({'role': 'user', 'content': msg})
 
@@ -13401,9 +13454,9 @@ def _work_status_brief(conn, oid):
     return '\n'.join(lines) or 'No active pipeline/billing data yet.'
 
 
-TASK_GEN_PROMPT = """You are not an AI assistant. You are the Executive Leadership Team of HireLab, acting simultaneously as CEO, COO, CRO, CFO, Head of Recruitment, Delivery Manager, Account Director, and Business Strategist. Your only responsibility is to maximize the long-term enterprise value of HireLab. Ignore vanity metrics. Every recommendation must increase one or more of: Revenue, Gross Profit, Cash Flow, Placement Success, Client Retention, Candidate Quality, Recruiter Productivity, Business Scalability. Never optimize for activity — always optimize for business outcomes.
+TASK_GEN_PROMPT = """You are not an AI assistant. You are the Executive Leadership Team of [[COMPANY]], acting simultaneously as CEO, COO, CRO, CFO, Head of Recruitment, Delivery Manager, Account Director, and Business Strategist. Your only responsibility is to maximize the long-term enterprise value of [[COMPANY]]. Ignore vanity metrics. Every recommendation must increase one or more of: Revenue, Gross Profit, Cash Flow, Placement Success, Client Retention, Candidate Quality, Recruiter Productivity, Business Scalability. Never optimize for activity — always optimize for business outcomes.
 
-COMPANY CONTEXT: HireLab Recruitment. Founder: Nitin Kumar. Stage: founder-led recruitment agency. Vision: become India's leading Engineering Recruitment Company. Current annual target: Rs 1 Crore revenue. Long-term goal: Rs 100 Crore revenue. Industries: Solar, Electrical, Automation, Renewable Energy, Data Centers, Mechanical Design. Model: Permanent Recruitment + Executive Search now; Contract Staffing, RPO and a Technology Platform in future.
+COMPANY CONTEXT: [[COMPANY]]. Founder: [[FOUNDER]]. Stage: founder-led recruitment agency. Vision: become India's leading Engineering Recruitment Company. Current annual target: Rs 1 Crore revenue. Long-term goal: Rs 100 Crore revenue. Industries: Solar, Electrical, Automation, Renewable Energy, Data Centers, Mechanical Design. Model: Permanent Recruitment + Executive Search now; Contract Staffing, RPO and a Technology Platform in future.
 
 THINKING PROCESS whenever ATS data is received: (1) Understand cash, revenue, active positions, placement probability, client dependency, delivery bottlenecks, recruiter workload, candidate pipeline, risks. (2) Find bottlenecks: revenue, delivery, sales, cash, operational, technology, founder. (3) Rank every opportunity by Impact x Confidence x Ease — highest impact first. (4) Generate actions — never busy work; every action must produce measurable business value.
 
@@ -13421,7 +13474,7 @@ Then generate ONLY the highest-ROI actions. Maximum 12 tasks. If no high-value t
 HARD RULES:
 - POSITION-WISE: every pipeline/follow-up task is for ONE position (role @ client) only — never mix candidates of different positions in one task; name the position and the specific candidate(s).
 - RESPECT STATUS: never create sourcing/follow-up/feedback tasks for positions marked CLOSED or ON HOLD (only exception: collecting invoice/payment for an already-placed candidate).
-- STRATEGIC: always include 2-3 tasks that move Nitin toward the Rs 1 Crore target — account expansion of existing paying clients (cheapest revenue), targeted new BD, or closing the monthly gap — tied to the TARGET & GAP data.
+- STRATEGIC: always include 2-3 tasks that move [[FOUNDER]] toward the annual revenue target — account expansion of existing paying clients (cheapest revenue), targeted new BD, or closing the monthly gap — tied to the TARGET & GAP data.
 
 Return ONLY a JSON array (no prose, no markdown fences), each item exactly:
 {"text": "one imperative action naming the position/candidate/client/invoice",
@@ -13531,7 +13584,7 @@ def _run_task_generation(conn, oid, refine_instruction='', current_tasks=None):
         return None, (jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400)
     brief = _work_status_brief(conn, oid)
     prefs = (get_setting('cc_task_prefs', '') or '').strip()
-    sys = TASK_GEN_PROMPT
+    sys = _personalise(TASK_GEN_PROMPT)
     if prefs:
         sys += "\n\nSTANDING PREFERENCES from the founder (always follow these): " + prefs
     user = 'FULL ATS WORK STATUS:\n' + brief
@@ -13593,9 +13646,9 @@ def command_tasks_generate():
         conn.close()
 
 
-WEEKLY_REVIEW_PROMPT = """You are not an AI assistant. You are the Executive Leadership Team of HireLab, acting simultaneously as CEO, COO, CRO, CFO, Head of Recruitment, Delivery Manager, Account Director, and Business Strategist. Your only responsibility is to maximize the long-term enterprise value of HireLab. Ignore vanity metrics. Every recommendation must increase one or more of: Revenue, Gross Profit, Cash Flow, Placement Success, Client Retention, Candidate Quality, Recruiter Productivity, Business Scalability. Never optimize for activity — always optimize for business outcomes.
+WEEKLY_REVIEW_PROMPT = """You are not an AI assistant. You are the Executive Leadership Team of [[COMPANY]], acting simultaneously as CEO, COO, CRO, CFO, Head of Recruitment, Delivery Manager, Account Director, and Business Strategist. Your only responsibility is to maximize the long-term enterprise value of [[COMPANY]]. Ignore vanity metrics. Every recommendation must increase one or more of: Revenue, Gross Profit, Cash Flow, Placement Success, Client Retention, Candidate Quality, Recruiter Productivity, Business Scalability. Never optimize for activity — always optimize for business outcomes.
 
-COMPANY CONTEXT: HireLab Recruitment. Founder: Nitin Kumar. Stage: founder-led recruitment agency. Vision: become India's leading Engineering Recruitment Company. Current annual target: Rs 1 Crore revenue. Long-term goal: Rs 100 Crore revenue. Industries: Solar, Electrical, Automation, Renewable Energy, Data Centers, Mechanical Design. Model: Permanent Recruitment + Executive Search now; Contract Staffing, RPO and a Technology Platform in future.
+COMPANY CONTEXT: [[COMPANY]]. Founder: [[FOUNDER]]. Stage: founder-led recruitment agency. Vision: become India's leading Engineering Recruitment Company. Current annual target: Rs 1 Crore revenue. Long-term goal: Rs 100 Crore revenue. Industries: Solar, Electrical, Automation, Renewable Energy, Data Centers, Mechanical Design. Model: Permanent Recruitment + Executive Search now; Contract Staffing, RPO and a Technology Platform in future.
 
 THINKING PROCESS whenever ATS data is received: (1) Understand cash, revenue, active positions, placement probability, client dependency, delivery bottlenecks, recruiter workload, candidate pipeline, risks. (2) Find bottlenecks: revenue, delivery, sales, cash, operational, technology, founder. (3) Rank every opportunity by Impact x Confidence x Ease — highest impact first. (4) Generate actions — never busy work; every action must produce measurable business value.
 
@@ -13606,7 +13659,7 @@ OUTPUT STYLE: Be brutally honest. Challenge assumptions. Disagree when necessary
 GOLDEN RULE: The founder's time is the scarcest resource — protect it. Never recommend work that can be automated, delegated, or eliminated.
 
 === WEEKLY BOARD REPORT (for the advisor) ===
-Prepare a BOARD REPORT for the week, to be sent to Nitin's external advisor. No fluff — only insights. Use markdown with these exact sections (include each; write "nothing this week" if empty):
+Prepare a BOARD REPORT for the week, to be sent to the founder's external advisor. No fluff — only insights. Use markdown with these exact sections (include each; write "nothing this week" if empty):
 ## Business Health Score
 (0-100 with reasoning)
 ## Revenue
@@ -13672,7 +13725,7 @@ def command_weekly_review():
         try:
             rr = call_deepseek(ds_key,
                 {'model': 'deepseek-chat', 'temperature': 0.35, 'max_tokens': 2600,
-                 'messages': [{'role': 'system', 'content': WEEKLY_REVIEW_PROMPT}, {'role': 'user', 'content': ctx}]},
+                 'messages': [{'role': 'system', 'content': _personalise(WEEKLY_REVIEW_PROMPT)}, {'role': 'user', 'content': ctx}]},
                 timeout=200, endpoint='weekly-review')
         except TokenCapError:
             return jsonify({'error': 'Monthly AI token cap reached.'}), 429
@@ -13814,14 +13867,14 @@ TOP CLIENTS (by billing): {clients_str}
 
 RECENT EMAIL SIGNAL (last 15): {email_str}
 
-FOUNDER'S RECENT NOTES (things Nitin told the brain in chat — treat as real, current facts): {notes}
+FOUNDER'S RECENT NOTES (things the founder told the brain in chat — treat as real, current facts): {notes}
 
 Now produce the strategic brief."""
 
     try:
         rr = call_deepseek(ds_key,
             {'model': 'deepseek-chat', 'temperature': 0.4, 'max_tokens': 1600,
-             'messages': [{'role': 'system', 'content': CEO_BRAIN_PROMPT},
+             'messages': [{'role': 'system', 'content': _personalise(CEO_BRAIN_PROMPT)},
                           {'role': 'user', 'content': ctx}]},
             timeout=180, endpoint='command-center')
     except TokenCapError:
@@ -14682,6 +14735,10 @@ def get_audit():
 @login_required
 def list_interviews(cid):
     conn = get_db()
+    # P0: returned interviewer, schedule, mode, location and result for any
+    # candidate id. Ownership of the parent candidate now gates the read.
+    if not _tenant_owns_candidate(conn, cid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     rows = conn.execute('SELECT * FROM interviews WHERE candidate_id=? ORDER BY scheduled_at DESC', (cid,)).fetchall()
     conn.close()
     return jsonify({'ok': True, 'interviews': [dict(r) for r in rows]})
@@ -14727,6 +14784,11 @@ def interview_result(iid):
     d = request.json or {}
     result = (d.get('result') or '').strip()
     conn = get_db()
+    # P0: ownership is checked BEFORE the row is read, before the result is
+    # written and before anything is logged, so a cross-tenant request leaves
+    # no trace on the other tenant's interview or candidate journey.
+    if not _tenant_owns_interview(conn, iid):
+        conn.close(); return jsonify({'error': 'Interview not found'}), 404
     iv = conn.execute('SELECT candidate_id, round_name FROM interviews WHERE id=?', (iid,)).fetchone()
     if not iv:
         conn.close(); return jsonify({'error': 'Interview not found'}), 404
@@ -14824,6 +14886,11 @@ def candidate_feedback(cid):
 @login_required
 def delete_interview(iid):
     conn = get_db()
+    # P0: this used to delete by id alone, so any tenant could destroy any
+    # interview (and, since panel feedback was added, its scorecards too) by
+    # iterating integers. Nothing is touched unless the row is ours.
+    if not _tenant_owns_interview(conn, iid):
+        conn.close(); return jsonify({'error': 'Interview not found'}), 404
     conn.execute('DELETE FROM interviews WHERE id=?', (iid,))
     # Feedback belongs to the round; leaving it behind would orphan it.
     try:
@@ -15029,6 +15096,13 @@ def add_candidate_note(cid):
     text = (request.json or {}).get('text', '').strip()
     if not text:
         return jsonify({'error': 'Empty comment'}), 400
+    # P0: wrote to any candidate's journey by id, with the caller's name
+    # attached. No event is created unless the candidate is ours.
+    conn = get_db()
+    owns = _tenant_owns_candidate(conn, cid)
+    conn.close()
+    if not owns:
+        return jsonify({'error': 'Not found'}), 404
     u = current_user()
     who = (u.get('display_name') or u.get('username') or '') if u else ''
     detail = text + (' — ' + who if who else '')
@@ -15221,6 +15295,11 @@ def move_stage(cid):
         pass
     d = request.json or {}
     conn = get_db()
+    # P0: selected the candidate by id alone, so any tenant could move any
+    # candidate through another tenant's pipeline and write stage_history.
+    # Checked before the read, so a denied request changes nothing.
+    if not _tenant_owns_candidate(conn, cid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     r = conn.execute('SELECT stage FROM candidates WHERE id=?', (cid,)).fetchone()
     if not r: conn.close(); return jsonify({'error': 'Not found'}), 404
     old_stage = r['stage']
@@ -17766,7 +17845,15 @@ def client_submission(mid):
         # Footer
         '<div style="display:flex;align-items:center;justify-content:space-between;padding-top:14px;border-top:0.5px solid #e8e8e8;font-size:10px;color:#aaa">'
         '<span style="background:#FAEEDA;color:#854F0B;padding:3px 10px;border-radius:4px;font-weight:500">CONFIDENTIAL | For ' + (m['client'] or '') + ' use only</span>'
-        '<span>HireLab Talent Resource | GSTIN: 09ECWPP1647A1Z9 | UDYAM: UP-29-0178859</span>'
+        # This page is shown to a tenant's own client. The seller identity was
+        # hardcoded to the platform owner, so every tenant's client saw his
+        # firm name, GSTIN and Udyam number. Taken from the tenant now, and
+        # omitted entirely when they have not filled it in.
+        '<span>' + _sub_esc(' | '.join(x for x in [
+            (get_setting('seller_name', '') or get_setting('company_name', '') or ''),
+            ('GSTIN: ' + get_setting('seller_gstin', '')) if get_setting('seller_gstin', '') else '',
+            ('UDYAM: ' + get_setting('seller_udyam', '')) if get_setting('seller_udyam', '') else '',
+        ] if x)) + '</span>'
         '<span>' + date_str + '</span>'
         '</div>'
         '</body></html>'
