@@ -4334,13 +4334,16 @@ def analytics():
     avg_ttf = round(sum(fill_days) / len(fill_days)) if fill_days else None
 
     # Pipeline funnel (grouped stages)
+    # The stage ID stays 'Shared with Client' (it is stored on candidate rows);
+    # only the label shown on the funnel follows the tenant's wording.
+    _vocab = workspace_vocab()[1]
     funnel_map = [
         ('Screening', ['Screening']),
         ('Follow Up', ['Follow Up 1', 'Follow Up 2', 'Not Contacted', 'Called']),
         ('Interested', ['Interested', 'Updated CV awaited']),
-        ('Shared with Client', ['Shared with Client']),
+        (_vocab.get('share', 'Shared with Client'), ['Shared with Client']),
         ('Interview', ['Interview Inprocess']),
-        ('Placed', ['Placed']),
+        (_vocab.get('placed', 'Placed'), ['Placed']),
     ]
     funnel = []
     for label, stages in funnel_map:
@@ -4412,6 +4415,106 @@ def analytics():
                                    'days': (now - latest).days})
     stale_mandates.sort(key=lambda x: -x['days'])
 
+    # ══════════════════════════════════════════════════════════════════════
+    #  CORPORATE HIRING METRICS
+    #
+    #  An in-house team is judged on different numbers than an agency. Two
+    #  differences matter most:
+    #
+    #  1. Time-to-fill means REQUISITION opened -> seat filled, not candidate
+    #     added -> Placed. The agency number above measures recruiter speed;
+    #     this one measures how long the business waited. Same data, and both
+    #     are returned, because each is right for its own audience.
+    #
+    #  2. Placed and Joined are genuinely different events here. Placed = offer
+    #     accepted, Joined = actually turned up. The gap between them is the
+    #     single most painful number in Indian hiring, and nothing in the app
+    #     surfaced it before.
+    #
+    #  Computed for everyone, shown only in corporate mode. Cheap: it reuses
+    #  `cands` and `mandates`, already loaded above.
+    # ══════════════════════════════════════════════════════════════════════
+    def _first_entry(cand_id, stage):
+        """When this candidate FIRST reached a stage (not the latest re-entry)."""
+        row = conn.execute(
+            'SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage=? '
+            'ORDER BY created_at ASC LIMIT 1', (cand_id, stage)).fetchone()
+        return row['created_at'] if row else None
+
+    def _parse(x):
+        try:
+            return datetime.datetime.fromisoformat(x) if x else None
+        except Exception:
+            return None
+
+    mandate_by_id = {m['id']: m for m in mandates}
+    req_fill_days, offer_gap_days = [], []
+    placed_ids, joined_ids = set(), set()
+
+    for c in cands:
+        stage = (c['stage'] or '').strip().lower()
+        placed_at = _first_entry(c['id'], 'Placed')
+        joined_at = _first_entry(c['id'], 'Joined')
+
+        # Anything at Joined was Placed first, even if that move predates
+        # stage_history or was skipped in the UI.
+        if stage in ('placed', 'joined') or placed_at:
+            if _in_range(placed_at or c['updated_at']):
+                placed_ids.add(c['id'])
+        if stage == 'joined' or joined_at:
+            if _in_range(joined_at or c['updated_at']):
+                joined_ids.add(c['id'])
+
+        # Requisition opened -> this person joined.
+        if joined_at:
+            m = mandate_by_id.get(c['mandate_id'])
+            d0 = _parse(m['created_at']) if m else None
+            d1 = _parse(joined_at)
+            if d0 and d1 and d1 >= d0 and _in_range(joined_at):
+                req_fill_days.append((d1 - d0).days)
+
+        # Offer accepted -> actually turned up.
+        d0, d1 = _parse(placed_at), _parse(joined_at)
+        if d0 and d1 and d1 >= d0 and _in_range(joined_at):
+            offer_gap_days.append((d1 - d0).days)
+
+    total_placed_c = len(placed_ids)
+    total_joined_c = len(joined_ids & placed_ids) or len(joined_ids)
+    awaiting = len(placed_ids - joined_ids)
+
+    # Requisitions by age, so a role open 90 days is visible even if someone
+    # touched it yesterday (which is what stale_mandates measures instead).
+    aging = []
+    for m in mandates:
+        if (m['status'] or '').lower() != 'active':
+            continue
+        opened = _parse(m['created_at'])
+        if not opened:
+            continue
+        age = (now - opened).days
+        filled = any(c['mandate_id'] == m['id'] and (c['stage'] or '').strip().lower() == 'joined'
+                     for c in cands)
+        if filled:
+            continue
+        aging.append({'id': m['id'], 'role': m['role'], 'client': m['client'],
+                      'location': m['location'], 'days_open': age})
+    aging.sort(key=lambda x: -x['days_open'])
+
+    corporate = {
+        # None (not 0) when there is nothing to average — the UI shows a dash
+        # rather than implying a real measurement of zero.
+        'avg_req_time_to_fill': round(sum(req_fill_days) / len(req_fill_days)) if req_fill_days else None,
+        'filled_count': len(req_fill_days),
+        'placed': total_placed_c,
+        'joined': total_joined_c,
+        'awaiting_joining': awaiting,
+        'joining_ratio': round(total_joined_c * 100 / total_placed_c) if total_placed_c else None,
+        'dropout_count': max(0, total_placed_c - total_joined_c),
+        'avg_offer_to_join': round(sum(offer_gap_days) / len(offer_gap_days)) if offer_gap_days else None,
+        'aging': aging[:10],
+        'aging_over_60': len([a for a in aging if a['days_open'] >= 60]),
+    }
+
     conn.close()
     return jsonify({'ok': True, 'is_admin_view': admin,
                     'kpi': {'open_mandates': len(mandates), 'active': active, 'hold': hold, 'closed': closed,
@@ -4419,6 +4522,7 @@ def analytics():
                             'pipeline_candidates': total_pipeline},
                     'funnel': funnel, 'sources': sources, 'leaderboard': leaderboard,
                     'stale_mandates': stale_mandates, 'stale_days': int(stale_days),
+                    'corporate': corporate,
                     'range_label': range_label})
 
 

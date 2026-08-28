@@ -2999,9 +2999,13 @@ async function renderDashboard(el){
   }
   var openM = (kpi.open_mandates!=null)?kpi.open_mandates:S.mandates.filter(function(m){return m.status==='active';}).length;
   var cards='<div style="padding:18px 16px 4px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">'
-    +statCard('Open mandates', openM, ((kpi.active!=null?kpi.active:openM)+' active'+(kpi.hold?', '+kpi.hold+' hold':''))+' &middot; now')
-    +statCard('Placements', (kpi.placed_this_month!=null?kpi.placed_this_month:0), 'All time &middot; Placed + Joined', "location.hash='analytics/placed'")
-    +statCard('Avg time-to-fill', (kpi.avg_time_to_fill!=null?kpi.avg_time_to_fill+'d':'&mdash;'), 'created &rarr; placed')
+    +statCard('Open '+esc(String(T('mandate_plural','mandates')).toLowerCase()), openM, ((kpi.active!=null?kpi.active:openM)+' active'+(kpi.hold?', '+kpi.hold+' hold':''))+' &middot; now')
+    +statCard(esc(T('placed','Placement'))+'s', (kpi.placed_this_month!=null?kpi.placed_this_month:0), 'All time &middot; Placed + Joined', "location.hash='analytics/placed'")
+    +statCard('Avg time-to-fill',
+        (wsMode()==='corporate' && analytics && analytics.corporate && analytics.corporate.avg_req_time_to_fill!=null)
+          ? (analytics.corporate.avg_req_time_to_fill+'d')
+          : (kpi.avg_time_to_fill!=null?kpi.avg_time_to_fill+'d':'&mdash;'),
+        wsMode()==='corporate' ? 'opened &rarr; joined' : 'created &rarr; placed')
     +statCard('Candidates in pipeline', (kpi.pipeline_candidates!=null?kpi.pipeline_candidates:'&mdash;'), 'Current snapshot')
     +'</div>';
 
@@ -11237,11 +11241,50 @@ async function renderAnalytics(){
   // KPI cards
   html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px">';
   var rangeWord = (r.range_label||'').replace('Last ','').replace(' days',' din');
-  html += _kpiCard('Open mandates', k.open_mandates, (k.active)+' active, '+(k.hold)+' hold  \u00b7 now');
-  html += _kpiCard('Placements', k.placed_this_month, 'All time · Placed + Joined', "location.hash='analytics/placed'");
+  html += _kpiCard('Open '+esc(String(T('mandate_plural','mandates')).toLowerCase()), k.open_mandates, (k.active)+' active, '+(k.hold)+' hold  \u00b7 now');
+  html += _kpiCard(esc(T('placed','Placed'))+'s', k.placed_this_month, 'All time · Placed + Joined', "location.hash='analytics/placed'");
   html += _kpiCard('Avg time-to-fill', k.avg_time_to_fill!=null ? (k.avg_time_to_fill+' days') : '\u2014', 'Placed in '+esc(r.range_label||'').toLowerCase());
   html += _kpiCard('Candidates in pipeline', k.pipeline_candidates, 'Current snapshot');
   html += '</div>';
+
+  // ── Corporate hiring metrics ───────────────────────────────────────────
+  // Numbers an in-house team is judged on. Hidden for agencies, whose
+  // audience is the client and whose KPI is the placement, not the seat.
+  if (wsMode()==='corporate' && r.corporate) {
+    var cp = r.corporate;
+    var word = esc(T('mandate','Requisition'));
+    html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px">';
+    html += _kpiCard(word+' time-to-fill',
+      cp.avg_req_time_to_fill!=null ? (cp.avg_req_time_to_fill+' days') : '\u2014',
+      cp.filled_count ? ('opened \u2192 joined \u00b7 '+cp.filled_count+' filled') : 'opened \u2192 joined');
+    html += _kpiCard('Joining ratio',
+      cp.joining_ratio!=null ? (cp.joining_ratio+'%') : '\u2014',
+      cp.joined+' joined of '+cp.placed+' offers accepted');
+    html += _kpiCard('Awaiting joining', cp.awaiting_joining,
+      cp.dropout_count ? (cp.dropout_count+' never joined') : 'offer accepted, not yet joined');
+    html += _kpiCard('Offer \u2192 join gap',
+      cp.avg_offer_to_join!=null ? (cp.avg_offer_to_join+' days') : '\u2014', 'average wait');
+    html += '</div>';
+
+    if ((cp.aging||[]).length) {
+      html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:20px">';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'
+        + '<div style="font-size:13px;font-weight:600">Open '+esc(String(T('mandate_plural','requisitions')).toLowerCase())+' by age</div>'
+        + (cp.aging_over_60 ? '<span style="font-size:10.5px;color:#A32D2D;background:#FDEEEE;padding:2px 8px;border-radius:6px">'+cp.aging_over_60+' over 60 days</span>' : '')
+        + '</div>';
+      html += '<div style="font-size:11px;color:var(--muted);margin-bottom:12px">How long the business has been waiting, counted from the day it was opened \u2014 regardless of recent activity.</div>';
+      html += '<div style="display:flex;flex-direction:column;gap:5px">';
+      cp.aging.forEach(function(a){
+        var col = a.days_open>=90 ? '#A32D2D' : a.days_open>=60 ? '#BA7517' : '#6b7280';
+        html += '<div style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-bottom:0.5px solid #f3f3f3;cursor:pointer" onclick="selectMandate('+a.id+')">'
+          + '<div style="flex:1;font-size:12.5px;color:var(--navy);font-weight:500">'+esc(a.role||'')
+          + '<span style="color:#999;font-weight:400"> \u00b7 '+esc(a.client||'')+(a.location?(' \u00b7 '+esc(a.location)):'')+'</span></div>'
+          + '<div style="font-size:12px;font-weight:700;color:'+col+';white-space:nowrap">'+a.days_open+'d</div>'
+          + '</div>';
+      });
+      html += '</div></div>';
+    }
+  }
 
   // Pipeline funnel
   html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:20px">';
