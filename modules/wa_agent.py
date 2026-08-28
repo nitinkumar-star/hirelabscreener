@@ -231,7 +231,21 @@ def wa_send_document(to_phone, document_url, filename, caption=''):
 # ══════════════════════════════════════════════════════════════════════════
 #  AI INTENT ENGINE — DeepSeek classifies candidate messages
 # ══════════════════════════════════════════════════════════════════════════
-INTENT_CLASSIFICATION_PROMPT = """You are an AI assistant for an Indian recruitment agency. A candidate has replied to a WhatsApp message about a job opportunity.
+def _ws_mode():
+    """'agency' or 'corporate' for the tenant this conversation belongs to.
+
+    Only affects how the AI introduces itself to candidates — an in-house
+    recruiter must not present as an agency consultant. Falls back to agency,
+    so nothing changes for existing tenants.
+    """
+    try:
+        from modules.shared import _core
+        return _core().workspace_mode()
+    except Exception:
+        return 'agency'
+
+
+INTENT_CLASSIFICATION_PROMPT = """You are an AI assistant helping a recruiter in India. A candidate has replied to a WhatsApp message about a job opportunity.
 
 Analyze the candidate's message and classify their intent. Return ONLY a JSON object:
 
@@ -310,12 +324,39 @@ Rules:
 Return ONLY the reply text, nothing else."""
 
 
-def generate_response(question, role='', client='', location='', jd_summary='', deepseek_key=''):
+# In-house version. A corporate recruiter IS the employer, so introducing
+# themselves as an agency consultant — and calling their own company "the
+# client" — misrepresents them to the candidate. Same rules otherwise.
+GENERATE_RESPONSE_PROMPT_CORPORATE = """You are an in-house talent acquisition specialist hiring for your own company. A candidate asked a question about a role at your company. Generate a short, professional WhatsApp reply.
+
+Job details:
+Role: {role}
+Team / Department: {client}
+Location: {location}
+JD Summary: {jd_summary}
+
+Candidate's question: "{question}"
+
+Rules:
+- Keep it under 50 words
+- Professional but warm
+- Speak as someone who works AT the hiring company, not for an agency
+- NEVER mention salary/CTC/compensation numbers
+- If you don't know the answer, say "Let me check with the hiring team and get back to you shortly."
+- Reply in the same language the candidate used (Hindi/English)
+
+Return ONLY the reply text, nothing else."""
+
+
+def generate_response(question, role='', client='', location='', jd_summary='', deepseek_key='',
+                      mode='agency'):
     """Generate a contextual WhatsApp reply for a candidate question."""
     if not deepseek_key:
         return ''
     import requests as _req
-    prompt = GENERATE_RESPONSE_PROMPT.format(
+    template = (GENERATE_RESPONSE_PROMPT_CORPORATE if mode == 'corporate'
+                else GENERATE_RESPONSE_PROMPT)
+    prompt = template.format(
         role=role, client=client or '[Confidential]', location=location,
         jd_summary=jd_summary[:500] if jd_summary else 'Not available', question=question)
     try:
@@ -685,7 +726,7 @@ def _execute_action(conn, conv, msg_id, intent, action, response, candidate_msg,
     ai_suggestion = generate_response(
         candidate_msg, role=conv['role'] or '', client=conv['client'] or '',
         location=conv['location'] or '', jd_summary=(conv['jd'] or '')[:300],
-        deepseek_key=deepseek_key)
+        deepseek_key=deepseek_key, mode=_ws_mode())
     _escalate(conn, conv, msg_id, candidate_msg, '', ai_suggestion)
     return {'action': 'escalated', 'auto': False, 'ai_suggestion': ai_suggestion}
 
