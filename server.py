@@ -1462,14 +1462,16 @@ VOCAB_DEFAULTS = {
         'client': 'Client', 'client_plural': 'Clients',
         'client_field': 'Client Name', 'client_hint': 'e.g. Legrand India',
         'share': 'Share to Client', 'crm': 'Clients (CRM)',
-        'placed': 'Placed',
+        'placed': 'Placed', 'placed_plural': 'Placements',
+        'shared_stage': 'Shared with Client',
     },
     'corporate': {
         'mandate': 'Requisition', 'mandate_plural': 'Requisitions', 'mandate_new': 'New Requisition',
         'client': 'Department', 'client_plural': 'Departments',
         'client_field': 'Department / Hiring Manager', 'client_hint': 'e.g. Engineering / Mr. Sharma',
         'share': 'Share with Hiring Manager', 'crm': 'Departments',
-        'placed': 'Hired',
+        'placed': 'Hired', 'placed_plural': 'Hires',
+        'shared_stage': 'Shared with Hiring Manager',
     },
 }
 
@@ -1515,6 +1517,7 @@ def get_workspace():
     mode, vocab = workspace_vocab()
     return jsonify({'ok': True, 'mode': mode, 'vocab': vocab,
                     'hidden_modules': AGENCY_ONLY_MODULES if mode == 'corporate' else [],
+                    'can_approve': bool(is_company_admin()),
                     'can_edit_vocab': bool(is_company_admin())})
 
 
@@ -2868,6 +2871,50 @@ def init_db():
                 lo = float(one.group(1))
                 hi = 0.0 if '+' in txt else lo
             c.execute('UPDATE mandates SET exp_min=?, exp_max=? WHERE id=?', (lo, hi, row['id']))
+    except sqlite3.OperationalError:
+        pass
+
+    # Migrate: corporate requisition approval + headcount.
+    #
+    # An agency mandate arrives from a client and work starts immediately, so
+    # everything defaults to 'approved' and nothing changes for them. A
+    # corporate requisition is different: someone signs off on headcount and
+    # budget before sourcing begins, and the recruiter needs to see where that
+    # sign-off has reached.
+    for col, typ in [('approval_status', "TEXT DEFAULT 'approved'"),
+                     ('headcount', 'INTEGER DEFAULT 1'),
+                     ('approved_by', 'INTEGER DEFAULT 0'),
+                     ('approved_at', "TEXT DEFAULT ''"),
+                     ('approval_note', "TEXT DEFAULT ''"),
+                     ('requested_by', 'INTEGER DEFAULT 0')]:
+        try:
+            c.execute(f'ALTER TABLE mandates ADD COLUMN {col} {typ}')
+        except sqlite3.OperationalError:
+            pass  # already exists
+
+    # Migrate: where a candidate actually came from.
+    #
+    # Until now the source was inferred by string-matching `ai_reasoning`
+    # ("Pushed from Naukri", "Manually added"). That works by accident and
+    # breaks the moment that text changes. It also cannot express referral,
+    # which is 30-40% of corporate hiring and the cheapest channel there is.
+    for col, typ in [('source_channel', "TEXT DEFAULT ''"),
+                     ('referrer_name', "TEXT DEFAULT ''")]:
+        try:
+            c.execute(f'ALTER TABLE candidates ADD COLUMN {col} {typ}')
+        except sqlite3.OperationalError:
+            pass  # already exists
+
+    # Back-fill once from the old free text, so historical source reporting
+    # keeps working instead of showing every past candidate as "Other".
+    try:
+        c.execute("""UPDATE candidates SET source_channel = CASE
+                       WHEN LOWER(COALESCE(ai_reasoning,'')) LIKE '%naukri%'  THEN 'naukri'
+                       WHEN LOWER(COALESCE(ai_reasoning,'')) LIKE '%org map%' THEN 'orgmap'
+                       WHEN LOWER(COALESCE(ai_reasoning,'')) LIKE '%bulk%'    THEN 'bulk'
+                       WHEN LOWER(COALESCE(ai_reasoning,'')) LIKE '%manual%'  THEN 'manual'
+                       ELSE '' END
+                     WHERE COALESCE(source_channel,'') = ''""")
     except sqlite3.OperationalError:
         pass
 
@@ -4341,7 +4388,7 @@ def analytics():
         ('Screening', ['Screening']),
         ('Follow Up', ['Follow Up 1', 'Follow Up 2', 'Not Contacted', 'Called']),
         ('Interested', ['Interested', 'Updated CV awaited']),
-        (_vocab.get('share', 'Shared with Client'), ['Shared with Client']),
+        (_vocab.get('shared_stage', 'Shared with Client'), ['Shared with Client']),
         ('Interview', ['Interview Inprocess']),
         (_vocab.get('placed', 'Placed'), ['Placed']),
     ]
@@ -4350,12 +4397,26 @@ def analytics():
         funnel.append({'label': label, 'count': len([c for c in cands if c['stage'] in stages]), 'stages': stages})
 
     # Source effectiveness (of placed candidates, by source)
-    def _source(reason):
-        r = (reason or '').lower()
+    SOURCE_LABELS = {'naukri': 'Naukri extension', 'referral': 'Employee referral',
+                     'careers': 'Careers page', 'internal': 'Internal mobility',
+                     'orgmap': 'Org Map', 'bulk': 'Bulk paste', 'manual': 'Manual add'}
+
+    def _source(row):
+        """Prefer the recorded channel; fall back to the old free text."""
+        ch = ''
+        try:
+            ch = (row['source_channel'] or '').strip().lower()
+        except (IndexError, KeyError):
+            ch = ''
+        if ch:
+            return SOURCE_LABELS.get(ch, ch.title())
+        r = (row['ai_reasoning'] or '').lower()
         if 'naukri' in r: return 'Naukri extension'
+        if 'org map' in r: return 'Org Map'
         if 'bulk' in r: return 'Bulk paste'
         if 'manual' in r: return 'Manual add'
         return 'Other'
+
     src_counts = {}
     for c in cands:
         if (c['stage'] or '').strip().lower() in ('placed', 'joined'):
@@ -4363,7 +4424,7 @@ def analytics():
             when = sh['created_at'] if sh else c['updated_at']
             if not _in_range(when):
                 continue
-            s = _source(c['ai_reasoning'])
+            s = _source(c)
             src_counts[s] = src_counts.get(s, 0) + 1
     total_placed = sum(src_counts.values())
     sources = [{'source': k, 'count': v, 'pct': round(v * 100 / total_placed) if total_placed else 0}
@@ -4485,19 +4546,28 @@ def analytics():
     # Requisitions by age, so a role open 90 days is visible even if someone
     # touched it yesterday (which is what stale_mandates measures instead).
     aging = []
+    seats_open = seats_total = 0
+    pending_approval = []
     for m in mandates:
+        mk = m.keys()
+        appr = (m['approval_status'] if 'approval_status' in mk else 'approved') or 'approved'
+        if appr == 'pending':
+            pending_approval.append({'id': m['id'], 'role': m['role'], 'client': m['client'],
+                                     'location': m['location']})
         if (m['status'] or '').lower() != 'active':
             continue
+        want = int((m['headcount'] if 'headcount' in mk else 1) or 1)
+        got = len([c for c in cands if c['mandate_id'] == m['id']
+                   and (c['stage'] or '').strip().lower() == 'joined'])
+        seats_total += want
+        seats_open += max(0, want - got)
         opened = _parse(m['created_at'])
-        if not opened:
-            continue
-        age = (now - opened).days
-        filled = any(c['mandate_id'] == m['id'] and (c['stage'] or '').strip().lower() == 'joined'
-                     for c in cands)
-        if filled:
+        if not opened or got >= want:
             continue
         aging.append({'id': m['id'], 'role': m['role'], 'client': m['client'],
-                      'location': m['location'], 'days_open': age})
+                      'location': m['location'], 'days_open': (now - opened).days,
+                      'filled': got, 'headcount': want,
+                      'approval_status': appr})
     aging.sort(key=lambda x: -x['days_open'])
 
     corporate = {
@@ -4513,6 +4583,9 @@ def analytics():
         'avg_offer_to_join': round(sum(offer_gap_days) / len(offer_gap_days)) if offer_gap_days else None,
         'aging': aging[:10],
         'aging_over_60': len([a for a in aging if a['days_open'] >= 60]),
+        'seats_open': seats_open,
+        'seats_total': seats_total,
+        'pending_approval': pending_approval,
     }
 
     conn.close()
@@ -5069,6 +5142,10 @@ def extension_push():
               (cid, '', (CENTRAL_STAGE if _to_central else 'Screening'),
                ('Pushed from Naukri into Central Database' if _to_central
                 else 'Pushed from Naukri extension'), ts()))
+    try:
+        c.execute("UPDATE candidates SET source_channel='naukri' WHERE id=?", (cid,))
+    except sqlite3.OperationalError:
+        pass
     _save_wh_for(conn, cid, d.get('work_history'))
     conn.commit(); conn.close()
     _touch_mandate_usage(mid)
@@ -10076,12 +10153,20 @@ def create_mandate():
             crm_client_id = _match_crm_client_by_name(conn, effective_company_id(), d['client'])
         except Exception:
             crm_client_id = 0
-    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,exp_min,exp_max,experience,jd,status,created_at,owner_id,assigned_user_id,crm_client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    # Agency mandates come from a client and start immediately. A corporate
+    # requisition waits for headcount sign-off, so it opens as 'pending'.
+    _approval = 'pending' if workspace_mode() == 'corporate' else 'approved'
+    try:
+        _headcount = max(1, int(d.get('headcount') or 1))
+    except (TypeError, ValueError):
+        _headcount = 1
+    c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,exp_min,exp_max,experience,jd,status,created_at,owner_id,assigned_user_id,crm_client_id,approval_status,headcount,requested_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
               (d['client'], d['role'], d.get('location',''), d.get('division',''),
                float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)),
                float(d.get('exp_min', 0) or 0), float(d.get('exp_max', 0) or 0),
                d.get('experience', ''),
-               d.get('jd',''), 'active', ts(), effective_company_id(), real_user_id(), crm_client_id))
+               d.get('jd',''), 'active', ts(), effective_company_id(), real_user_id(), crm_client_id,
+               _approval, _headcount, real_user_id() or 0))
     mid = c.lastrowid; conn.commit(); conn.close()
     log_activity('create_mandate', d['role'] + ' @ ' + d['client'])
     return jsonify({'ok': True, 'id': mid, 'crm_client_id': crm_client_id})
@@ -10609,6 +10694,39 @@ def delete_mandate(mid):
     return jsonify({'ok': True, 'candidates_kept': kept})
 
 
+@app.route('/api/mandates/<int:mid>/approval', methods=['POST'])
+@login_required
+def mandate_approval(mid):
+    """Move a requisition through sign-off: pending -> approved / rejected.
+
+    Corporate only. Agency mandates are created 'approved' and never touch
+    this endpoint. Approving is a company-admin decision; anyone assigned to
+    the requisition can resubmit a rejected one after fixing it.
+    """
+    d = request.json or {}
+    action = (d.get('action') or '').strip().lower()
+    if action not in ('approve', 'reject', 'resubmit'):
+        return jsonify({'error': 'action must be approve, reject or resubmit'}), 400
+    if action in ('approve', 'reject') and not is_company_admin():
+        return jsonify({'error': 'Only a company admin can approve or reject'}), 403
+
+    conn = get_db()
+    m = conn.execute('SELECT id, role, approval_status FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, effective_company_id())).fetchone()
+    if not m:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+
+    new_status = {'approve': 'approved', 'reject': 'rejected', 'resubmit': 'pending'}[action]
+    note = str(d.get('note') or '').strip()[:500]
+    conn.execute('UPDATE mandates SET approval_status=?, approved_by=?, approved_at=?, approval_note=? '
+                 'WHERE id=?',
+                 (new_status, real_user_id() or 0, ts(), note, mid))
+    conn.commit(); conn.close()
+    log_activity('mandate_' + action, f"{m['role']}" + (f' — {note}' if note else ''),
+                 entity_type='mandate', entity_id=mid)
+    return jsonify({'ok': True, 'approval_status': new_status})
+
+
 @app.route('/api/mandates/<int:mid>/duplicate', methods=['POST'])
 @login_required
 def duplicate_mandate(mid):
@@ -10670,11 +10788,12 @@ def update_mandate(mid):
     own = conn.execute('SELECT owner_id FROM mandates WHERE id=?', (mid,)).fetchone()
     if not own or own['owner_id'] != effective_user_id():
         conn.close(); return jsonify({'error': 'Not found'}), 404
-    conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,exp_min=?,exp_max=?,experience=?,jd=?,status=? WHERE id=?',
+    conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,exp_min=?,exp_max=?,experience=?,jd=?,status=?,headcount=? WHERE id=?',
                  (d.get('client',''), d.get('role',''), d.get('location',''), d.get('division',''),
                   float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)),
                   float(d.get('exp_min', 0) or 0), float(d.get('exp_max', 0) or 0),
-                  d.get('experience',''), d.get('jd',''), d.get('status','active'), mid))
+                  d.get('experience',''), d.get('jd',''), d.get('status','active'),
+                  max(1, int(d.get('headcount') or 1)), mid))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
@@ -14976,6 +15095,13 @@ def add_manual(mid):
          d.get('location',''), d.get('phone',''), d.get('email',''), d.get('career_summary',''),
          json.dumps(d.get('key_skills') or []), 'worth_opening', 'Manually added', stage, ts(), ts()))
     cid = c.lastrowid
+    # Where this person came from. Referral matters most: it is the cheapest
+    # channel in corporate hiring, and until now there was no way to say it.
+    _ch = (d.get('source_channel') or ('orgmap' if to_central else 'manual')).strip().lower()
+    if _ch not in ('naukri', 'referral', 'careers', 'internal', 'orgmap', 'bulk', 'manual'):
+        _ch = 'manual'
+    c.execute('UPDATE candidates SET source_channel=?, referrer_name=? WHERE id=?',
+              (_ch, str(d.get('referrer_name') or '').strip()[:120], cid))
     c.execute('UPDATE candidates SET qualification=?, preferred_location=? WHERE id=?',
               (d.get('qualification',''), d.get('preferred_location',''), cid))
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',

@@ -1191,6 +1191,18 @@ body{font-size:14px !important; line-height:1.5}
         </div>
         <div class="fg-row"><label>Key Skills (comma separated)</label><input class="inp" id="ac-skills"></div>
         <div class="fg-row"><label>Career Summary</label><textarea class="ta" id="ac-summary" rows="2"></textarea></div>
+        <div class="fg-row"><label>Source</label>
+          <select class="inp" id="ac-source" onchange="acSourceHint()">
+            <option value="manual">Added manually</option>
+            <option value="referral">&#128101; Employee referral</option>
+            <option value="careers">Careers page / applied</option>
+            <option value="internal">Internal mobility</option>
+            <option value="naukri">Naukri / job portal</option>
+          </select>
+        </div>
+        <div class="fg-row" id="ac-referrer-row" style="display:none"><label>Referred by</label>
+          <input class="inp" id="ac-referrer" placeholder="Name of the employee who referred them">
+        </div>
         <div class="fg-row"><label>Save to</label>
           <select class="inp" id="ac-dest" onchange="acDestHint()">
             <option value="mandate">This position — starts at Screening</option>
@@ -3000,7 +3012,7 @@ async function renderDashboard(el){
   var openM = (kpi.open_mandates!=null)?kpi.open_mandates:S.mandates.filter(function(m){return m.status==='active';}).length;
   var cards='<div style="padding:18px 16px 4px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">'
     +statCard('Open '+esc(String(T('mandate_plural','mandates')).toLowerCase()), openM, ((kpi.active!=null?kpi.active:openM)+' active'+(kpi.hold?', '+kpi.hold+' hold':''))+' &middot; now')
-    +statCard(esc(T('placed','Placement'))+'s', (kpi.placed_this_month!=null?kpi.placed_this_month:0), 'All time &middot; Placed + Joined', "location.hash='analytics/placed'")
+    +statCard(esc(T('placed_plural','Placements')), (kpi.placed_this_month!=null?kpi.placed_this_month:0), 'All time &middot; Placed + Joined', "location.hash='analytics/placed'")
     +statCard('Avg time-to-fill',
         (wsMode()==='corporate' && analytics && analytics.corporate && analytics.corporate.avg_req_time_to_fill!=null)
           ? (analytics.corporate.avg_req_time_to_fill+'d')
@@ -3120,12 +3132,13 @@ function renderMandateSetup(el){
       + '</div>'
       + '</div></div>';
   }
-  el.innerHTML='<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
+  el.innerHTML=approvalBarHtml(m)+'<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
     +'<div class="g2">'
     +field('ms-client',wfL().client,m.client||'')+field('ms-role','Role',m.role||'')
     +field('ms-loc','Location',m.location||'')+field('ms-div','Division',m.division||'')
     +numfield('ms-cmin','CTC Min (LPA)',m.ctc_min||'')+numfield('ms-cmax','CTC Max (LPA)',m.ctc_max||'')
     +numfield('ms-expmin','Experience Min (Yrs)',m.exp_min||'')+numfield('ms-expmax','Experience Max (Yrs)',m.exp_max||'')
+    +(wsMode()==='corporate' ? numfield('ms-headcount','Headcount (positions)',m.headcount||1) : '')
     +'</div><div class="fg-row"><label>Job Description</label>'
     + buildJDEditor('ms-jd', m.jd||'')
     +'</div>'
@@ -3564,7 +3577,7 @@ async function saveMandateSetup(){
   const m=S.activeMandate;
   const emin=parseFloat(v('ms-expmin'))||0, emax=parseFloat(v('ms-expmax'))||0;
   if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
-  await req('PUT','/mandates/'+m.id,{client:v('ms-client'),role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:vHtml('ms-jd'),status:m.status});
+  await req('PUT','/mandates/'+m.id,{client:v('ms-client'),role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status});
   S.activeMandate=await req('GET','/mandates/'+m.id);
   S.mandates=S.mandates.map(x=>x.id===m.id?S.activeMandate:x);
   renderSidebar();updateTopbar();toast('✅','Mandate saved');
@@ -5187,10 +5200,15 @@ function keyFactsCardHTML(c){
     : infoRow('Email','');
   // Parked in the talent library rather than on a live pipeline. Flagged so
   // it is obvious at a glance why this person has no position against them.
+  // A referral is worth seeing at a glance — it usually means faster
+  // screening and someone internal already vouched for this person.
+  var srcPill = ((c.source_channel||'')==='referral')
+    ? '<span title="'+esc(c.referrer_name?('Referred by '+c.referrer_name):'Employee referral')+'" style="font-size:9.5px;font-weight:700;letter-spacing:.04em;background:#EDF6EE;color:#2C6B39;border:0.5px solid #C6E0CB;border-radius:20px;padding:2px 8px;margin-left:7px;white-space:nowrap">&#128101; REFERRAL</span>'
+    : '';
   var centralPill=((c.stage||'')==='Central DB')
     ? '<span title="In your Central Database — no position yet" style="font-size:9.5px;font-weight:700;letter-spacing:.04em;background:#EEF4FB;color:#2A5580;border:0.5px solid #C6DAF0;border-radius:20px;padding:2px 8px;margin-left:7px;white-space:nowrap">&#128218; CENTRAL DB</span>'
     : '';
-  var keyFacts='<div class="cp-card2" id="cp-keyfacts"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0;display:flex;align-items:center">Key Facts'+centralPill+'</div><button class="edit-pencil" onclick="toggleEdit(&#39;pd&#39;)" title="Edit">&#9998;</button></div>'
+  var keyFacts='<div class="cp-card2" id="cp-keyfacts"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0;display:flex;align-items:center">Key Facts'+centralPill+srcPill+'</div><button class="edit-pencil" onclick="toggleEdit(&#39;pd&#39;)" title="Edit">&#9998;</button></div>'
     +'<div id="pd-view" class="info-grid">'
     + infoRow('Company', c.company) + infoRow('Designation', c.designation)
     + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
@@ -6627,7 +6645,8 @@ async function setStatus(status){
 // ── ADD CANDIDATE MANUAL ───────────────────────────────────────────────────
 function openAddCandidateModal(){clearACForm();openModal('modal-add-candidate');}
 function clearACForm(){['ac-raw','ac-name','ac-company','ac-phone','ac-email','ac-designation','ac-exp','ac-ctc','ac-ectc','ac-notice','ac-location','ac-skills','ac-summary'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});const s=document.getElementById('ds-status');if(s)s.textContent='';
-const dst=document.getElementById('ac-dest');if(dst){dst.value='mandate';acDestHint();}}
+const dst=document.getElementById('ac-dest');if(dst){dst.value='mandate';acDestHint();}
+const sr=document.getElementById('ac-source');if(sr){sr.value='manual';acSourceHint();}}
 async function parseWithDeepSeek(){
   const raw=v('ac-raw').trim();if(!raw){toast('&#9888;&#65039;','Paste content first');return;}
   const key=S.settings.deepseek_api_key;if(!key){toast('&#128273;','Add DeepSeek API key in Settings');toggleSettings();return;}
@@ -6647,6 +6666,11 @@ async function parseWithDeepSeek(){
   toast('✅','DeepSeek extracted '+filled+' fields');
 }
 // mandate id 0 is the agreed shorthand for "no position yet — Central Database"
+// Referrer only makes sense for a referral, so the field appears with it.
+function acSourceHint(){
+  var el=document.getElementById('ac-source'), row=document.getElementById('ac-referrer-row');
+  if(el&&row) row.style.display=(el.value==='referral')?'':'none';
+}
 function acDestHint(){
   const el=document.getElementById('ac-dest'),h=document.getElementById('ac-dest-hint');
   if(el&&h) h.style.display=(el.value==='central')?'block':'none';
@@ -6658,7 +6682,12 @@ async function addCandidateManual(){
   const destEl=document.getElementById('ac-dest');
   const toCentral=!!(destEl&&destEl.value==='central');
   const target=toCentral?0:S.activeMandate.id;
-  const r=await req('POST','/mandates/'+target+'/candidates/manual',{name,company,phone:v('ac-phone'),email:v('ac-email'),designation:v('ac-designation'),experience:parseFloat(v('ac-exp'))||0,ctc_current:parseFloat(v('ac-ctc'))||0,ctc_expected:parseFloat(v('ac-ectc'))||0,notice_period:parseInt(v('ac-notice'))||0,location:v('ac-location'),career_summary:v('ac-summary'),key_skills:skills});
+  const srcEl=document.getElementById('ac-source');
+  const src=(srcEl&&srcEl.value)||'manual';
+  if(src==='referral' && !v('ac-referrer').trim()){
+    toast('&#9888;&#65039;','Who referred them?'); return;
+  }
+  const r=await req('POST','/mandates/'+target+'/candidates/manual',{name,company,phone:v('ac-phone'),email:v('ac-email'),designation:v('ac-designation'),experience:parseFloat(v('ac-exp'))||0,ctc_current:parseFloat(v('ac-ctc'))||0,ctc_expected:parseFloat(v('ac-ectc'))||0,notice_period:parseInt(v('ac-notice'))||0,location:v('ac-location'),career_summary:v('ac-summary'),key_skills:skills,source_channel:src,referrer_name:v('ac-referrer')});
   if(r.ok){
     closeModal('modal-add-candidate');
     toast('✅',name+(toCentral?' saved to Central Database':' added to Screening'));
@@ -7388,6 +7417,60 @@ async function doDuplicateMandate(){
   if(fresh){ S.activeMandate=fresh; }
   renderSidebar(); updateTopbar();
   if(fresh) selectMandate(fresh.id);
+}
+
+// ── Requisition sign-off (corporate only) ──────────────────────────────
+// A corporate requisition needs headcount approval before the business
+// considers it real. Agency mandates come from a client already agreed, so
+// they are created 'approved' and this bar never renders for them.
+//
+// Deliberately NOT a hard block: a rejected or pending requisition can still
+// be worked on. Recruiters often start sourcing while sign-off is in flight,
+// and blocking them would push work outside the system where it stops being
+// visible. The bar makes the state impossible to miss instead.
+function approvalBarHtml(m){
+  if(wsMode()!=='corporate' || !m) return '';
+  var st=(m.approval_status||'approved');
+  if(st==='approved' && !m.approval_note) return '';
+  var word=esc(T('mandate','Requisition'));
+  var look={
+    pending :{bg:'#FFF8E6',bd:'#F0DFB0',fg:'#8A6512',icon:'&#9203;',msg:word+' is awaiting headcount approval.'},
+    rejected:{bg:'#FDEEEE',bd:'#E8C4C4',fg:'#A32D2D',icon:'&#9888;&#65039;',msg:word+' was not approved.'},
+    approved:{bg:'#E9F7F1',bd:'#BFE3D4',fg:'#0F6E56',icon:'&#10004;',msg:word+' is approved.'}
+  }[st] || null;
+  if(!look) return '';
+
+  var btns='';
+  if(st==='pending' && S.ws && S.ws.can_approve){
+    btns='<button class="btn btn-g" style="font-size:11px;padding:3px 12px" onclick="setApproval(\'approve\')">Approve</button>'
+       + '<button class="btn btn-o" style="font-size:11px;padding:3px 12px;color:#A32D2D;border-color:#E8C4C4" onclick="setApproval(\'reject\')">Reject</button>';
+  } else if(st==='rejected'){
+    btns='<button class="btn btn-o" style="font-size:11px;padding:3px 12px" onclick="setApproval(\'resubmit\')">Resubmit for approval</button>';
+  }
+
+  return '<div style="max-width:580px;background:'+look.bg+';border:1px solid '+look.bd+';border-radius:10px;padding:10px 14px;margin-bottom:12px">'
+    +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+      +'<span style="font-size:13px">'+look.icon+'</span>'
+      +'<span style="font-size:12.5px;font-weight:600;color:'+look.fg+'">'+look.msg+'</span>'
+      +'<span style="margin-left:auto;display:flex;gap:6px">'+btns+'</span>'
+    +'</div>'
+    +(m.approval_note?'<div style="font-size:11.5px;color:'+look.fg+';margin-top:6px;opacity:.85">Note: '+esc(m.approval_note)+'</div>':'')
+    +'</div>';
+}
+
+async function setApproval(action){
+  var m=S.activeMandate; if(!m) return;
+  var note='';
+  if(action==='reject'){
+    note=prompt('Why is this not approved? (the recruiter will see this)')||'';
+    if(!note.trim()) return;
+  }
+  var r=await req('POST','/mandates/'+m.id+'/approval',{action:action,note:note});
+  if(!r||!r.ok){ toast('&#9888;&#65039;',(r&&r.error)||'Could not update approval'); return; }
+  m.approval_status=r.approval_status;
+  m.approval_note=note;
+  toast('✅', action==='approve'?'Approved':action==='reject'?'Marked as not approved':'Sent for approval again');
+  renderMandateSetup(document.getElementById('content'));
 }
 
 function field(id,lbl,val){return '<div class="fg-row"><label>'+lbl+'</label><input class="inp" id="'+id+'" value="'+esc(val)+'"></div>';}
@@ -9748,7 +9831,7 @@ async function loadAdminSummary() {
 
   // Per-agency (tenant) table
   h += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:18px;box-shadow:var(--shadow-sm)">'
-    + '<div style="padding:12px 16px;border-bottom:0.5px solid var(--line);font-size:13px;font-weight:700;color:var(--navy)">Agencies (Tenants)</div>';
+    + '<div style="padding:12px 16px;border-bottom:0.5px solid var(--line);font-size:13px;font-weight:700;color:var(--navy)">Tenants (Agency &amp; Corporate)</div>';
   r.summary.forEach(function(co){
     var isMine = S.currentUser && S.currentUser.company && co.id === S.currentUser.company.id;
     var statusBadge;
@@ -11242,7 +11325,7 @@ async function renderAnalytics(){
   html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px">';
   var rangeWord = (r.range_label||'').replace('Last ','').replace(' days',' din');
   html += _kpiCard('Open '+esc(String(T('mandate_plural','mandates')).toLowerCase()), k.open_mandates, (k.active)+' active, '+(k.hold)+' hold  \u00b7 now');
-  html += _kpiCard(esc(T('placed','Placed'))+'s', k.placed_this_month, 'All time · Placed + Joined', "location.hash='analytics/placed'");
+  html += _kpiCard(esc(T('placed_plural','Placements')), k.placed_this_month, 'All time · Placed + Joined', "location.hash='analytics/placed'");
   html += _kpiCard('Avg time-to-fill', k.avg_time_to_fill!=null ? (k.avg_time_to_fill+' days') : '\u2014', 'Placed in '+esc(r.range_label||'').toLowerCase());
   html += _kpiCard('Candidates in pipeline', k.pipeline_candidates, 'Current snapshot');
   html += '</div>';
@@ -11266,6 +11349,27 @@ async function renderAnalytics(){
       cp.avg_offer_to_join!=null ? (cp.avg_offer_to_join+' days') : '\u2014', 'average wait');
     html += '</div>';
 
+    // Requisitions waiting on headcount sign-off — the business is blocked
+    // here, so it sits above the ageing list.
+    if ((cp.pending_approval||[]).length) {
+      html += '<div style="background:#FFF8E6;border:1px solid #F0DFB0;border-radius:12px;padding:14px 18px;margin-bottom:20px">';
+      html += '<div style="font-size:13px;font-weight:600;color:#8A6512;margin-bottom:8px">&#9203; '
+        + cp.pending_approval.length + ' ' + esc(String(T(cp.pending_approval.length===1?'mandate':'mandate_plural','requisitions')).toLowerCase())
+        + ' awaiting approval</div>';
+      cp.pending_approval.forEach(function(a){
+        html += '<div style="font-size:12.5px;color:#8A6512;padding:3px 0;cursor:pointer" onclick="selectMandate('+a.id+')">'
+          + '&bull; ' + esc(a.role||'') + '<span style="opacity:.7"> \u00b7 ' + esc(a.client||'')
+          + (a.location?(' \u00b7 '+esc(a.location)):'') + '</span></div>';
+      });
+      html += '</div>';
+    }
+
+    if (cp.seats_total) {
+      html += '<div style="font-size:11.5px;color:var(--muted);margin:-10px 0 18px">'
+        + cp.seats_open + ' of ' + cp.seats_total + ' seats still open across active '
+        + esc(String(T('mandate_plural','requisitions')).toLowerCase()) + '.</div>';
+    }
+
     if ((cp.aging||[]).length) {
       html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:20px">';
       html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'
@@ -11278,7 +11382,10 @@ async function renderAnalytics(){
         var col = a.days_open>=90 ? '#A32D2D' : a.days_open>=60 ? '#BA7517' : '#6b7280';
         html += '<div style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-bottom:0.5px solid #f3f3f3;cursor:pointer" onclick="selectMandate('+a.id+')">'
           + '<div style="flex:1;font-size:12.5px;color:var(--navy);font-weight:500">'+esc(a.role||'')
-          + '<span style="color:#999;font-weight:400"> \u00b7 '+esc(a.client||'')+(a.location?(' \u00b7 '+esc(a.location)):'')+'</span></div>'
+          + '<span style="color:#999;font-weight:400"> \u00b7 '+esc(a.client||'')+(a.location?(' \u00b7 '+esc(a.location)):'')+'</span>'
+          + ((a.headcount||1)>1 ? '<span style="color:#6b7280;font-weight:600;font-size:11px"> \u00b7 '+(a.filled||0)+'/'+a.headcount+' filled</span>' : '')
+          + (a.approval_status==='pending' ? '<span style="font-size:9.5px;font-weight:700;background:#FFF8E6;color:#8A6512;border-radius:20px;padding:1px 7px;margin-left:6px">PENDING</span>' : '')
+          + '</div>'
           + '<div style="font-size:12px;font-weight:700;color:'+col+';white-space:nowrap">'+a.days_open+'d</div>'
           + '</div>';
       });
