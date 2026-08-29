@@ -3163,7 +3163,7 @@ function renderMandateSetup(el){
           +selField('ms-work-mode','Work Mode',WORKMODE_OPTS,m.work_mode||'')
           +selField('ms-emp-type','Employment Type',EMPTYPE_OPTS,m.employment_type||'')
           +'<div class="fg-row"><label>Target Hire Date</label><input class="inp" type="date" id="ms-target-date" value="'+esc(m.target_hire_date||'')+'"></div>'
-          +'<div class="fg-row"><label>Approved Headcount</label><input class="inp" type="number" min="0" id="ms-appr-headcount" value="'+esc(m.approved_headcount==null?'':m.approved_headcount)+'" placeholder="not yet approved"></div>'
+          +'<div class="fg-row"><label>Approved Headcount</label><input class="inp" type="number" value="'+esc(m.approved_headcount==null?'':m.approved_headcount)+'" placeholder="set when approving" disabled style="background:#FAFAFC;color:#888"></div>'
         +'</div></div>'
       : '')
     +'<div class="fg-row"><label>Job Description</label>'
@@ -3303,6 +3303,16 @@ function selField(id,label,list,cur){
     +'<option value="">— not set —</option>'
     + list.map(function(x){ return '<option value="'+x[0]+'"'+(x[0]===cur?' selected':'')+'>'+esc(x[1])+'</option>'; }).join('')
     +'</select></div>';
+}
+
+// ── Candidate stage display labels ─────────────────────────────────────
+// The stage ID is the value stored in candidates.stage and stage_history, so
+// it is never translated for storage, comparison, API payloads or automation.
+// This translates the LABEL only, and any unmapped stage — a tenant's own
+// custom stage or a future one — falls through to its raw value unchanged.
+function stageLabel(id){
+  var map=(S.ws && S.ws.stage_labels) || {};
+  return map[id] || id;
 }
 
 // ── Corporate organisation selectors ───────────────────────────────────
@@ -3789,7 +3799,7 @@ async function saveMandateSetup(){
     // its controlled lists, so the dropdown is convenience, not validation.
     [['priority','ms-priority'],['hiring_reason','ms-hiring-reason'],
      ['work_mode','ms-work-mode'],['employment_type','ms-emp-type'],
-     ['target_hire_date','ms-target-date'],['approved_headcount','ms-appr-headcount']]
+     ['target_hire_date','ms-target-date']]
       .forEach(function(p){ var e=document.getElementById(p[1]); if(e) payload[p[0]]=e.value; });
     ['department_id:ms-department','hiring_manager_id:ms-hm','hrbp_user_id:ms-hrbp','assigned_user_id:ms-recruiter']
       .forEach(function(pair){
@@ -3847,7 +3857,7 @@ function renderPipelineList(el, rows){
 
   var stageOpts=function(cur){
     return PIPELINE_STAGES.map(function(s){
-      return '<option value="'+esc(s.id)+'"'+(s.id===cur?' selected':'')+'>'+esc(s.id)+'</option>';
+      return '<option value="'+esc(s.id)+'"'+(s.id===cur?' selected':'')+'>'+esc(stageLabel(s.id))+'</option>';
     }).join('');
   };
 
@@ -3878,7 +3888,7 @@ function renderPipelineList(el, rows){
 
 async function plChangeStage(cid, stage){
   var r=await req('POST','/candidates/'+cid+'/stage',{stage:stage,note:'Changed from List view'});
-  if(r&&r.ok){ toast('✅','Moved to '+stage); renderPipeline(document.getElementById('content')); }
+  if(r&&r.ok){ toast('✅','Moved to '+stageLabel(stage)); renderPipeline(document.getElementById('content')); }
   else toast('&#9888;&#65039;',(r&&r.error)||'Could not change stage');
 }
 
@@ -3901,7 +3911,7 @@ async function renderPipeline(el){
     +'<button onclick="openStatusModal('+S.activeMandate.id+')" title="Change position status" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:6px;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;background:'+_stBg+';color:'+_stFg+'"><span style="width:7px;height:7px;border-radius:50%;background:'+_stDot+'"></span>'+_stLabel+' &#9662;</button>'
     +'<span style="font-size:11px;color:#888">'+inPipeline.length+' in pipeline</span>'
     +(sharedCnt?'<span class="pill pill-p" style="font-size:10px">'+sharedCnt+' shared</span>':'')
-    +(placedCnt?'<span class="pill pill-g" style="font-size:10px">'+placedCnt+' placed</span>':'')
+    +(placedCnt?'<span class="pill pill-g" style="font-size:10px">'+placedCnt+' '+esc(String(stageLabel('Placed')).toLowerCase())+'</span>':'')
     +'<div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap;align-items:center">'
     +'<div style="display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden">'
       +'<button onclick="setPipelineView(\'board\')" style="font-size:11px;padding:4px 11px;border:none;cursor:pointer;background:'+(plView()==='board'?'#0F6E56':'#fff')+';color:'+(plView()==='board'?'#fff':'#666')+'">&#9638; Board</button>'
@@ -3960,7 +3970,7 @@ async function renderPipeline(el){
     col.innerHTML='<div class="pl-col-head" data-toggle-stage="'+esc(stage.id)+'">'
       +'<span style="display:flex;align-items:center;gap:8px;min-width:0">'
       +'<span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:'+stage.color+'"></span>'
-      +'<span class="pl-col-name">'+esc(stage.id)+'</span>'
+      +'<span class="pl-col-name">'+esc(stageLabel(stage.id))+'</span>'
       +'</span>'
       +'<span style="display:flex;align-items:center;gap:6px;flex-shrink:0">'
       +'<span class="pl-col-cnt" style="background:#fff">'+cards.length+'</span>'
@@ -4061,27 +4071,27 @@ function _shareModalHtml(m, r, preselectStage, draft){
   order.forEach(function(stg){
     var cs=groups[stg]; if(!cs||!cs.length) return;
     listHtml += '<div style="margin-top:8px"><label style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;color:#534AB7;padding:2px 4px;cursor:pointer">'
-      +'<input type="checkbox" class="share-stage-cb" data-stage="'+esc(stg)+'"> '+esc(stg)+' <span style="color:#aaa;font-weight:500">('+cs.length+')</span></label>'
+      +'<input type="checkbox" class="share-stage-cb" data-stage="'+esc(stg)+'"> '+esc(stageLabel(stg))+' <span style="color:#aaa;font-weight:500">('+cs.length+')</span></label>'
       +cs.map(_shareRowHtml).join('')+'</div>';
   });
   var inp='width:100%;padding:7px 9px;border:1px solid #ddd;border-radius:7px;font-size:12.5px;font-family:inherit';
   return '<div class="modal" style="max-width:720px;width:94%">'
-    +'<div class="modal-head"><span class="modal-title">&#9993; Share Profiles to Client</span>'
+    +'<div class="modal-head"><span class="modal-title">&#9993; '+esc(T('share_title','Share Profiles to Client'))+'</span>'
     +'<button class="modal-x" onclick="_shareCloseModal()">&#10005;</button></div>'
     +'<div class="modal-body" style="max-height:76vh;overflow:auto">'
     +'<div style="font-size:11px;color:#888;margin-bottom:10px">'+esc(m.role||'')+(m.client?' &middot; '+esc(m.client):'')+'</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
-      +'<div><label style="font-size:11px;font-weight:600;color:#555">To (client)</label><input id="share-to" style="'+inp+'" value="'+esc(toVal)+'" placeholder="client@company.com, ..."></div>'
+      +'<div><label style="font-size:11px;font-weight:600;color:#555">'+esc(T('share_to','To (client)'))+'</label><input id="share-to" style="'+inp+'" value="'+esc(toVal)+'" placeholder="'+esc(T('share_to_hint','client@company.com, ...'))+'"></div>'
       +'<div><label style="font-size:11px;font-weight:600;color:#555">CC (internal)</label><input id="share-cc" style="'+inp+'" value="'+esc(ccVal)+'"></div>'
     +'</div>'
     +'<div style="margin-top:10px"><label style="font-size:11px;font-weight:600;color:#555">Subject</label><input id="share-subject" style="'+inp+'" value="'+esc(subjVal)+'"></div>'
     +'<div style="margin-top:10px"><label style="font-size:11px;font-weight:600;color:#555">Greeting</label><input id="share-greeting" style="'+inp+'" value="'+esc(greetVal)+'"></div>'
     +'<div style="margin-top:10px"><label style="font-size:11px;font-weight:600;color:#555">Intro line</label><input id="share-intro" style="'+inp+'" value="'+esc(introVal)+'"></div>'
     +'<div style="margin-top:12px;border:1px solid #eee;border-radius:9px;padding:10px 12px;background:#FAFAFC">'
-      +'<label style="font-size:11px;font-weight:700;color:#555">Blank columns for the '+esc(String(T('client','client')).toLowerCase())+' to fill</label>'
+      +'<label style="font-size:11px;font-weight:700;color:#555">Blank columns for the '+esc(T('share_audience','client'))+' to fill</label>'
       +'<div style="font-size:10.5px;color:#999;margin:3px 0 7px">Pick a heading or type your own. These go into the emailed table and the Submission Excel.</div>'
       +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:7px">'
-        + [T('client','Client')+' Feedback','Interview Date','Shortlisted (Y/N)','Interview Mode','Remarks','Round 1 Status']
+        + [T('feedback_title','Client Feedback'),'Interview Date','Shortlisted (Y/N)','Interview Mode','Remarks','Round 1 Status']
             .map(function(x){return '<button type="button" class="btn btn-o" style="font-size:10.5px;padding:3px 9px" onclick="_shareAddCol(\''+x.replace(/'/g,"\\'")+'\')">+ '+x+'</button>';}).join('')
       +'</div>'
       +'<div style="display:flex;gap:6px"><input id="share-newcol" placeholder="Or type a heading and press Enter" style="'+inp+';flex:1" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_shareAddCol(this.value);this.value=\'\';}">'
@@ -4090,7 +4100,7 @@ function _shareModalHtml(m, r, preselectStage, draft){
       +'<div style="margin-top:10px;display:flex;align-items:center;gap:8px">'
         +'<label style="font-size:11px;font-weight:700;color:#555">Blank rows at the bottom</label>'
         +'<input id="share-blankrows" type="number" min="0" max="20" value="'+(parseInt(m.share_blank_rows)||0)+'" style="'+inp+';width:70px" onchange="_shareLayoutChanged()">'
-        +'<span style="font-size:10.5px;color:#999">Empty rows the client can type names into</span>'
+        +'<span style="font-size:10.5px;color:#999">Empty rows the '+esc(T('share_audience','client'))+' can type names into</span>'
       +'</div>'
     +'</div>'
     +'<div style="margin-top:14px;display:flex;align-items:center;justify-content:space-between">'
@@ -5247,7 +5257,7 @@ async function renderProfiles(el){
     if(!cands.length) return;
     listHtml += '<div class="prof-stage-head" style="color:'+stage.color+'">'
       +'<span style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:50%;background:'+stage.color+';flex-shrink:0;display:inline-block"></span>'
-      +esc(stage.id)+'</span>'
+      +esc(stageLabel(stage.id))+'</span>'
       +'<span style="background:'+stage.color+'22;color:'+stage.color+';border-radius:9px;padding:1px 8px;font-size:11px">'+cands.length+'</span>'
       +'</div>';
     cands.forEach(function(c){
@@ -5460,7 +5470,7 @@ function renderProfileDetail(c){
   const skills=c.key_skills||[];
   const hasCv=!!(c.cv_path&&c.cv_path!=='');
   var fit=c.ai_score||0;
-  var stageOptions = PIPELINE_STAGES.map(function(s){var sel=(s.id===c.stage)?' selected':'';return '<option value="'+esc(s.id)+'"'+sel+'>'+esc(s.id)+'</option>';}).join('');
+  var stageOptions = PIPELINE_STAGES.map(function(s){var sel=(s.id===c.stage)?' selected':'';return '<option value="'+esc(s.id)+'"'+sel+'>'+esc(stageLabel(s.id))+'</option>';}).join('');
   var _stags=[]; try{_stags=JSON.parse(c.status_tags||'[]');}catch(e){_stags=[];}
   S.statusTags=S.statusTags||{}; S.statusTags[c.id]=_stags;
 
@@ -5937,15 +5947,67 @@ async function cpLoadInterviews(cid){
 
   box.innerHTML=cpPanelSummary(summary)+ivs.map(function(iv){
     var dt=''; try{dt=new Date(iv.scheduled_at).toLocaleString('en-IN',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});}catch(e){}
-    var done=iv.status==='completed';
-    var badge=done?'<span style="font-size:10px;background:#E8F4EE;color:#127A57;padding:2px 8px;border-radius:6px">Done</span>':'<span style="font-size:10px;background:#FFF3E0;color:#C7841E;padding:2px 8px;border-radius:6px">Scheduled</span>';
-    return '<div style="padding:11px 0;border-bottom:0.5px solid var(--line)">'
-      +'<div style="display:flex;align-items:flex-start;gap:10px"><div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--ink)">'+esc(iv.round_name||'Interview')+'</div><div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+esc(dt)+(iv.mode?' &middot; '+esc(iv.mode):'')+(iv.location?' &middot; '+esc(iv.location):'')+'</div>'+(iv.result?'<div style="font-size:11px;color:#555;margin-top:2px">Result: '+esc(iv.result)+'</div>':'')+'</div>'+badge+'</div>'
+    // Status is what happened to the MEETING; result is what the panel
+    // concluded. Shown as two separate badges so "Cancelled" can never be
+    // mistaken for a verdict.
+    var stLook={scheduled:['#FFF3E0','#C7841E'],completed:['#E8F4EE','#127A57'],
+                cancelled:['#F1F0EC','#888'],no_show:['#FDEEEE','#A32D2D']};
+    var sc=stLook[iv.status]||['#F1F0EC','#666'];
+    var badge='<span style="font-size:10px;background:'+sc[0]+';color:'+sc[1]+';padding:2px 8px;border-radius:6px">'
+      +esc(iv.status_label||iv.status||'')+'</span>';
+    var rLook={pass:['#E1F5EE','#0F6E56'],fail:['#FDEEEE','#A32D2D'],
+               hold:['#FFF8E6','#8A6512'],pending:['#F1F0EC','#666']};
+    var rc=rLook[iv.result]||['#F1F0EC','#666'];
+    var rbadge=iv.result?'<span style="font-size:10px;background:'+rc[0]+';color:'+rc[1]+';padding:2px 8px;border-radius:6px;margin-left:5px">'
+      +esc(iv.result_label||iv.result)+'</span>':'';
+    var meta=[dt];
+    if(iv.duration_mins) meta.push(iv.duration_mins+' min');
+    if(iv.timezone) meta.push(iv.timezone);
+    if(iv.mode) meta.push(ivModeLabel(iv.mode));
+    if(iv.location) meta.push(iv.location);
+    if(iv.interviewer_name) meta.push(T('interviewer_label','Interviewer')+': '+iv.interviewer_name);
+    var cancelled=(iv.status==='cancelled');
+    return '<div style="padding:11px 0;border-bottom:0.5px solid var(--line)'+(cancelled?';opacity:.6':'')+'">'
+      +'<div style="display:flex;align-items:flex-start;gap:10px"><div style="flex:1">'
+        +'<div style="font-size:13px;font-weight:600;color:var(--ink)">'+esc(iv.round_name||'Interview')+'</div>'
+        +'<div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+esc(meta.filter(Boolean).join(' \u00b7 '))+'</div>'
+        +(iv.rescheduled_from?'<div style="font-size:10.5px;color:#8A6512;margin-top:2px">Moved from '+esc(String(iv.rescheduled_from).slice(0,16).replace('T',' '))+'</div>':'')
+        +(iv.notes?'<div style="font-size:11px;color:#666;margin-top:3px">'+esc(iv.notes)+'</div>':'')
+      +'</div><div style="white-space:nowrap">'+badge+rbadge+'</div></div>'
       +cpFeedbackList(fbAll[iv.id]||[], cid)
-      +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 10px;margin-top:7px" onclick="cpFeedbackForm('+iv.id+','+cid+')">+ Add panel feedback</button>'
+      +'<div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">'
+        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 10px" onclick="cpFeedbackForm('+iv.id+','+cid+')">+ Add panel feedback</button>'
+        +(cancelled?'':'<button class="btn btn-o" style="font-size:10.5px;padding:3px 10px" onclick="ivSetStatus('+iv.id+','+cid+',\'rescheduled\')">Reschedule</button>')
+        +(cancelled?'':'<button class="btn btn-o" style="font-size:10.5px;padding:3px 10px" onclick="ivSetStatus('+iv.id+','+cid+',\'no_show\')">No show</button>')
+        +(cancelled?'':'<button class="btn btn-o" style="font-size:10.5px;padding:3px 10px;color:#A32D2D;border-color:#E8C4C4" onclick="ivSetStatus('+iv.id+','+cid+',\'cancelled\')">Cancel</button>')
+      +'</div>'
       +'<div id="fbform-'+iv.id+'"></div>'
       +'</div>';
   }).join('');
+}
+
+// Interview mode is HOW the meeting happens — not the requisition's work_mode
+// (remote/hybrid/onsite), which is how the JOB is done. Two different concepts.
+var IV_MODE_LABELS={in_person:'In-person', video:'Video', phone:'Phone'};
+function ivModeLabel(m){ return IV_MODE_LABELS[m] || m || ''; }
+
+// Cancel / reschedule / no-show never delete the interview and never touch the
+// candidate's pipeline stage.
+async function ivSetStatus(iid, cid, status){
+  var body={status:status};
+  if(status==='rescheduled'){
+    var when=prompt('New date & time (YYYY-MM-DDTHH:MM):');
+    if(!when) return;
+    body.scheduled_at=when.trim();
+  } else if(status==='cancelled'){
+    if(!confirm('Cancel this interview?\n\nThe record and its history are kept — only the status changes.')) return;
+    body.note=prompt('Reason (optional):')||'';
+  } else if(status==='no_show'){
+    if(!confirm('Mark this interview as a no-show?\n\nThe candidate is NOT rejected — their pipeline stage is unchanged.')) return;
+  }
+  var r=await req('POST','/interviews/'+iid+'/status',body);
+  if(r&&r.ok){ toast('\u2705','Interview updated'); cpLoadInterviews(cid); }
+  else toast('&#9888;&#65039;',(r&&r.error)||'Could not update interview');
 }
 
 // ── Interview panel feedback ───────────────────────────────────────────
@@ -6051,7 +6113,7 @@ async function saveField(cid,fieldName){
   } else if(fieldName==='recruiter_feedback'){
     payload={recruiter_feedback:v('pf-rfb')}; statusId='pf-rfb-status'; label='Recruiter Feedback';
   } else if(fieldName==='client_feedback'){
-    payload={client_feedback:v('pf-cfb')}; statusId='pf-cfb-status'; label='Client Feedback';
+    payload={client_feedback:v('pf-cfb')}; statusId='pf-cfb-status'; label=T('feedback_title','Client Feedback');
   } else if(fieldName==='general_comments'){
     var commentText = v('pf-comments').trim();
     if(!commentText){ toast('WA','Write a comment first'); return; }
@@ -7971,6 +8033,7 @@ function approvalBarHtml(m){
 
 async function setApproval(action){
   var m=S.activeMandate; if(!m) return;
+  var approvedHc=null;
   // Comments are optional on approve and submit, required on reject so the
   // recruiter is told what to fix.
   var note='';
@@ -7978,9 +8041,22 @@ async function setApproval(action){
     note=prompt('Why is this not approved? (the recruiter will see this)')||'';
     if(!note.trim()) return;
   } else if(action==='approve'){
+    // Approved headcount is management-approved capacity, so it is captured
+    // here — the only place the server accepts it.
+    var req=(m.headcount==null?1:m.headcount);
+    var cur=(m.approved_headcount==null?req:m.approved_headcount);
+    var hc=prompt('Approved headcount (requested: '+req+'):', String(cur));
+    if(hc===null) return;
+    hc=String(hc).trim();
+    if(hc!=='' && (isNaN(parseInt(hc,10)) || parseInt(hc,10)<0 || parseInt(hc,10)>req)){
+      toast('&#9888;&#65039;','Approved headcount must be between 0 and '+req); return;
+    }
+    approvedHc = hc;
     note=prompt('Approval comment (optional):')||'';
   }
-  var r=await req('POST','/mandates/'+m.id+'/approval',{action:action,note:note});
+  var _body={action:action,note:note};
+  if(action==='approve' && approvedHc!==null) _body.approved_headcount=approvedHc;
+  var r=await req('POST','/mandates/'+m.id+'/approval',_body);
   if(!r||!r.ok){ toast('&#9888;&#65039;',(r&&r.error)||'Could not update approval'); return; }
   m.approval_status=r.approval_status;
   m.approval_note=note;
@@ -14006,7 +14082,7 @@ async function renderPlacedCandidatesPage(){
     + '<a href="#analytics" style="font-size:12px;color:var(--teal-deep);text-decoration:none">&#8592; Analytics</a></div>';
   html += '<div style="font-size:18px;font-weight:700;color:var(--navy);margin-bottom:4px">Placements &middot; Placed + Joined</div>';
   html += '<div style="font-size:12px;color:var(--muted);margin-bottom:16px"><b>'+cands.length+'</b> total'
-    + ' &middot; '+nJoined+' joined, '+nPlaced+' placed'
+    + ' &middot; '+nJoined+' joined, '+nPlaced+' '+String(stageLabel('Placed')).toLowerCase()
     + (nOffer?' &middot; <span style="color:#C0522B;font-weight:600">'+nOffer+' offered (stage not moved)</span>':'')+'</div>';
 
   if(nOffer){

@@ -1480,6 +1480,10 @@ VOCAB_DEFAULTS = {
         'placed': 'Placed', 'placed_plural': 'Placements',
         'shared_stage': 'Shared with Client',
         'role_field': 'Role', 'notes_title': 'Client Notes',
+        'share_title': 'Share Profiles to Client', 'share_to': 'To (client)',
+        'share_to_hint': 'client@company.com, ...', 'feedback_title': 'Client Feedback',
+        'share_audience': 'client',
+        'interview_title': 'Client Interview', 'interviewer_label': 'Client Contact / Interviewer',
         'notes_hint': 'e.g. Client wants only candidates from Tier-1 colleges',
     },
     'corporate': {
@@ -1490,6 +1494,10 @@ VOCAB_DEFAULTS = {
         'placed': 'Hired', 'placed_plural': 'Hires',
         'shared_stage': 'Shared with Hiring Manager',
         'role_field': 'Job Title', 'notes_title': 'Requisition Notes',
+        'share_title': 'Share Profiles with Hiring Team', 'share_to': 'To (Hiring Team)',
+        'share_to_hint': 'hiring.manager@yourcompany.com, ...', 'feedback_title': 'Hiring Team Feedback',
+        'share_audience': 'hiring team',
+        'interview_title': 'Hiring Team Interview', 'interviewer_label': 'Interviewer',
         'notes_hint': 'e.g. Hiring team prefers candidates with power-electronics background',
     },
 }
@@ -1529,6 +1537,36 @@ def workspace_vocab(company_id=None):
     return mode, vocab
 
 
+# ── Candidate stage display labels ────────────────────────────────────────
+# The stage ID **is** the stored TEXT in candidates.stage and in
+# stage_history, and tenants may rename stages themselves. So this maps a
+# known default ID to a Corporate display label and nothing more:
+#
+#   DB value 'Shared with Client'  →  Corporate UI 'Shared with Hiring Team'
+#   DB value stays 'Shared with Client'.
+#
+# Any stage not listed — a tenant's own custom stage, or a future one — falls
+# through to its raw value. Nothing here changes data, history, API payloads
+# or automation identifiers.
+CORPORATE_STAGE_LABELS = {
+    'Shared with Client': 'Shared with Hiring Team',
+    'Client Rejected on Paper': 'Hiring Team Rejected (CV)',
+    'Client Rejected After Interview': 'Hiring Team Rejected (Interview)',
+    # Confirmed meaning of 'Placed' in this product: final selection AND offer
+    # accepted — the candidate has not joined yet ('Joined' is the next stage).
+    # 'Hired' would overstate that and 'Selected' would understate the accepted
+    # offer, so the label states exactly what the stage means.
+    'Placed': 'Offer Accepted',
+}
+
+
+def stage_label(stage, mode=None):
+    """Display label for a stage. Never used as a key, never stored."""
+    if (mode or workspace_mode()) != 'corporate':
+        return stage
+    return CORPORATE_STAGE_LABELS.get(stage, stage)
+
+
 @app.route('/api/workspace', methods=['GET'])
 @login_required
 def get_workspace():
@@ -1538,6 +1576,7 @@ def get_workspace():
                     'hidden_modules': AGENCY_ONLY_MODULES if mode == 'corporate' else [],
                     'can_approve': bool(is_company_admin()),
                     'company_id': effective_company_id(),
+                    'stage_labels': (CORPORATE_STAGE_LABELS if mode == 'corporate' else {}),
                     'can_edit_vocab': bool(is_company_admin())})
 
 
@@ -3076,6 +3115,24 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # ── Interview: the few fields the existing record genuinely lacks ─────
+    # Everything already present is reused: round_name, mode, location,
+    # interviewer, scheduled_at, status, result, owner_id. No second interview
+    # table, no corporate_interviews. All nullable/blank so existing rows and
+    # Agency behaviour are unchanged.
+    for col, typ in [('duration_mins', 'INTEGER DEFAULT NULL'),  # minutes; optional
+                     ('timezone', "TEXT DEFAULT ''"),            # IANA name, display only
+                     ('notes', "TEXT DEFAULT ''"),               # about THIS interview event
+                     ('round_order', 'INTEGER DEFAULT 0'),       # rounds are named, not sortable
+                     ('interviewer_user_id', 'INTEGER DEFAULT NULL'),     # -> users.id
+                     ('interviewer_contact_id', 'INTEGER DEFAULT NULL'),  # -> crm_contacts.id
+                     ('rescheduled_from', "TEXT DEFAULT ''"),    # previous scheduled_at
+                     ('cancelled_at', "TEXT DEFAULT ''")]:
+        try:
+            c.execute(f'ALTER TABLE interviews ADD COLUMN {col} {typ}')
+        except sqlite3.OperationalError:
+            pass
+
     # Which mandate each user last pushed to, so the extension can float the
     # ones they actually use to the top of a long dropdown.
     try:
@@ -4539,16 +4596,15 @@ def analytics():
     avg_ttf = round(sum(fill_days) / len(fill_days)) if fill_days else None
 
     # Pipeline funnel (grouped stages)
-    # The stage ID stays 'Shared with Client' (it is stored on candidate rows);
-    # only the label shown on the funnel follows the tenant's wording.
-    _vocab = workspace_vocab()[1]
+    # The stage IDs stay exactly as stored on candidate rows; only the funnel's
+    # displayed label is translated, through the same helper the UI uses.
     funnel_map = [
         ('Screening', ['Screening']),
         ('Follow Up', ['Follow Up 1', 'Follow Up 2', 'Not Contacted', 'Called']),
         ('Interested', ['Interested', 'Updated CV awaited']),
-        (_vocab.get('shared_stage', 'Shared with Client'), ['Shared with Client']),
+        (stage_label('Shared with Client'), ['Shared with Client']),
         ('Interview', ['Interview Inprocess']),
-        (_vocab.get('placed', 'Placed'), ['Placed']),
+        (stage_label('Placed'), ['Placed']),
     ]
     funnel = []
     for label, stages in funnel_map:
@@ -10389,7 +10445,7 @@ def create_mandate():
     _ok, _err = _validate_org_links(conn, d, effective_company_id())
     if not _ok:
         conn.close(); return jsonify({'error': _err}), 400
-    _pok, _perr, _plan = _validate_planning_fields(d)
+    _pok, _perr, _plan = _validate_planning_fields(d)   # approved_headcount rejected here
     if not _pok:
         conn.close(); return jsonify({'error': _perr}), 400
     _nid = lambda k: (int(d[k]) if str(d.get(k) or '').strip() not in ('', '0') else None)
@@ -10952,11 +11008,17 @@ APPROVAL_STATUSES = ('pending', 'approved', 'rejected')
 APPROVAL_ACTIONS = ('submitted', 'approved', 'rejected')
 
 
-def _validate_planning_fields(d):
+def _validate_planning_fields(d, requested_headcount=None, allow_approved_headcount=False):
     """(ok, error, cleaned). Controlled values only — no free-text priorities.
 
     A field absent from the payload is left alone; a field present but empty
     clears it. Nothing is inferred.
+
+    `approved_headcount` is NOT an ordinary planning field. It records what
+    management signed off, so it is only accepted when the caller is performing
+    an approval action (`allow_approved_headcount`). An ordinary edit that
+    carries it is rejected outright rather than silently ignored, so the caller
+    knows the value was not applied.
     """
     cleaned = {}
     for field, allowed, label in (('priority', PRIORITIES, 'Priority'),
@@ -10980,6 +11042,9 @@ def _validate_planning_fields(d):
         cleaned['target_hire_date'] = v            # past dates allowed: planning only
 
     if 'approved_headcount' in d:
+        if not allow_approved_headcount:
+            return False, ('Approved headcount can only be set through an approval action, '
+                           'not an ordinary edit'), {}
         v = str(d.get('approved_headcount') or '').strip()
         if v == '':
             cleaned['approved_headcount'] = None   # not yet decided
@@ -10990,6 +11055,11 @@ def _validate_planning_fields(d):
                 return False, 'Approved headcount must be a whole number', {}
             if n < 0:
                 return False, 'Approved headcount cannot be negative', {}
+            # No existing business rule anywhere in this codebase permits
+            # approving more capacity than was requested, so it is rejected.
+            if requested_headcount is not None and n > int(requested_headcount or 0):
+                return False, (f'Approved headcount ({n}) cannot exceed the requested '
+                               f'headcount ({int(requested_headcount or 0)})'), {}
             cleaned['approved_headcount'] = n
     return True, None, cleaned
 
@@ -11005,7 +11075,13 @@ def _log_approval(conn, mid, company_id, action, comment=''):
 @app.route('/api/mandates/<int:mid>/approval-history', methods=['GET'])
 @login_required
 def approval_history(mid):
-    """The full sequence of approval actions on a requisition."""
+    """The full sequence of approval actions on a requisition.
+
+    Corporate-only. Agency mandates open approved and have no approval
+    workflow, so this must not become an Agency surface.
+    """
+    if workspace_mode() != 'corporate':
+        return jsonify({'error': 'Not found'}), 404
     cid = effective_company_id()
     conn = get_db()
     try:
@@ -11043,6 +11119,11 @@ def mandate_approval(mid):
     appended to. Approval never touches candidate stages.
     """
     d = request.json or {}
+    # Approval is a Corporate feature. An Agency tenant reaching this endpoint
+    # must change nothing at all — not the status, not the approver stamp, not
+    # the note, and no history row. Checked first, before anything is read.
+    if workspace_mode() != 'corporate':
+        return jsonify({'error': 'Not found'}), 404
     action = (d.get('action') or '').strip().lower()
     # 'resubmit' is kept as an alias so anything already calling it keeps working.
     if action == 'resubmit':
@@ -11054,10 +11135,21 @@ def mandate_approval(mid):
 
     cid = effective_company_id()
     conn = get_db()
-    m = conn.execute('SELECT id, role, approval_status, requested_by FROM mandates '
+    m = conn.execute('SELECT id, role, approval_status, requested_by, headcount FROM mandates '
                      'WHERE id=? AND owner_id=?', (mid, cid)).fetchone()
     if not m:
         conn.close(); return jsonify({'error': 'Not found'}), 404
+
+    # Approved headcount is management-approved capacity, so it is set HERE and
+    # only here — never through an ordinary requisition edit. Validated against
+    # the requested headcount before any write.
+    _hc_ok, _hc_err, _hc = _validate_planning_fields(
+        d, requested_headcount=m['headcount'], allow_approved_headcount=True)
+    if not _hc_ok:
+        conn.close(); return jsonify({'error': _hc_err}), 400
+    if 'approved_headcount' in _hc and action != 'approve':
+        conn.close()
+        return jsonify({'error': 'Approved headcount can only be set when approving'}), 400
 
     # §16: a normal recruiter must not approve their own requisition. That is
     # already guaranteed by the existing convention — approve/reject are
@@ -11075,6 +11167,9 @@ def mandate_approval(mid):
         new_status, hist = 'approved', 'approved'
         conn.execute('UPDATE mandates SET approval_status=?, approved_by=?, approved_at=?, '
                      'approval_note=? WHERE id=?', (new_status, real_user_id() or 0, now, note, mid))
+        if 'approved_headcount' in _hc:
+            conn.execute('UPDATE mandates SET approved_headcount=? WHERE id=?',
+                         (_hc['approved_headcount'], mid))
     elif action == 'reject':
         # Clear the approver stamp: leaving the previous approver against a
         # rejected requisition would misreport who signed it off. The history
@@ -11469,9 +11564,23 @@ def update_mandate(mid):
 
     # Validated before ANY write, so a rejected value leaves the requisition
     # completely unmodified — same contract as the org-link validation above.
+    # approved_headcount is deliberately NOT accepted here; it belongs to the
+    # approval action, and supplying it is rejected rather than ignored.
     _pok, _perr, _plan = _validate_planning_fields(d)
     if not _pok:
         conn.close(); return jsonify({'error': _perr}), 400
+
+    # Lowering the requested headcount below an existing approval would leave
+    # approved > requested. Reject the edit rather than silently rewriting
+    # approval data that management signed off.
+    if 'headcount' in d:
+        _existing = conn.execute('SELECT approved_headcount FROM mandates WHERE id=?',
+                                 (mid,)).fetchone()
+        _appr = _existing['approved_headcount'] if _existing else None
+        if _appr is not None and int(d.get('headcount') or 1) < int(_appr):
+            conn.close()
+            return jsonify({'error': (f'Requested headcount cannot be lower than the approved '
+                                      f'headcount ({int(_appr)}). Change the approval first.')}), 400
 
     # Corporate never edits an external client, so its payload does not carry
     # one. Preserving the stored value keeps this from blanking legacy data.
@@ -11960,8 +12069,42 @@ def _submission_signature_html():
     parts.append('</div>')
     return ''.join(parts)
 
-def _mandate_client_contacts(conn, company_id, crm_client_id):
-    """Return [{name, email}] for the mandate's linked CRM client (with emails)."""
+def _mandate_client_contacts(conn, company_id, crm_client_id, mandate=None):
+    """Recipients for the share-profiles email.
+
+    Agency: contacts of the mandate's linked external CRM client.
+
+    Corporate: there is no external client (crm_client_id is always 0), so the
+    recipients are the tenant's OWN hiring team — the requisition's hiring
+    manager first, then other internal people. This reuses the internal
+    crm_clients row and crm_contacts introduced in Step 3; no new person model
+    and no Agency CRM client is ever exposed to a Corporate tenant.
+    """
+    try:
+        if workspace_mode() == 'corporate':
+            internal_id = _internal_client_id(conn, company_id)
+            rows = conn.execute(
+                'SELECT id, name, email FROM crm_contacts '
+                'WHERE client_id=? AND company_id=? AND is_active=1 AND email != "" '
+                'ORDER BY id ASC', (internal_id, company_id)).fetchall()
+            out = [{'name': r['name'] or '', 'email': r['email'] or ''}
+                   for r in rows if (r['email'] or '').strip()]
+            # The hiring manager owns the decision, so they lead the To list.
+            hm_id = 0
+            try:
+                hm_id = (mandate['hiring_manager_id'] or 0) if mandate is not None else 0
+            except (IndexError, KeyError, TypeError):
+                hm_id = 0
+            if hm_id:
+                hm = conn.execute('SELECT name, email FROM crm_contacts '
+                                  'WHERE id=? AND company_id=?', (hm_id, company_id)).fetchone()
+                if hm and (hm['email'] or '').strip():
+                    lead = {'name': hm['name'] or '', 'email': hm['email'] or ''}
+                    out = [lead] + [c for c in out if c['email'] != lead['email']]
+            return out
+    except Exception:
+        return []
+
     if not crm_client_id:
         return []
     try:
@@ -12143,11 +12286,11 @@ def submission_prefill(mid):
     rows = conn.execute(
         'SELECT * FROM candidates WHERE mandate_id=? AND stage != "Screened-Out" '
         'ORDER BY stage, name', (mid,)).fetchall()
-    contacts = _mandate_client_contacts(conn, company_id, m['crm_client_id'])
+    contacts = _mandate_client_contacts(conn, company_id, m['crm_client_id'], m)
     # If a SPOC is set on the mandate, put them first (primary To + greeting).
     spoc = None
     try:
-        sid = m['spoc_contact_id'] or 0
+        sid = 0 if workspace_mode() == 'corporate' else (m['spoc_contact_id'] or 0)
     except Exception:
         sid = 0
     if sid:
@@ -15368,6 +15511,118 @@ def get_audit():
     return jsonify({'ok': True, 'audit': [dict(r) for r in rows]})
 
 
+# ── Interview: status, result and modes ───────────────────────────────────
+# Status = what happened to the MEETING. Result = what the panel concluded.
+# Deliberately separate: a cancelled interview has no result, and a completed
+# one may still be awaiting a decision.
+INTERVIEW_STATUSES = ('scheduled', 'completed', 'cancelled', 'rescheduled', 'no_show')
+INTERVIEW_RESULTS = ('', 'pending', 'pass', 'fail', 'hold')
+INTERVIEW_MODES = ('in_person', 'video', 'phone')
+
+# Interview mode is HOW the meeting happens. It is NOT the requisition's
+# work_mode (onsite/hybrid/remote), which is how the JOB is done.
+INTERVIEW_STATUS_LABELS = {'scheduled': 'Scheduled', 'completed': 'Completed',
+                           'cancelled': 'Cancelled', 'rescheduled': 'Rescheduled',
+                           'no_show': 'No Show'}
+INTERVIEW_RESULT_LABELS = {'pending': 'Pending', 'pass': 'Pass', 'fail': 'Fail',
+                           'hold': 'On Hold'}
+
+
+def _validate_interview_fields(d):
+    """(ok, error, cleaned) for the optional interview fields."""
+    out = {}
+    if 'duration_mins' in d:
+        v = str(d.get('duration_mins') or '').strip()
+        if v == '':
+            out['duration_mins'] = None
+        else:
+            try:
+                n = int(v)
+            except (TypeError, ValueError):
+                return False, 'Duration must be a whole number of minutes', {}
+            if n <= 0 or n > 24 * 60:
+                return False, 'Duration must be between 1 and 1440 minutes', {}
+            out['duration_mins'] = n
+    for f, cap in (('timezone', 64), ('notes', 4000)):
+        if f in d:
+            out[f] = str(d.get(f) or '').strip()[:cap]
+    if 'round_order' in d:
+        try:
+            out['round_order'] = max(0, int(d.get('round_order') or 0))
+        except (TypeError, ValueError):
+            return False, 'Round order must be a whole number', {}
+    if 'mode' in d:
+        v = str(d.get('mode') or '').strip()
+        # Free-text modes predate this list, so an unrecognised value is kept
+        # rather than rejected — only the known slugs get a tidy label.
+        out_mode = v
+        del out_mode
+    return True, None, out
+
+
+def _apply_interview_extras(conn, iid, extra, iv_user=None, iv_contact=None):
+    """Write the optional columns without disturbing the main insert."""
+    sets, vals = [], []
+    for k, v in (extra or {}).items():
+        sets.append(k + '=?'); vals.append(v)
+    if iv_user:
+        sets.append('interviewer_user_id=?'); vals.append(int(iv_user))
+    if iv_contact:
+        sets.append('interviewer_contact_id=?'); vals.append(int(iv_contact))
+    if sets:
+        try:
+            conn.execute('UPDATE interviews SET {} WHERE id=?'.format(','.join(sets)),
+                         tuple(vals) + (iid,))
+        except sqlite3.OperationalError:
+            pass
+
+
+@app.route('/api/interviews/<int:iid>/status', methods=['POST'])
+@login_required
+def interview_status(iid):
+    """Cancel, reschedule, or mark a no-show — without deleting anything.
+
+    Cancellation keeps the interview, its interviewer, its candidate, its
+    requisition and its original schedule; only the status changes. A reschedule
+    records where it moved from. Neither touches the candidate's pipeline stage:
+    an interview outcome and a candidate stage are separate concepts.
+    """
+    d = request.json or {}
+    status = (d.get('status') or '').strip().lower()
+    if status not in INTERVIEW_STATUSES:
+        return jsonify({'error': 'Unknown interview status'}), 400
+    conn = get_db()
+    if not _tenant_owns_interview(conn, iid):
+        conn.close(); return jsonify({'error': 'Interview not found'}), 404
+    iv = conn.execute('SELECT candidate_id, round_name, scheduled_at FROM interviews WHERE id=?',
+                      (iid,)).fetchone()
+    if not iv:
+        conn.close(); return jsonify({'error': 'Interview not found'}), 404
+
+    note = str(d.get('note') or '').strip()[:500]
+    new_time = str(d.get('scheduled_at') or '').strip()
+    if status == 'rescheduled' and not new_time:
+        conn.close(); return jsonify({'error': 'A new date & time is required to reschedule'}), 400
+
+    if status == 'rescheduled':
+        # The original time is preserved rather than overwritten silently.
+        conn.execute('UPDATE interviews SET status=?, rescheduled_from=?, scheduled_at=? WHERE id=?',
+                     ('scheduled', iv['scheduled_at'] or '', new_time, iid))
+    elif status == 'cancelled':
+        conn.execute('UPDATE interviews SET status=?, cancelled_at=? WHERE id=?',
+                     ('cancelled', ts(), iid))
+    else:
+        conn.execute('UPDATE interviews SET status=? WHERE id=?', (status, iid))
+    conn.commit(); conn.close()
+
+    label = INTERVIEW_STATUS_LABELS.get(status, status)
+    detail = f'{iv["round_name"]} {label.lower()}'
+    if status == 'rescheduled':
+        detail = f'{iv["round_name"]} rescheduled from {iv["scheduled_at"]} to {new_time}'
+    log_candidate_event(iv['candidate_id'], 'note', detail + (f' — {note}' if note else ''))
+    return jsonify({'ok': True, 'status': ('scheduled' if status == 'rescheduled' else status)})
+
+
 @app.route('/api/candidates/<int:cid>/interviews', methods=['GET'])
 @login_required
 def list_interviews(cid):
@@ -15377,8 +15632,31 @@ def list_interviews(cid):
     if not _tenant_owns_candidate(conn, cid):
         conn.close(); return jsonify({'error': 'Not found'}), 404
     rows = conn.execute('SELECT * FROM interviews WHERE candidate_id=? ORDER BY scheduled_at DESC', (cid,)).fetchall()
+    out = []
+    for r in rows:
+        iv = dict(r)
+        # Resolve a linked interviewer to a name so the UI never joins
+        # users/crm_contacts itself. Free-text names pass through unchanged.
+        who = (iv.get('interviewer') or '').strip()
+        try:
+            if iv.get('interviewer_user_id'):
+                u = conn.execute('SELECT display_name, username FROM users WHERE id=? AND company_id=?',
+                                 (iv['interviewer_user_id'], effective_company_id())).fetchone()
+                if u:
+                    who = (u['display_name'] or u['username'] or who)
+            elif iv.get('interviewer_contact_id'):
+                p = conn.execute('SELECT name FROM crm_contacts WHERE id=? AND company_id=?',
+                                 (iv['interviewer_contact_id'], effective_company_id())).fetchone()
+                if p:
+                    who = (p['name'] or who)
+        except (sqlite3.OperationalError, KeyError):
+            pass
+        iv['interviewer_name'] = who
+        iv['status_label'] = INTERVIEW_STATUS_LABELS.get(iv.get('status') or '', iv.get('status') or '')
+        iv['result_label'] = INTERVIEW_RESULT_LABELS.get(iv.get('result') or '', iv.get('result') or '')
+        out.append(iv)
     conn.close()
-    return jsonify({'ok': True, 'interviews': [dict(r) for r in rows]})
+    return jsonify({'ok': True, 'interviews': out})
 
 
 @app.route('/api/candidates/<int:cid>/interviews', methods=['POST'])
@@ -15393,13 +15671,42 @@ def create_interview(cid):
     if not scheduled_at:
         return jsonify({'error': 'Date & time required'}), 400
     conn = get_db()
+    # P0: this selected the candidate by id alone, so another tenant could
+    # schedule an interview on it — and the auto stage-move below would then
+    # rewrite that candidate's stage, stage_history and journey. Checked before
+    # anything is read or written.
+    if not _tenant_owns_candidate(conn, cid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     c = conn.execute('SELECT mandate_id, name FROM candidates WHERE id=?', (cid,)).fetchone()
     if not c:
         conn.close(); return jsonify({'error': 'Candidate not found'}), 404
-    conn.execute(
+
+    # An interviewer may be an ATS user or an internal person with no login.
+    # Either way they must belong to this tenant; a browser-supplied id is not
+    # trusted. Free-text interviewer names stay supported and unvalidated.
+    company_id = effective_company_id()
+    iv_user = d.get('interviewer_user_id')
+    iv_contact = d.get('interviewer_contact_id')
+    if iv_user:
+        ok, err = _validate_company_user(conn, iv_user, company_id, 'Interviewer')
+        if not ok:
+            conn.close(); return jsonify({'error': err}), 400
+    if iv_contact:
+        ok, err = _validate_hiring_manager(conn, iv_contact, company_id)
+        if not ok:
+            conn.close(); return jsonify({'error': 'Interviewer not found'}), 400
+
+    ok, err, extra = _validate_interview_fields(d)
+    if not ok:
+        conn.close(); return jsonify({'error': err}), 400
+
+    cur = conn.cursor()
+    cur.execute(
         'INSERT INTO interviews (candidate_id,mandate_id,owner_id,round_name,mode,location,interviewer,scheduled_at,status,created_at) '
         'VALUES (?,?,?,?,?,?,?,?,?,?)',
-        (cid, c['mandate_id'], effective_user_id(), round_name, mode, location, interviewer, scheduled_at, 'scheduled', ts()))
+        (cid, c['mandate_id'], company_id, round_name, mode, location, interviewer, scheduled_at, 'scheduled', ts()))
+    iid = cur.lastrowid
+    _apply_interview_extras(conn, iid, extra, iv_user, iv_contact)
     # Auto-move to Interview Inprocess stage
     conn.execute('UPDATE candidates SET stage=?, updated_at=? WHERE id=?', ('Interview Inprocess', ts(), cid))
     conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
@@ -15412,28 +15719,45 @@ def create_interview(cid):
     except Exception:
         nice = scheduled_at
     log_candidate_event(cid, 'note', f'Interview scheduled — {round_name}: {nice}' + (f' ({mode})' if mode else ''))
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'id': iid})
 
 
 @app.route('/api/interviews/<int:iid>/result', methods=['POST'])
 @login_required
 def interview_result(iid):
+    """Record the panel's conclusion.
+
+    Status and result are separate concepts (§13): a cancelled or no-show
+    interview must be able to carry no result, and a completed one may still be
+    'pending'. So this no longer forces status='completed' — it only advances a
+    still-'scheduled' interview, and leaves cancelled / no-show alone.
+
+    The candidate's pipeline stage is never touched here.
+    """
     d = request.json or {}
     result = (d.get('result') or '').strip()
+    # Known slugs are normalised; anything else is preserved as free text so
+    # results recorded before this list existed keep working.
+    if result.lower() in INTERVIEW_RESULTS:
+        result = result.lower()
     conn = get_db()
     # P0: ownership is checked BEFORE the row is read, before the result is
     # written and before anything is logged, so a cross-tenant request leaves
     # no trace on the other tenant's interview or candidate journey.
     if not _tenant_owns_interview(conn, iid):
         conn.close(); return jsonify({'error': 'Interview not found'}), 404
-    iv = conn.execute('SELECT candidate_id, round_name FROM interviews WHERE id=?', (iid,)).fetchone()
+    iv = conn.execute('SELECT candidate_id, round_name, status FROM interviews WHERE id=?',
+                      (iid,)).fetchone()
     if not iv:
         conn.close(); return jsonify({'error': 'Interview not found'}), 404
-    conn.execute('UPDATE interviews SET status=?, result=? WHERE id=?', ('completed', result, iid))
+    cur_status = (iv['status'] or 'scheduled')
+    new_status = 'completed' if cur_status in ('scheduled', 'rescheduled') else cur_status
+    conn.execute('UPDATE interviews SET status=?, result=? WHERE id=?', (new_status, result, iid))
     conn.commit(); conn.close()
     if result:
-        log_candidate_event(iv['candidate_id'], 'note', f'{iv["round_name"]} result: {result}')
-    return jsonify({'ok': True})
+        label = INTERVIEW_RESULT_LABELS.get(result, result)
+        log_candidate_event(iv['candidate_id'], 'note', f'{iv["round_name"]} result: {label}')
+    return jsonify({'ok': True, 'status': new_status, 'result': result})
 
 
 RECOMMENDATIONS = ('strong_yes', 'yes', 'hold', 'no')
@@ -18481,7 +18805,11 @@ def client_submission(mid):
 
         # Footer
         '<div style="display:flex;align-items:center;justify-content:space-between;padding-top:14px;border-top:0.5px solid #e8e8e8;font-size:10px;color:#aaa">'
-        '<span style="background:#FAEEDA;color:#854F0B;padding:3px 10px;border-radius:4px;font-weight:500">CONFIDENTIAL | For ' + (m['client'] or '') + ' use only</span>'
+        # Corporate has no external client, so m['client'] is empty and this
+        # would read "For  use only". The hiring team is the audience there.
+        '<span style="background:#FAEEDA;color:#854F0B;padding:3px 10px;border-radius:4px;font-weight:500">CONFIDENTIAL | For '
+        + _sub_esc((m['client'] or '') if workspace_mode() != 'corporate' else 'hiring team')
+        + ' use only</span>'
         # This page is shown to a tenant's own client. The seller identity was
         # hardcoded to the platform owner, so every tenant's client saw his
         # firm name, GSTIN and Udyam number. Taken from the tenant now, and
