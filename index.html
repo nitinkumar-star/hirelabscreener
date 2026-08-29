@@ -744,7 +744,7 @@ body{font-size:14px !important; line-height:1.5}
     <a href="#central" class="sb-gear" id="sb-central" onclick="return navClick(event,openCentralDB)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Talent</span><span class="sb-nav-sub">Search all candidates &middot; add new</span></span></a><a href="/schedule" class="sb-gear" id="sb-schedule"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Scheduler</span><span class="sb-nav-sub">Availability &middot; bookings</span></span></a><a href="/orgmap" class="sb-gear" id="sb-orgmap"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/><path d="M12 7v4M5 16v-2h14v2M12 11v3"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Org Map</span><span class="sb-nav-sub">Talent mapping &middot; reporting lines</span></span></a>
   </div>
 
-  <div class="sb-mand-head"><span class="t">MY MANDATES</span><button class="a" onclick="openModal('modal-mandate')" title="New mandate">+</button></div>
+  <div class="sb-mand-head"><span class="t" id="sb-mand-title">MY MANDATES</span><button class="a" onclick="openModal('modal-mandate')" title="New mandate">+</button></div>
   <div id="sb-mandates" style="overflow-y:auto;flex:1;min-height:120px"></div>
   <div style="flex:1 1 auto"></div>
 
@@ -1106,8 +1106,9 @@ body{font-size:14px !important; line-height:1.5}
     <div class="modal-head"><span class="modal-title" id="mandate-modal-title" data-vocab-tpl="{mandate_new}">New Mandate</span><button class="modal-x" onclick="closeModal('modal-mandate')">&#10005;</button></div>
     <div class="modal-body">
       <div class="g2">
-        <div class="fg-row"><label data-vocab-tpl="{client_field} *">Client Name *</label><input class="inp" id="m-client" data-vocab-ph="client_hint" placeholder="e.g. Legrand India"></div>
-        <div class="fg-row"><label>Role / Position *</label><input class="inp" id="m-role" placeholder="e.g. Sr. Sales Manager"></div>
+        <div class="fg-row" id="m-client-row"><label data-vocab-tpl="{client_field} *">Client Name *</label><input class="inp" id="m-client" data-vocab-ph="client_hint" placeholder="e.g. Legrand India"></div>
+        <div class="fg-row" id="m-dept-row" style="display:none"><label>Department *</label><select class="inp" id="m-department"><option value="">Loading…</option></select></div>
+        <div class="fg-row"><label data-vocab-tpl="{role_field} *">Role / Position *</label><input class="inp" id="m-role" placeholder="e.g. Sr. Sales Manager"></div>
         <div class="fg-row"><label>Location</label><input class="inp" id="m-location" placeholder="e.g. Noida"></div>
         <div class="fg-row"><label>Division</label><input class="inp" id="m-division" placeholder="e.g. LV Switchgear"></div>
         <div class="fg-row"><label>CTC Min (LPA)</label><input class="inp" id="m-ctcmin" type="number" placeholder="8"></div>
@@ -1798,6 +1799,7 @@ async function init(){
   // ── Workspace mode (agency vs corporate) drives labels + which modules show.
   // Loaded before the first render so nothing flashes the wrong wording.
   await loadWorkspace();
+  await loadDeptNameMap();
 
   // ── Freelancer Sourcer gets a completely separate, restricted interface ──
   if (S.currentUser && S.currentUser.role === 'freelancer_sourcer') {
@@ -2726,7 +2728,7 @@ function openMoveCandidate(cid){
     return '<div onclick="doMoveCandidate('+cid+','+m.id+')" style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:0.5px solid var(--line);cursor:pointer;border-radius:8px" onmouseover="this.style.background=\'#F5F4F1\'" onmouseout="this.style.background=\'transparent\'">'
       + '<span style="width:9px;height:9px;border-radius:50%;background:'+dotC+';flex-shrink:0"></span>'
       + '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:var(--ink)">'+esc(m.role)+'</div>'
-      + '<div style="font-size:11px;color:var(--muted)">'+esc(m.client)+(m.location?' · '+esc(m.location):'')+'</div></div>'
+      + '<div style="font-size:11px;color:var(--muted)">'+esc(reqSubtitle(m))+'</div></div>'
       + '<span style="font-size:16px;color:#534AB7">&#8594;</span>'
       + '</div>';
   }).join('');
@@ -3128,14 +3130,15 @@ function renderMandateSetup(el){
       + '<div style="font-size:12px;color:#A32D2D;font-weight:600;margin-bottom:6px">Danger zone</div>'
       + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Deleting this job removes the mandate, but its candidates stay safe in your Central Database.</div>'
       + '<button class="btn btn-o" onclick="copyReviewLink()">&#128279; Reviewer link</button>'
-      + '<button class="btn btn-o" onclick="openDuplicateMandate()">&#128203; Duplicate this Job</button>'
-      + '<button class="btn btn-o" style="color:#A32D2D;border-color:#E8C4C4" onclick="deleteJob()">&#128465; Delete this Job</button>'
+      + '<button class="btn btn-o" onclick="openDuplicateMandate()">&#128203; Duplicate this '+esc(T('mandate','Job'))+'</button>'
+      + '<button class="btn btn-o" style="color:#A32D2D;border-color:#E8C4C4" onclick="deleteJob()">&#128465; Delete this '+esc(T('mandate','Job'))+'</button>'
       + '</div>'
       + '</div></div>';
   }
   el.innerHTML=approvalBarHtml(m)+orgSummaryHtml(m)+'<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
     +'<div class="g2">'
-    +field('ms-client',wfL().client,m.client||'')+field('ms-role','Role',m.role||'')
+    +(wsMode()==='corporate' ? '' : field('ms-client',wfL().client,m.client||''))
+    +field('ms-role',T('role_field','Role'),m.role||'')
     +field('ms-loc','Location',m.location||'')+field('ms-div','Division',m.division||'')
     +numfield('ms-cmin','CTC Min (LPA)',m.ctc_min||'')+numfield('ms-cmax','CTC Max (LPA)',m.ctc_max||'')
     +numfield('ms-expmin','Experience Min (Yrs)',m.exp_min||'')+numfield('ms-expmax','Experience Max (Yrs)',m.exp_max||'')
@@ -3152,22 +3155,34 @@ function renderMandateSetup(el){
           +'<div class="fg-row"><label>HRBP</label><select class="inp" id="ms-hrbp"><option value="">Loading…</option></select></div>'
         +'</div></div>'
       : '')
+    +(wsMode()==='corporate'
+      ? '<div id="ms-plan"><div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#6b7280;margin:14px 0 8px">Planning</div>'
+        +'<div class="g2">'
+          +selField('ms-priority','Priority',PRIORITY_OPTS,m.priority||'')
+          +selField('ms-hiring-reason','Hiring Reason',REASON_OPTS,m.hiring_reason||'')
+          +selField('ms-work-mode','Work Mode',WORKMODE_OPTS,m.work_mode||'')
+          +selField('ms-emp-type','Employment Type',EMPTYPE_OPTS,m.employment_type||'')
+          +'<div class="fg-row"><label>Target Hire Date</label><input class="inp" type="date" id="ms-target-date" value="'+esc(m.target_hire_date||'')+'"></div>'
+          +'<div class="fg-row"><label>Approved Headcount</label><input class="inp" type="number" min="0" id="ms-appr-headcount" value="'+esc(m.approved_headcount==null?'':m.approved_headcount)+'" placeholder="not yet approved"></div>'
+        +'</div></div>'
+      : '')
     +'<div class="fg-row"><label>Job Description</label>'
     + buildJDEditor('ms-jd', m.jd||'')
     +'</div>'
     +'</div></div>'
-    + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
-    + '<span style="font-weight:500">&#128100; Client SPOC <span style="font-size:10.5px;color:var(--muted);font-weight:400">(auto-fills the "To" when you share profiles)</span></span></div>'
-    + '<div class="card-body"><div id="ms-spoc-wrap"><div style="font-size:12px;color:var(--muted)">Loading contacts…</div></div></div></div>'
+    + (wsMode()==='corporate' ? '' :
+        '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
+      + '<span style="font-weight:500">&#128100; Client SPOC <span style="font-size:10.5px;color:var(--muted);font-weight:400">(auto-fills the "To" when you share profiles)</span></span></div>'
+      + '<div class="card-body"><div id="ms-spoc-wrap"><div style="font-size:12px;color:var(--muted)">Loading contacts…</div></div></div></div>')
     + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
     + '<span style="font-weight:500">&#128231; Submission CC <span style="font-size:10.5px;color:var(--muted);font-weight:400">(auto-CC these when you share profiles)</span></span>'
     + '<button class="btn btn-g" onclick="saveCcConfig()">Save CC</button></div>'
     + '<div class="card-body"><div id="ms-cc-wrap"><div style="font-size:12px;color:var(--muted)">Loading…</div></div></div></div>'
     + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
-    + '<span style="font-weight:500">&#128273; Client Notes <span style="font-size:10.5px;color:var(--muted);font-weight:400">(private &mdash; used by AI rating, never shared with candidates)</span></span></div>'
+    + '<span style="font-weight:500">&#128273; '+esc(T('notes_title','Client Notes'))+' <span style="font-size:10.5px;color:var(--muted);font-weight:400">(private &mdash; used by AI rating, never shared with candidates)</span></span></div>'
     + '<div class="card-body">'
     + '<div style="display:flex;gap:8px;margin-bottom:12px">'
-    + '<input id="cn-input" class="inp" style="flex:1" placeholder="e.g. Client wants only candidates from Tier-1 colleges" onkeydown="if(event.key===\'Enter\')addClientNote()">'
+    + '<input id="cn-input" class="inp" style="flex:1" placeholder="'+esc(T('notes_hint','e.g. Client wants only candidates from Tier-1 colleges'))+'" onkeydown="if(event.key===\'Enter\')addClientNote()">'
     + '<button class="btn btn-g" onclick="addClientNote()">Add</button></div>'
     + '<div id="cn-list"><div style="font-size:12px;color:var(--muted)">Loading notes...</div></div>'
     + '</div></div>'
@@ -3176,7 +3191,7 @@ function renderMandateSetup(el){
   loadClientNotes();
   loadSpocOptions();
   loadCcOptions();
-  if (wsMode()==='corporate') loadOrgOptions(m);
+  if (wsMode()==='corporate') { loadOrgOptions(m); loadApprovalHistory(m); }
   if (S.currentUser && S.currentUser.is_company_admin) loadTeamForAssign(m.assigned_user_id);
 }
 
@@ -3211,7 +3226,83 @@ function orgSummaryInner(m){
     + row('Recruiter / TA Owner', d.recruiter)
     + row('HRBP', d.hrbp)
     + row('Location', m.location)
+    + row('Work Mode', optLabel(WORKMODE_OPTS, m.work_mode||''))
+    + row('Employment Type', optLabel(EMPTYPE_OPTS, m.employment_type||''))
+    + row('Priority', optLabel(PRIORITY_OPTS, m.priority||''))
+    + row('Hiring Reason', optLabel(REASON_OPTS, m.hiring_reason||''))
+    + row('Target Hire Date', m.target_hire_date||'')
+    + row('Requested Headcount', m.headcount||'')
+    + row('Approved Headcount', (m.approved_headcount==null?'':String(m.approved_headcount)))
+    +'</div></div>'
+    // Lifecycle and sign-off are two different things and are shown as two
+    // separate badges — never merged into one "Open / Approved" label.
+    + statusApprovalHtml(m)
+    + '<div id="appr-history"></div>';
+}
+
+function statusApprovalHtml(m){
+  var stMap={draft:['Draft','#F1F0EC','#6b7280'],active:['Open','#E1F5EE','#0F6E56'],
+             hold:['On Hold','#FFF8E6','#8A6512'],closed:['Closed','#F1F0EC','#6b7280'],
+             central:['Central Database','#EEF4FB','#2A5580']};
+  var apMap={pending:['Pending','#FFF8E6','#8A6512'],approved:['Approved','#E1F5EE','#0F6E56'],
+             rejected:['Rejected','#FDEEEE','#A32D2D']};
+  var st=stMap[(m.status||'active')]||[m.status||'',' #F1F0EC','#6b7280'];
+  var ap=apMap[(m.approval_status||'approved')]||['','#F1F0EC','#6b7280'];
+  var badge=function(label,v){
+    return '<div style="display:flex;gap:10px;align-items:center;padding:5px 0;font-size:12.5px">'
+      +'<span style="min-width:150px;color:#6b7280">'+esc(label)+'</span>'
+      +'<span style="font-size:11px;font-weight:700;background:'+v[1]+';color:'+v[2]
+      +';border-radius:20px;padding:2px 10px">'+esc(v[0])+'</span></div>';
+  };
+  var apprBy = (window._orgResolved||{}).approver || '';
+  return '<div class="card" style="max-width:580px;margin-bottom:14px"><div class="card-head">'
+    +'<span style="font-weight:500">Status &amp; Approval</span></div>'
+    +'<div class="card-body" style="padding-top:10px">'
+    + badge(esc(T('mandate','Requisition'))+' Status', st)
+    + badge('Approval', ap)
+    + (apprBy?'<div style="display:flex;gap:10px;padding:5px 0;font-size:12.5px"><span style="min-width:150px;color:#6b7280">Approved By</span><span>'+esc(apprBy)+'</span></div>':'')
+    + (m.approved_at?'<div style="display:flex;gap:10px;padding:5px 0;font-size:12.5px"><span style="min-width:150px;color:#6b7280">Approved At</span><span>'+esc(String(m.approved_at).slice(0,16).replace('T',' '))+'</span></div>':'')
     +'</div></div>';
+}
+
+// Compact, append-only trail. Never edited from the UI.
+async function loadApprovalHistory(m){
+  var box=document.getElementById('appr-history'); if(!box||!m) return;
+  var r;
+  try{ r=await req('GET','/mandates/'+m.id+'/approval-history'); }catch(e){ return; }
+  var h=(r&&r.history)||[];
+  if(!h.length){ box.innerHTML=''; return; }
+  var look={submitted:['Submitted','#6b7280'],approved:['Approved','#0F6E56'],rejected:['Rejected','#A32D2D']};
+  box.innerHTML='<div class="card" style="max-width:580px;margin-bottom:14px"><div class="card-head">'
+    +'<span style="font-weight:500">Approval History</span></div><div class="card-body" style="padding-top:8px">'
+    + h.map(function(x){
+        var L=look[x.action]||[x.action,'#6b7280'];
+        var when=String(x.created_at||'').slice(0,10);
+        return '<div style="display:flex;gap:9px;align-items:baseline;padding:4px 0;font-size:12.5px;border-bottom:0.5px solid #f3f3f3">'
+          +'<span style="color:#999;min-width:78px">'+esc(when)+'</span>'
+          +'<span style="font-weight:600;color:'+L[1]+';min-width:80px">'+esc(L[0])+'</span>'
+          +'<span style="color:#555">'+esc(x.actor||'')+'</span>'
+          +(x.comment?'<span style="color:#888;flex:1"> — '+esc(x.comment)+'</span>':'')
+          +'</div>';
+      }).join('')
+    +'</div></div>';
+}
+
+// Controlled vocabularies for the Corporate planning fields. Slugs must match
+// PRIORITIES / WORK_MODES / EMPLOYMENT_TYPES / HIRING_REASONS in server.py.
+var PRIORITY_OPTS=[['critical','Critical'],['high','High'],['medium','Medium'],['low','Low']];
+var WORKMODE_OPTS=[['onsite','On-site'],['hybrid','Hybrid'],['remote','Remote']];
+var EMPTYPE_OPTS=[['full_time','Full-time'],['part_time','Part-time'],['contract','Contract'],
+                  ['temporary','Temporary'],['intern','Intern'],['consultant','Consultant']];
+var REASON_OPTS=[['new_position','New Position'],['replacement','Replacement'],['backfill','Backfill'],
+                 ['expansion','Expansion'],['attrition','Attrition'],['internal_transfer','Internal Transfer'],
+                 ['project','Project'],['business_growth','Business Growth'],['other','Other']];
+function optLabel(list,val){ var f=list.find(function(x){return x[0]===val;}); return f?f[1]:''; }
+function selField(id,label,list,cur){
+  return '<div class="fg-row"><label>'+esc(label)+'</label><select class="inp" id="'+id+'">'
+    +'<option value="">— not set —</option>'
+    + list.map(function(x){ return '<option value="'+x[0]+'"'+(x[0]===cur?' selected':'')+'>'+esc(x[1])+'</option>'; }).join('')
+    +'</select></div>';
 }
 
 // ── Corporate organisation selectors ───────────────────────────────────
@@ -3270,6 +3361,7 @@ async function loadOrgOptions(m){
                            return u?(u.display_name||u.username):''; };
     _orgResolved.recruiter=byId(m.assigned_user_id);
     _orgResolved.hrbp=byId(m.hrbp_user_id);
+    _orgResolved.approver=byId(m.approved_by);
   }catch(e){}
   // Names arrive after the selectors load, so refresh the summary in place.
   var box=document.getElementById('org-summary');
@@ -3687,9 +3779,18 @@ async function saveMandateSetup(){
   const m=S.activeMandate;
   const emin=parseFloat(v('ms-expmin'))||0, emax=parseFloat(v('ms-expmax'))||0;
   if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
-  var payload={client:v('ms-client'),role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status};
+  // Corporate has no client field on the form, so the key is omitted and the
+  // server preserves whatever is stored rather than blanking it.
+  var payload={role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status};
   // Only sent in Corporate mode, so an Agency save can never null these out.
+  if(wsMode()!=='corporate') payload.client=v('ms-client');
   if(wsMode()==='corporate'){
+    // Planning fields are sent as slugs; the server rejects anything outside
+    // its controlled lists, so the dropdown is convenience, not validation.
+    [['priority','ms-priority'],['hiring_reason','ms-hiring-reason'],
+     ['work_mode','ms-work-mode'],['employment_type','ms-emp-type'],
+     ['target_hire_date','ms-target-date'],['approved_headcount','ms-appr-headcount']]
+      .forEach(function(p){ var e=document.getElementById(p[1]); if(e) payload[p[0]]=e.value; });
     ['department_id:ms-department','hiring_manager_id:ms-hm','hrbp_user_id:ms-hrbp','assigned_user_id:ms-recruiter']
       .forEach(function(pair){
         var parts=pair.split(':'), el=document.getElementById(parts[1]);
@@ -3700,7 +3801,7 @@ async function saveMandateSetup(){
   if(sr&&sr.error){ toast('&#9888;&#65039;',sr.error); return; }
   S.activeMandate=await req('GET','/mandates/'+m.id);
   S.mandates=S.mandates.map(x=>x.id===m.id?S.activeMandate:x);
-  renderSidebar();updateTopbar();toast('✅','Mandate saved');
+  renderSidebar();updateTopbar();toast('✅',T('mandate','Mandate')+' saved');
 }
 
 // ── SOP ────────────────────────────────────────────────────────────────────
@@ -6947,16 +7048,65 @@ function toggleSettings(){
   if(S.settingsOpen)renderSettings();
 }
 
+// The secondary line under a requisition name. Agency shows the client it
+// came from; Corporate has no client, so it shows the department that owns it.
+function reqSubtitle(m){
+  var bits=[];
+  if(wsMode()==='corporate'){
+    var d=(window._deptNames||{})[m.department_id];
+    if(d) bits.push(d);
+  } else if(m.client){ bits.push(m.client); }
+  if(m.location) bits.push(m.location);
+  return bits.join(' \u00b7 ');
+}
+
+// Department names for list rendering. Cached once per load; tenant-scoped
+// server-side, so no other tenant's names can enter this map.
+async function loadDeptNameMap(){
+  if(wsMode()!=='corporate'){ window._deptNames={}; return; }
+  try{
+    var r=await req('GET','/departments?all=1');
+    var map={};
+    ((r&&r.departments)||[]).forEach(function(d){ map[d.id]=d.name; });
+    window._deptNames=map;
+  }catch(e){ window._deptNames={}; }
+}
+
 // ── MANDATE MODALS ─────────────────────────────────────────────────────────
+// Only ACTIVE departments are offered when opening a new requisition; an
+// inactive one is rejected server-side anyway, so it must not appear here.
+async function loadNewReqDepartments(){
+  var sel=document.getElementById('m-department'); if(!sel) return;
+  try{
+    var r=await req('GET','/departments');
+    var list=(r&&r.departments)||[];
+    sel.innerHTML = list.length
+      ? '<option value="">Select a department…</option>'
+        + list.map(function(d){ return '<option value="'+d.id+'">'+esc(d.name)+'</option>'; }).join('')
+      : '<option value="">No departments yet — add one in Settings</option>';
+  }catch(e){ sel.innerHTML='<option value="">Could not load departments</option>'; }
+}
 async function saveMandate(){
+  const corp = wsMode()==='corporate';
   const client=v('m-client').trim(),role=v('m-role').trim();
-  if(!client||!role){toast('&#9888;&#65039;','Client and Role required');return;}
+  // Corporate hires for the tenant itself, so no external client is asked for.
+  // Department takes its place as the defining organisational field.
+  const deptEl=document.getElementById('m-department');
+  const dept=(deptEl&&deptEl.value)||'';
+  if(corp){
+    if(!role){toast('&#9888;&#65039;','Job Title is required');return;}
+    if(!dept){toast('&#9888;&#65039;','Department is required');return;}
+  } else if(!client||!role){
+    toast('&#9888;&#65039;','Client and Role required');return;
+  }
   // Prevent double-click
   var btn=document.querySelector('#modal-mandate .btn-g');
   if(btn){if(btn.disabled)return; btn.disabled=true; btn.textContent='Creating...';}
   const emin=parseFloat(v('m-expmin'))||0, emax=parseFloat(v('m-expmax'))||0;
   if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
-  const r=await req('POST','/mandates',{client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd')});
+  var _body={client:corp?'':client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd')};
+  if(corp) _body.department_id=dept;
+  const r=await req('POST','/mandates',_body);
   if(r.ok){closeModal('modal-mandate');await loadMandates();await selectMandate(r.id);S.activeTab='Mandate Setup';renderTabs();renderContent();toast('✅',T('mandate','Mandate')+' created!');}
   else {toast('&#9888;&#65039;',r.error||'Create failed');if(btn){btn.disabled=false;btn.textContent='Create Mandate →';}}
 }
@@ -7664,6 +7814,8 @@ function applyWorkspace(){
     el.setAttribute('placeholder', T(el.getAttribute('data-vocab-ph'), el.getAttribute('placeholder')||''));
   });
 
+  var mt=document.getElementById('sb-mand-title');
+  if(mt) mt.textContent='MY '+String(T('mandate_plural','Mandates')).toUpperCase();
   document.body.setAttribute('data-ws-mode', wsMode());
 }
 
@@ -7676,10 +7828,21 @@ function openModal(id){
   if(id==='modal-mandate'){
     var L=wfL();
     var t=document.getElementById('mandate-modal-title'); if(t)t.textContent=L.newMandate;
-    var cl=document.querySelector('#modal-mandate label'); // first label = client/department
-    var ci=document.getElementById('m-client');
-    if(cl)cl.textContent=L.client+' *';
-    if(ci)ci.placeholder=L.clientPlaceholder;
+    var corp = wsMode()==='corporate';
+    var crow=document.getElementById('m-client-row');
+    var drow=document.getElementById('m-dept-row');
+    // Corporate hires for itself: the external client selector is removed from
+    // the workflow entirely rather than left visible and optional.
+    if(crow) crow.style.display = corp ? 'none' : '';
+    if(drow) drow.style.display = corp ? '' : 'none';
+    if(!corp){
+      var cl=document.querySelector('#modal-mandate label'); // first label = client
+      var ci=document.getElementById('m-client');
+      if(cl)cl.textContent=L.client+' *';
+      if(ci)ci.placeholder=L.clientPlaceholder;
+    } else {
+      loadNewReqDepartments();
+    }
   }
   document.getElementById(id).classList.add('open');
 }
@@ -7730,13 +7893,13 @@ function openDuplicateMandate(){
   el.id='dupMandateBd';
   el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
   el.innerHTML='<div style="background:#fff;border-radius:10px;max-width:460px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.2)">'
-   +'<div style="padding:16px 18px;border-bottom:1px solid #eee;font-weight:600">Duplicate this position</div>'
+   +'<div style="padding:16px 18px;border-bottom:1px solid #eee;font-weight:600">Duplicate this '+esc(String(T('mandate','position')).toLowerCase())+'</div>'
    +'<div style="padding:18px">'
    +'<div style="font-size:12px;color:#6b7280;line-height:1.5;margin-bottom:14px">'
    +'Copies the JD, screening SOP, recruiter pitch, email templates, SPOC and CC list, and client notes. '
    +'Candidates, activity and submissions are <b>not</b> copied &mdash; the new pipeline starts empty.</div>'
    +'<div class="fg-row"><label>Client</label><input class="inp" id="dup-client" value="'+esc(m.client||'')+'"></div>'
-   +'<div class="fg-row"><label>Role / Position</label><input class="inp" id="dup-role" value="'+esc(m.role||'')+'"></div>'
+   +'<div class="fg-row"><label>'+esc(T('role_field','Role / Position'))+'</label><input class="inp" id="dup-role" value="'+esc(m.role||'')+'"></div>'
    +'<div class="fg-row"><label>Location</label><input class="inp" id="dup-loc" value="'+esc(m.location||'')+'" placeholder="e.g. Pune"></div>'
    +'<div class="fg-row"><label>Division</label><input class="inp" id="dup-div" value="'+esc(m.division||'')+'"></div>'
    +'</div>'
@@ -7793,7 +7956,7 @@ function approvalBarHtml(m){
     btns='<button class="btn btn-g" style="font-size:11px;padding:3px 12px" onclick="setApproval(\'approve\')">Approve</button>'
        + '<button class="btn btn-o" style="font-size:11px;padding:3px 12px;color:#A32D2D;border-color:#E8C4C4" onclick="setApproval(\'reject\')">Reject</button>';
   } else if(st==='rejected'){
-    btns='<button class="btn btn-o" style="font-size:11px;padding:3px 12px" onclick="setApproval(\'resubmit\')">Resubmit for approval</button>';
+    btns='<button class="btn btn-o" style="font-size:11px;padding:3px 12px" onclick="setApproval(\'submit\')">Resubmit for approval</button>';
   }
 
   return '<div style="max-width:580px;background:'+look.bg+';border:1px solid '+look.bd+';border-radius:10px;padding:10px 14px;margin-bottom:12px">'
@@ -7808,16 +7971,20 @@ function approvalBarHtml(m){
 
 async function setApproval(action){
   var m=S.activeMandate; if(!m) return;
+  // Comments are optional on approve and submit, required on reject so the
+  // recruiter is told what to fix.
   var note='';
   if(action==='reject'){
     note=prompt('Why is this not approved? (the recruiter will see this)')||'';
     if(!note.trim()) return;
+  } else if(action==='approve'){
+    note=prompt('Approval comment (optional):')||'';
   }
   var r=await req('POST','/mandates/'+m.id+'/approval',{action:action,note:note});
   if(!r||!r.ok){ toast('&#9888;&#65039;',(r&&r.error)||'Could not update approval'); return; }
   m.approval_status=r.approval_status;
   m.approval_note=note;
-  toast('✅', action==='approve'?'Approved':action==='reject'?'Marked as not approved':'Sent for approval again');
+  toast('✅', action==='approve'?'Approved':action==='reject'?'Marked as not approved':'Submitted for approval');
   renderMandateSetup(document.getElementById('content'));
 }
 

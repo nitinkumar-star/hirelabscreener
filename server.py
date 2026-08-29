@@ -1479,6 +1479,8 @@ VOCAB_DEFAULTS = {
         'share': 'Share to Client', 'crm': 'Clients (CRM)',
         'placed': 'Placed', 'placed_plural': 'Placements',
         'shared_stage': 'Shared with Client',
+        'role_field': 'Role', 'notes_title': 'Client Notes',
+        'notes_hint': 'e.g. Client wants only candidates from Tier-1 colleges',
     },
     'corporate': {
         'mandate': 'Requisition', 'mandate_plural': 'Requisitions', 'mandate_new': 'New Requisition',
@@ -1487,6 +1489,8 @@ VOCAB_DEFAULTS = {
         'share': 'Share with Hiring Manager', 'crm': 'Departments',
         'placed': 'Hired', 'placed_plural': 'Hires',
         'shared_stage': 'Shared with Hiring Manager',
+        'role_field': 'Job Title', 'notes_title': 'Requisition Notes',
+        'notes_hint': 'e.g. Hiring team prefers candidates with power-electronics background',
     },
 }
 
@@ -3026,6 +3030,49 @@ def init_db():
     # without making that column nullable on a live Agency table.
     try:
         c.execute('ALTER TABLE crm_clients ADD COLUMN is_internal INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+
+    # ── Corporate requisition planning fields ─────────────────────────────
+    # All nullable / blank-defaulted so existing Agency and Corporate rows are
+    # unchanged. Nothing is inferred for historical records — an unset value
+    # stays unset rather than being guessed.
+    #
+    # business_unit is deliberately NOT added here: departments.business_unit
+    # already exists (Step 3) and the requisition reaches it through its
+    # department. Duplicating it on mandates would create a second source of
+    # truth, which is the mistake `offered_ctc`/`ctc_offered` already made.
+    for col, typ in [('priority', "TEXT DEFAULT ''"),          # critical|high|medium|low
+                     ('hiring_reason', "TEXT DEFAULT ''"),     # controlled list, see HIRING_REASONS
+                     ('target_hire_date', "TEXT DEFAULT ''"),  # ISO yyyy-mm-dd, planning only
+                     ('work_mode', "TEXT DEFAULT ''"),         # onsite|hybrid|remote
+                     ('employment_type', "TEXT DEFAULT ''"),   # full_time|part_time|...
+                     ('approved_headcount', 'INTEGER DEFAULT NULL')]:
+        try:
+            c.execute(f'ALTER TABLE mandates ADD COLUMN {col} {typ}')
+        except sqlite3.OperationalError:
+            pass
+
+    # Approval history. A full sequence, never overwritten: submitted →
+    # rejected → submitted → approved must all survive. `mandates.approval_*`
+    # holds only the CURRENT state; this table is the record of how it got there.
+    #
+    # company_id is stored explicitly rather than derived through
+    # requisition_id, so a tenant check never depends on a join.
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS requisition_approval_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            requisition_id INTEGER NOT NULL,      -- -> mandates.id
+            company_id INTEGER NOT NULL,          -- tenant, explicit
+            approver_user_id INTEGER DEFAULT 0,
+            action TEXT NOT NULL,                 -- submitted | approved | rejected
+            comment TEXT DEFAULT '',
+            created_at TEXT DEFAULT ''
+        )''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_rah_company '
+                  'ON requisition_approval_history(company_id)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_rah_req '
+                  'ON requisition_approval_history(requisition_id, created_at)')
     except sqlite3.OperationalError:
         pass
 
@@ -5722,7 +5769,7 @@ def rate_candidate(cid):
         skills = ''
 
     jd_text = html_to_text(m['jd']) if m['jd'] else ''
-    role_ctx = (f"Role: {m['role']} at {m['client']}\n"
+    role_ctx = (f"Role: {m['role']} at {_hiring_org(m)}\n"
                 f"Location: {m['location']}\n"
                 f"CTC band: {m['ctc_min']}-{m['ctc_max']} LPA\n"
                 + (f"Job Description:\n{jd_text}" if jd_text.strip() else "Job Description: (not provided)"))
@@ -5738,8 +5785,16 @@ def rate_candidate(cid):
     except Exception:
         client_notes = ''
     if client_notes.strip():
-        role_ctx += ("\n\nIMPORTANT — Private client requirements & preferences "
-                     "(shared confidentially by the client; weigh these heavily):\n" + client_notes)
+        # The note CONTENT is the recruiter's own words and is passed through
+        # untouched. Only the surrounding label changes: telling a corporate
+        # model these came "from the client" misdescribes an internal hiring
+        # requirement written by the tenant's own team.
+        if workspace_mode() == 'corporate':
+            role_ctx += ("\n\nIMPORTANT — Internal hiring requirements & preferences "
+                         "(recorded by the hiring team; weigh these heavily):\n" + client_notes)
+        else:
+            role_ctx += ("\n\nIMPORTANT — Private client requirements & preferences "
+                         "(shared confidentially by the client; weigh these heavily):\n" + client_notes)
 
     cand_ctx = (f"Name: {c['name']}\n"
                 f"Current: {c['designation']} at {c['company']}\n"
@@ -5895,7 +5950,7 @@ def _deep_analysis_inputs(conn, c, m):
     Prefers the candidate's FULL uploaded resume; falls back to structured
     profile fields when no CV file is available so the tool still works."""
     jd_text = html_to_text(m['jd']) if m['jd'] else ''
-    jd_block = (f"Role: {m['role']} at {m['client']}\n"
+    jd_block = (f"Role: {m['role']} at {_hiring_org(m)}\n"
                 f"Location: {m['location']}\n"
                 f"CTC band: {m['ctc_min']}-{m['ctc_max']} LPA\n\n"
                 + (jd_text.strip() if jd_text.strip()
@@ -10291,17 +10346,37 @@ def delete_client_note(mid, nid):
 @login_required
 def create_mandate():
     d = request.json or {}
-    if not d.get('client') or not d.get('role'):
-        return jsonify({'error': 'Client and Role required'}), 400
     conn = get_db(); c = conn.cursor()
+    corporate = (workspace_mode() == 'corporate')
+
+    # ── Validation differs by product, not by field name ──────────────────
+    # Agency: a mandate comes FROM a client, so Client + Role stay required.
+    # Corporate: the tenant IS the hiring company. Asking a corporate
+    # recruiter to name an external client is meaningless, so the fields that
+    # actually define the requisition are required instead.
+    if corporate:
+        if not d.get('role'):
+            conn.close(); return jsonify({'error': 'Job Title is required'}), 400
+        if not str(d.get('department_id') or '').strip() or str(d.get('department_id')) == '0':
+            conn.close(); return jsonify({'error': 'Department is required'}), 400
+    else:
+        if not d.get('client') or not d.get('role'):
+            conn.close(); return jsonify({'error': 'Client and Role required'}), 400
+
     # Resolve CRM client link (Option B). If a crm_client_id is passed, use it.
     # Otherwise try to auto-match by normalised name so existing CRM clients link up.
-    crm_client_id = int(d.get('crm_client_id') or 0)
-    if not crm_client_id and d.get('client'):
+    # Corporate never links to a CRM client: there is no external relationship
+    # to record, and inventing one would make the tenant look like its own customer.
+    crm_client_id = 0 if corporate else int(d.get('crm_client_id') or 0)
+    if not corporate and not crm_client_id and d.get('client'):
         try:
             crm_client_id = _match_crm_client_by_name(conn, effective_company_id(), d['client'])
         except Exception:
             crm_client_id = 0
+    # `mandates.client` is NOT NULL DEFAULT '', so an empty string is a valid
+    # legacy-compatible value. Corporate stores '' rather than a placeholder
+    # name — nothing is invented, and no external client is created.
+    client_val = '' if corporate else d['client']
     # Agency mandates come from a client and start immediately. A corporate
     # requisition waits for headcount sign-off, so it opens as 'pending'.
     _approval = 'pending' if workspace_mode() == 'corporate' else 'approved'
@@ -10314,17 +10389,29 @@ def create_mandate():
     _ok, _err = _validate_org_links(conn, d, effective_company_id())
     if not _ok:
         conn.close(); return jsonify({'error': _err}), 400
+    _pok, _perr, _plan = _validate_planning_fields(d)
+    if not _pok:
+        conn.close(); return jsonify({'error': _perr}), 400
     _nid = lambda k: (int(d[k]) if str(d.get(k) or '').strip() not in ('', '0') else None)
     c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,exp_min,exp_max,experience,jd,status,created_at,owner_id,assigned_user_id,crm_client_id,approval_status,headcount,requested_by,department_id,hiring_manager_id,hrbp_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-              (d['client'], d['role'], d.get('location',''), d.get('division',''),
+              (client_val, d['role'], d.get('location',''), d.get('division',''),
                float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)),
                float(d.get('exp_min', 0) or 0), float(d.get('exp_max', 0) or 0),
                d.get('experience', ''),
                d.get('jd',''), 'active', ts(), effective_company_id(), real_user_id(), crm_client_id,
                _approval, _headcount, real_user_id() or 0,
                _nid('department_id'), _nid('hiring_manager_id'), _nid('hrbp_user_id')))
-    mid = c.lastrowid; conn.commit(); conn.close()
-    log_activity('create_mandate', d['role'] + ' @ ' + d['client'])
+    mid = c.lastrowid
+    if _plan:
+        _k = list(_plan.keys())
+        c.execute('UPDATE mandates SET {} WHERE id=?'.format(','.join(x + '=?' for x in _k)),
+                  tuple(_plan[x] for x in _k) + (mid,))
+    # A corporate requisition opens as 'pending', so its trail starts with the
+    # submission that created it. Agency mandates open approved and get none.
+    if corporate:
+        _log_approval(conn, mid, effective_company_id(), 'submitted', 'Requisition raised')
+    conn.commit(); conn.close()
+    log_activity('create_mandate', d['role'] + (' @ ' + client_val if client_val else ''))
     return jsonify({'ok': True, 'id': mid, 'crm_client_id': crm_client_id})
 
 
@@ -10850,37 +10937,161 @@ def delete_mandate(mid):
     return jsonify({'ok': True, 'candidates_kept': kept})
 
 
+# ── Corporate requisition planning: controlled values ─────────────────────
+# Stored as short slugs; the UI supplies the labels. Kept as constants rather
+# than lookup tables — these are fixed vocabularies, not tenant data.
+PRIORITIES = ('critical', 'high', 'medium', 'low')
+WORK_MODES = ('onsite', 'hybrid', 'remote')
+EMPLOYMENT_TYPES = ('full_time', 'part_time', 'contract', 'temporary', 'intern', 'consultant')
+HIRING_REASONS = ('new_position', 'replacement', 'backfill', 'expansion', 'attrition',
+                  'internal_transfer', 'project', 'business_growth', 'other')
+
+# Requisition lifecycle vs approval state — two separate axes, deliberately.
+REQ_STATUSES = ('draft', 'active', 'hold', 'closed', 'central')
+APPROVAL_STATUSES = ('pending', 'approved', 'rejected')
+APPROVAL_ACTIONS = ('submitted', 'approved', 'rejected')
+
+
+def _validate_planning_fields(d):
+    """(ok, error, cleaned). Controlled values only — no free-text priorities.
+
+    A field absent from the payload is left alone; a field present but empty
+    clears it. Nothing is inferred.
+    """
+    cleaned = {}
+    for field, allowed, label in (('priority', PRIORITIES, 'Priority'),
+                                  ('work_mode', WORK_MODES, 'Work mode'),
+                                  ('employment_type', EMPLOYMENT_TYPES, 'Employment type'),
+                                  ('hiring_reason', HIRING_REASONS, 'Hiring reason')):
+        if field not in d:
+            continue
+        v = str(d.get(field) or '').strip().lower()
+        if v and v not in allowed:
+            return False, f'{label} is not a recognised value', {}
+        cleaned[field] = v
+
+    if 'target_hire_date' in d:
+        v = str(d.get('target_hire_date') or '').strip()
+        if v:
+            try:
+                datetime.date.fromisoformat(v)     # a date, not free text
+            except ValueError:
+                return False, 'Target hire date must be a valid date (YYYY-MM-DD)', {}
+        cleaned['target_hire_date'] = v            # past dates allowed: planning only
+
+    if 'approved_headcount' in d:
+        v = str(d.get('approved_headcount') or '').strip()
+        if v == '':
+            cleaned['approved_headcount'] = None   # not yet decided
+        else:
+            try:
+                n = int(v)
+            except (TypeError, ValueError):
+                return False, 'Approved headcount must be a whole number', {}
+            if n < 0:
+                return False, 'Approved headcount cannot be negative', {}
+            cleaned['approved_headcount'] = n
+    return True, None, cleaned
+
+
+def _log_approval(conn, mid, company_id, action, comment=''):
+    """Append to the approval trail. Never updates or deletes an earlier row."""
+    conn.execute('INSERT INTO requisition_approval_history '
+                 '(requisition_id, company_id, approver_user_id, action, comment, created_at) '
+                 'VALUES (?,?,?,?,?,?)',
+                 (mid, company_id, real_user_id() or 0, action, str(comment or '')[:500], ts()))
+
+
+@app.route('/api/mandates/<int:mid>/approval-history', methods=['GET'])
+@login_required
+def approval_history(mid):
+    """The full sequence of approval actions on a requisition."""
+    cid = effective_company_id()
+    conn = get_db()
+    try:
+        # Tenant checked on BOTH the requisition and the history rows, so a
+        # mismatch in either direction returns nothing.
+        m = conn.execute('SELECT id FROM mandates WHERE id=? AND owner_id=?', (mid, cid)).fetchone()
+        if not m:
+            return jsonify({'error': 'Not found'}), 404
+        rows = conn.execute(
+            '''SELECT h.id, h.action, h.comment, h.created_at, h.approver_user_id,
+                      COALESCE(u.display_name, u.username, '') AS actor
+               FROM requisition_approval_history h
+               LEFT JOIN users u ON u.id = h.approver_user_id
+               WHERE h.requisition_id=? AND h.company_id=?
+               ORDER BY h.created_at ASC, h.id ASC''', (mid, cid)).fetchall()
+        return jsonify({'ok': True, 'history': [dict(r) for r in rows]})
+    finally:
+        conn.close()
+
+
 @app.route('/api/mandates/<int:mid>/approval', methods=['POST'])
 @login_required
 def mandate_approval(mid):
-    """Move a requisition through sign-off: pending -> approved / rejected.
+    """Move a requisition through sign-off, recording every step.
 
-    Corporate only. Agency mandates are created 'approved' and never touch
-    this endpoint. Approving is a company-admin decision; anyone assigned to
-    the requisition can resubmit a rejected one after fixing it.
+    Corporate only. Agency mandates are created 'approved' and never touch this
+    endpoint. Three actions:
+
+      submit  → pending    (anyone on the tenant; also used to resubmit)
+      approve → approved   (company admin)
+      reject  → rejected   (company admin)
+
+    `mandates.approval_*` carries the CURRENT state;
+    `requisition_approval_history` carries the whole sequence and is only ever
+    appended to. Approval never touches candidate stages.
     """
     d = request.json or {}
     action = (d.get('action') or '').strip().lower()
-    if action not in ('approve', 'reject', 'resubmit'):
-        return jsonify({'error': 'action must be approve, reject or resubmit'}), 400
+    # 'resubmit' is kept as an alias so anything already calling it keeps working.
+    if action == 'resubmit':
+        action = 'submit'
+    if action not in ('submit', 'approve', 'reject'):
+        return jsonify({'error': 'action must be submit, approve or reject'}), 400
     if action in ('approve', 'reject') and not is_company_admin():
         return jsonify({'error': 'Only a company admin can approve or reject'}), 403
 
+    cid = effective_company_id()
     conn = get_db()
-    m = conn.execute('SELECT id, role, approval_status FROM mandates WHERE id=? AND owner_id=?',
-                     (mid, effective_company_id())).fetchone()
+    m = conn.execute('SELECT id, role, approval_status, requested_by FROM mandates '
+                     'WHERE id=? AND owner_id=?', (mid, cid)).fetchone()
     if not m:
         conn.close(); return jsonify({'error': 'Not found'}), 404
 
-    new_status = {'approve': 'approved', 'reject': 'rejected', 'resubmit': 'pending'}[action]
-    note = str(d.get('note') or '').strip()[:500]
-    conn.execute('UPDATE mandates SET approval_status=?, approved_by=?, approved_at=?, approval_note=? '
-                 'WHERE id=?',
-                 (new_status, real_user_id() or 0, ts(), note, mid))
+    # §16: a normal recruiter must not approve their own requisition. That is
+    # already guaranteed by the existing convention — approve/reject are
+    # company-admin only, and a normal user is not a company admin.
+    #
+    # A company admin CAN approve a requisition they raised themselves. In a
+    # small corporate tenant that is often the only workable arrangement, and
+    # inventing a separate approver role here would be exactly the permanent
+    # RBAC rule §16 says to leave for the RBAC step. Documented as a known
+    # limitation rather than blocked.
+
+    note = str(d.get('note') or d.get('comment') or '').strip()[:500]
+    now = ts()
+    if action == 'approve':
+        new_status, hist = 'approved', 'approved'
+        conn.execute('UPDATE mandates SET approval_status=?, approved_by=?, approved_at=?, '
+                     'approval_note=? WHERE id=?', (new_status, real_user_id() or 0, now, note, mid))
+    elif action == 'reject':
+        # Clear the approver stamp: leaving the previous approver against a
+        # rejected requisition would misreport who signed it off. The history
+        # row keeps the record of who rejected it, and of any earlier approval.
+        new_status, hist = 'rejected', 'rejected'
+        conn.execute('UPDATE mandates SET approval_status=?, approved_by=0, approved_at=?, '
+                     "approval_note=? WHERE id=?", (new_status, '', note, mid))
+    else:
+        new_status, hist = 'pending', 'submitted'
+        conn.execute('UPDATE mandates SET approval_status=?, approved_by=0, approved_at=?, '
+                     "approval_note=? WHERE id=?", (new_status, '', note, mid))
+
+    _log_approval(conn, mid, cid, hist, note)
     conn.commit(); conn.close()
     log_activity('mandate_' + action, f"{m['role']}" + (f' — {note}' if note else ''),
                  entity_type='mandate', entity_id=mid)
-    return jsonify({'ok': True, 'approval_status': new_status})
+    return jsonify({'ok': True, 'approval_status': new_status, 'action': hist})
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -11244,14 +11455,39 @@ def update_mandate(mid):
     _ok, _err = _validate_org_links(conn, d, effective_company_id())
     if not _ok:
         conn.close(); return jsonify({'error': _err}), 400
+
+    _corp = (workspace_mode() == 'corporate')
+    if _corp and 'role' in d and not str(d.get('role') or '').strip():
+        conn.close(); return jsonify({'error': 'Job Title is required'}), 400
+
+    # Requisition status is the state of the OPENING, not of any candidate.
+    # Reuses the existing mandate status column rather than adding a second
+    # one; 'active' is what Corporate presents as "Open".
+    _st = str(d.get('status') or 'active').strip().lower()
+    if _st not in REQ_STATUSES:
+        conn.close(); return jsonify({'error': 'Invalid status'}), 400
+
+    # Validated before ANY write, so a rejected value leaves the requisition
+    # completely unmodified — same contract as the org-link validation above.
+    _pok, _perr, _plan = _validate_planning_fields(d)
+    if not _pok:
+        conn.close(); return jsonify({'error': _perr}), 400
+
+    # Corporate never edits an external client, so its payload does not carry
+    # one. Preserving the stored value keeps this from blanking legacy data.
+    _cur = conn.execute('SELECT client FROM mandates WHERE id=?', (mid,)).fetchone()
+    _client_val = d.get('client') if ('client' in d and not _corp) else (_cur['client'] if _cur else '')
+
     conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,exp_min=?,exp_max=?,experience=?,jd=?,status=?,headcount=? WHERE id=?',
-                 (d.get('client',''), d.get('role',''), d.get('location',''), d.get('division',''),
+                 (_client_val, d.get('role',''), d.get('location',''), d.get('division',''),
                   float(d.get('ctc_min', 0)), float(d.get('ctc_max', 0)),
                   float(d.get('exp_min', 0) or 0), float(d.get('exp_max', 0) or 0),
-                  d.get('experience',''), d.get('jd',''), d.get('status','active'),
+                  d.get('experience',''), d.get('jd',''), _st,
                   max(1, int(d.get('headcount') or 1)), mid))
     # Organisational links are updated only when the caller sends them, so an
     # Agency save can never null them out. Same-tenant validated above.
+    for _pf, _pv in _plan.items():
+        conn.execute(f'UPDATE mandates SET {_pf}=? WHERE id=?', (_pv, mid))
     for _f in ('department_id', 'hiring_manager_id', 'hrbp_user_id', 'assigned_user_id'):
         if _f in d:
             _v = str(d.get(_f) or '').strip()
@@ -13528,6 +13764,25 @@ def _tenant_identity():
     return company, person
 
 
+def _hiring_org(m):
+    """The organisation a requisition hires for, as an AI/email prompt should see it.
+
+    Agency: the external client on the mandate. Corporate: the tenant itself —
+    `mandates.client` is an empty legacy field there, so using it would send
+    "Role at " to the model, or name a client that does not exist.
+    """
+    try:
+        if workspace_mode() == 'corporate':
+            comp, _person = _tenant_identity()
+            return comp or 'our company'
+    except Exception:
+        pass
+    try:
+        return (m['client'] or '').strip() or 'the client'
+    except Exception:
+        return 'the client'
+
+
 def _personalise(prompt):
     """Fill the tenant-neutral identity tokens in a strategy prompt.
 
@@ -14396,7 +14651,17 @@ def generate_jd():
     if not role:
         return jsonify({'error': 'Role is required to write a JD. Pehle Role field bharo.'}), 400
     parts = [f"Role / Designation: {role}"]
-    if d.get('client'): parts.append(f"Client / Company: {d['client']}")
+    # Corporate hires for ITSELF, so the hiring company is the tenant — never
+    # mandates.client, which is an empty legacy field for Corporate. Sending
+    # the legacy value would make the JD describe a client that does not exist.
+    if workspace_mode() == 'corporate':
+        _comp, _person = _tenant_identity()
+        if _comp:
+            parts.append(f"Hiring Company: {_comp}")
+        if d.get('department'):
+            parts.append(f"Department: {d['department']}")
+    elif d.get('client'):
+        parts.append(f"Client / Company: {d['client']}")
     if d.get('location'): parts.append(f"Location: {d['location']}")
     if d.get('experience'): parts.append(f"Experience required: {d['experience']}")
     if d.get('ctc_min') or d.get('ctc_max'):
