@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file, Response
+from flask import Flask, request, jsonify, send_file, Response, redirect
 from flask_cors import CORS
 import sqlite3, json, os, datetime, requests, shutil, io, re, smtplib, time
 from email.mime.text import MIMEText
@@ -444,6 +444,34 @@ def login_required(f):
             return flask_redirect('/login')
         return f(*args, **kwargs)
     return decorated
+
+def agency_only(f):
+    """Refuse an endpoint that belongs to the Agency product.
+
+    Hiding a sidebar item is presentation, not security: a Corporate user could
+    still call the URL. Invoicing, Command Center, BD and Freelancers are
+    Agency modules, so their APIs are closed to Corporate tenants here.
+
+    Returns 404 rather than 403, matching every other denial in this codebase —
+    it does not disclose that the feature exists.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if workspace_mode() == 'corporate':
+            return jsonify({'error': 'Not found'}), 404
+        return f(*args, **kwargs)
+    return decorated
+
+
+def agency_only_page(f):
+    """Same guard for a page route: send a Corporate user to their own app."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if workspace_mode() == 'corporate':
+            return redirect('/')
+        return f(*args, **kwargs)
+    return decorated
+
 
 def admin_required(f):
     @wraps(f)
@@ -3133,6 +3161,115 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # ── Interview scorecard ───────────────────────────────────────────────
+    # `interview_feedback` already IS a scorecard header: it belongs to one
+    # interview, holds one evaluator, an overall rating, a recommendation and
+    # free-text strengths/concerns. So it is extended rather than duplicated —
+    # no `interview_scorecards` table, and every existing row keeps working.
+    #
+    # status defaults to 'submitted' on purpose: all existing feedback (panel
+    # feedback and the hiring-manager review link) was final when written, and
+    # existing callers do not send a status.
+    for col, typ in [('status', "TEXT DEFAULT 'submitted'"),   # draft | submitted
+                     ('submitted_at', "TEXT DEFAULT ''"),
+                     ('updated_at', "TEXT DEFAULT ''"),
+                     ('summary', "TEXT DEFAULT ''"),           # overall comment
+                     ('mandate_id', 'INTEGER DEFAULT NULL'),   # derived, never trusted
+                     ('interviewer_user_id', 'INTEGER DEFAULT NULL'),
+                     ('interviewer_contact_id', 'INTEGER DEFAULT NULL')]:
+        try:
+            c.execute(f'ALTER TABLE interview_feedback ADD COLUMN {col} {typ}')
+        except sqlite3.OperationalError:
+            pass
+
+    # Per-criterion ratings. Nothing equivalent exists, so this is genuinely
+    # new — deliberately minimal: criteria are plain strings, not a competency
+    # library, and no criterion is mandatory.
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS interview_scorecard_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scorecard_id INTEGER NOT NULL,      -- -> interview_feedback.id
+            company_id INTEGER NOT NULL,        -- tenant, explicit
+            criterion TEXT NOT NULL,
+            rating INTEGER DEFAULT 0,           -- 0 = not rated
+            comment TEXT DEFAULT '',
+            sort_order INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT ''
+        )''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_sci_card '
+                  'ON interview_scorecard_items(scorecard_id, sort_order)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_sci_company '
+                  'ON interview_scorecard_items(company_id)')
+    except sqlite3.OperationalError:
+        pass
+
+    # ── Corporate hiring decision ─────────────────────────────────────────
+    # A separate record, and here is why it cannot reuse candidate.stage:
+    # 'Placed' is not "the hiring team selected this person" — it is a
+    # COMMERCIAL event. It gates the billing status, counts toward freelancer
+    # commission, marks the candidate terminal in the pipeline and in the
+    # WhatsApp queue. Overloading it with a hiring decision would fire billing
+    # the moment a corporate hiring manager said "selected".
+    #
+    # The table is APPEND-ONLY: one row per decision, the latest row is the
+    # current decision, and the whole sequence is the history. No separate
+    # history table, and nothing is ever overwritten.
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS candidate_hiring_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,        -- tenant, explicit
+            candidate_id INTEGER NOT NULL,
+            mandate_id INTEGER,                 -- derived from the candidate
+            decision TEXT NOT NULL,             -- selected | rejected | on_hold
+            reason TEXT DEFAULT '',
+            decided_by INTEGER DEFAULT 0,
+            decided_at TEXT DEFAULT '',
+            created_at TEXT DEFAULT ''
+        )''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_chd_candidate '
+                  'ON candidate_hiring_decisions(candidate_id, id)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_chd_company '
+                  'ON candidate_hiring_decisions(company_id)')
+    except sqlite3.OperationalError:
+        pass
+
+    # ── Offers ────────────────────────────────────────────────────────────
+    # A shared table, not `corporate_offers`: an offer is a generic concept and
+    # Agency will eventually want the same lifecycle.
+    #
+    # CTC lives HERE for corporate offers, deliberately not in
+    # candidates.offered_ctc. That column is load-bearing for Agency billing —
+    # PLACED_SQL treats `offered_ctc > 0` as a placement, so writing a corporate
+    # offer into it would mark the candidate placed and pull them into revenue
+    # projection and invoicing. See the CTC audit in the report.
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS offers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,          -- tenant, explicit
+            candidate_id INTEGER NOT NULL,
+            mandate_id INTEGER,                   -- derived from the candidate
+            hiring_decision_id INTEGER,           -- the 'selected' decision it rests on
+            status TEXT NOT NULL DEFAULT 'draft', -- draft|released|accepted|declined|withdrawn
+            offered_ctc REAL DEFAULT 0,
+            currency TEXT DEFAULT 'INR',
+            offered_date TEXT DEFAULT '',
+            expected_joining_date TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_by INTEGER DEFAULT 0,
+            released_by INTEGER DEFAULT 0,
+            released_at TEXT DEFAULT '',
+            accepted_at TEXT DEFAULT '',
+            declined_at TEXT DEFAULT '',
+            withdrawn_by INTEGER DEFAULT 0,
+            withdrawn_at TEXT DEFAULT '',
+            created_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT ''
+        )''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_offers_candidate ON offers(candidate_id, id)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_offers_company ON offers(company_id, status)')
+    except sqlite3.OperationalError:
+        pass
+
     # Which mandate each user last pushed to, so the extension can float the
     # ones they actually use to the top of a long dropdown.
     try:
@@ -4793,10 +4930,24 @@ def analytics():
     for c in cands:
         if (c['stage'] or '').strip().lower() not in ('placed', 'joined'):
             continue
+        # The offers table is now the source of truth for a corporate offer.
+        # candidates.ctc_offered is the deprecated Wave-7 column, kept as a
+        # fallback so figures recorded before the offers table still count.
+        offered = 0
         try:
-            offered = float(c['ctc_offered'] or 0)
-        except (IndexError, KeyError, TypeError, ValueError):
+            orow = conn.execute(
+                "SELECT offered_ctc FROM offers WHERE candidate_id=? AND company_id=? "
+                "AND status IN ('released','accepted') ORDER BY id DESC LIMIT 1",
+                (c['id'], effective_company_id())).fetchone()
+            if orow and orow['offered_ctc']:
+                offered = float(orow['offered_ctc'])
+        except sqlite3.OperationalError:
             offered = 0
+        if not offered:
+            try:
+                offered = float(c['ctc_offered'] or 0)
+            except (IndexError, KeyError, TypeError, ValueError):
+                offered = 0
         if not offered:
             unknown += 1
             continue
@@ -12668,6 +12819,8 @@ def _next_gst_invoice_no(conn, owner_id, doc_type='tax'):
 
 @app.route('/api/invoices', methods=['POST'])
 @login_required
+@agency_only
+@agency_only
 def create_invoice():
     d = request.json or {}
     conn = None
@@ -12724,6 +12877,9 @@ def create_invoice():
 
 @app.route('/api/invoices/<int:iid>', methods=['PUT'])
 @login_required
+@agency_only
+@agency_only
+@agency_only
 def update_invoice(iid):
     d = request.json or {}
     conn = get_db(); oid = effective_company_id()
@@ -12754,6 +12910,7 @@ def update_invoice(iid):
 
 @app.route('/api/invoices', methods=['GET'])
 @login_required
+@agency_only
 def list_invoices():
     conn = get_db(); oid = effective_company_id()
     rows = conn.execute('SELECT * FROM invoices WHERE owner_id=? ORDER BY id DESC', (oid,)).fetchall()
@@ -12773,6 +12930,7 @@ def list_invoices():
 
 @app.route('/api/invoices/<int:iid>', methods=['GET'])
 @login_required
+@agency_only
 def get_invoice(iid):
     conn = get_db()
     r = conn.execute('SELECT * FROM invoices WHERE id=? AND owner_id=?', (iid, effective_company_id())).fetchone()
@@ -12787,6 +12945,7 @@ def get_invoice(iid):
 
 @app.route('/api/invoices/<int:iid>/mark-paid', methods=['POST'])
 @login_required
+@agency_only
 def mark_invoice_paid(iid):
     d = request.json or {}
     conn = get_db()
@@ -12799,6 +12958,7 @@ def mark_invoice_paid(iid):
 
 @app.route('/api/invoices/<int:iid>/convert', methods=['POST'])
 @login_required
+@agency_only
 def convert_proforma_to_tax(iid):
     """One-click: turn a proforma into a real GST tax invoice. Assigns a fresh
     number from the tax series, stamps today's date + a 45-day due date, and
@@ -12838,6 +12998,7 @@ def convert_proforma_to_tax(iid):
 
 @app.route('/api/invoices/<int:iid>', methods=['DELETE'])
 @login_required
+@agency_only
 def delete_invoice(iid):
     conn = get_db()
     conn.execute('DELETE FROM invoices WHERE id=? AND owner_id=?', (iid, effective_company_id()))
@@ -12847,6 +13008,7 @@ def delete_invoice(iid):
 
 @app.route('/api/invoices/<int:iid>/print', methods=['GET'])
 @login_required
+@agency_only
 def print_invoice(iid):
     if not HAS_INVOICE:
         return Response('Invoice engine not deployed (invoice_engine.py missing).', mimetype='text/plain')
@@ -12895,6 +13057,7 @@ def delete_expense(eid):
 
 @app.route('/api/invoices/next-number', methods=['GET'])
 @login_required
+@agency_only
 def invoice_next_number():
     conn = get_db()
     doc_type = request.args.get('doc_type', 'tax')
@@ -12905,6 +13068,7 @@ def invoice_next_number():
 
 @app.route('/api/invoices/summary', methods=['GET'])
 @login_required
+@agency_only
 def invoicing_summary():
     import datetime as _dt
     conn = get_db(); oid = effective_company_id()
@@ -13970,6 +14134,9 @@ def _command_chat_history(conn, oid, limit=24):
 
 @app.route('/api/command/chat', methods=['GET'])
 @login_required
+@agency_only
+@agency_only
+@agency_only
 def command_chat_history():
     conn = get_db()
     try:
@@ -13981,6 +14148,7 @@ def command_chat_history():
 
 @app.route('/api/command/chat', methods=['DELETE'])
 @login_required
+@agency_only
 def command_chat_clear():
     conn = get_db()
     conn.execute('DELETE FROM command_chat WHERE owner_id=?', (effective_company_id(),))
@@ -13990,6 +14158,7 @@ def command_chat_clear():
 
 @app.route('/api/command/chat', methods=['POST'])
 @login_required
+@agency_only
 def command_chat():
     ds_key = get_setting('deepseek_api_key')
     if not ds_key:
@@ -14256,6 +14425,8 @@ Return ONLY a JSON array (no prose, no markdown fences), each item exactly:
 
 @app.route('/api/command/tasks', methods=['GET'])
 @login_required
+@agency_only
+@agency_only
 def command_tasks_list():
     import datetime as _dt
     today = _dt.date.today().isoformat()
@@ -14275,6 +14446,7 @@ def command_tasks_list():
 
 @app.route('/api/command/tasks', methods=['POST'])
 @login_required
+@agency_only
 def command_tasks_add():
     d = request.json or {}
     txt = (d.get('text') or '').strip()
@@ -14289,6 +14461,8 @@ def command_tasks_add():
 
 @app.route('/api/command/tasks/<int:tid>', methods=['PUT'])
 @login_required
+@agency_only
+@agency_only
 def command_tasks_update(tid):
     d = request.json or {}
     conn = get_db(); oid = effective_company_id()
@@ -14307,6 +14481,7 @@ def command_tasks_update(tid):
 
 @app.route('/api/command/tasks/<int:tid>', methods=['DELETE'])
 @login_required
+@agency_only
 def command_tasks_delete(tid):
     conn = get_db()
     conn.execute('DELETE FROM command_tasks WHERE id=? AND owner_id=?', (tid, effective_company_id()))
@@ -14405,6 +14580,7 @@ def _run_task_generation(conn, oid, refine_instruction='', current_tasks=None):
 
 @app.route('/api/command/tasks/generate', methods=['POST'])
 @login_required
+@agency_only
 def command_tasks_generate():
     conn = get_db()
     try:
@@ -14459,6 +14635,7 @@ Be brutally honest and specific. Every number should teach the advisor something
 
 @app.route('/api/command/weekly-review', methods=['POST'])
 @login_required
+@agency_only
 def command_weekly_review():
     ds_key = get_setting('deepseek_api_key')
     if not ds_key:
@@ -14515,6 +14692,7 @@ def command_weekly_review():
 
 @app.route('/api/command/tasks/refine', methods=['POST'])
 @login_required
+@agency_only
 def command_tasks_refine():
     instr = ((request.json or {}).get('instruction') or '').strip()
     if not instr:
@@ -14537,6 +14715,7 @@ def command_tasks_refine():
 
 @app.route('/api/command/tasks/prefs', methods=['GET', 'POST'])
 @login_required
+@agency_only
 def command_tasks_prefs():
     if request.method == 'POST':
         set_setting('cc_task_prefs', ((request.json or {}).get('prefs') or '').strip()[:800])
@@ -14546,6 +14725,7 @@ def command_tasks_prefs():
 
 @app.route('/api/command/snapshot', methods=['GET', 'POST'])
 @login_required
+@agency_only
 def command_snapshot():
     keys = ['cc_bank_cash', 'cc_monthly_fixed', 'cc_team_size', 'cc_year_target',
             'cc_funding_available', 'cc_target_total', 'cc_target_years', 'cc_notes']
@@ -14560,6 +14740,7 @@ def command_snapshot():
 
 @app.route('/api/command/overview', methods=['GET'])
 @login_required
+@agency_only
 def command_overview():
     conn = get_db()
     try:
@@ -14571,6 +14752,7 @@ def command_overview():
 
 @app.route('/api/command/plan', methods=['POST'])
 @login_required
+@agency_only
 def command_plan():
     ds_key = get_setting('deepseek_api_key')
     if not ds_key:
@@ -15763,6 +15945,213 @@ def interview_result(iid):
 RECOMMENDATIONS = ('strong_yes', 'yes', 'hold', 'no')
 
 
+# ── Interview scorecard ───────────────────────────────────────────────────
+# Three separate concepts, never synchronised:
+#   interviews.status  — what happened to the meeting
+#   interviews.result  — pending / pass / fail / hold
+#   scorecard.recommendation — strong_hire … strong_no_hire
+# "Result: Pass, Recommendation: Hold" is a valid and meaningful combination.
+SCORECARD_RECOMMENDATIONS = ('strong_hire', 'hire', 'hold', 'no_hire', 'strong_no_hire')
+
+# The panel-feedback flow (and the hiring-manager review link) already write
+# this older four-value set. Both are accepted so nothing existing breaks and
+# no historical row is migrated; the legacy values map to the new ones for
+# display only.
+LEGACY_RECOMMENDATIONS = {'strong_yes': 'strong_hire', 'yes': 'hire',
+                          'hold': 'hold', 'no': 'no_hire'}
+
+RECOMMENDATION_LABELS = {'strong_hire': 'Strong Hire', 'hire': 'Hire', 'hold': 'Hold',
+                         'no_hire': 'No Hire', 'strong_no_hire': 'Strong No Hire'}
+
+RATING_LABELS = {1: 'Poor', 2: 'Below Expectations', 3: 'Meets Expectations',
+                 4: 'Strong', 5: 'Exceptional'}
+
+
+def _norm_recommendation(v):
+    """Accept either vocabulary; return (ok, canonical_value)."""
+    v = (v or '').strip().lower()
+    if v in SCORECARD_RECOMMENDATIONS:
+        return True, v
+    if v in LEGACY_RECOMMENDATIONS:
+        return True, LEGACY_RECOMMENDATIONS[v]
+    return False, ''
+
+
+def _valid_rating(v, allow_zero=True):
+    """(ok, int). 0 means 'not rated'; 1-5 is the scale. 6, -1 etc. rejected."""
+    try:
+        n = int(v or 0)
+    except (TypeError, ValueError):
+        return False, 0
+    if n == 0 and allow_zero:
+        return True, 0
+    return (1 <= n <= 5), n
+
+
+def _scorecard_context(conn, iid, cid_claim=None):
+    """(interview_row, error). Validates tenant AND candidate/interview match."""
+    company_id = effective_company_id()
+    if not _tenant_owns_interview(conn, iid):
+        return None, 'Interview not found'
+    iv = conn.execute('SELECT id, candidate_id, mandate_id, round_name FROM interviews WHERE id=?',
+                      (iid,)).fetchone()
+    if not iv:
+        return None, 'Interview not found'
+    # A scorecard for candidate A must not be filed against interview B.
+    if cid_claim not in (None, '', 0) and int(cid_claim) != int(iv['candidate_id']):
+        return None, 'That candidate does not belong to this interview'
+    if not _tenant_owns_candidate(conn, iv['candidate_id']):
+        return None, 'Interview not found'
+    return iv, None
+
+
+@app.route('/api/interviews/<int:iid>/scorecard', methods=['POST'])
+@login_required
+def save_scorecard(iid):
+    """Create or update a scorecard for one interview.
+
+    `action` is 'draft' (default) or 'submit'. A draft may be incomplete; a
+    submitted scorecard requires an overall rating and a recommendation. The
+    requisition is DERIVED from the interview, never taken from the browser.
+    """
+    d = request.json or {}
+    action = (d.get('action') or 'draft').strip().lower()
+    if action not in ('draft', 'submit'):
+        return jsonify({'error': 'action must be draft or submit'}), 400
+
+    company_id = effective_company_id()
+    conn = get_db()
+    iv, err = _scorecard_context(conn, iid, d.get('candidate_id'))
+    if err:
+        conn.close(); return jsonify({'error': err}), 404
+
+    # Interviewer identity: validated against this tenant, never trusted raw.
+    iv_user, iv_contact = d.get('interviewer_user_id'), d.get('interviewer_contact_id')
+    if iv_user:
+        ok, e = _validate_company_user(conn, iv_user, company_id, 'Interviewer')
+        if not ok:
+            conn.close(); return jsonify({'error': e}), 400
+    if iv_contact:
+        ok, e = _validate_hiring_manager(conn, iv_contact, company_id)
+        if not ok:
+            conn.close(); return jsonify({'error': 'Interviewer not found'}), 400
+
+    rec_raw = d.get('recommendation')
+    rec = ''
+    if rec_raw not in (None, ''):
+        ok, rec = _norm_recommendation(rec_raw)
+        if not ok:
+            conn.close(); return jsonify({'error': 'Unknown recommendation'}), 400
+
+    ok, rating = _valid_rating(d.get('overall_rating') or d.get('rating'))
+    if not ok:
+        conn.close(); return jsonify({'error': 'Overall rating must be between 1 and 5'}), 400
+
+    items = d.get('criteria') or []
+    clean_items = []
+    for i, it in enumerate(items if isinstance(items, list) else []):
+        crit = str((it or {}).get('criterion') or '').strip()[:120]
+        if not crit:
+            continue
+        ok, r = _valid_rating((it or {}).get('rating'))
+        if not ok:
+            conn.close(); return jsonify({'error': f'Rating for "{crit}" must be between 1 and 5'}), 400
+        clean_items.append((crit, r, str((it or {}).get('comment') or '').strip()[:1500], i))
+
+    # A submitted scorecard is a formal evaluation, so it must actually say
+    # something. Criteria stay optional — not every organisation configures them.
+    if action == 'submit':
+        if not rating:
+            conn.close(); return jsonify({'error': 'An overall rating is required to submit'}), 400
+        if not rec:
+            conn.close(); return jsonify({'error': 'A recommendation is required to submit'}), 400
+
+    panelist = str(d.get('panelist') or '').strip()[:120]
+    summary = str(d.get('summary') or '').strip()[:4000]
+    now = ts()
+    sid = d.get('scorecard_id')
+    cur = conn.cursor()
+    if sid:
+        own = conn.execute('SELECT id FROM interview_feedback WHERE id=? AND owner_id=? '
+                           'AND interview_id=?', (int(sid), company_id, iid)).fetchone()
+        if not own:
+            conn.close(); return jsonify({'error': 'Scorecard not found'}), 404
+        cur.execute('UPDATE interview_feedback SET panelist=?, rating=?, recommendation=?, '
+                    'strengths=?, concerns=?, summary=?, status=?, updated_at=?, '
+                    'interviewer_user_id=?, interviewer_contact_id=? WHERE id=?',
+                    (panelist, rating, rec,
+                     str(d.get('strengths') or '').strip()[:1500],
+                     str(d.get('concerns') or '').strip()[:1500],
+                     summary, action if action == 'draft' else 'submitted', now,
+                     int(iv_user) if iv_user else None,
+                     int(iv_contact) if iv_contact else None, int(sid)))
+        if action == 'submit':
+            cur.execute("UPDATE interview_feedback SET submitted_at=? WHERE id=? "
+                        "AND COALESCE(submitted_at,'')=''", (now, int(sid)))
+        sid = int(sid)
+    else:
+        cur.execute('INSERT INTO interview_feedback (interview_id,candidate_id,owner_id,panelist,'
+                    'rating,recommendation,strengths,concerns,summary,status,submitted_at,'
+                    'updated_at,mandate_id,interviewer_user_id,interviewer_contact_id,'
+                    'created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                    (iid, iv['candidate_id'], company_id, panelist, rating, rec,
+                     str(d.get('strengths') or '').strip()[:1500],
+                     str(d.get('concerns') or '').strip()[:1500], summary,
+                     'submitted' if action == 'submit' else 'draft',
+                     now if action == 'submit' else '', now,
+                     iv['mandate_id'],                       # derived from the interview
+                     int(iv_user) if iv_user else None,
+                     int(iv_contact) if iv_contact else None,
+                     real_user_id() or 0, now))
+        sid = cur.lastrowid
+
+    # Items are replaced wholesale — simpler and safer than diffing, and the
+    # scorecard is the unit of evaluation, not the individual row.
+    cur.execute('DELETE FROM interview_scorecard_items WHERE scorecard_id=? AND company_id=?',
+                (sid, company_id))
+    for crit, r, comment, order in clean_items:
+        cur.execute('INSERT INTO interview_scorecard_items (scorecard_id,company_id,criterion,'
+                    'rating,comment,sort_order,created_at) VALUES (?,?,?,?,?,?,?)',
+                    (sid, company_id, crit, r, comment, order, now))
+    conn.commit(); conn.close()
+
+    if action == 'submit':
+        log_candidate_event(iv['candidate_id'], 'note',
+                            f'{iv["round_name"]} scorecard submitted'
+                            + (f' — {RECOMMENDATION_LABELS.get(rec, rec)}' if rec else ''))
+    return jsonify({'ok': True, 'scorecard_id': sid, 'status': 'submitted' if action == 'submit' else 'draft'})
+
+
+@app.route('/api/scorecards/<int:sid>', methods=['GET'])
+@login_required
+def get_scorecard(sid):
+    """One scorecard with its criteria. Tenant-scoped on both tables."""
+    company_id = effective_company_id()
+    conn = get_db()
+    try:
+        row = conn.execute(
+            '''SELECT f.*, i.round_name, i.scheduled_at, c.name AS candidate_name,
+                      m.role AS requisition_role
+               FROM interview_feedback f
+               LEFT JOIN interviews i ON i.id = f.interview_id
+               LEFT JOIN candidates c ON c.id = f.candidate_id
+               LEFT JOIN mandates   m ON m.id = f.mandate_id
+               WHERE f.id=? AND f.owner_id=?''', (sid, company_id)).fetchone()
+        if not row:
+            return jsonify({'error': 'Scorecard not found'}), 404
+        card = dict(row)
+        card['recommendation_label'] = RECOMMENDATION_LABELS.get(
+            _norm_recommendation(card.get('recommendation'))[1], card.get('recommendation') or '')
+        card['rating_label'] = RATING_LABELS.get(card.get('rating') or 0, '')
+        items = conn.execute('SELECT criterion, rating, comment, sort_order '
+                             'FROM interview_scorecard_items WHERE scorecard_id=? AND company_id=? '
+                             'ORDER BY sort_order, id', (sid, company_id)).fetchall()
+        card['criteria'] = [dict(x) for x in items]
+        return jsonify({'ok': True, 'scorecard': card})
+    finally:
+        conn.close()
+
+
 @app.route('/api/interviews/<int:iid>/feedback', methods=['POST'])
 @login_required
 def add_interview_feedback(iid):
@@ -15809,6 +16198,277 @@ def delete_interview_feedback(fid):
     return jsonify({'ok': True})
 
 
+# ── Corporate hiring decision ─────────────────────────────────────────────
+# Four separate concepts, none of which writes to any of the others:
+#
+#   candidates.stage           where the candidate is in the process
+#   interviews.result          pass / fail / hold for one round
+#   interview_feedback.recommendation   what an interviewer advises
+#   candidate_hiring_decisions.decision what the hiring team decided
+#
+# "Result: Pass, Recommendation: Strong Hire, Decision: On Hold" is valid.
+HIRING_DECISIONS = ('selected', 'rejected', 'on_hold')
+HIRING_DECISION_LABELS = {'selected': 'Selected', 'rejected': 'Rejected',
+                          'on_hold': 'On Hold'}
+
+
+# ── Offer lifecycle ───────────────────────────────────────────────────────
+# Selected → Offer Draft → Released → Accepted | Declined | Withdrawn.
+# Nothing here writes to candidates.stage, candidates.offered_ctc,
+# placement_fee, joining_date or invoices — an offer is not a placement.
+OFFER_STATUSES = ('draft', 'released', 'accepted', 'declined', 'withdrawn')
+OFFER_STATUS_LABELS = {'draft': 'Offer Draft', 'released': 'Offer Released',
+                       'accepted': 'Offer Accepted', 'declined': 'Offer Declined',
+                       'withdrawn': 'Offer Withdrawn'}
+# Nonsensical moves are refused: an accepted offer cannot go back to draft, and
+# a declined one cannot be flipped to accepted without an explicit re-offer
+# workflow, which this step deliberately does not build.
+OFFER_TRANSITIONS = {'draft': ('released', 'withdrawn'),
+                     'released': ('accepted', 'declined', 'withdrawn'),
+                     'accepted': (), 'declined': (), 'withdrawn': ()}
+
+
+def _current_decision(conn, cid, company_id):
+    row = conn.execute('SELECT id, decision FROM candidate_hiring_decisions '
+                       'WHERE candidate_id=? AND company_id=? ORDER BY id DESC LIMIT 1',
+                       (cid, company_id)).fetchone()
+    return row
+
+
+def _offer_row(conn, oid, company_id):
+    return conn.execute('SELECT * FROM offers WHERE id=? AND company_id=?',
+                        (oid, company_id)).fetchone()
+
+
+@app.route('/api/candidates/<int:cid>/offers', methods=['GET'])
+@login_required
+def list_offers(cid):
+    """Offers for a candidate, newest first."""
+    if workspace_mode() != 'corporate':
+        return jsonify({'error': 'Not found'}), 404
+    company_id = effective_company_id()
+    conn = get_db()
+    try:
+        if not _tenant_owns_candidate(conn, cid):
+            return jsonify({'error': 'Not found'}), 404
+        rows = conn.execute(
+            '''SELECT o.*, m.role AS requisition_role,
+                      COALESCE(u.display_name, u.username, '') AS created_by_name
+               FROM offers o
+               LEFT JOIN mandates m ON m.id = o.mandate_id
+               LEFT JOIN users u ON u.id = o.created_by
+               WHERE o.candidate_id=? AND o.company_id=? ORDER BY o.id DESC''',
+            (cid, company_id)).fetchall()
+        out = []
+        for r in rows:
+            o = dict(r)
+            o['status_label'] = OFFER_STATUS_LABELS.get(o['status'], o['status'])
+            o['allowed_next'] = list(OFFER_TRANSITIONS.get(o['status'], ()))
+            out.append(o)
+        return jsonify({'ok': True, 'offers': out})
+    finally:
+        conn.close()
+
+
+@app.route('/api/candidates/<int:cid>/offers', methods=['POST'])
+@login_required
+def create_offer(cid):
+    """Create an offer draft. Requires a standing 'selected' hiring decision."""
+    if workspace_mode() != 'corporate':
+        return jsonify({'error': 'Not found'}), 404
+    if not is_company_admin():
+        return jsonify({'error': 'Only a company admin can create an offer'}), 403
+
+    d = request.json or {}
+    company_id = effective_company_id()
+    conn = get_db()
+    if not _tenant_owns_candidate(conn, cid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    cand = conn.execute('SELECT id, name, mandate_id FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not cand:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    # The requisition is derived, never taken from the browser.
+    if cand['mandate_id'] and not _tenant_owns_mandate(conn, cand['mandate_id']):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+
+    # An offer rests on a decision. Creating one never creates that decision.
+    dec = _current_decision(conn, cid, company_id)
+    if not dec:
+        conn.close()
+        return jsonify({'error': 'Record a hiring decision before creating an offer'}), 400
+    if dec['decision'] != 'selected':
+        conn.close()
+        return jsonify({'error': f'An offer needs a "Selected" decision — this candidate is '
+                                 f'{HIRING_DECISION_LABELS.get(dec["decision"], dec["decision"])}'}), 400
+
+    try:
+        ctc = float(d.get('offered_ctc') or 0)
+    except (TypeError, ValueError):
+        conn.close(); return jsonify({'error': 'Offered CTC must be a number'}), 400
+    if ctc < 0:
+        conn.close(); return jsonify({'error': 'Offered CTC cannot be negative'}), 400
+    for f in ('offered_date', 'expected_joining_date'):
+        v = str(d.get(f) or '').strip()
+        if v:
+            try:
+                datetime.date.fromisoformat(v)
+            except ValueError:
+                conn.close(); return jsonify({'error': f'{f.replace("_", " ").title()} must be a valid date'}), 400
+
+    now = ts()
+    cur = conn.cursor()
+    cur.execute('INSERT INTO offers (company_id,candidate_id,mandate_id,hiring_decision_id,status,'
+                'offered_ctc,currency,offered_date,expected_joining_date,notes,created_by,'
+                'created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (company_id, cid, cand['mandate_id'], dec['id'], 'draft', ctc,
+                 (str(d.get('currency') or 'INR').strip()[:8] or 'INR'),
+                 str(d.get('offered_date') or '').strip(),
+                 str(d.get('expected_joining_date') or '').strip(),
+                 str(d.get('notes') or '').strip()[:2000], real_user_id() or 0, now, now))
+    oid = cur.lastrowid
+    conn.commit(); conn.close()
+    log_candidate_event(cid, 'note', 'Offer draft created')
+    log_activity('offer_created', f'{cand["name"]} — draft', entity_type='candidate', entity_id=cid)
+    return jsonify({'ok': True, 'offer_id': oid, 'status': 'draft'})
+
+
+@app.route('/api/offers/<int:oid>/status', methods=['POST'])
+@login_required
+def offer_status(oid):
+    """Release, accept, decline or withdraw. Never touches placement or billing."""
+    if workspace_mode() != 'corporate':
+        return jsonify({'error': 'Not found'}), 404
+    if not is_company_admin():
+        return jsonify({'error': 'Only a company admin can change an offer'}), 403
+
+    d = request.json or {}
+    target = (d.get('status') or '').strip().lower()
+    if target not in OFFER_STATUSES:
+        return jsonify({'error': 'Unknown offer status'}), 400
+
+    company_id = effective_company_id()
+    conn = get_db()
+    row = _offer_row(conn, oid, company_id)
+    if not row:
+        conn.close(); return jsonify({'error': 'Offer not found'}), 404
+    if target not in OFFER_TRANSITIONS.get(row['status'], ()):
+        conn.close()
+        return jsonify({'error': f'Cannot move an offer from '
+                                 f'{OFFER_STATUS_LABELS[row["status"]]} to '
+                                 f'{OFFER_STATUS_LABELS[target]}'}), 400
+
+    now = ts()
+    sets = {'status': target, 'updated_at': now}
+    if target == 'released':
+        sets['released_by'] = real_user_id() or 0
+        sets['released_at'] = now
+    elif target == 'accepted':
+        sets['accepted_at'] = now
+    elif target == 'declined':
+        sets['declined_at'] = now
+    elif target == 'withdrawn':
+        sets['withdrawn_by'] = real_user_id() or 0
+        sets['withdrawn_at'] = now
+    if d.get('notes'):
+        sets['notes'] = str(d.get('notes')).strip()[:2000]
+    keys = list(sets.keys())
+    conn.execute('UPDATE offers SET {} WHERE id=?'.format(','.join(k + '=?' for k in keys)),
+                 tuple(sets[k] for k in keys) + (oid,))
+    conn.commit(); conn.close()
+
+    label = OFFER_STATUS_LABELS[target]
+    log_candidate_event(row['candidate_id'], 'note', label)
+    log_activity('offer_' + target, f'offer #{oid}', entity_type='candidate',
+                 entity_id=row['candidate_id'])
+    return jsonify({'ok': True, 'status': target, 'label': label})
+
+
+@app.route('/api/candidates/<int:cid>/hiring-decision', methods=['GET'])
+@login_required
+def get_hiring_decision(cid):
+    """Current decision plus the full sequence that led to it."""
+    if workspace_mode() != 'corporate':
+        return jsonify({'error': 'Not found'}), 404
+    company_id = effective_company_id()
+    conn = get_db()
+    try:
+        if not _tenant_owns_candidate(conn, cid):
+            return jsonify({'error': 'Not found'}), 404
+        rows = conn.execute(
+            '''SELECT d.*, COALESCE(u.display_name, u.username, '') AS decided_by_name,
+                      m.role AS requisition_role
+               FROM candidate_hiring_decisions d
+               LEFT JOIN users u ON u.id = d.decided_by
+               LEFT JOIN mandates m ON m.id = d.mandate_id
+               WHERE d.candidate_id=? AND d.company_id=?
+               ORDER BY d.id ASC''', (cid, company_id)).fetchall()
+        hist = []
+        for r in rows:
+            h = dict(r)
+            h['decision_label'] = HIRING_DECISION_LABELS.get(h['decision'], h['decision'])
+            hist.append(h)
+        return jsonify({'ok': True, 'current': (hist[-1] if hist else None), 'history': hist})
+    finally:
+        conn.close()
+
+
+@app.route('/api/candidates/<int:cid>/hiring-decision', methods=['POST'])
+@login_required
+def set_hiring_decision(cid):
+    """Record the hiring team's decision for this candidate on this requisition.
+
+    Deliberately does NOT: move the candidate's stage, change any interview
+    result or scorecard recommendation, create an offer, mark anyone joined, or
+    trigger billing. It records a decision and nothing else — the offer and
+    joining lifecycle are later steps.
+    """
+    if workspace_mode() != 'corporate':
+        return jsonify({'error': 'Not found'}), 404
+    # Existing convention for significant actions (departments, requisition
+    # approval) is company admin. The architecture cannot yet distinguish a
+    # hiring manager from a recruiter — documented, not invented here.
+    if not is_company_admin():
+        return jsonify({'error': 'Only a company admin can record a hiring decision'}), 403
+
+    d = request.json or {}
+    decision = (d.get('decision') or '').strip().lower()
+    if decision not in HIRING_DECISIONS:
+        return jsonify({'error': 'Decision must be selected, rejected or on_hold'}), 400
+
+    company_id = effective_company_id()
+    conn = get_db()
+    if not _tenant_owns_candidate(conn, cid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    cand = conn.execute('SELECT id, name, mandate_id, stage FROM candidates WHERE id=?',
+                        (cid,)).fetchone()
+    if not cand:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    # The requisition is DERIVED from the candidate, never taken from the
+    # browser, so a decision can never be filed against someone else's opening.
+    mandate_id = cand['mandate_id']
+    if mandate_id and not _tenant_owns_mandate(conn, mandate_id):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+
+    stage_before = cand['stage']
+    now = ts()
+    conn.execute('INSERT INTO candidate_hiring_decisions (company_id,candidate_id,mandate_id,'
+                 'decision,reason,decided_by,decided_at,created_at) VALUES (?,?,?,?,?,?,?,?)',
+                 (company_id, cid, mandate_id, decision,
+                  str(d.get('reason') or '').strip()[:1500], real_user_id() or 0, now, now))
+    conn.commit()
+    stage_after = conn.execute('SELECT stage FROM candidates WHERE id=?', (cid,)).fetchone()['stage']
+    conn.close()
+
+    label = HIRING_DECISION_LABELS[decision]
+    log_candidate_event(cid, 'note', f'Hiring decision: {label}'
+                        + (f' — {str(d.get("reason") or "").strip()[:200]}' if d.get('reason') else ''))
+    log_activity('hiring_decision', f'{cand["name"]} — {label}',
+                 entity_type='candidate', entity_id=cid)
+    # Returned so a caller can assert the stage was untouched.
+    return jsonify({'ok': True, 'decision': decision, 'label': label,
+                    'stage_unchanged': stage_before == stage_after})
+
+
 @app.route('/api/candidates/<int:cid>/feedback', methods=['GET'])
 @login_required
 def candidate_feedback(cid):
@@ -15818,23 +16478,47 @@ def candidate_feedback(cid):
     panel said and flags disagreement. Deciding is the hiring manager's job,
     and a split panel is a signal worth seeing rather than averaging away.
     """
+    company_id = effective_company_id()
     conn = get_db()
+    if not _tenant_owns_candidate(conn, cid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
     rows = conn.execute(
         '''SELECT f.*, i.round_name, i.scheduled_at
            FROM interview_feedback f LEFT JOIN interviews i ON i.id=f.interview_id
            WHERE f.candidate_id=? AND f.owner_id=? ORDER BY f.created_at ASC''',
-        (cid, effective_company_id())).fetchall()
+        (cid, company_id)).fetchall()
+    fb = []
+    for r in rows:
+        f = dict(r)
+        # Criteria come from the scorecard items table, tenant-scoped again.
+        try:
+            f['criteria'] = [dict(x) for x in conn.execute(
+                'SELECT criterion, rating, comment, sort_order FROM interview_scorecard_items '
+                'WHERE scorecard_id=? AND company_id=? ORDER BY sort_order, id',
+                (f['id'], company_id)).fetchall()]
+        except sqlite3.OperationalError:
+            f['criteria'] = []
+        canon = _norm_recommendation(f.get('recommendation'))[1]
+        f['recommendation_canonical'] = canon
+        f['recommendation_label'] = RECOMMENDATION_LABELS.get(canon, f.get('recommendation') or '')
+        f['rating_label'] = RATING_LABELS.get(f.get('rating') or 0, '')
+        fb.append(f)
     conn.close()
-    fb = [dict(r) for r in rows]
-    counts = {k: 0 for k in RECOMMENDATIONS}
+
+    # The consolidated view counts SUBMITTED evaluations only — a draft is not
+    # yet anyone's opinion, and letting it swing the split flag would be wrong.
+    counts = {k: 0 for k in SCORECARD_RECOMMENDATIONS}
     ratings = []
     for f in fb:
-        if f['recommendation'] in counts:
-            counts[f['recommendation']] += 1
+        if (f.get('status') or 'submitted') != 'submitted':
+            continue
+        canon = f.get('recommendation_canonical')
+        if canon in counts:
+            counts[canon] += 1
         if f['rating']:
             ratings.append(f['rating'])
-    positive = counts['strong_yes'] + counts['yes']
-    negative = counts['no']
+    positive = counts['strong_hire'] + counts['hire']
+    negative = counts['no_hire'] + counts['strong_no_hire']
     return jsonify({'ok': True, 'feedback': fb, 'summary': {
         'count': len(fb),
         'avg_rating': round(sum(ratings) / len(ratings), 1) if ratings else None,

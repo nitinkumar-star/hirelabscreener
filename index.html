@@ -5592,7 +5592,7 @@ function renderProfileDetail(c){
   html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
-  html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+'</div><div>'+keyFacts+reminders+workCard+_cpOrgShell(c.id)+'</div></div></div>';
+  html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+'</div><div>'+keyFacts+reminders+workCard+_cpOrgShell(c.id)+_cpInterviewShell(c.id)+'</div></div></div>';
   // AI Analysis (capability-first hiring-manager evaluation)
   html+='<div class="cp-pane" id="cp-pane-ai" style="display:none"><div id="cp-ai-'+c.id+'"></div></div>';
   // Placement & Billing (closes the lifecycle: Joined -> Invoiced -> Paid)
@@ -5623,6 +5623,7 @@ function renderProfileDetail(c){
   try{ cpLoadWaThread(c.id); }catch(e){}
   try{ cpLoadHistory(c.id); }catch(e){}
   try{ cpLoadOrg(c.id); }catch(e){}
+  try{ cpLoadInterviews(c.id); }catch(e){}
   try{ cpLoadBilling(c.id); }catch(e){}
 }
 
@@ -5933,7 +5934,151 @@ async function cpLoadEmailThread(cid){
   }).join('');
 }
 
+// ── Corporate hiring decision ──────────────────────────────────────────
+// Deliberately distinct from stage, interview result and scorecard
+// recommendation. Recording a decision changes nothing else — no stage move,
+// no offer, no joining, no billing.
+var HD_LOOK={selected:{t:'Selected',bg:'#E1F5EE',fg:'#0F6E56'},
+             rejected:{t:'Rejected',bg:'#FDEEEE',fg:'#A32D2D'},
+             on_hold :{t:'On Hold', bg:'#FFF8E6',fg:'#8A6512'}};
+
+async function cpLoadDecision(cid){
+  var box=document.getElementById('cp-decision-'+cid); if(!box) return;
+  if(wsMode()!=='corporate'){ box.innerHTML=''; return; }
+  var r;
+  try{ r=await req('GET','/candidates/'+cid+'/hiring-decision'); }catch(e){ return; }
+  if(!r||!r.ok){ box.innerHTML=''; return; }
+  var cur=r.current, hist=r.history||[];
+  var L=cur?(HD_LOOK[cur.decision]||{t:cur.decision_label||cur.decision,bg:'#F1F0EC',fg:'#555'}):null;
+  var canAct=!!(S.ws && S.ws.can_approve);   // same convention as approvals
+
+  var h='<div class="cp-card2" style="margin-top:12px"><div class="cp-lbl2">Hiring Decision</div>';
+  h+= cur
+    ? '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
+      +'<span style="font-size:11px;font-weight:700;background:'+L.bg+';color:'+L.fg+';border-radius:20px;padding:2px 10px">'+esc(L.t)+'</span>'
+      +'<span style="font-size:11.5px;color:#6b7280">by '+esc(cur.decided_by_name||'—')+'</span>'
+      +'<span style="font-size:11.5px;color:#999">'+esc(String(cur.decided_at||'').slice(0,16).replace('T',' '))+'</span>'
+      +'</div>'
+      +(cur.reason?'<div style="font-size:12px;color:#444;margin-bottom:6px">'+esc(cur.reason)+'</div>':'')
+    : '<div style="font-size:12px;color:#aaa;margin-bottom:8px">No decision recorded yet.</div>';
+
+  if(canAct){
+    h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">'
+      +'<button class="btn btn-g" style="font-size:11px;padding:3px 12px" onclick="cpDecide('+cid+',\'selected\')">Select</button>'
+      +'<button class="btn btn-o" style="font-size:11px;padding:3px 12px" onclick="cpDecide('+cid+',\'on_hold\')">Put on hold</button>'
+      +'<button class="btn btn-o" style="font-size:11px;padding:3px 12px;color:#A32D2D;border-color:#E8C4C4" onclick="cpDecide('+cid+',\'rejected\')">Reject</button>'
+      +'</div>';
+  }
+  if(hist.length>1){
+    h+='<div style="margin-top:10px;border-top:0.5px solid #f0f0f0;padding-top:7px">'
+      +hist.map(function(x){
+        var HL=HD_LOOK[x.decision]||{t:x.decision,fg:'#666'};
+        return '<div style="display:flex;gap:9px;font-size:11.5px;padding:2px 0">'
+          +'<span style="color:#999;min-width:78px">'+esc(String(x.decided_at||'').slice(0,10))+'</span>'
+          +'<span style="font-weight:600;color:'+HL.fg+';min-width:70px">'+esc(HL.t)+'</span>'
+          +'<span style="color:#666">'+esc(x.decided_by_name||'')+'</span></div>';
+      }).join('')+'</div>';
+  }
+  box.innerHTML=h+'</div>';
+}
+
+async function cpDecide(cid, decision){
+  var L=HD_LOOK[decision];
+  // An explicit confirmation, because this is a hiring decision — not an
+  // interview outcome and not a stage move.
+  var msg='Record hiring decision: '+L.t+'?\n\n'
+    +'This records the hiring team\'s decision only. It does not move the '
+    +'candidate\'s stage, create an offer, or mark them joined.';
+  if(!confirm(msg)) return;
+  var reason=prompt('Reason (optional):')||'';
+  var r=await req('POST','/candidates/'+cid+'/hiring-decision',{decision:decision, reason:reason});
+  if(r&&r.ok){ toast('\u2705','Decision recorded: '+r.label); cpLoadDecision(cid); }
+  else toast('&#9888;&#65039;',(r&&r.error)||'Could not record the decision');
+}
+
+// ── Offers ─────────────────────────────────────────────────────────────
+// An offer rests on a "Selected" decision and changes nothing else: no stage
+// move, no placement, no invoice, no freelancer commission.
+var OF_LOOK={draft:{t:'Offer Draft',bg:'#F1F0EC',fg:'#666'},
+             released:{t:'Offer Released',bg:'#FFF8E6',fg:'#8A6512'},
+             accepted:{t:'Offer Accepted',bg:'#E1F5EE',fg:'#0F6E56'},
+             declined:{t:'Offer Declined',bg:'#FDEEEE',fg:'#A32D2D'},
+             withdrawn:{t:'Offer Withdrawn',bg:'#F1F0EC',fg:'#888'}};
+var OF_ACTION={released:'Release offer',accepted:'Mark accepted',
+               declined:'Mark declined',withdrawn:'Withdraw offer'};
+
+async function cpLoadOffer(cid){
+  var box=document.getElementById('cp-offer-'+cid); if(!box) return;
+  if(wsMode()!=='corporate'){ box.innerHTML=''; return; }
+  var r;
+  try{ r=await req('GET','/candidates/'+cid+'/offers'); }catch(e){ return; }
+  if(!r||!r.ok){ box.innerHTML=''; return; }
+  var offers=r.offers||[], cur=offers[0];
+  var canAct=!!(S.ws && S.ws.can_approve);
+
+  var h='<div class="cp-card2" style="margin-top:12px"><div class="cp-lbl2">Offer</div>';
+  if(!cur){
+    h+='<div style="font-size:12px;color:#aaa;margin-bottom:8px">No offer yet.</div>';
+    if(canAct) h+='<button class="btn btn-g" style="font-size:11px;padding:3px 12px" onclick="cpNewOffer('+cid+')">Create offer</button>';
+  } else {
+    var L=OF_LOOK[cur.status]||{t:cur.status_label||cur.status,bg:'#F1F0EC',fg:'#555'};
+    h+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
+      +'<span style="font-size:11px;font-weight:700;background:'+L.bg+';color:'+L.fg+';border-radius:20px;padding:2px 10px">'+esc(L.t)+'</span>'
+      +(cur.offered_ctc?'<span style="font-size:12.5px;font-weight:600">\u20B9'+esc(cur.offered_ctc)+' '+esc(cur.currency||'INR')+'</span>':'')
+      +'</div>';
+    var rows=[['Offer Date',cur.offered_date],['Expected Joining',cur.expected_joining_date],
+              ['Requisition',cur.requisition_role],['Created By',cur.created_by_name]];
+    rows.forEach(function(x){ if(x[1]) h+='<div style="display:flex;gap:10px;font-size:12px;padding:2px 0">'
+      +'<span style="min-width:130px;color:#6b7280">'+esc(x[0])+'</span><span>'+esc(x[1])+'</span></div>'; });
+    if(cur.notes) h+='<div style="font-size:11.5px;color:#555;margin-top:5px">'+esc(cur.notes)+'</div>';
+    // Only transitions the server would actually accept are offered.
+    if(canAct && (cur.allowed_next||[]).length){
+      h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
+        + cur.allowed_next.map(function(nx){
+            var danger=(nx==='declined'||nx==='withdrawn');
+            return '<button class="btn '+(nx==='accepted'?'btn-g':'btn-o')+'" style="font-size:11px;padding:3px 12px'
+              +(danger?';color:#A32D2D;border-color:#E8C4C4':'')+'" onclick="cpOfferStatus('+cur.id+','+cid+',\''+nx+'\')">'
+              +esc(OF_ACTION[nx]||nx)+'</button>';
+          }).join('')
+        +'</div>';
+    }
+    if(offers.length>1){
+      h+='<div style="margin-top:9px;border-top:0.5px solid #f0f0f0;padding-top:6px">'
+        + offers.slice(1).map(function(o){
+            var OL=OF_LOOK[o.status]||{t:o.status,fg:'#666'};
+            return '<div style="font-size:11.5px;color:#777;padding:2px 0">'+esc(OL.t)
+              +(o.offered_ctc?(' \u00b7 \u20B9'+esc(o.offered_ctc)):'')+'</div>';
+          }).join('')+'</div>';
+    }
+  }
+  box.innerHTML=h+'</div>';
+}
+
+async function cpNewOffer(cid){
+  var ctc=prompt('Offered CTC (LPA):'); if(ctc===null) return;
+  if(isNaN(parseFloat(ctc))||parseFloat(ctc)<0){ toast('&#9888;&#65039;','Offered CTC must be a number'); return; }
+  var od=prompt('Offer date (YYYY-MM-DD, optional):')||'';
+  var jd=prompt('Expected joining date (YYYY-MM-DD, optional):')||'';
+  var r=await req('POST','/candidates/'+cid+'/offers',
+    {offered_ctc:parseFloat(ctc), offered_date:od.trim(), expected_joining_date:jd.trim()});
+  if(r&&r.ok){ toast('\u2705','Offer draft created'); cpLoadOffer(cid); }
+  else toast('&#9888;&#65039;',(r&&r.error)||'Could not create the offer');
+}
+
+async function cpOfferStatus(oid, cid, status){
+  var msg={released:'Release this offer to the candidate?',
+           accepted:'Mark this offer as accepted by the candidate?\n\nThis does NOT mark them joined.',
+           declined:'Mark this offer as declined?',
+           withdrawn:'Withdraw this offer?'}[status]||'Update this offer?';
+  if(!confirm(msg)) return;
+  var r=await req('POST','/offers/'+oid+'/status',{status:status});
+  if(r&&r.ok){ toast('\u2705',r.label); cpLoadOffer(cid); }
+  else toast('&#9888;&#65039;',(r&&r.error)||'Could not update the offer');
+}
+
 async function cpLoadInterviews(cid){
+  cpLoadDecision(cid);
+  cpLoadOffer(cid);
   var box=document.getElementById('cp-interviews-'+cid); if(!box) return;
   var r;
   try{ r=await req('GET','/candidates/'+cid+'/interviews'); }catch(e){ box.innerHTML='<div style="color:#B42318;font-size:12px;padding:12px">Could not load interviews: '+esc(String(e))+'</div>'; return; }
@@ -6014,17 +6159,23 @@ async function ivSetStatus(iid, cid, status){
 // One row per panelist rather than a single verdict, because a corporate
 // panel is 2-4 people who each judge independently. The summary reports
 // what they said and flags disagreement; it never decides for them.
+// Canonical recommendation vocabulary. The older four values written by the
+// panel-feedback flow and the review link are mapped server-side, so only
+// these appear here.
 var REC_LOOK={
-  strong_yes:{t:'Strong yes',bg:'#E1F5EE',fg:'#0F6E56'},
-  yes       :{t:'Yes',       bg:'#EDF6EE',fg:'#2C6B39'},
-  hold      :{t:'Hold',      bg:'#FFF8E6',fg:'#8A6512'},
-  no        :{t:'No',        bg:'#FDEEEE',fg:'#A32D2D'}
+  strong_hire   :{t:'Strong Hire',   bg:'#E1F5EE',fg:'#0F6E56'},
+  hire          :{t:'Hire',          bg:'#EDF6EE',fg:'#2C6B39'},
+  hold          :{t:'Hold',          bg:'#FFF8E6',fg:'#8A6512'},
+  no_hire       :{t:'No Hire',       bg:'#FDEEEE',fg:'#A32D2D'},
+  strong_no_hire:{t:'Strong No Hire',bg:'#FBE0E0',fg:'#8C1F1F'}
 };
+var RATING_LABELS={1:'Poor',2:'Below Expectations',3:'Meets Expectations',
+                   4:'Strong',5:'Exceptional'};
 
 function cpPanelSummary(sm){
   if(!sm||!sm.count) return '';
   var bits=[];
-  ['strong_yes','yes','hold','no'].forEach(function(k){
+  ['strong_hire','hire','hold','no_hire','strong_no_hire'].forEach(function(k){
     if(sm.counts[k]) bits.push('<span style="font-size:10.5px;background:'+REC_LOOK[k].bg+';color:'+REC_LOOK[k].fg+';border-radius:20px;padding:2px 9px;margin-right:5px">'+REC_LOOK[k].t+' '+sm.counts[k]+'</span>');
   });
   return '<div style="background:#FAFAFC;border:0.5px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:10px">'
@@ -6040,16 +6191,29 @@ function cpPanelSummary(sm){
 function cpFeedbackList(list, cid){
   if(!list.length) return '';
   return '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">'+list.map(function(f){
-    var L=REC_LOOK[f.recommendation]||{t:f.recommendation,bg:'#F1F0EC',fg:'#555'};
-    return '<div style="background:#FAFAFC;border-left:2px solid '+L.fg+';border-radius:0 7px 7px 0;padding:8px 11px">'
+    var canon=f.recommendation_canonical||f.recommendation;
+    var L=REC_LOOK[canon]||{t:(f.recommendation_label||f.recommendation||''),bg:'#F1F0EC',fg:'#555'};
+    var isDraft=(f.status||'submitted')==='draft';
+    var crits=(f.criteria||[]).map(function(c){
+      return '<div style="display:flex;gap:8px;font-size:11.5px;color:#444;margin-top:3px">'
+        +'<span style="min-width:150px;color:#6b7280">'+esc(c.criterion)+'</span>'
+        +'<span style="font-weight:600">'+(c.rating?esc(c.rating+'/5'):'&mdash;')+'</span>'
+        +(c.comment?'<span style="color:#777">'+esc(c.comment)+'</span>':'')
+        +'</div>';
+    }).join('');
+    return '<div style="background:#FAFAFC;border-left:2px solid '+L.fg+';border-radius:0 7px 7px 0;padding:8px 11px'+(isDraft?';opacity:.7':'')+'">'
       +'<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">'
         +'<span style="font-size:12px;font-weight:600;color:var(--ink)">'+esc(f.panelist||'')+'</span>'
         +'<span style="font-size:10px;background:'+L.bg+';color:'+L.fg+';border-radius:20px;padding:1px 8px">'+esc(L.t)+'</span>'
-        +(f.rating?'<span style="font-size:11px;color:#888">'+f.rating+'/5</span>':'')
+        +(f.rating?'<span style="font-size:11px;color:#888">'+f.rating+'/5'+(f.rating_label?' \u00b7 '+esc(f.rating_label):'')+'</span>':'')
+        +(isDraft?'<span style="font-size:9.5px;font-weight:700;background:#FFF8E6;color:#8A6512;border-radius:20px;padding:1px 7px">DRAFT</span>':'')
         +'<button title="Remove" onclick="cpDelFeedback('+f.id+','+cid+')" style="margin-left:auto;border:0;background:none;color:#bbb;cursor:pointer;font-size:13px;line-height:1">&times;</button>'
       +'</div>'
+      +crits
       +(f.strengths?'<div style="font-size:11.5px;color:#444;margin-top:4px"><b>Strengths:</b> '+esc(f.strengths)+'</div>':'')
       +(f.concerns?'<div style="font-size:11.5px;color:#444;margin-top:3px"><b>Concerns:</b> '+esc(f.concerns)+'</div>':'')
+      +(f.summary?'<div style="font-size:11.5px;color:#444;margin-top:3px">'+esc(f.summary)+'</div>':'')
+      +(f.submitted_at?'<div style="font-size:10.5px;color:#999;margin-top:4px">Submitted '+esc(String(f.submitted_at).slice(0,16).replace('T',' '))+'</div>':'')
       +'</div>';
   }).join('')+'</div>';
 }
@@ -6062,30 +6226,66 @@ function cpFeedbackForm(iid, cid){
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'
       +'<input id="fb-name-'+iid+'" placeholder="Panelist name" style="'+inp+'">'
       +'<select id="fb-rec-'+iid+'" style="'+inp+'"><option value="">Recommendation…</option>'
-        +'<option value="strong_yes">Strong yes</option><option value="yes">Yes</option>'
-        +'<option value="hold">Hold</option><option value="no">No</option></select>'
+        + Object.keys(REC_LOOK).map(function(k){ return '<option value="'+k+'">'+esc(REC_LOOK[k].t)+'</option>'; }).join('')
+        +'</select>'
     +'</div>'
-    +'<select id="fb-rate-'+iid+'" style="'+inp+';margin-bottom:8px"><option value="0">Rating (optional)</option>'
-      +'<option value="5">5 — Outstanding</option><option value="4">4 — Strong</option>'
-      +'<option value="3">3 — Adequate</option><option value="2">2 — Weak</option>'
-      +'<option value="1">1 — Poor</option></select>'
+    +'<select id="fb-rate-'+iid+'" style="'+inp+';margin-bottom:8px"><option value="0">Overall rating…</option>'
+      + [5,4,3,2,1].map(function(n){ return '<option value="'+n+'">'+n+' \u2014 '+esc(RATING_LABELS[n])+'</option>'; }).join('')
+      +'</select>'
+    // Criteria are optional and free-form: organisations evaluate different
+    // things, so nothing is mandatory and no competency library is imposed.
+    +'<div style="font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#6b7280;margin:10px 0 6px">Criteria (optional)</div>'
+    +'<div id="fb-crit-'+iid+'"></div>'
+    +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 9px;margin-bottom:8px" onclick="cpAddCriterion('+iid+')">+ Add criterion</button>'
     +'<textarea id="fb-str-'+iid+'" rows="2" placeholder="Strengths" style="'+inp+';margin-bottom:8px"></textarea>'
     +'<textarea id="fb-con-'+iid+'" rows="2" placeholder="Concerns" style="'+inp+';margin-bottom:8px"></textarea>'
-    +'<button class="btn btn-g" style="font-size:11px" onclick="cpSaveFeedback('+iid+','+cid+')">Save feedback</button>'
+    +'<textarea id="fb-sum-'+iid+'" rows="2" placeholder="Overall summary" style="'+inp+';margin-bottom:8px"></textarea>'
+    +'<button class="btn btn-o" style="font-size:11px" onclick="cpSaveScorecard('+iid+','+cid+',\'draft\')">Save draft</button>'
+    +'<button class="btn btn-g" style="font-size:11px;margin-left:6px" onclick="cpSaveScorecard('+iid+','+cid+',\'submit\')">Submit scorecard</button>'
     +'<button class="btn btn-o" style="font-size:11px;margin-left:6px" onclick="cpFeedbackForm('+iid+','+cid+')">Cancel</button>'
     +'</div>';
   var n=document.getElementById('fb-name-'+iid); if(n) n.focus();
 }
 
-async function cpSaveFeedback(iid, cid){
+// Criteria rows are built client-side and sent as an array; the server
+// replaces the whole set, so ordering here is the ordering stored.
+function cpAddCriterion(iid, name, rating, comment){
+  var box=document.getElementById('fb-crit-'+iid); if(!box) return;
+  var inp='padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:12px;font-family:inherit;outline:none;box-sizing:border-box';
+  var row=document.createElement('div');
+  row.className='fb-crit-row';
+  row.style.cssText='display:grid;grid-template-columns:1.2fr 1fr 1.5fr auto;gap:6px;margin-bottom:6px';
+  row.innerHTML='<input class="crit-name" placeholder="e.g. Technical Skills" value="'+esc(name||'')+'" style="'+inp+'">'
+    +'<select class="crit-rate" style="'+inp+'"><option value="0">Rating…</option>'
+      + [5,4,3,2,1].map(function(n){ return '<option value="'+n+'"'+(String(rating)===String(n)?' selected':'')+'>'+n+' \u2014 '+esc(RATING_LABELS[n])+'</option>'; }).join('')
+      +'</select>'
+    +'<input class="crit-comment" placeholder="Comment" value="'+esc(comment||'')+'" style="'+inp+'">'
+    +'<button class="btn btn-o" style="font-size:11px;padding:3px 9px" onclick="this.parentNode.remove()">&times;</button>';
+  box.appendChild(row);
+}
+
+async function cpSaveScorecard(iid, cid, action){
   var g=function(p){ var e=document.getElementById(p+'-'+iid); return e?e.value.trim():''; };
-  if(!g('fb-name')){ toast('&#9888;&#65039;','Panelist name is required'); return; }
-  if(!g('fb-rec')){ toast('&#9888;&#65039;','Pick a recommendation'); return; }
-  var r=await req('POST','/interviews/'+iid+'/feedback',{
-    panelist:g('fb-name'), recommendation:g('fb-rec'), rating:parseInt(g('fb-rate'))||0,
-    strengths:g('fb-str'), concerns:g('fb-con')});
-  if(r&&r.ok){ toast('✅','Feedback saved'); cpLoadInterviews(cid); }
-  else toast('&#9888;&#65039;',(r&&r.error)||'Could not save feedback');
+  if(!g('fb-name')){ toast('&#9888;&#65039;','Interviewer name is required'); return; }
+  // A draft may be incomplete; a submitted scorecard is a formal evaluation.
+  if(action==='submit'){
+    if(!g('fb-rate') || g('fb-rate')==='0'){ toast('&#9888;&#65039;','An overall rating is required to submit'); return; }
+    if(!g('fb-rec')){ toast('&#9888;&#65039;','A recommendation is required to submit'); return; }
+  }
+  var crits=[];
+  var box=document.getElementById('fb-crit-'+iid);
+  if(box) Array.prototype.forEach.call(box.querySelectorAll('.fb-crit-row'), function(row){
+    var n=row.querySelector('.crit-name').value.trim();
+    if(!n) return;
+    crits.push({criterion:n, rating:parseInt(row.querySelector('.crit-rate').value)||0,
+                comment:row.querySelector('.crit-comment').value.trim()});
+  });
+  var r=await req('POST','/interviews/'+iid+'/scorecard',{
+    action:action, panelist:g('fb-name'), recommendation:g('fb-rec'),
+    overall_rating:parseInt(g('fb-rate'))||0, strengths:g('fb-str'),
+    concerns:g('fb-con'), summary:g('fb-sum'), criteria:crits});
+  if(r&&r.ok){ toast('✅', action==='submit'?'Scorecard submitted':'Draft saved'); cpLoadInterviews(cid); }
+  else toast('&#9888;&#65039;',(r&&r.error)||'Could not save scorecard');
 }
 
 async function cpDelFeedback(fid, cid){
@@ -14721,6 +14921,17 @@ async function deleteReminder(rid, cid) {
    own, but a real difference is never overwritten — it is shown so the
    recruiter decides which number is the live one.
    ═══════════════════════════════════════════════════════════════════ */
+// Mount points for the interview / scorecard / hiring-decision panels.
+// These were previously missing, so `cpLoadInterviews` had nowhere to render
+// and the panel-feedback UI was unreachable.
+function _cpInterviewShell(cid){
+  return '<div id="cp-decision-'+cid+'"></div>'
+       + '<div id="cp-offer-'+cid+'"></div>'
+       + '<div class="cp-card2" id="cp-interviews-'+cid+'" style="margin-top:12px">'
+       + '<div class="cp-lbl2">Interviews</div>'
+       + '<div style="font-size:12px;color:var(--muted)">Loading…</div></div>';
+}
+
 function _cpOrgShell(cid){
   return '<div class="cp-card2" id="cp-org-'+cid+'">'
        + '<div class="cp-lbl2">Org &amp; Reporting</div>'
