@@ -19086,6 +19086,44 @@ def email_templates():
     return jsonify({'ok': True, 'templates': EMAIL_DEFAULT_TEMPLATES})
 
 
+@app.route('/api/candidate-lookup')
+@login_required
+def candidate_lookup_by_email():
+    """Find a candidate (and their mandate) by email address.
+
+    Read-only helper used by the Email Box composer so template variables like
+    {name} / {role} / {client} can be filled even when the compose window was
+    opened without a candidate id. Tenant-scoped exactly like /api/candidates.
+    """
+    email = (request.args.get('email') or '').strip().lower()
+    if not email or '@' not in email:
+        return jsonify({'ok': True, 'found': False})
+    conn = get_db()
+    r = conn.execute(
+        "SELECT * FROM candidates WHERE LOWER(TRIM(email))=? AND owner_id=? "
+        "ORDER BY id DESC LIMIT 1",
+        (email, effective_company_id())).fetchone()
+    if not r:
+        conn.close()
+        return jsonify({'ok': True, 'found': False})
+    c = _cand_public(r)
+    mand = None
+    try:
+        mr = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                          (r['mandate_id'], effective_company_id())).fetchone()
+        if mr:
+            mand = {'id': mr['id'], 'client': mr['client'], 'role': mr['role'],
+                    'location': mr['location']}
+    except Exception:
+        mand = None
+    conn.close()
+    keep = ('id', 'name', 'email', 'designation', 'company', 'ctc_current',
+            'notice_period', 'location', 'preferred_location', 'mandate_id')
+    return jsonify({'ok': True, 'found': True,
+                    'candidate': {k: c.get(k) for k in keep},
+                    'mandate': mand})
+
+
 def _submission_token(mid):
     """Unguessable per-mandate token for the public client-submission link.
     Derived via HMAC(secret, mid) — no storage needed, and an attacker cannot

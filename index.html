@@ -4854,6 +4854,7 @@ function openCompose(to, subject, body, meta){
     +'<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="sendCompose(this)">&#9993; Send</button><button class="btn btn-o" onclick="document.getElementById(\'cmp-file\').click()">&#128206; Attach</button><button class="btn btn-o" onclick="saveDraft(this)">Save draft</button><span id="cmp-status" style="font-size:11px;color:#0F6E56"></span></div>'
     +'</div></div>';
   document.body.appendChild(bg);
+  window._cmpCtxKey=null; window._cmpCtxVal=null;
   ebRenderAttachList();
   cmpLoadTemplates();
   installTagAutocomplete('cmp-editor');
@@ -4866,13 +4867,29 @@ async function cmpLoadTemplates(){
   list.forEach(function(t,i){ opts+='<option value="'+i+'">'+esc(t.title||('Template '+(i+1)))+'</option>'; });
   sel.innerHTML=opts;
 }
-function cmpApplyTemplate(){
+// Resolves the candidate behind the "To" address so {name}/{role}/{client}
+// can be filled here too. Cached per address; silent no-op if not a candidate.
+async function _cmpCtx(){
+  var to=((document.getElementById('cmp-to')||{}).value||'').trim().toLowerCase();
+  if(window._cmpCtxKey===to && window._cmpCtxVal) return window._cmpCtxVal;
+  var ctx={cand:null,mand:null};
+  if(to && to.indexOf('@')>0){
+    try{
+      var r=await req('GET','/candidate-lookup?email='+encodeURIComponent(to));
+      if(r && r.ok && r.found){ ctx.cand=r.candidate||null; ctx.mand=r.mandate||null; }
+    }catch(e){}
+  }
+  window._cmpCtxKey=to; window._cmpCtxVal=ctx;
+  return ctx;
+}
+async function cmpApplyTemplate(){
   var sel=document.getElementById('cmp-tpl'); if(!sel) return;
   var i=parseInt(sel.value,10); if(isNaN(i)||i<0) return;
   var t=(window._cmpTpls||[])[i]; if(!t) return;
+  var ctx=await _cmpCtx();
   var subEl=document.getElementById('cmp-sub'); var ed=document.getElementById('cmp-editor');
-  if(subEl && t.subject) subEl.value=t.subject;
-  if(ed){ var b=(t.body||'');
+  if(subEl && t.subject) subEl.value=fillTplVars(t.subject,ctx);
+  if(ed){ var b=fillTplVars(t.body||'',ctx);
     ed.innerHTML=(/<[a-z!/][\s\S]*>/i.test(b)) ? b : b.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
   sel.value='-1';
 }
@@ -7667,6 +7684,40 @@ function closeJourney(){
   document.removeEventListener('mousedown', _journeyOutside);
 }
 
+// ── Template variables: shared fill engine ────────────────────────────────
+// Used by BOTH composers (candidate Email drawer + Email Box compose) so a
+// template written once in Settings behaves identically everywhere.
+// Unknown/empty values deliberately leave the {tag} in place, so the recruiter
+// can SEE what could not be filled instead of sending a blank.
+function _tplVarMap(ctx){
+  ctx = ctx || {};
+  var c = ctx.cand || {}, m = ctx.mand || {}, st = (window.S && S.settings) || {};
+  var full = String(c.name || '').trim();
+  var first = full ? full.split(/\s+/)[0] : '';
+  return {
+    '{name}':        full,
+    '{first_name}':  first,
+    '{role}':        m.role || c.designation || '',
+    '{client}':      m.client || '',
+    '{location}':    m.location || c.preferred_location || c.location || '',
+    '{recruiter}':   st.recruiter_name || st.smtp_display_name || '',
+    '{company}':     st.company_name || st.seller_name || '',
+    '{ctc}':         c.ctc_current ? (c.ctc_current + ' LPA') : '',
+    '{notice}':      c.notice_period ? (c.notice_period + ' days') : ''
+  };
+}
+function fillTplVars(text, ctx){
+  var out = String(text == null ? '' : text);
+  if(!out) return out;
+  var map = _tplVarMap(ctx);
+  Object.keys(map).forEach(function(k){
+    var v = map[k];
+    if(v === null || v === undefined || v === '') return;   // leave tag visible
+    out = out.split(k).join(String(v));
+  });
+  return out;
+}
+
 // ── Email Compose Side Panel ──────────────────────────────────────────────
 function openEmailPanel(cid, candidateEmail, mandateId){
   // Close journey if open
@@ -7693,11 +7744,11 @@ function openEmailPanel(cid, candidateEmail, mandateId){
     + setupWarning
     // Template selector (per-mandate)
     + '<div style="margin-bottom:10px">'
-    + '<div style="font-size:10px;color:var(--muted);margin-bottom:3px">Templates for this job position</div>'
+    + '<div style="font-size:10px;color:var(--muted);margin-bottom:3px">Email templates &middot; Settings &rarr; Email Templates</div>'
     + '<div style="display:flex;gap:6px;align-items:center">'
     + '<select id="email-tpl" onchange="applyEmailTemplate()" class="inp" style="flex:1;font-size:11.5px"><option value="">— Select template —</option></select>'
-    + '<button onclick="saveAsEmailTemplate()" class="btn btn-o" style="font-size:10px;padding:4px 8px;white-space:nowrap" title="Save as new template">&#10133; New</button>'
-    + '<button onclick="updateEmailTemplate()" class="btn btn-o" style="font-size:10px;padding:4px 8px;white-space:nowrap" title="Update selected template">&#128190; Update</button>'
+    + '<button onclick="saveAsEmailTemplate()" class="btn btn-o" style="font-size:10px;padding:4px 8px;white-space:nowrap" title="Save the current email as a copy for this job">&#10133; New</button>'
+    + '<button onclick="updateEmailTemplate()" class="btn btn-o" style="font-size:10px;padding:4px 8px;white-space:nowrap" title="Save or refresh this job copy of the selected template">&#128190; Update</button>'
     + '</div></div>'
     // Compose fields
     + '<div style="margin-bottom:8px"><label style="font-size:10.5px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px">To</label>'
@@ -7748,7 +7799,9 @@ function openEmailPanel(cid, candidateEmail, mandateId){
   requestAnimationFrame(function(){ drawer.style.transform = 'translateX(0)'; });
   setTimeout(function(){ document.addEventListener('mousedown', _emailOutside); }, 50);
 
-  loadMandateTemplates();
+  S._emailCtx = null;
+  _ensureEmailCtx();
+  loadEmailPanelTemplates();
   loadEmailThread(cid);
 
   setTimeout(function(){
@@ -7757,16 +7810,92 @@ function openEmailPanel(cid, candidateEmail, mandateId){
   }, 300);
 }
 
-async function loadMandateTemplates(){
+// The drawer now lists the GLOBAL templates from Settings → Email Templates.
+// A mandate may additionally hold a job-specific copy of a Settings template
+// (linked by src_id); when one exists it is used instead of the global body and
+// the option is marked "• this job". The Settings original is never modified
+// from here. Legacy job-only templates (saved before this change) stay listed
+// so nothing that was already saved is lost.
+async function loadEmailPanelTemplates(){
   var sel = document.getElementById('email-tpl');
   if(!sel) return;
+  S._globalTpls = [];
   S._mandTemplates = [];
+  try{
+    var r = await req('GET', '/email-templates');
+    if(r && r.ok) S._globalTpls = r.templates || [];
+  }catch(e){}
   if(S._emailMandateId){
-    var r = await req('GET', '/mandates/' + S._emailMandateId + '/email-templates');
-    if(r.ok) S._mandTemplates = r.templates || [];
+    try{
+      var m = await req('GET', '/mandates/' + S._emailMandateId + '/email-templates');
+      if(m && m.ok) S._mandTemplates = m.templates || [];
+    }catch(e){}
   }
-  sel.innerHTML = '<option value="">— Select template —</option>'
-    + S._mandTemplates.map(function(t,i){ return '<option value="'+i+'">'+esc(t.name)+'</option>'; }).join('');
+  var opts = '<option value="">— Select template —</option>';
+  (S._globalTpls || []).forEach(function(t, i){
+    var ov = _findJobOverride(t);
+    opts += '<option value="g' + i + '">' + esc(t.title || ('Template ' + (i + 1)))
+          + (ov ? ' • this job' : '') + '</option>';
+  });
+  (S._mandTemplates || []).forEach(function(t, i){
+    if(!t || t.src_id) return;   // copies of Settings templates are shown above
+    opts += '<option value="m' + i + '">' + esc(t.name || ('Job template ' + (i + 1)))
+          + ' • this job</option>';
+  });
+  sel.innerHTML = opts;
+  if(!(S._globalTpls || []).length && !(S._mandTemplates || []).length){
+    sel.innerHTML = '<option value="">— No templates yet (Settings → Email Templates) —</option>';
+  }
+}
+// Kept so any older call site keeps working.
+function loadMandateTemplates(){ return loadEmailPanelTemplates(); }
+
+function _tplKey(t){ return (t && (t.id || t.title || t.name)) || ''; }
+
+function _findJobOverride(t){
+  var key = _tplKey(t);
+  if(!key) return null;
+  var list = S._mandTemplates || [];
+  for(var i = 0; i < list.length; i++){
+    if(list[i] && list[i].src_id && list[i].src_id === key) return list[i];
+  }
+  return null;
+}
+
+function _selectedGlobal(val){
+  if(val === null || val === undefined || val === '') return null;
+  val = String(val);
+  if(val.charAt(0) !== 'g') return null;
+  var i = parseInt(val.slice(1), 10);
+  return isNaN(i) ? null : ((S._globalTpls || [])[i] || null);
+}
+
+function _resolveEmailTpl(val){
+  if(val === null || val === undefined || val === '') return null;
+  val = String(val);
+  var kind = val.charAt(0), i = parseInt(val.slice(1), 10);
+  if(isNaN(i)) return null;
+  if(kind === 'm') return (S._mandTemplates || [])[i] || null;
+  var g = (S._globalTpls || [])[i];
+  if(!g) return null;
+  var ov = _findJobOverride(g);
+  return ov ? {name: g.title || '', subject: ov.subject, body: ov.body} : g;
+}
+
+// Candidate + mandate context, fetched once per open panel, used to fill {tags}.
+async function _ensureEmailCtx(){
+  var cid = S._emailCid, mid = S._emailMandateId;
+  var cur = S._emailCtx;
+  if(cur && cur._cid === cid && cur._mid === mid) return cur;
+  var ctx = {_cid: cid, _mid: mid, cand: null, mand: null};
+  if(cid){
+    try{ var r = await req('GET', '/candidates/' + cid); if(r && !r.error) ctx.cand = r; }catch(e){}
+  }
+  if(mid){
+    try{ var m = await req('GET', '/mandates/' + mid); if(m && !m.error) ctx.mand = m; }catch(e){}
+  }
+  S._emailCtx = ctx;
+  return ctx;
 }
 
 async function _saveMandTemplates(){
@@ -7774,47 +7903,86 @@ async function _saveMandTemplates(){
   await req('POST', '/mandates/' + S._emailMandateId + '/email-templates', {templates: S._mandTemplates});
 }
 
-function applyEmailTemplate(){
+async function applyEmailTemplate(){
   var sel = document.getElementById('email-tpl');
   if(!sel || sel.value === '') return;
-  var t = (S._mandTemplates || [])[parseInt(sel.value)];
+  var t = _resolveEmailTpl(sel.value);
   if(!t) return;
+  var ctx = await _ensureEmailCtx();
   var subj = document.getElementById('email-subject');
-  if(subj) subj.value = t.subject || '';
+  if(subj) subj.value = fillTplVars(t.subject || '', ctx);
   var be = document.getElementById('email-body');
-  if(be) be.innerHTML = t.body || '';
-}
-
-async function saveAsEmailTemplate(){
-  if(!S._emailMandateId){ toast('ERR','This candidate is not linked to any mandate'); return; }
-  var subject = (document.getElementById('email-subject') || {}).value || '';
-  var body = _getEmailBodyHtml();
-  if(!subject.trim() && !body.trim()){ toast('ERR','Please enter a subject or message first'); return; }
-  var name = prompt('Template ka naam dein:', subject.trim().substring(0,40) || 'My Template');
-  if(!name) return;
-  S._mandTemplates = S._mandTemplates || [];
-  S._mandTemplates.push({name: name.trim(), subject: subject, body: body});
-  await _saveMandTemplates();
-  toast('OK', 'Template "'+name+'" saved for this job!');
-  var sel = document.getElementById('email-tpl');
-  if(sel){
-    sel.innerHTML = '<option value="">— Select template —</option>' + S._mandTemplates.map(function(t,i){ return '<option value="'+i+'">'+esc(t.name)+'</option>'; }).join('');
-    sel.value = S._mandTemplates.length - 1;
+  if(be){
+    var b = fillTplVars(t.body || '', ctx);
+    be.innerHTML = _etLooksHtml(b) ? b : _etToHtml(b);
   }
 }
 
-async function updateEmailTemplate(){
-  var sel = document.getElementById('email-tpl');
-  if(!sel || sel.value === ''){ toast('ERR','Please select a template to update first'); return; }
-  var idx = parseInt(sel.value);
-  var t = (S._mandTemplates || [])[idx];
-  if(!t) return;
+// "New" — saves the current email as a copy for THIS job. If a Settings
+// template is selected, the copy is linked to it (src_id) and becomes this
+// job's version of it; the Settings original stays untouched.
+async function saveAsEmailTemplate(){
+  if(!S._emailMandateId){ toast('ERR', 'This candidate is not linked to any mandate'); return; }
   var subject = (document.getElementById('email-subject') || {}).value || '';
   var body = _getEmailBodyHtml();
-  if(!confirm('Template "'+t.name+'" with the current email?')) return;
-  S._mandTemplates[idx] = {name: t.name, subject: subject, body: body};
+  if(!subject.trim() && !body.trim()){ toast('ERR', 'Please enter a subject or message first'); return; }
+  var sel = document.getElementById('email-tpl');
+  var base = sel ? _selectedGlobal(sel.value) : null;
+  var name = prompt('Template ka naam dein:',
+                    (base && base.title) || subject.trim().substring(0, 40) || 'My Template');
+  if(!name) return;
+  S._mandTemplates = S._mandTemplates || [];
+  var entry = {name: name.trim(), subject: subject, body: body};
+  if(base && _tplKey(base)) entry.src_id = _tplKey(base);
+  S._mandTemplates.push(entry);
+  var keep = (base && sel) ? sel.value : null;
   await _saveMandTemplates();
-  toast('OK', 'Template "'+t.name+'" updated!');
+  toast('OK', 'Template "' + name + '" is job ke liye save ho gaya');
+  await loadEmailPanelTemplates();
+  sel = document.getElementById('email-tpl');
+  if(sel){
+    if(keep){ sel.value = keep; }
+    else {
+      var idx = S._mandTemplates.length - 1;
+      sel.value = 'm' + idx;
+    }
+  }
+}
+
+// "Update" — refreshes this job's copy. A Settings template selected here gets
+// a job-specific copy saved/refreshed; the Settings original is never edited
+// from the drawer (edit it in Settings → Email Templates).
+async function updateEmailTemplate(){
+  var sel = document.getElementById('email-tpl');
+  if(!sel || sel.value === ''){ toast('ERR', 'Pehle koi template select karein'); return; }
+  if(!S._emailMandateId){ toast('ERR', 'This candidate is not linked to any mandate'); return; }
+  var subject = (document.getElementById('email-subject') || {}).value || '';
+  var body = _getEmailBodyHtml();
+  var val = String(sel.value), kind = val.charAt(0), i = parseInt(val.slice(1), 10);
+  if(isNaN(i)) return;
+  S._mandTemplates = S._mandTemplates || [];
+  if(kind === 'm'){
+    var t = S._mandTemplates[i];
+    if(!t) return;
+    if(!confirm('"' + (t.name || 'This template') + '" ko current email se update karein?')) return;
+    var rec = {name: t.name, subject: subject, body: body};
+    if(t.src_id) rec.src_id = t.src_id;
+    S._mandTemplates[i] = rec;
+  } else {
+    var g = (S._globalTpls || [])[i];
+    if(!g) return;
+    if(!confirm('"' + (g.title || 'Template') + '" ki job-specific copy is position ke liye save karein?\n(Settings wala original waisa hi rahega.)')) return;
+    var ov = _findJobOverride(g);
+    var copy = {name: g.title || 'Template', subject: subject, body: body, src_id: _tplKey(g)};
+    if(ov) S._mandTemplates[S._mandTemplates.indexOf(ov)] = copy;
+    else S._mandTemplates.push(copy);
+  }
+  var keep = sel.value;
+  await _saveMandTemplates();
+  toast('OK', 'Is job ke liye template save ho gaya');
+  await loadEmailPanelTemplates();
+  sel = document.getElementById('email-tpl');
+  if(sel) sel.value = keep;
 }
 
 async function loadEmailThread(cid){
