@@ -162,6 +162,36 @@ input:focus,textarea:focus{outline:none;border-color:#1D9E75!important}
 #toast{position:fixed;bottom:20px;right:20px;background:#0a2540;color:#fff;padding:10px 16px;border-radius:8px;font-size:12px;z-index:200;display:none;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:320px}
 #toast.show{display:flex}
 .settings-body{padding:18px;overflow-y:auto;flex:1}
+.set-search{width:100%;font-size:12.5px;padding:8px 11px;border:0.5px solid var(--line);border-radius:9px;margin-bottom:12px;background:#fff}
+.set-res{background:#fff;border:0.5px solid var(--line);border-radius:9px;margin:-6px 0 12px;overflow:hidden;display:none}
+.set-res .set-hit{padding:8px 11px;font-size:11.5px;font-weight:600;color:var(--navy);cursor:pointer;border-bottom:0.5px solid #F2F1ED}
+.set-res .set-hit:last-child{border-bottom:none}
+.set-res .set-hit:hover{background:#F5F4F0}
+.set-res .set-hit span{font-weight:400;color:var(--muted);font-size:10.5px;margin-left:6px}
+.set-wrap{display:flex;gap:20px;align-items:flex-start}
+.set-rail{width:228px;flex-shrink:0;position:sticky;top:0}
+.set-main{flex:1;min-width:0;max-width:740px}
+.set-tab{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:none;background:none;padding:8px 10px;border-radius:9px;cursor:pointer;margin-bottom:2px}
+.set-tab:hover{background:#F0EFEA}
+.set-tab.active{background:#E9E7FA}
+.set-tab .st-ic{font-size:14px;width:19px;text-align:center;flex-shrink:0}
+.set-tab .st-l{font-size:12.5px;font-weight:600;color:var(--navy);line-height:1.3}
+.set-tab .st-s{font-size:10px;color:var(--muted);line-height:1.3}
+.set-dot{display:none;width:7px;height:7px;border-radius:50%;background:#C0522B;margin-left:auto;flex-shrink:0}
+.set-sec{scroll-margin-top:12px;border-radius:12px}
+.set-hl{outline:2px solid #8F86E0;outline-offset:5px}
+.set-savebar{position:sticky;bottom:0;margin-top:20px;background:rgba(255,255,255,.97);border-top:0.5px solid var(--line);padding:11px 2px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;z-index:5}
+.set-savebar-txt{font-size:11.5px;color:var(--muted)}
+.set-savebar-note{font-size:10.5px;color:var(--muted);margin-left:auto;max-width:320px;text-align:right}
+.set-h{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 3px}
+.set-hsub{font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5}
+@media(max-width:900px){
+  .set-wrap{flex-direction:column;gap:12px}
+  .set-rail{width:100%;position:static;display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+  .set-rail .set-tab{width:auto;white-space:nowrap;flex-shrink:0;background:#F5F4F0}
+  .set-rail .st-s{display:none}
+  .set-main{max-width:none}
+}
 .var-pill{font-size:10px;padding:2px 7px;border-radius:5px;background:#EEEDFE;color:#534AB7;font-family:monospace;margin:2px}
 /* Dashboard */
 .db-mandate-card{background:#fff;border:0.5px solid #e8e8e8;border-radius:10px;overflow:hidden;cursor:pointer;transition:box-shadow .15s,transform .15s}
@@ -6473,133 +6503,387 @@ function buildWAMsg(c,type){
 
   return msg;
 }
+// ── Settings: tabbed shell ────────────────────────────────────────────────
+// IMPORTANT: every pane is rendered into the DOM at once and only toggled with
+// `display`. saveSettings() reads its fields by id, so a lazily-built pane
+// would make hidden fields read as empty and silently wipe those settings.
+var SETTINGS_TABS = [
+  {id:'account',    ic:'&#128100;', label:'My Account',    sub:'Your profile &amp; plan'},
+  {id:'workspace',  ic:'&#127970;', label:'Workspace',     sub:'Company-wide setup'},
+  {id:'comm',       ic:'&#9993;',   label:'Communication', sub:'Email, WhatsApp, templates'},
+  {id:'automation', ic:'&#9889;',   label:'Automation',    sub:'Follow-ups &amp; tasks'},
+  {id:'public',     ic:'&#127760;', label:'Public',        sub:'Careers page &amp; replies'},
+  {id:'admin',      ic:'&#128272;', label:'Admin',         sub:'Keys, users, billing', adminOnly:true}
+];
+var _setTab = 'account';
+var _setSnap = {};
+
+function _setIsAdmin(){
+  return !!(S.currentUser && (S.currentUser.role === 'admin' || S.currentUser.is_company_admin));
+}
+function _sec(id, tab, title, kw, html){
+  return '<div class="set-sec" id="' + id + '" data-tab="' + tab + '" data-title="' + esc(title)
+       + '" data-kw="' + esc(kw) + '">' + html + '</div>';
+}
+function _setSaveBar(tab, note){
+  return '<div class="set-savebar">'
+    + '<button class="btn btn-g" id="setbar-btn-' + tab + '" onclick="saveSettingsTab(\'' + tab + '\')">&#128190; Save changes</button>'
+    + '<span class="set-savebar-txt" id="setbar-txt-' + tab + '">All changes saved</span>'
+    + (note ? '<span class="set-savebar-note">' + note + '</span>' : '')
+    + '</div>';
+}
+function _setHead(title, sub){
+  return '<div class="set-h">' + title + '</div><div class="set-hsub">' + sub + '</div>';
+}
+// A secret is never sent back to the browser — the API returns the sentinel
+// '__set__' when one is stored. Show the field blank with a placeholder that
+// says so, and let saveSettings() treat blank as "keep the existing value".
+function _secretPh(val, ph){
+  return (val === '__set__') ? 'Saved &mdash; leave blank to keep it' : (ph || '');
+}
+
 function renderSettings(){
-  const body=document.getElementById('settings-body');if(!body)return;
-  _pipeEdit=null;
-  const s=S.settings;
-  body.innerHTML='<div style="max-width:680px">'
-    +'<div id="my-billing-card"></div>'
-    +'<div id="pipeline-editor"></div>'
-    // ── My Profile (every user) ──
-    +'<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head"><span style="font-weight:500">&#128100; My Profile &amp; Email Signature</span></div><div class="card-body">'
-    +'<div style="font-size:11px;color:var(--muted);margin-bottom:10px">These details are used automatically in your email signature and AI-composed emails.</div>'
-    +'<div class="g2">'
-    +'<div class="fg-row"><label>Full Name</label><input class="inp" id="mp-name" value="" placeholder="e.g. your full name"></div>'
-    +'<div class="fg-row"><label>Designation / Title</label><input class="inp" id="mp-designation" value="" placeholder="e.g. Practice Lead | Talent Acquisition"></div>'
-    +'<div class="fg-row"><label>Phone / Mobile</label><input class="inp" id="mp-phone" value="" placeholder="e.g. 90000 00000"></div>'
-    +'<div class="fg-row"><label>Email</label><input class="inp" id="mp-email" value="" placeholder="e.g. nitin@hirelab.com"></div>'
-    +'</div>'
-    +'<button class="btn btn-g" style="margin-top:8px" onclick="saveMyProfile()">Save My Profile</button>'
-    +'<span id="mp-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
-    +'</div></div>'
-    // ── Workspace Type (read-only) + tenant's own wording ──
-    +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Workspace Type</span></div><div class="card-body">'
-    +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
-      +'<span style="font-size:13px;font-weight:700;padding:4px 12px;border-radius:20px;background:#E1F5EE;color:#0F6E56">'
-      +(wsMode()==='corporate'?'Corporate / In-house hiring':'Recruitment Agency')+'</span>'
-      +'<span style="font-size:11px;color:var(--muted)">'
-      +(wsMode()==='corporate'?'You hire for your own company.':'You recruit for client companies.')
-      +' Set by HireLab — contact support to change.</span>'
-    +'</div>'
-    +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Prefer different words? Rename them here and the whole app follows. Leave blank to keep the default.</div>'
-    +'<div class="g2">'
-      +'<div class="fg-row"><label>A job is called</label><input class="inp" id="vc-mandate" value="'+esc(T('mandate',''))+'"></div>'
-      +'<div class="fg-row"><label>Plural</label><input class="inp" id="vc-mandate_plural" value="'+esc(T('mandate_plural',''))+'"></div>'
-      +'<div class="fg-row"><label>Who you hire for</label><input class="inp" id="vc-client" value="'+esc(T('client',''))+'"></div>'
-      +'<div class="fg-row"><label>That field\'s label</label><input class="inp" id="vc-client_field" value="'+esc(T('client_field',''))+'"></div>'
-      +'<div class="fg-row"><label>Sharing profiles is called</label><input class="inp" id="vc-share" value="'+esc(T('share',''))+'"></div>'
-      +'<div class="fg-row"><label>A successful hire is called</label><input class="inp" id="vc-placed" value="'+esc(T('placed',''))+'"></div>'
-    +'</div>'
-    +'<button class="btn btn-g" onclick="saveVocab()">Save wording</button>'
-    +'<span id="vc-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
-    +'</div></div>'
+  const body = document.getElementById('settings-body'); if(!body) return;
+  _pipeEdit = null;
+  const s = S.settings;
+  const admin = _setIsAdmin();
 
-    // ── Departments (Corporate only) ──
-    +(wsMode()==='corporate'
-      ? '<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Departments</span></div><div class="card-body">'
-        +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Departments your '
-        + esc(String(T('mandate_plural','requisitions')).toLowerCase()) + ' belong to. '
-        +'Deactivating one keeps existing '+esc(String(T('mandate_plural','requisitions')).toLowerCase())
-        +' intact \u2014 it just stops appearing in the picker.</div>'
-        +'<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">'
-          +'<input class="inp" id="dept-new-name" placeholder="Department name" style="flex:1;min-width:160px">'
-          +'<input class="inp" id="dept-new-code" placeholder="Code (optional)" style="width:130px">'
-          +'<button class="btn btn-g" onclick="createDepartment()">Add</button>'
-        +'</div>'
-        +'<div id="dept-list"><div style="font-size:12px;color:var(--muted)">Loading\u2026</div></div>'
-        +'</div></div>'
-      : '')
+  var rail = SETTINGS_TABS.filter(function(t){ return !t.adminOnly || admin; }).map(function(t){
+    return '<button class="set-tab" id="settab-' + t.id + '" onclick="setTab(\'' + t.id + '\')">'
+      + '<span class="st-ic">' + t.ic + '</span>'
+      + '<span style="min-width:0"><span class="st-l" style="display:block">' + t.label + '</span>'
+      + '<span class="st-s" style="display:block">' + t.sub + '</span></span>'
+      + '<span class="set-dot" id="settab-dot-' + t.id + '"></span></button>';
+  }).join('');
 
-    // ── Public careers page ──
-    +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Careers Page</span></div><div class="card-body">'
-    +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">A public page listing your open '
-    + esc(String(T('mandate_plural','positions')).toLowerCase())
-    +'. Only active, approved ones appear \u2014 nothing else about them is exposed.</div>'
-    +'<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:8px;cursor:pointer">'
-      +'<input type="checkbox" id="s-careers_enabled"'+((s.careers_enabled==='1')?' checked':'')+'> Publish my careers page</label>'
-    +'<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:10px;cursor:pointer">'
-      +'<input type="checkbox" id="s-careers_show_ctc"'+((s.careers_show_ctc==='1')?' checked':'')+'> Show salary range on it</label>'
-    +'<div class="fg-row"><label>Intro line (optional)</label>'
-      +'<input class="inp" id="s-careers_intro" value="'+esc(s.careers_intro||'')+'" placeholder="e.g. Build the future of solar with us."></div>'
-    +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Your link:</div>'
-    +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
-      +'<code id="careers-url" style="font-size:11.5px;background:#F1F0EC;padding:5px 9px;border-radius:6px;word-break:break-all">'+esc(careersUrl())+'</code>'
-      +'<button class="btn btn-o" style="font-size:11px" onclick="copyCareersUrl()">Copy</button>'
-      +'<a class="btn btn-o" style="font-size:11px;text-decoration:none" href="'+esc(careersUrl())+'" target="_blank">Preview</a>'
-    +'</div>'
-    +'<div style="font-size:11px;color:var(--muted);margin-top:7px">Save settings below to apply changes.</div>'
-    +'</div></div>'
+  body.innerHTML =
+      '<input class="set-search" id="set-search" placeholder="&#128269;  Search settings — try gmail, careers, follow-up, GST" oninput="setSearch(this.value)">'
+    + '<div class="set-res" id="set-search-res"></div>'
+    + '<div class="set-wrap"><div class="set-rail">' + rail + '</div><div class="set-main">'
 
-    // ── Applicant replies ──
-    +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Applicant Replies</span></div><div class="card-body">'
-    +'<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Use <b>{name}</b>, <b>{role}</b> and <b>{company}</b> \u2014 they are filled in automatically. Leave blank to use the built-in wording.</div>'
-    +'<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:10px;cursor:pointer">'
-      +'<input type="checkbox" id="s-ack_enabled"'+((s.ack_enabled==='1')?' checked':'')+'> Auto-acknowledge every application</label>'
-    +'<div class="fg-row"><label>Acknowledgement email</label>'
-      +'<textarea class="ta" id="s-ack_template" rows="4" placeholder="Leave blank for the default wording">'+esc(s.ack_template||'')+'</textarea></div>'
-    +'<div class="fg-row"><label>Regret email</label>'
-      +'<textarea class="ta" id="s-regret_template" rows="5" placeholder="Leave blank for the default wording">'+esc(s.regret_template||'')+'</textarea></div>'
-    +'<div style="font-size:11px;color:var(--muted)">Regret emails are sent one at a time from the Submissions list \u2014 never in bulk without you looking at the person first.</div>'
-    +'</div></div>'
-    +'<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;box-shadow:var(--shadow-sm)">'
-    +'<div><div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:2px">Export &amp; Import Data</div><div style="color:var(--muted);font-size:11.5px">Export before updates — import after</div></div>'
-    +'<div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-g" onclick="exportAll()">&#8595; Export JSON</button><label class="btn btn-o" style="cursor:pointer">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="importAll(this)"></label></div></div>'
-    +'<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Recruiter Details</span></div><div class="card-body">'
-    +'<div class="g2"><div class="fg-row"><label>Recruiter Name</label><input class="inp" id="s-name" value="'+esc(s.recruiter_name||'')+'"></div>'
-    +'<div class="fg-row"><label>Company Name</label><input class="inp" id="s-company" value="'+esc(s.company_name||'')+'"></div></div>'
-    +'<div class="fg-row"><label>Claude API Key</label><input class="inp" id="s-claude" type="password" value="'+esc(s.claude_api_key||'')+'" placeholder="sk-ant-..."></div>'
-    +'<div class="fg-row"><label>DeepSeek API Key (for Naukri quick-parse &amp; bulk add) <a href="https://platform.deepseek.com/api_keys" target="_blank" style="color:#1D9E75;font-size:10px">Get key &#8599;</a></label>'
-    +'<input class="inp" id="s-deepseek" type="password" value="'+esc(s.deepseek_api_key||'')+'" placeholder="sk-..."></div>'
-    +'<div class="fg-row"><label>Groq API Key (for call recording transcription) <a href="https://console.groq.com/keys" target="_blank" style="color:#1D9E75;font-size:10px">Get key &#8599;</a></label>'
-    +'<div style="display:flex;gap:8px"><input class="inp" id="s-groq" type="password" value="'+esc(s.groq_api_key||'')+'" placeholder="gsk_..." style="flex:1">'
-    +'<span style="font-size:10px;color:#1D9E75;align-self:center;white-space:nowrap">Free via Groq</span></div></div>'
-    +'<div class="fg-row"><label>Gemini API Key (for AI semantic search) <a href=\'https://aistudio.google.com/apikey\' target=\'_blank\' style=\'color:#1D9E75;font-size:10px\'>Get key &#8599;</a></label>'
-    +'<div style="display:flex;gap:8px"><input class="inp" id="s-gemini" type="password" value="'+esc(s.gemini_api_key||'')+'" placeholder="AIza..." style="flex:1">'
-    +'<span style="font-size:10px;color:#1D9E75;align-self:center;white-space:nowrap">Free tier</span></div></div>'
-    +'</div></div>'
-    +'<div style="font-size:11px;color:#666;margin-bottom:10px;padding:9px 12px;background:#EEEDFE;border-radius:6px;border:0.5px solid #AFA9EC">Template variables: <span class="var-pill">{Name}</span> <span class="var-pill">{Position}</span> <span class="var-pill">{Location}</span> <span class="var-pill">{Company}</span> <span class="var-pill">{RecruiterName}</span></div>'
-    +[{n:'msg1',label:'First Outreach',color:'#1D9E75',timing:null,key:'template_msg1'},
-      {n:'fu1',label:'Follow Up 1',color:'#378ADD',timing:'fu1_hours',from:'Message 1',key:'template_fu1'},
-      {n:'fu2',label:'Follow Up 2',color:'#534AB7',timing:'fu2_hours',from:'Follow Up 1',key:'template_fu2'}].map(t=>
-      '<div style="background:#fff;border:0.5px solid #e8e8e8;border-radius:8px;overflow:hidden;margin-bottom:10px">'
-      +'<div style="padding:9px 14px;background:#f9f9f9;border-bottom:0.5px solid #e8e8e8;border-top:2px solid '+t.color+';display:flex;align-items:center;justify-content:space-between">'
-      +'<div style="font-size:12px;font-weight:500">'+t.label+'</div>'
-      +(t.timing?'<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#666">Send after <input class="inp" id="s-'+t.timing+'" type="number" value="'+(s[t.timing]||8)+'" style="width:55px;text-align:center"> hrs after '+t.from+'</div>':'<span style="font-size:10px;color:#888">Immediate</span>')+'</div>'
-      +'<div style="padding:10px 14px"><textarea class="ta" id="s-'+t.key+'" rows="4">'+esc(s[t.key]||'')+'</textarea></div></div>'
-    ).join('')
-    + emailConfigHTML(s)
-    + waConfigHTML(s)
-    + followUpConfigHTML(s)
-    +'<button class="btn btn-g" onclick="saveSettings()">Save All Settings</button>'
-    +'<span id="s-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
-    + (S.currentUser && S.currentUser.role==='admin' ? billingConfigHTML(s) : '')
-    + (S.currentUser && S.currentUser.role==='admin' ? adminUserMgmtHTML() : '')
-    +'</div>';
-  if (S.currentUser && S.currentUser.role==='admin') loadUsersList();
+    // ── ① My Account ──────────────────────────────────────────────────────
+    + '<div class="set-pane" id="setpane-account" style="display:none">'
+      + _setHead('My Account', 'Just about you. Nothing here affects your teammates.')
+      + _sec('sec-plan', 'account', 'My plan &amp; usage', 'billing subscription plan usage invoice',
+             '<div id="my-billing-card"></div>')
+      + _sec('sec-profile', 'account', 'My Profile &amp; Email Signature', 'name designation phone email signature',
+          '<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head"><span style="font-weight:500">&#128100; My Profile &amp; Email Signature</span></div><div class="card-body">'
+          + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">These details are used automatically in your email signature and AI-composed emails.</div>'
+          + '<div class="g2">'
+          + '<div class="fg-row"><label>Full Name</label><input class="inp" id="mp-name" value="" placeholder="e.g. your full name"></div>'
+          + '<div class="fg-row"><label>Designation / Title</label><input class="inp" id="mp-designation" value="" placeholder="e.g. Practice Lead | Talent Acquisition"></div>'
+          + '<div class="fg-row"><label>Phone / Mobile</label><input class="inp" id="mp-phone" value="" placeholder="e.g. 90000 00000"></div>'
+          + '<div class="fg-row"><label>Email</label><input class="inp" id="mp-email" value="" placeholder="e.g. you@company.com"></div>'
+          + '</div><span id="mp-save-status" style="font-size:11px;color:#888"></span>'
+          + '</div></div>')
+      + _setSaveBar('account')
+    + '</div>'
+
+    // ── ② Workspace ───────────────────────────────────────────────────────
+    + '<div class="set-pane" id="setpane-workspace" style="display:none">'
+      + _setHead('Workspace', 'Company-wide setup. Changes here apply to everyone in your workspace.')
+      + _sec('sec-identity', 'workspace', 'Company Identity', 'recruiter name company name branding',
+          '<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Company Identity</span></div><div class="card-body">'
+          + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Used in email signatures, invoices and the <code>{recruiter}</code> / <code>{company}</code> template variables.</div>'
+          + '<div class="g2"><div class="fg-row"><label>Recruiter Name</label><input class="inp" id="s-name" value="' + esc(s.recruiter_name||'') + '"></div>'
+          + '<div class="fg-row"><label>Company Name</label><input class="inp" id="s-company" value="' + esc(s.company_name||'') + '"></div></div>'
+          + '</div></div>')
+      + _sec('sec-workspace-type', 'workspace', 'Workspace Type &amp; Wording', 'agency corporate mandate client vocabulary rename wording',
+          '<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Workspace Type</span></div><div class="card-body">'
+          + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+          + '<span style="font-size:13px;font-weight:700;padding:4px 12px;border-radius:20px;background:#E1F5EE;color:#0F6E56">'
+          + (wsMode()==='corporate'?'Corporate / In-house hiring':'Recruitment Agency') + '</span>'
+          + '<span style="font-size:11px;color:var(--muted)">'
+          + (wsMode()==='corporate'?'You hire for your own company.':'You recruit for client companies.')
+          + ' Set by HireLab &mdash; contact support to change.</span></div>'
+          + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Prefer different words? Rename them here and the whole app follows. Leave blank to keep the default.</div>'
+          + '<div class="g2">'
+          + '<div class="fg-row"><label>A job is called</label><input class="inp" id="vc-mandate" value="' + esc(T('mandate','')) + '"></div>'
+          + '<div class="fg-row"><label>Plural</label><input class="inp" id="vc-mandate_plural" value="' + esc(T('mandate_plural','')) + '"></div>'
+          + '<div class="fg-row"><label>Who you hire for</label><input class="inp" id="vc-client" value="' + esc(T('client','')) + '"></div>'
+          + '<div class="fg-row"><label>That field&#39;s label</label><input class="inp" id="vc-client_field" value="' + esc(T('client_field','')) + '"></div>'
+          + '<div class="fg-row"><label>Sharing profiles is called</label><input class="inp" id="vc-share" value="' + esc(T('share','')) + '"></div>'
+          + '<div class="fg-row"><label>A successful hire is called</label><input class="inp" id="vc-placed" value="' + esc(T('placed','')) + '"></div>'
+          + '</div><span id="vc-status" style="font-size:11px;color:#888"></span>'
+          + '</div></div>')
+      + _sec('sec-pipeline', 'workspace', 'Pipeline Stages', 'stages kanban placed joined colour order',
+             '<div id="pipeline-editor"></div>')
+      + (wsMode()==='corporate'
+        ? _sec('sec-depts', 'workspace', 'Departments', 'department team division',
+            '<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Departments</span></div><div class="card-body">'
+            + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Departments your '
+            + esc(String(T('mandate_plural','requisitions')).toLowerCase()) + ' belong to. '
+            + 'Deactivating one keeps existing ' + esc(String(T('mandate_plural','requisitions')).toLowerCase())
+            + ' intact &mdash; it just stops appearing in the picker.</div>'
+            + '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">'
+            + '<input class="inp" id="dept-new-name" placeholder="Department name" style="flex:1;min-width:160px">'
+            + '<input class="inp" id="dept-new-code" placeholder="Code (optional)" style="width:130px">'
+            + '<button class="btn btn-g" onclick="createDepartment()">Add</button></div>'
+            + '<div id="dept-list"><div style="font-size:12px;color:var(--muted)">Loading&hellip;</div></div>'
+            + '</div></div>')
+        : '')
+      + _sec('sec-data', 'workspace', 'Export &amp; Import Data', 'backup export import json restore data',
+          '<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;box-shadow:var(--shadow-sm)">'
+          + '<div><div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:2px">Export &amp; Import Data</div>'
+          + '<div style="color:var(--muted);font-size:11.5px">Export before updates &mdash; import after</div></div>'
+          + '<div style="margin-left:auto;display:flex;gap:8px"><button class="btn btn-g" onclick="exportAll()">&#8595; Export JSON</button>'
+          + '<label class="btn btn-o" style="cursor:pointer">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="importAll(this)"></label></div></div>')
+      + _setSaveBar('workspace', 'Saves company identity, wording and pipeline stages together.')
+    + '</div>'
+
+    // ── ③ Communication ───────────────────────────────────────────────────
+    + '<div class="set-pane" id="setpane-comm" style="display:none">'
+      + _setHead('Communication', 'Everything the candidate or client actually receives &mdash; in one place.')
+      + _sec('sec-email', 'comm', 'Email Configuration &amp; Templates', 'gmail smtp app password signature cc share template',
+             emailConfigHTML(s))
+      + _sec('sec-outreach', 'comm', 'WhatsApp Outreach Sequence', 'outreach first message follow up 1 2 timing hours',
+             outreachSeqHTML(s))
+      + _sec('sec-wa', 'comm', 'WhatsApp Templates', 'whatsapp library listener reply capture', waConfigHTML(s))
+      + _sec('sec-interview', 'comm', 'Interview Message Template', 'interview invite round datetime mode',
+             interviewTemplateHTML(s))
+      + _sec('sec-replies', 'comm', 'Applicant Replies', 'acknowledgement regret rejection auto reply applicant',
+             applicantRepliesHTML(s))
+      + _setSaveBar('comm', 'WhatsApp library and email templates have their own Save button inside the list.')
+    + '</div>'
+
+    // ── ④ Automation ──────────────────────────────────────────────────────
+    + '<div class="set-pane" id="setpane-automation" style="display:none">'
+      + _setHead('Automation', 'When the app should nudge you, so nothing slips through.')
+      + _sec('sec-followup', 'automation', 'Follow-up &amp; Task Settings', 'stale days promise hours notifications overdue analytics',
+             followUpConfigHTML(s))
+      + _setSaveBar('automation')
+    + '</div>'
+
+    // ── ⑤ Public ──────────────────────────────────────────────────────────
+    + '<div class="set-pane" id="setpane-public" style="display:none">'
+      + _setHead('Public', 'What people outside your workspace can see.')
+      + _sec('sec-careers', 'public', 'Careers Page', 'careers public jobs page salary intro link',
+             careersHTML(s))
+      + _setSaveBar('public')
+    + '</div>'
+
+    // ── ⑥ Admin ───────────────────────────────────────────────────────────
+    // Rendered for everyone (the rail hides it from non-admins) so the API-key
+    // inputs stay in the DOM and a save from another tab can never blank them.
+    + '<div class="set-pane" id="setpane-admin" style="display:none">'
+      + _setHead('Admin', 'Keys, users and platform billing.')
+      + _sec('sec-keys', 'admin', 'AI API Keys', 'claude deepseek groq gemini api key ai',
+             apiKeysHTML(s))
+      + (admin ? _sec('sec-billing', 'admin', 'Billing Configuration', 'price gst trial invoice markup usd',
+                      billingConfigHTML(s)) : '')
+      + (admin ? _sec('sec-users', 'admin', 'User Management', 'users recruiters add remove role',
+                      adminUserMgmtHTML()) : '')
+      + _setSaveBar('admin')
+    + '</div>'
+
+    + '<span id="s-save-status" style="font-size:11px;color:#888"></span>'
+    + '</div></div>';
+
+  var wrap = body.querySelector('.set-wrap');
+  if(wrap && !wrap._setBound){
+    wrap._setBound = true;
+    var onEdit = function(ev){
+      var pane = ev.target.closest ? ev.target.closest('.set-pane') : null;
+      if(!pane) return;
+      _setDirtyRefresh(pane.id.replace('setpane-', ''));
+    };
+    wrap.addEventListener('input', onEdit);
+    wrap.addEventListener('change', onEdit);
+  }
+
+  SETTINGS_TABS.forEach(function(t){ _setSnapshot(t.id); });
+  setTab(_setTab);
+
+  if(admin) loadUsersList();
   loadMyProfile();
   renderWaSettings();
   loadEmailTemplates();
-  if (wsMode()==='corporate') loadDepartments();
+  if(wsMode()==='corporate') loadDepartments();
+}
+
+function setTab(id){
+  if(!document.getElementById('setpane-' + id)) id = 'account';
+  _setTab = id;
+  SETTINGS_TABS.forEach(function(t){
+    var p = document.getElementById('setpane-' + t.id);
+    if(p) p.style.display = (t.id === id) ? 'block' : 'none';
+    var b = document.getElementById('settab-' + t.id);
+    if(b) b.className = 'set-tab' + (t.id === id ? ' active' : '');
+  });
+  var sb = document.getElementById('settings-body');
+  if(sb) sb.scrollTop = 0;
+}
+
+// ── Search ────────────────────────────────────────────────────────────────
+function setSearch(q){
+  var box = document.getElementById('set-search-res'); if(!box) return;
+  q = (q || '').trim().toLowerCase();
+  if(q.length < 2){ box.style.display = 'none'; box.innerHTML = ''; return; }
+  var labels = {}; SETTINGS_TABS.forEach(function(t){ labels[t.id] = t.label; });
+  var hits = [];
+  Array.prototype.forEach.call(document.querySelectorAll('.set-sec'), function(sec){
+    var title = sec.getAttribute('data-title') || '';
+    var kw    = sec.getAttribute('data-kw') || '';
+    if((title + ' ' + kw).toLowerCase().indexOf(q) >= 0){
+      hits.push({id: sec.id, title: title, tab: sec.getAttribute('data-tab')});
+    }
+  });
+  if(!hits.length){
+    box.innerHTML = '<div class="set-hit" style="cursor:default;color:var(--muted);font-weight:400">Nothing matched &ldquo;' + esc(q) + '&rdquo;</div>';
+  } else {
+    box.innerHTML = hits.slice(0, 8).map(function(h){
+      return '<div class="set-hit" onclick="setJump(\'' + h.id + '\',\'' + h.tab + '\')">' + h.title
+           + '<span>' + (labels[h.tab] || h.tab) + '</span></div>';
+    }).join('');
+  }
+  box.style.display = 'block';
+}
+function setJump(secId, tab){
+  setTab(tab);
+  var box = document.getElementById('set-search-res'); if(box) box.style.display = 'none';
+  var q = document.getElementById('set-search'); if(q) q.value = '';
+  var el = document.getElementById(secId); if(!el) return;
+  setTimeout(function(){
+    if(el.scrollIntoView) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+    el.classList.add('set-hl');
+    setTimeout(function(){ el.classList.remove('set-hl'); }, 1800);
+  }, 40);
+}
+
+// ── Unsaved-changes tracking ──────────────────────────────────────────────
+function _setPaneFields(tab){
+  var p = document.getElementById('setpane-' + tab); if(!p) return [];
+  return Array.prototype.slice.call(p.querySelectorAll('input,textarea,select'))
+    .filter(function(el){ return el.id && el.type !== 'file'; });
+}
+function _setVal(el){ return (el.type === 'checkbox') ? (el.checked ? '1' : '0') : (el.value || ''); }
+function _setSnapshot(tab){
+  var m = {}; _setPaneFields(tab).forEach(function(el){ m[el.id] = _setVal(el); });
+  _setSnap[tab] = m;
+  _setDirtyRefresh(tab);
+}
+function _setDirtyCount(tab){
+  var m = _setSnap[tab] || {}, n = 0;
+  _setPaneFields(tab).forEach(function(el){
+    if(Object.prototype.hasOwnProperty.call(m, el.id) && m[el.id] !== _setVal(el)) n++;
+  });
+  return n;
+}
+function _setDirtyRefresh(tab){
+  var txt = document.getElementById('setbar-txt-' + tab);
+  var n = _setDirtyCount(tab);
+  if(txt) txt.innerHTML = n
+    ? '<b style="color:#C0522B">' + n + ' unsaved change' + (n > 1 ? 's' : '') + '</b>'
+    : 'All changes saved';
+  var dot = document.getElementById('settab-dot-' + tab);
+  if(dot) dot.style.display = n ? 'inline-block' : 'none';
+}
+
+// One Save per tab. Each handler calls the same save functions that already
+// existed — the bar is a coordinator, not a new save path.
+async function saveSettingsTab(tab){
+  var btn = document.getElementById('setbar-btn-' + tab);
+  if(btn){ btn.disabled = true; btn.innerHTML = 'Saving&hellip;'; }
+  try{
+    if(tab === 'account'){
+      await saveMyProfile();
+    } else if(tab === 'workspace'){
+      await saveVocab();
+      if(_setIsAdmin() && Array.isArray(_pipeEdit) && _pipeEdit.length) await savePipelineStages();
+      await saveSettings();
+    } else if(tab === 'admin'){
+      await saveSettings();
+      if(_setIsAdmin() && document.getElementById('b-price')) await saveBillingConfig();
+    } else {
+      await saveSettings();
+    }
+  } finally {
+    if(btn){ btn.disabled = false; btn.innerHTML = '&#128190; Save changes'; }
+    _setSnapshot(tab);
+  }
+}
+
+// ── Section builders split out of the old single-column page ──────────────
+function outreachSeqHTML(s){
+  return '<div style="margin:18px 0;border-top:2px solid #1D9E75;padding-top:16px">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:15px">&#128241;</span>'
+    + '<div style="font-size:15px;font-weight:700;color:var(--navy)">WhatsApp Outreach Sequence</div></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5">The three messages sent from the candidate list, and how long to wait between them.</div>'
+    + '<div style="font-size:11px;color:#666;margin-bottom:10px;padding:9px 12px;background:#EEEDFE;border-radius:6px;border:0.5px solid #AFA9EC">'
+    + '<b>Variables for these three messages:</b> <span class="var-pill">{Name}</span> <span class="var-pill">{Position}</span> <span class="var-pill">{Location}</span> <span class="var-pill">{Company}</span> <span class="var-pill">{RecruiterName}</span> <span class="var-pill">{CandidateCompany}</span>'
+    + '<div style="margin-top:6px;color:#6B4FA0">Email templates use a different, lowercase set (<code>{name}</code> <code>{role}</code> <code>{client}</code>). They are not interchangeable &mdash; <code>{Company}</code> here means the <i>client</i> company, while <code>{company}</code> in an email means <i>your</i> company.</div>'
+    + '</div>'
+    + [{n:'msg1',label:'First Outreach',color:'#1D9E75',timing:null,key:'template_msg1'},
+       {n:'fu1',label:'Follow Up 1',color:'#378ADD',timing:'fu1_hours',from:'Message 1',key:'template_fu1'},
+       {n:'fu2',label:'Follow Up 2',color:'#534AB7',timing:'fu2_hours',from:'Follow Up 1',key:'template_fu2'}].map(function(t){
+        return '<div style="background:#fff;border:0.5px solid #e8e8e8;border-radius:8px;overflow:hidden;margin-bottom:10px">'
+        + '<div style="padding:9px 14px;background:#f9f9f9;border-bottom:0.5px solid #e8e8e8;border-top:2px solid ' + t.color + ';display:flex;align-items:center;justify-content:space-between">'
+        + '<div style="font-size:12px;font-weight:500">' + t.label + '</div>'
+        + (t.timing ? '<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#666">Send after <input class="inp" id="s-' + t.timing + '" type="number" value="' + (s[t.timing]||8) + '" style="width:55px;text-align:center"> hrs after ' + t.from + '</div>' : '<span style="font-size:10px;color:#888">Immediate</span>') + '</div>'
+        + '<div style="padding:10px 14px"><textarea class="ta" id="s-' + t.key + '" rows="4">' + esc(s[t.key]||'') + '</textarea></div></div>';
+      }).join('')
+    + '</div>';
+}
+
+function interviewTemplateHTML(s){
+  return '<div style="margin:18px 0;border-top:2px solid #185FA5;padding-top:16px">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:15px">&#128197;</span>'
+    + '<div style="font-size:15px;font-weight:700;color:var(--navy)">Interview Message Template</div></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5">Sent when you schedule an interview round for a candidate.</div>'
+    + '<div class="card"><div class="card-body">'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;line-height:1.5">Placeholders: <code>{name}</code> <code>{role}</code> <code>{client}</code> <code>{round}</code> <code>{datetime}</code> <code>{mode}</code> <code>{location_line}</code> <code>{interviewer}</code> <code>{recruiter}</code></div>'
+    + '<textarea class="ta" id="s-interview_template" rows="9" style="font-size:12px;line-height:1.5">' + esc(s.interview_template||'') + '</textarea>'
+    + '</div></div></div>';
+}
+
+function applicantRepliesHTML(s){
+  return '<div style="margin:18px 0;border-top:2px solid #C0522B;padding-top:16px">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:15px">&#128233;</span>'
+    + '<div style="font-size:15px;font-weight:700;color:var(--navy)">Applicant Replies</div></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5">What someone gets back after applying through your careers page.</div>'
+    + '<div class="card"><div class="card-body">'
+    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Use <b>{name}</b>, <b>{role}</b> and <b>{company}</b> &mdash; they are filled in automatically. Leave blank to use the built-in wording.</div>'
+    + '<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:10px;cursor:pointer">'
+    + '<input type="checkbox" id="s-ack_enabled"' + ((s.ack_enabled==='1')?' checked':'') + '> Auto-acknowledge every application</label>'
+    + '<div class="fg-row"><label>Acknowledgement email</label>'
+    + '<textarea class="ta" id="s-ack_template" rows="4" placeholder="Leave blank for the default wording">' + esc(s.ack_template||'') + '</textarea></div>'
+    + '<div class="fg-row"><label>Regret email</label>'
+    + '<textarea class="ta" id="s-regret_template" rows="5" placeholder="Leave blank for the default wording">' + esc(s.regret_template||'') + '</textarea></div>'
+    + '<div style="font-size:11px;color:var(--muted)">Regret emails are sent one at a time from the Submissions list &mdash; never in bulk without you looking at the person first.</div>'
+    + '</div></div></div>';
+}
+
+function careersHTML(s){
+  return '<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">Careers Page</span></div><div class="card-body">'
+    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">A public page listing your open '
+    + esc(String(T('mandate_plural','positions')).toLowerCase())
+    + '. Only active, approved ones appear &mdash; nothing else about them is exposed.</div>'
+    + '<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:8px;cursor:pointer">'
+    + '<input type="checkbox" id="s-careers_enabled"' + ((s.careers_enabled==='1')?' checked':'') + '> Publish my careers page</label>'
+    + '<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:10px;cursor:pointer">'
+    + '<input type="checkbox" id="s-careers_show_ctc"' + ((s.careers_show_ctc==='1')?' checked':'') + '> Show salary range on it</label>'
+    + '<div class="fg-row"><label>Intro line (optional)</label>'
+    + '<input class="inp" id="s-careers_intro" value="' + esc(s.careers_intro||'') + '" placeholder="e.g. Build the future of solar with us."></div>'
+    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Your link:</div>'
+    + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+    + '<code id="careers-url" style="font-size:11.5px;background:#F1F0EC;padding:5px 9px;border-radius:6px;word-break:break-all">' + esc(careersUrl()) + '</code>'
+    + '<button class="btn btn-o" style="font-size:11px" onclick="copyCareersUrl()">Copy</button>'
+    + '<a class="btn btn-o" style="font-size:11px;text-decoration:none" href="' + esc(careersUrl()) + '" target="_blank">Preview</a>'
+    + '</div></div></div>';
+}
+
+function apiKeysHTML(s){
+  return '<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">&#129302; AI API Keys</span></div><div class="card-body">'
+    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Stored keys are never sent back to the browser, so these boxes always look empty. '
+    + '<b>Leave a box blank to keep the key that is already saved</b> &mdash; type a new one only when you want to replace it.</div>'
+    + '<div class="fg-row"><label>Claude API Key</label><input class="inp" id="s-claude" type="password" value="" placeholder="' + _secretPh(s.claude_api_key, 'sk-ant-...') + '"></div>'
+    + '<div class="fg-row"><label>DeepSeek API Key (Naukri quick-parse &amp; bulk add) <a href="https://platform.deepseek.com/api_keys" target="_blank" style="color:#1D9E75;font-size:10px">Get key &#8599;</a></label>'
+    + '<input class="inp" id="s-deepseek" type="password" value="" placeholder="' + _secretPh(s.deepseek_api_key, 'sk-...') + '"></div>'
+    + '<div class="fg-row"><label>Groq API Key (call recording transcription) <a href="https://console.groq.com/keys" target="_blank" style="color:#1D9E75;font-size:10px">Get key &#8599;</a></label>'
+    + '<input class="inp" id="s-groq" type="password" value="" placeholder="' + _secretPh(s.groq_api_key, 'gsk_...') + '"></div>'
+    + '<div class="fg-row"><label>Gemini API Key (AI semantic search) <a href="https://aistudio.google.com/apikey" target="_blank" style="color:#1D9E75;font-size:10px">Get key &#8599;</a></label>'
+    + '<input class="inp" id="s-gemini" type="password" value="" placeholder="' + _secretPh(s.gemini_api_key, 'AIza...') + '"></div>'
+    + '</div></div>';
 }
 
 async function loadMyProfile(){
@@ -6611,6 +6895,7 @@ async function loadMyProfile(){
   e('mp-phone', p.profile_phone);
   e('mp-designation', p.profile_designation);
   e('mp-email', p.profile_email);
+  if(typeof _setSnapshot === 'function') _setSnapshot('account');
   loadMyBillingCard();
   renderPipelineEditor();
 }
@@ -6645,8 +6930,7 @@ function renderPipelineEditor(){
     + rows
     + '<button class="btn btn-o" style="font-size:11px;margin:4px 0 12px" onclick="_pipeEdit.push({id:\'New Stage\',color:\'#6B675E\'});renderPipelineEditor()">&#43; Add stage</button>'
     + '<div style="border-top:0.5px dashed var(--line);padding-top:10px">' + fixed + '</div>'
-    + '<button class="btn btn-g" style="margin-top:10px" onclick="savePipelineStages()">Save pipeline</button>'
-    + '<span id="pipe-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
+    + '<span id="pipe-save-status" style="font-size:11px;color:#888"></span>'
     + '</div></div>';
 }
 function _pipeMove(i, dir){
@@ -6919,11 +7203,6 @@ function followUpConfigHTML(s){
     + (notifOn ? '\u2705 Notifications On' : '\ud83d\udd14 Enable Browser Notifications') + '</button>'
     + '<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Get notified in this browser when a follow-up becomes overdue (works while the app tab is open).</div>'
     + '</div></div>'
-    + '<div class="card" style="margin-top:12px"><div class="card-body">'
-    + '<div style="font-size:12.5px;font-weight:600;color:var(--navy);margin-bottom:4px">&#128197; Interview Message Template</div>'
-    + '<div style="font-size:10.5px;color:var(--muted);margin-bottom:8px;line-height:1.5">Placeholders: <code>{name}</code> <code>{role}</code> <code>{client}</code> <code>{round}</code> <code>{datetime}</code> <code>{mode}</code> <code>{location_line}</code> <code>{interviewer}</code> <code>{recruiter}</code></div>'
-    + '<textarea class="ta" id="s-interview_template" rows="9" style="font-size:12px;line-height:1.5">' + esc(s.interview_template||'') + '</textarea>'
-    + '</div></div>'
     + '</div>';
 }
 
@@ -7068,7 +7347,8 @@ function emailConfigHTML(s){
     + '</div>'
     + '<div class="card"><div class="card-body">'
     + '<div class="fg-row"><label>Gmail Address</label><input class="inp" id="s-smtp_email" value="' + esc(s.smtp_email||'') + '" placeholder="you@gmail.com"></div>'
-    + '<div class="fg-row"><label>App Password</label><input class="inp" id="s-smtp_app_password" type="password" value="' + esc(s.smtp_app_password||'') + '" placeholder="xxxx xxxx xxxx xxxx"></div>'
+    + '<div class="fg-row"><label>App Password</label><input class="inp" id="s-smtp_app_password" type="password" value="" placeholder="' + _secretPh(s.smtp_app_password, 'xxxx xxxx xxxx xxxx') + '">'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">' + (s.smtp_app_password === '__set__' ? 'A password is already saved. Leave this blank to keep it.' : 'Never shown again once saved.') + '</div></div>'
     + '<div class="fg-row"><label>Display Name (optional)</label><input class="inp" id="s-smtp_display_name" value="' + esc(s.smtp_display_name||'') + '" placeholder="e.g. HireLab Talent"></div>'
     + '<div style="border-top:1px dashed #ddd;margin:14px 0 10px;padding-top:12px"><div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:2px">&#9993; '+esc(T('share','Share to Client'))+'</div>'
     + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Used when you share candidate profiles to a client from the Pipeline.</div>'
@@ -7107,7 +7387,7 @@ function billingConfigHTML(s){
     + '</div>'
     + row('b-legal','Business legal name (invoice)',s.billing_legal_name||'')
     + row('b-addr','Business address (invoice)',s.billing_address||'')
-    + '<button class="btn btn-g" style="margin-top:8px" onclick="saveBillingConfig()">Save Billing Config</button>'
+
     + '<span id="b-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
     + '</div></div></div>';
 }
@@ -7305,9 +7585,56 @@ function copyCareersUrl(){
 }
 
 async function saveSettings(){
-  const data={recruiter_name:v('s-name'),company_name:v('s-company'),claude_api_key:v('s-claude'),deepseek_api_key:v('s-deepseek'),groq_api_key:v('s-groq'),gemini_api_key:v('s-gemini'),fu1_hours:v('s-fu1_hours')||'8',fu2_hours:v('s-fu2_hours')||'24',template_msg1:v('s-template_msg1'),template_fu1:v('s-template_fu1'),template_fu2:v('s-template_fu2'),smtp_email:v('s-smtp_email'),smtp_app_password:v('s-smtp_app_password'),smtp_display_name:v('s-smtp_display_name'),submission_cc_emails:v('s-submission_cc_emails'),company_website:v('s-company_website'),submission_signature:v('s-submission_signature'),stale_days:v('s-stale_days')||'7',promise_hours:v('s-promise_hours')||'24',analytics_stale_days:v('s-analytics_stale_days')||'7',interview_template:v('s-interview_template'),careers_enabled:(document.getElementById('s-careers_enabled')||{}).checked?'1':'0',careers_show_ctc:(document.getElementById('s-careers_show_ctc')||{}).checked?'1':'0',careers_intro:v('s-careers_intro'),ack_enabled:(document.getElementById('s-ack_enabled')||{}).checked?'1':'0',ack_template:v('s-ack_template'),regret_template:v('s-regret_template')};
-  const r=await req('POST','/settings',data);
-  if(r.ok){S.settings=data;applyPipelineStages();toast('✅','Settings saved');const ss=document.getElementById('s-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}else toast('&#9888;&#65039;',r.error||'Save failed');
+  // Built field-by-field on purpose:
+  //  * a field that is not in the DOM is SKIPPED, never sent as an empty string
+  //    (that used to blank out settings whose section was not rendered);
+  //  * secrets come back from the API as the sentinel '__set__', never as the
+  //    real value — writing that back would overwrite the stored key with the
+  //    literal text '__set__', so blank/sentinel means "keep what is saved".
+  var data = {};
+  var put = function(key, id, def){
+    var el = document.getElementById(id); if(!el) return;
+    var val = (el.type === 'checkbox') ? (el.checked ? '1' : '0') : (el.value || '');
+    if(val === '__set__') return;
+    if(!val && def !== undefined) val = def;
+    data[key] = val;
+  };
+  var putSecret = function(key, id){
+    var el = document.getElementById(id); if(!el) return;
+    var val = (el.value || '').trim();
+    if(!val || val === '__set__') return;    // blank = keep the existing key
+    data[key] = val;
+  };
+  put('recruiter_name','s-name');            put('company_name','s-company');
+  putSecret('claude_api_key','s-claude');    putSecret('deepseek_api_key','s-deepseek');
+  putSecret('groq_api_key','s-groq');        putSecret('gemini_api_key','s-gemini');
+  put('fu1_hours','s-fu1_hours','8');        put('fu2_hours','s-fu2_hours','24');
+  put('template_msg1','s-template_msg1');    put('template_fu1','s-template_fu1');
+  put('template_fu2','s-template_fu2');
+  put('smtp_email','s-smtp_email');          putSecret('smtp_app_password','s-smtp_app_password');
+  put('smtp_display_name','s-smtp_display_name');
+  put('submission_cc_emails','s-submission_cc_emails');
+  put('company_website','s-company_website');
+  put('submission_signature','s-submission_signature');
+  put('stale_days','s-stale_days','7');      put('promise_hours','s-promise_hours','24');
+  put('analytics_stale_days','s-analytics_stale_days','7');
+  put('interview_template','s-interview_template');
+  put('careers_enabled','s-careers_enabled');
+  put('careers_show_ctc','s-careers_show_ctc');
+  put('careers_intro','s-careers_intro');
+  put('ack_enabled','s-ack_enabled');
+  put('ack_template','s-ack_template');      put('regret_template','s-regret_template');
+
+  const r = await req('POST','/settings',data);
+  if(r.ok){
+    // MERGE, never replace: S.settings also holds keys this form never touches
+    // (pipeline_stages, wa_*, billing_*), and replacing it wiped them in memory.
+    S.settings = Object.assign({}, S.settings, data);
+    applyPipelineStages();
+    toast('&#9989;','Settings saved');
+    const ss = document.getElementById('s-save-status');
+    if(ss){ ss.innerHTML='Saved &#10003;'; setTimeout(function(){ ss.textContent=''; },2000); }
+  } else toast('&#9888;&#65039;', r.error||'Save failed');
 }
 function toggleSettings(){
   closeSidebarOnMobile();
