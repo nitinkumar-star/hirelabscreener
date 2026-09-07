@@ -18344,6 +18344,85 @@ def serve_cv(filename):
     return send_file(fp)
 
 
+# ── .docx sanitiser ───────────────────────────────────────────────────────
+# Job-board exports (Naukri in particular) ship CVs containing an image
+# relationship whose Target is an absolute tracking URL but which is NOT marked
+# TargetMode="External". OOXML requires that flag for absolute URIs. Word is
+# lenient and ignores the broken entry; strict readers like mammoth resolve it
+# as a path INSIDE the zip — 'word/https://...' — and blow up with a KeyError,
+# so the whole CV fails to preview.
+#
+# We strip those relationships and the image elements that point at them. Two
+# wins: the CV renders, and the recruiter's browser never pings the job board's
+# tracking pixel (which would leak that the CV was opened, and from where).
+#
+# The uploaded file on disk is never modified — this runs on a copy at read
+# time, so the original stays byte-identical for download or client sharing.
+
+_DOCX_ABS_TARGET_RE = re.compile(r'Target\s*=\s*"(?:https?|ftp)://[^"]*"', re.I)
+_DOCX_REL_TAG_RE = re.compile(r'<Relationship\b[^>]*?/>', re.I | re.S)
+_DOCX_REL_ID_RE = re.compile(r'\bId\s*=\s*"([^"]+)"', re.I)
+
+
+def _docx_sanitize(data):
+    """Return (docx_bytes, n_stripped). Byte-identical passthrough when the
+    file is already clean, so normal CVs take no risk from this path."""
+    import zipfile as _zf
+    try:
+        zin = _zf.ZipFile(io.BytesIO(data))
+        names = zin.namelist()
+    except Exception:
+        return data, 0
+
+    bad_ids, rels = set(), {}
+    for n in names:
+        if not n.endswith('.rels'):
+            continue
+        try:
+            x = zin.read(n).decode('utf-8', 'ignore')
+        except Exception:
+            continue
+        out = x
+        for tag in _DOCX_REL_TAG_RE.findall(x):
+            if 'TargetMode' in tag or not _DOCX_ABS_TARGET_RE.search(tag):
+                continue          # properly-declared external links are fine
+            m = _DOCX_REL_ID_RE.search(tag)
+            if m:
+                bad_ids.add(m.group(1))
+            out = out.replace(tag, '')
+        if out != x:
+            rels[n] = out.encode('utf-8')
+    if not bad_ids:
+        return data, 0
+
+    body = {}
+    for n in names:
+        base = n.rsplit('/', 1)[-1]
+        if not (n.endswith('.xml') and (base.startswith('document')
+                                        or base.startswith('header')
+                                        or base.startswith('footer'))):
+            continue
+        try:
+            x = zin.read(n).decode('utf-8', 'ignore')
+        except Exception:
+            continue
+        out = x
+        for block in ('w:drawing', 'w:pict', 'w:object'):
+            pat = re.compile(r'<%s\b.*?</%s>' % (block, block), re.S)
+            out = pat.sub(
+                lambda m: '' if any(('"%s"' % i) in m.group(0) for i in bad_ids) else m.group(0),
+                out)
+        if out != x:
+            body[n] = out.encode('utf-8')
+
+    buf = io.BytesIO()
+    zout = _zf.ZipFile(buf, 'w', _zf.ZIP_DEFLATED)
+    for it in zin.infolist():
+        zout.writestr(it, rels.get(it.filename) or body.get(it.filename) or zin.read(it.filename))
+    zout.close()
+    return buf.getvalue(), len(bad_ids)
+
+
 @app.route('/api/cv-view/<path:filename>')
 @login_required
 def view_cv_html(filename):
@@ -18360,7 +18439,12 @@ def view_cv_html(filename):
     try:
         import mammoth
         with open(fp, 'rb') as f:
-            result = mammoth.convert_to_html(f)
+            raw = f.read()
+        clean, stripped = _docx_sanitize(raw)
+        if stripped:
+            print('[cv-view] stripped %d external tracking relationship(s) from %s'
+                  % (stripped, filename))
+        result = mammoth.convert_to_html(io.BytesIO(clean))
         body = result.value or '<p style="color:#888">(Empty document)</p>'
         page = (
             '<!doctype html><html><head><meta charset="utf-8">'
@@ -18375,8 +18459,11 @@ def view_cv_html(filename):
         )
         return (page, 200, {'Content-Type': 'text/html; charset=utf-8'})
     except Exception as e:
-        return ('<p style="font-family:sans-serif;padding:20px;color:#C0522B">Could not render this Word file: '
-                + str(e) + '. Please download to view.</p>', 200)
+        # Log the real reason; show the recruiter something useful instead of a
+        # raw stack message (which also used to echo the tracking URL back).
+        print('[cv-view] render failed for %s: %s' % (filename, e))
+        return ('<p style="font-family:sans-serif;padding:20px;color:#C0522B">'
+                'This Word file could not be shown inline. Please use Download to open it.</p>', 200)
 
 @app.route('/api/candidates/<int:cid>/cv', methods=['DELETE'])
 @login_required
