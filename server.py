@@ -18360,8 +18360,14 @@ def serve_cv(filename):
 # time, so the original stays byte-identical for download or client sharing.
 
 _DOCX_ABS_TARGET_RE = re.compile(r'Target\s*=\s*"(?:https?|ftp)://[^"]*"', re.I)
-_DOCX_REL_TAG_RE = re.compile(r'<Relationship\b[^>]*?/>', re.I | re.S)
+# Both spellings occur in the wild: <Relationship .../> and <Relationship ...></Relationship>
+_DOCX_REL_TAG_RE = re.compile(r'<Relationship\b[^>]*?(?:/>|>.*?</Relationship\s*>)', re.I | re.S)
 _DOCX_REL_ID_RE = re.compile(r'\bId\s*=\s*"([^"]+)"', re.I)
+_DOCX_REL_TYPE_RE = re.compile(r'Type\s*=\s*"([^"]*)"', re.I)
+# Relationship kinds mammoth resolves as a path INSIDE the zip. For these an
+# absolute URL target can never work, so they are stripped. Hyperlinks are NOT
+# in this list — those are real content and mammoth handles them correctly.
+_DOCX_ZIP_BOUND_RELS = ('/image', '/oleobject', '/package', '/audio', '/video', '/chart')
 
 
 def _docx_sanitize(data):
@@ -18384,8 +18390,16 @@ def _docx_sanitize(data):
             continue
         out = x
         for tag in _DOCX_REL_TAG_RE.findall(x):
-            if 'TargetMode' in tag or not _DOCX_ABS_TARGET_RE.search(tag):
-                continue          # properly-declared external links are fine
+            if not _DOCX_ABS_TARGET_RE.search(tag):
+                continue
+            # NOTE: TargetMode="External" is NOT a reason to keep it. mammoth's
+            # _find_embedded_image() joins "word/" + target and opens it from the
+            # zip without ever looking at TargetMode, so a correctly-declared
+            # external image still crashes it. What matters is the Type.
+            rtype = (_DOCX_REL_TYPE_RE.search(tag) or [None, ''])
+            rtype = (rtype.group(1) if hasattr(rtype, 'group') else '').lower()
+            if not any(rtype.endswith(k) for k in _DOCX_ZIP_BOUND_RELS):
+                continue          # hyperlinks and friends stay
             m = _DOCX_REL_ID_RE.search(tag)
             if m:
                 bad_ids.add(m.group(1))
