@@ -240,6 +240,31 @@ def current_company_id():
     u = current_user()
     return u.get('company_id') if u else None
 
+_BG_TENANT = None   # threading.local(), created lazily so import order stays safe
+
+
+def _bg_tenant_set(oid):
+    """Pin the tenant for THIS thread. Background workers have no Flask session,
+    so effective_user_id() would explode on session access. Set this before any
+    tenant-scoped work in a worker thread and always clear it in a finally."""
+    global _BG_TENANT
+    import threading as _th
+    if _BG_TENANT is None:
+        _BG_TENANT = _th.local()
+    _BG_TENANT.oid = oid
+
+
+def _bg_tenant_clear():
+    if _BG_TENANT is not None:
+        _BG_TENANT.oid = None
+
+
+def _bg_tenant_get():
+    if _BG_TENANT is None:
+        return None
+    return getattr(_BG_TENANT, 'oid', None)
+
+
 def effective_user_id():
     """TENANT-ID this request operates on. Historically named for the
     single-user era; it now returns the effective COMPANY (tenant) id, which
@@ -247,6 +272,9 @@ def effective_user_id():
     impersonate another tenant via 'view_as_company'. Kept under the old name
     so all existing `WHERE owner_id = effective_user_id()` filters keep working
     and enforce tenant isolation automatically."""
+    _ov = _bg_tenant_get()
+    if _ov:
+        return _ov          # worker thread: no session exists, use the pin
     va = session.get('view_as_company')
     if va:
         return va
@@ -3687,6 +3715,90 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # ── Mass email campaigns (Wave 1) ─────────────────────────────────────
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS campaigns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            created_by INTEGER,
+            name TEXT DEFAULT '',
+            mandate_id INTEGER,
+            subject TEXT DEFAULT '',
+            body TEXT DEFAULT '',
+            filter_stages TEXT DEFAULT '[]',
+            candidate_ids TEXT DEFAULT '[]',
+            status TEXT DEFAULT 'draft',
+            daily_cap INTEGER DEFAULT 120,
+            dedupe_days INTEGER DEFAULT 14,
+            sent_count INTEGER DEFAULT 0,
+            created_at TEXT, updated_at TEXT, started_at TEXT, finished_at TEXT
+        );
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_recipients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            campaign_id INTEGER,
+            candidate_id INTEGER,
+            email TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',
+            reason TEXT DEFAULT '',
+            msg_id TEXT DEFAULT '',
+            thread_id TEXT DEFAULT '',
+            sent_at TEXT DEFAULT '',
+            created_at TEXT
+        );
+    """)
+    try:
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_camp_rcpt "
+                  "ON campaign_recipients(campaign_id, candidate_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_camp_rcpt_status "
+                  "ON campaign_recipients(owner_id, campaign_id, status)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_camp_rcpt_sent "
+                  "ON campaign_recipients(owner_id, sent_at)")
+    except sqlite3.OperationalError:
+        pass
+    # Wave 2 — tracking, bounces and replies
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            campaign_id INTEGER,
+            recipient_id INTEGER,
+            candidate_id INTEGER,
+            type TEXT DEFAULT '',
+            ref TEXT DEFAULT '',
+            detail TEXT DEFAULT '',
+            created_at TEXT
+        );
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS campaign_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER DEFAULT 0,
+            campaign_id INTEGER,
+            url TEXT DEFAULT '',
+            created_at TEXT
+        );
+    """)
+    try:
+        # One row per (recipient, event type, ref) — this is what makes opens and
+        # clicks UNIQUE counts rather than a raw hit log that Gmail's image
+        # proxy would inflate on every re-render.
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_camp_event "
+                  "ON campaign_events(recipient_id, type, ref)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_camp_event_c "
+                  "ON campaign_events(owner_id, campaign_id, type)")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_camp_link "
+                  "ON campaign_links(campaign_id, url)")
+    except sqlite3.OperationalError:
+        pass
+    for _col in ("do_not_email INTEGER DEFAULT 0", "unsub_at TEXT DEFAULT ''"):
+        try:
+            c.execute(f"ALTER TABLE candidates ADD COLUMN {_col}")
+        except sqlite3.OperationalError:
+            pass
+
     # Migrate: add reminders table if not exists
     c.execute('''CREATE TABLE IF NOT EXISTS reminders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5658,6 +5770,9 @@ TENANT_SETTINGS = {
     'ack_enabled', 'ack_template', 'regret_template',
     'pipeline_stages',  # JSON array of custom stages before the fixed Placed/Joined
     'smtp_email', 'smtp_app_password', 'smtp_display_name',
+    'email_transport', 'ses_region', 'ses_smtp_user', 'ses_smtp_password',
+    'ses_from_email', 'ses_from_name', 'ses_reply_to', 'ses_topic_arn',
+    'ses_warmup_start', 'campaign_daily_cap',
     'imap_enabled', 'imap_last_uid',
     'email_templates',  # JSON array of {name, subject, body}
     'custom_status_tags',  # JSON array of user-created quick tags
@@ -13401,7 +13516,17 @@ def email_roundtrip_start():
     """Send a tokenised test email to YOURSELF with a small attachment, so the
     full send → receive → thread → attachment path can be verified end-to-end."""
     import uuid as _uuid
-    email_addr, pw, host, port, dname = _smtp_params()
+    if smtp_override:
+        # Campaign mail can leave through a DIFFERENT sender (Amazon SES on the
+        # bulk subdomain) while every 1:1 email keeps using the recruiter's own
+        # mailbox. Deliberately scoped per-call — nothing else changes.
+        email_addr = smtp_override.get('email') or ''
+        pw = smtp_override.get('password') or ''
+        host = smtp_override.get('host') or ''
+        port = int(smtp_override.get('port') or 587)
+        dname = smtp_override.get('display_name') or email_addr
+    else:
+        email_addr, pw, host, port, dname = _smtp_params()
     if not email_addr or not pw:
         return jsonify({'error': 'Email not configured'}), 400
     token = 'HLTEST-' + _uuid.uuid4().hex[:10].upper()
@@ -15330,7 +15455,8 @@ def _text_to_html(text):
 
 def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
                        in_reply_to='', references='', thread_id='', candidate_id=None,
-                       append_signature=True, attachment_ids=None, forward_from_email_id=None):
+                       append_signature=True, attachment_ids=None, forward_from_email_id=None,
+                       extra_headers=None, smtp_override=None, reply_to=None):
     """THE single outgoing-email pipeline. Builds multipart plain+HTML, sets
     Message-ID / In-Reply-To / References, appends the official signature, sends
     via SMTP, and stores the sent copy in `emails` (+ `email_messages` if linked
@@ -15460,11 +15586,20 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
     if cc:
         msg['Cc'] = cc
     msg['Subject'] = subject
+    if reply_to:
+        msg['Reply-To'] = reply_to
     msg['Message-ID'] = mid
     msg['Date'] = formatdate(localtime=True)
     if in_reply_to:
         msg['In-Reply-To'] = in_reply_to
         msg['References'] = refs
+    # Campaign headers (List-Unsubscribe etc). Empty by default for normal mail.
+    for _hk, _hv in (extra_headers or {}).items():
+        try:
+            if _hv and _hk not in msg:
+                msg[_hk] = _hv
+        except Exception:
+            pass
 
     rcpts = [to]
     for extra in (cc, bcc):
@@ -15473,7 +15608,8 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
     try:
         server = smtplib.SMTP(host, port, timeout=20)
         server.starttls()
-        server.login(email_addr, pw)
+        # SES's SMTP username is a generated credential, NOT the From address.
+        server.login((smtp_override or {}).get('smtp_user') or email_addr, pw)
         server.sendmail(email_addr, rcpts, msg.as_string())
         server.quit()
     except smtplib.SMTPAuthenticationError:
@@ -15530,6 +15666,1166 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
     except Exception as _e:
         print('[email-service] store error:', _e)
     return True, None, mid, tid
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  MASS EMAIL CAMPAIGNS — Wave 1
+#
+#  Design notes:
+#   * One email per candidate, never Bcc. Gmail counts recipients, not
+#     messages, and a Bcc blast burns the quota AND the domain reputation.
+#   * Sending goes through email_service_send(), the same pipeline the Email
+#     Box uses, so every campaign mail is threaded, signed, stored in Sent and
+#     linked to the candidate — replies land in the timeline automatically.
+#   * A recipient whose template still has an unfilled {tag} is SKIPPED, not
+#     sent. "Hi {name}" reaching a real candidate is worse than not sending.
+#   * Transport is deliberately funnelled through one function so swapping
+#     Gmail SMTP for SES/Resend later is a change in ONE place.
+# ══════════════════════════════════════════════════════════════════════════
+
+CAMP_STATUSES = ('draft', 'running', 'paused', 'done', 'stopped')
+
+
+def _camp_base_url():
+    return (os.environ.get('PUBLIC_BASE_URL', '')
+            or 'https://hirelabscreener.onrender.com').rstrip('/')
+
+
+def _unsub_token(oid, cid):
+    import hmac as _hmac, hashlib as _hl
+    raw = '%s:%s' % (oid, cid)
+    key = (app.secret_key if isinstance(app.secret_key, bytes)
+           else str(app.secret_key or 'hirelab').encode())
+    sig = _hmac.new(key, raw.encode(), _hl.sha256).hexdigest()[:20]
+    return '%s-%s-%s' % (oid, cid, sig)
+
+
+def _unsub_parse(token):
+    """Return (oid, cid) if the token is authentic, else (None, None)."""
+    try:
+        oid, cid, sig = (token or '').split('-', 2)
+        oid, cid = int(oid), int(cid)
+    except Exception:
+        return None, None
+    if _unsub_token(oid, cid) != token:
+        return None, None
+    return oid, cid
+
+
+def _camp_vars(cand, mand, unsub_url):
+    """The variable table. Mirrors fillTplVars() in the UI exactly."""
+    cand = cand or {}
+    mand = mand or {}
+    full = (cand.get('name') or '').strip()
+    first = full.split()[0] if full else ''
+    ctc = cand.get('ctc_current')
+    notice = cand.get('notice_period')
+    return {
+        '{name}':        full,
+        '{first_name}':  first,
+        '{role}':        mand.get('role') or cand.get('designation') or '',
+        '{client}':      mand.get('client') or '',
+        '{location}':    mand.get('location') or cand.get('preferred_location') or cand.get('location') or '',
+        '{recruiter}':   get_setting('recruiter_name', '') or get_setting('smtp_display_name', ''),
+        '{company}':     get_setting('company_name', ''),
+        '{ctc}':         ('%g LPA' % ctc) if ctc else '',
+        '{notice}':      ('%d days' % int(notice)) if notice else '',
+        '{unsubscribe}': unsub_url or '',
+    }
+
+
+def _camp_render(text, cand, mand, unsub_url):
+    """Fill the template. Returns (rendered, [tags that could not be filled])."""
+    out = text or ''
+    table = _camp_vars(cand, mand, unsub_url)
+    missing = []
+    for tag, val in table.items():
+        if tag not in out:
+            continue
+        if val in (None, ''):
+            missing.append(tag)
+            continue
+        out = out.replace(tag, str(val))
+    # Any {tag} still standing that we do not even know about.
+    for leftover in set(re.findall(r'\{[a-zA-Z_]{2,24}\}', out)):
+        if leftover not in missing:
+            missing.append(leftover)
+    return out, missing
+
+
+def _camp_row(conn, cid, oid):
+    return conn.execute('SELECT * FROM campaigns WHERE id=? AND owner_id=?', (cid, oid)).fetchone()
+
+
+def _camp_public(r, counts=None):
+    d = dict(r)
+    try:
+        d['filter_stages'] = json.loads(d.get('filter_stages') or '[]')
+    except Exception:
+        d['filter_stages'] = []
+    try:
+        d['candidate_ids'] = json.loads(d.get('candidate_ids') or '[]')
+    except Exception:
+        d['candidate_ids'] = []
+    if counts is not None:
+        d['counts'] = counts
+    return d
+
+
+def _camp_counts(conn, cid, oid):
+    out = {'pending': 0, 'sent': 0, 'skipped': 0, 'failed': 0, 'cancelled': 0, 'total': 0}
+    for r in conn.execute("SELECT status, COUNT(*) n FROM campaign_recipients "
+                          "WHERE owner_id=? AND campaign_id=? GROUP BY status", (oid, cid)).fetchall():
+        out[r['status']] = r['n']
+        out['total'] += r['n']
+    return out
+
+
+def _camp_sent_today(conn, oid):
+    today = datetime.datetime.now().strftime('%Y-%m-%d')
+    r = conn.execute("SELECT COUNT(*) n FROM campaign_recipients WHERE owner_id=? AND status='sent' "
+                     "AND substr(COALESCE(sent_at,''),1,10)=?", (oid, today)).fetchone()
+    return r['n'] if r else 0
+
+
+def _camp_resolve(conn, oid, camp):
+    """Candidates this campaign targets, before any suppression checks."""
+    try:
+        stages = json.loads(camp['filter_stages'] or '[]')
+    except Exception:
+        stages = []
+    try:
+        cids = [int(x) for x in json.loads(camp['candidate_ids'] or '[]')]
+    except Exception:
+        cids = []
+    q = ("SELECT id, name, email, stage, mandate_id, designation, company, ctc_current, "
+         "notice_period, COALESCE(do_not_email,0) dne FROM candidates WHERE owner_id=?")
+    args = [oid]
+    if cids:
+        q += ' AND id IN (%s)' % ','.join('?' * len(cids))
+        args += cids
+    else:
+        if camp['mandate_id']:
+            q += ' AND mandate_id=?'
+            args.append(camp['mandate_id'])
+        if stages:
+            q += ' AND stage IN (%s)' % ','.join('?' * len(stages))
+            args += stages
+    return conn.execute(q + ' ORDER BY id', tuple(args)).fetchall()
+
+
+def _camp_build_list(conn, oid, camp):
+    """Snapshot the recipient list, marking suppressed people up front so the
+    recruiter can SEE who was excluded and why before anything is sent."""
+    rows = _camp_resolve(conn, oid, camp)
+    dedupe_days = camp['dedupe_days'] if camp['dedupe_days'] is not None else 14
+    cutoff = (datetime.datetime.now() - datetime.timedelta(days=dedupe_days)).strftime('%Y-%m-%d')
+    recent = set()
+    for r in ([] if dedupe_days <= 0 else conn.execute("SELECT DISTINCT candidate_id FROM campaign_recipients WHERE owner_id=? "
+                          "AND status='sent' AND substr(COALESCE(sent_at,''),1,10)>=? AND campaign_id!=?",
+                          (oid, cutoff, camp['id'])).fetchall()):
+        recent.add(r['candidate_id'])
+    seen_emails = set()
+    out = []
+    for r in rows:
+        email = (r['email'] or '').strip()
+        status, reason = 'pending', ''
+        if not email or '@' not in email:
+            status, reason = 'skipped', 'No email address'
+        elif r['dne']:
+            status, reason = 'skipped', 'Unsubscribed / do-not-email'
+        elif email.lower() in seen_emails:
+            status, reason = 'skipped', 'Duplicate email in this list'
+        elif r['id'] in recent:
+            status, reason = 'skipped', 'Emailed by another campaign in the last %d days' % dedupe_days
+        if status == 'pending':
+            seen_emails.add(email.lower())
+        out.append((r['id'], email, status, reason))
+    return out
+
+
+def _camp_transport_send(to, subject, body, candidate_id, unsub_url,
+                         oid=None, campaign_id=None, recipient_id=None):
+    """THE single place a campaign email leaves the building. Swap the body of
+    this function to move from Gmail SMTP to SES/Resend/Mailgun later — no
+    other campaign code needs to change."""
+    headers = {}
+    if unsub_url:
+        headers['List-Unsubscribe'] = '<%s>' % unsub_url
+        headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+    html = None
+    if recipient_id and campaign_id and oid:
+        try:
+            html = _camp_html(body, oid, campaign_id, recipient_id, unsub_url)
+        except Exception as e:
+            print('[campaign] html build error:', e)
+            html = None
+    override, frm, rto = (None, '', '')
+    if _ses_enabled():
+        override, frm, rto = _ses_params()
+    return email_service_send(to, subject, body, body_html=html, candidate_id=candidate_id,
+                              extra_headers=headers, smtp_override=override,
+                              reply_to=(rto if override else None))
+
+
+def _camp_send_one(cid, oid):
+    """Send at most ONE email for campaign `cid`. Returns True if it sent."""
+    conn = get_db()
+    camp = _camp_row(conn, cid, oid)
+    if not camp or camp['status'] != 'running':
+        conn.close()
+        return False
+    cap = camp['daily_cap'] or 120
+    warm = _ses_warmup_cap() if _ses_enabled() else None
+    if warm is not None:
+        cap = min(cap, warm)          # a new sending domain must ramp up slowly
+    if _camp_sent_today(conn, oid) >= cap:
+        conn.close()
+        return False
+    rcpt = conn.execute("SELECT * FROM campaign_recipients WHERE owner_id=? AND campaign_id=? "
+                        "AND status='pending' ORDER BY id LIMIT 1", (oid, cid)).fetchone()
+    if not rcpt:
+        conn.execute("UPDATE campaigns SET status='done', finished_at=?, updated_at=? WHERE id=? AND owner_id=?",
+                     (ts(), ts(), cid, oid))
+        conn.commit(); conn.close()
+        return False
+    cand = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
+                        (rcpt['candidate_id'], oid)).fetchone()
+    mand = None
+    if cand and cand['mandate_id']:
+        mand = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                            (cand['mandate_id'], oid)).fetchone()
+    conn.close()
+
+    def _finish(status, reason='', msg_id='', thread_id=''):
+        c2 = get_db()
+        c2.execute("UPDATE campaign_recipients SET status=?, reason=?, msg_id=?, thread_id=?, sent_at=? "
+                   "WHERE id=? AND owner_id=?",
+                   (status, reason, msg_id, thread_id, ts() if status == 'sent' else '', rcpt['id'], oid))
+        if status == 'sent':
+            c2.execute("UPDATE campaigns SET sent_count=COALESCE(sent_count,0)+1, updated_at=? "
+                       "WHERE id=? AND owner_id=?", (ts(), cid, oid))
+        c2.commit(); c2.close()
+
+    if not cand:
+        _finish('skipped', 'Candidate no longer exists')
+        return False
+    if cand['do_not_email']:
+        _finish('skipped', 'Unsubscribed / do-not-email')
+        return False
+    to = (cand['email'] or '').strip()
+    if not to or '@' not in to:
+        _finish('skipped', 'No email address')
+        return False
+
+    unsub_url = _camp_base_url() + '/u/' + _unsub_token(oid, cand['id'])
+    cd = dict(cand)
+    md = dict(mand) if mand else {}
+    subject, miss_s = _camp_render(camp['subject'], cd, md, unsub_url)
+    body, miss_b = _camp_render(camp['body'], cd, md, unsub_url)
+    missing = sorted(set(miss_s + miss_b))
+    if missing:
+        _finish('skipped', 'Could not fill: ' + ', '.join(missing))
+        return False
+
+    ok, err, mid, tid = _camp_transport_send(to, subject, body, cand['id'], unsub_url,
+                                             oid=oid, campaign_id=cid, recipient_id=rcpt['id'])
+    if not ok:
+        _finish('failed', (err or 'Send failed')[:300])
+        return False
+    _finish('sent', '', mid or '', tid or '')
+    return True
+
+
+def _campaign_tick():
+    """One pass over every running campaign, at most one send in total, so a
+    single Gmail account is never hit by parallel bursts."""
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT id, owner_id FROM campaigns WHERE status='running' ORDER BY id").fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        _bg_tenant_set(r['owner_id'])
+        try:
+            if _camp_send_one(r['id'], r['owner_id']):
+                return True
+        except Exception as e:
+            print('[campaign] send error:', e)
+        finally:
+            _bg_tenant_clear()
+    return False
+
+
+_CAMP_SCAN_EVERY = 20      # loop passes between inbox scans (~5 min at idle)
+
+
+def _campaign_loop():
+    import time as _t, random as _rnd
+    passes = 0
+    while True:
+        sent = False
+        try:
+            sent = _campaign_tick()
+        except Exception as e:
+            print('[campaign] loop error:', e)
+        passes += 1
+        if passes % _CAMP_SCAN_EVERY == 0:
+            try:
+                conn = get_db()
+                oids = [r['owner_id'] for r in conn.execute(
+                    'SELECT DISTINCT owner_id FROM campaign_recipients').fetchall()]
+                conn.close()
+                for _oid in oids:
+                    _bg_tenant_set(_oid)
+                    try:
+                        _camp_scan_inbox(_oid)
+                    except Exception as e:
+                        print('[campaign] inbox scan error:', e)
+                    finally:
+                        _bg_tenant_clear()
+            except Exception as e:
+                print('[campaign] scan sweep error:', e)
+        # Randomised human-ish gap after a send; short idle poll otherwise.
+        _t.sleep(_rnd.randint(30, 90) if sent else 15)
+
+
+def _start_campaign_worker():
+    import threading
+    t = threading.Thread(target=_campaign_loop, daemon=True)
+    t.start()
+    print('[campaign] background thread started')
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  WAVE 3 — Amazon SES transport for bulk mail
+#
+#  Why SES only for campaigns: bulk sending from the primary domain puts every
+#  normal recruiter and client email at risk. SES sends from a separate,
+#  verified bulk sender with its own reputation, while Reply-To points back at
+#  the recruiter's real mailbox so replies still land in the Email Box.
+#
+#  SES is reached over its SMTP interface, so it reuses the exact same send
+#  pipeline (threading, signature, multipart, Sent-copy) — no second code path
+#  and no new dependency.
+# ══════════════════════════════════════════════════════════════════════════
+
+# Gradual ramp: sending 500 on day one from a brand-new domain is the fastest
+# way to get filtered. (days_elapsed_threshold, max_per_day)
+_SES_WARMUP = [(2, 50), (4, 100), (6, 200), (8, 400), (10, 700),
+               (12, 1200), (14, 2000)]
+
+
+def _ses_enabled():
+    return (get_setting('email_transport', '') or 'gmail').strip().lower() == 'ses'
+
+
+def _ses_params():
+    """(override_dict, from_email, reply_to) or (None, '', '') if unusable."""
+    region = (get_setting('ses_region', '') or '').strip()
+    user = (get_setting('ses_smtp_user', '') or '').strip()
+    pw = (get_setting('ses_smtp_password', '') or '').strip()
+    frm = (get_setting('ses_from_email', '') or '').strip()
+    if not (region and user and pw and frm):
+        return None, '', ''
+    return ({'email': frm, 'password': pw,
+             'host': 'email-smtp.%s.amazonaws.com' % region, 'port': 587,
+             'display_name': (get_setting('ses_from_name', '')
+                              or get_setting('company_name', '') or frm),
+             'smtp_user': user},
+            frm,
+            (get_setting('ses_reply_to', '') or get_setting('smtp_email', '') or ''))
+
+
+def _ses_warmup_cap():
+    """None = warm-up finished or never started (campaign cap applies)."""
+    start = (get_setting('ses_warmup_start', '') or '').strip()[:10]
+    if not start:
+        return None
+    try:
+        d0 = datetime.datetime.strptime(start, '%Y-%m-%d')
+    except Exception:
+        return None
+    days = (datetime.datetime.now() - d0).days + 1
+    if days < 1:
+        days = 1
+    for threshold, cap in _SES_WARMUP:
+        if days <= threshold:
+            return cap
+    return None
+
+
+def _ses_hook_token(oid):
+    import hmac as _hmac, hashlib as _hl
+    key = (app.secret_key if isinstance(app.secret_key, bytes)
+           else str(app.secret_key or 'hirelab').encode())
+    return '%s-%s' % (oid, _hmac.new(key, ('ses:%s' % oid).encode(), _hl.sha256).hexdigest()[:24])
+
+
+def _ses_hook_parse(token):
+    try:
+        oid = int((token or '').split('-')[0])
+    except Exception:
+        return None
+    return oid if _ses_hook_token(oid) == token else None
+
+
+# ── SNS message authenticity ──────────────────────────────────────────────
+_SNS_CERT_CACHE = {}
+_SNS_SIGN_FIELDS = {
+    'Notification': ['Message', 'MessageId', 'Subject', 'Timestamp', 'TopicArn', 'Type'],
+    'SubscriptionConfirmation': ['Message', 'MessageId', 'SubscribeURL', 'Timestamp',
+                                 'Token', 'TopicArn', 'Type'],
+    'UnsubscribeConfirmation': ['Message', 'MessageId', 'SubscribeURL', 'Timestamp',
+                               'Token', 'TopicArn', 'Type'],
+}
+
+
+def _sns_verify(payload):
+    """Verify an SNS envelope really came from AWS. Without this the webhook is
+    an open door: anyone could POST a fake 'complaint' and suppress a real
+    candidate. Returns True only on a good signature."""
+    try:
+        from cryptography.x509 import load_pem_x509_certificate
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives import hashes
+        import base64 as _b64
+        from urllib.parse import urlparse as _urlparse
+
+        cert_url = payload.get('SigningCertURL') or payload.get('SigningCertUrl') or ''
+        host = (_urlparse(cert_url).hostname or '').lower()
+        if _urlparse(cert_url).scheme != 'https':
+            return False
+        if not re.match(r'^sns\.[a-z0-9\-]+\.amazonaws\.com(\.cn)?$', host):
+            return False
+
+        pem = _SNS_CERT_CACHE.get(cert_url)
+        if pem is None:
+            resp = requests.get(cert_url, timeout=10)
+            if resp.status_code != 200:
+                return False
+            pem = resp.content
+            if len(_SNS_CERT_CACHE) < 20:
+                _SNS_CERT_CACHE[cert_url] = pem
+
+        fields = _SNS_SIGN_FIELDS.get(payload.get('Type') or '')
+        if not fields:
+            return False
+        parts = []
+        for f in fields:
+            if f in payload and payload.get(f) is not None:
+                parts.append(f)
+                parts.append(str(payload.get(f)))
+        to_sign = ('\n'.join(parts) + '\n').encode('utf-8')
+
+        algo = hashes.SHA256() if str(payload.get('SignatureVersion')) == '2' else hashes.SHA1()
+        cert = load_pem_x509_certificate(pem)
+        cert.public_key().verify(_b64.b64decode(payload.get('Signature') or ''),
+                                 to_sign, padding.PKCS1v15(), algo)
+        return True
+    except Exception as e:
+        print('[ses-hook] signature check failed:', e)
+        return False
+
+
+def _ses_suppress(oid, addr, kind, detail):
+    """A hard bounce or a complaint means: never email this person again."""
+    addr = (addr or '').strip().lower()
+    if not addr:
+        return
+    conn = get_db()
+    cand = conn.execute("SELECT id FROM candidates WHERE owner_id=? AND LOWER(TRIM(email))=? "
+                        "ORDER BY id DESC LIMIT 1", (oid, addr)).fetchone()
+    rec = conn.execute("SELECT id, campaign_id, candidate_id FROM campaign_recipients "
+                       "WHERE owner_id=? AND LOWER(TRIM(email))=? AND status='sent' "
+                       "ORDER BY id DESC LIMIT 1", (oid, addr)).fetchone()
+    if cand:
+        conn.execute("UPDATE candidates SET do_not_email=1, unsub_at=? WHERE id=? AND owner_id=?",
+                     (ts(), cand['id'], oid))
+        conn.execute("UPDATE campaign_recipients SET status='cancelled', reason=? "
+                     "WHERE owner_id=? AND candidate_id=? AND status='pending'",
+                     ('Email ' + kind, oid, cand['id']))
+    conn.commit(); conn.close()
+    if rec:
+        _camp_event(oid, rec['campaign_id'], rec['id'], rec['candidate_id'],
+                    'bounce' if kind == 'bounced' else 'complaint',
+                    ref='ses:' + addr, detail=detail)
+
+
+@app.route('/hooks/ses/<token>', methods=['POST'])
+def ses_webhook(token):
+    """SES → SNS → here. Bounces and complaints suppress the candidate the
+    moment AWS reports them, instead of waiting for an inbox scan."""
+    oid = _ses_hook_parse(token)
+    if not oid:
+        return ('', 404)
+    try:
+        payload = json.loads(request.get_data(as_text=True) or '{}')
+    except Exception:
+        return ('bad json', 400)
+    if not _sns_verify(payload):
+        return ('bad signature', 403)
+
+    _bg_tenant_set(oid)
+    try:
+        want_arn = (get_setting('ses_topic_arn', '') or '').strip()
+        got_arn = (payload.get('TopicArn') or '').strip()
+        if want_arn and got_arn and want_arn != got_arn:
+            return ('wrong topic', 403)
+
+        mtype = payload.get('Type')
+        if mtype == 'SubscriptionConfirmation':
+            sub = payload.get('SubscribeURL') or ''
+            if sub.startswith('https://sns.'):
+                try:
+                    requests.get(sub, timeout=10)
+                except Exception as e:
+                    print('[ses-hook] confirm failed:', e)
+            if got_arn and not want_arn:
+                set_setting('ses_topic_arn', got_arn)
+            return ('ok', 200)
+
+        if mtype != 'Notification':
+            return ('ok', 200)
+
+        try:
+            msg = json.loads(payload.get('Message') or '{}')
+        except Exception:
+            return ('ok', 200)
+        kind = msg.get('notificationType') or msg.get('eventType') or ''
+        if kind == 'Bounce':
+            b = msg.get('bounce') or {}
+            permanent = (b.get('bounceType') == 'Permanent')
+            for r in (b.get('bouncedRecipients') or []):
+                addr = r.get('emailAddress') or ''
+                detail = '%s / %s' % (b.get('bounceType') or '', b.get('bounceSubType') or '')
+                if permanent:
+                    _ses_suppress(oid, addr, 'bounced', detail)
+                else:
+                    # Transient (full mailbox, throttled) — record it, but do not
+                    # burn the address on one temporary failure.
+                    conn = get_db()
+                    rec = conn.execute("SELECT id, campaign_id, candidate_id FROM campaign_recipients "
+                                       "WHERE owner_id=? AND LOWER(TRIM(email))=? ORDER BY id DESC LIMIT 1",
+                                       (oid, (addr or '').lower())).fetchone()
+                    conn.close()
+                    if rec:
+                        _camp_event(oid, rec['campaign_id'], rec['id'], rec['candidate_id'],
+                                    'soft_bounce', ref='ses:' + addr, detail=detail)
+        elif kind == 'Complaint':
+            cpl = msg.get('complaint') or {}
+            for r in (cpl.get('complainedRecipients') or []):
+                _ses_suppress(oid, r.get('emailAddress') or '', 'marked as spam',
+                              cpl.get('complaintFeedbackType') or 'complaint')
+        return ('ok', 200)
+    finally:
+        _bg_tenant_clear()
+
+
+@app.route('/api/ses/status', methods=['GET'])
+@login_required
+def ses_status():
+    oid = effective_company_id()
+    warm = _ses_warmup_cap()
+    return jsonify({'ok': True,
+                    'enabled': _ses_enabled(),
+                    'configured': bool(_ses_params()[0]),
+                    'webhook_url': _camp_base_url() + '/hooks/ses/' + _ses_hook_token(oid),
+                    'topic_arn': get_setting('ses_topic_arn', ''),
+                    'warmup_start': get_setting('ses_warmup_start', ''),
+                    'warmup_cap_today': warm,
+                    'from_email': get_setting('ses_from_email', ''),
+                    'reply_to': (get_setting('ses_reply_to', '') or get_setting('smtp_email', ''))})
+
+
+@app.route('/api/ses/test', methods=['POST'])
+@login_required
+def ses_test():
+    """Send one real email through SES so a misconfiguration surfaces here and
+    not halfway through a live campaign."""
+    ov, frm, rto = _ses_params()
+    if not ov:
+        return jsonify({'error': 'SES is not fully configured (region, SMTP user, password and From address).'}), 400
+    to = (request.json or {}).get('to') or get_setting('smtp_email', '')
+    if not to:
+        return jsonify({'error': 'No test address available.'}), 400
+    ok, err, mid, _tid = email_service_send(
+        to, '[SES TEST] HireLab bulk sending',
+        'This is a test from your HireLab campaign transport.\n\n'
+        'If you are reading this, Amazon SES is wired up correctly.',
+        smtp_override=dict(ov, password=ov['password'], email=frm),
+        reply_to=rto, append_signature=False)
+    if not ok:
+        return jsonify({'error': err or 'Send failed'}), 400
+    return jsonify({'ok': True, 'to': to, 'from': frm, 'reply_to': rto})
+
+
+# ── Wave 2: open / click tracking, bounce + reply detection ───────────────
+# Honest limitation, worth knowing before you read the numbers: open tracking
+# is no longer reliable. Apple Mail Privacy Protection fetches the pixel for
+# every message whether or not the person looked at it, and Gmail proxies and
+# pre-fetches images. Treat opens as a soft signal; CLICKS and REPLIES are the
+# numbers to actually decide on.
+
+_PIXEL_GIF = (b'GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!'
+              b'\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00'
+              b'\x00\x02\x02D\x01\x00;')
+
+
+def _trk_sig(parts):
+    import hmac as _hmac, hashlib as _hl
+    key = (app.secret_key if isinstance(app.secret_key, bytes)
+           else str(app.secret_key or 'hirelab').encode())
+    return _hmac.new(key, ':'.join(str(x) for x in parts).encode(), _hl.sha256).hexdigest()[:16]
+
+
+def _trk_token(*parts):
+    return '-'.join(str(x) for x in parts) + '-' + _trk_sig(parts)
+
+
+def _trk_parse(token, n):
+    """Split a signed token into n integer parts, verifying the signature."""
+    try:
+        bits = (token or '').split('-')
+        if len(bits) != n + 1:
+            return None
+        vals = [int(x) for x in bits[:n]]
+        if _trk_sig(vals) != bits[n]:
+            return None
+        return vals
+    except Exception:
+        return None
+
+
+def _camp_link_id(conn, oid, campaign_id, url):
+    r = conn.execute('SELECT id FROM campaign_links WHERE campaign_id=? AND url=?',
+                     (campaign_id, url)).fetchone()
+    if r:
+        return r['id']
+    cur = conn.execute('INSERT INTO campaign_links (owner_id,campaign_id,url,created_at) VALUES (?,?,?,?)',
+                       (oid, campaign_id, url, ts()))
+    return cur.lastrowid
+
+
+_URL_RE = re.compile(r'(https?://[^\s<>"\')]+)')
+
+
+def _camp_html(body_text, oid, campaign_id, recipient_id, unsub_url):
+    """Campaign HTML body: real links become tracked links (the visible text
+    stays the original URL), plus the open pixel. The PLAIN-TEXT part is left
+    untouched — a recipient reading plain text sees clean, honest URLs."""
+    base = _camp_base_url()
+    safe = esc_html(body_text or '')
+    def _rep(m):
+        url = m.group(1)
+        if unsub_url and url.startswith(unsub_url):
+            return '<a href="' + url + '">' + url + '</a>'    # never track unsubscribes
+        try:
+            conn = get_db()
+            lid = _camp_link_id(conn, oid, campaign_id, url)
+            conn.commit(); conn.close()
+        except Exception:
+            return '<a href="' + url + '">' + url + '</a>'
+        trk = base + '/t/c/' + _trk_token(oid, recipient_id, lid)
+        return '<a href="' + trk + '">' + url + '</a>'
+    linked = _URL_RE.sub(_rep, safe)
+    pixel = ('<img src="' + base + '/t/o/' + _trk_token(oid, recipient_id)
+             + '.gif" width="1" height="1" alt="" style="display:block;border:0">')
+    return ('<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;line-height:1.6">'
+            + linked.replace('\n', '<br>') + '</div>' + pixel)
+
+
+def _camp_event(oid, campaign_id, recipient_id, candidate_id, typ, ref='', detail=''):
+    """Record one event. The unique index makes repeats a no-op, so opens and
+    clicks stay unique counts."""
+    try:
+        conn = get_db()
+        conn.execute("INSERT OR IGNORE INTO campaign_events (owner_id,campaign_id,recipient_id,candidate_id,"
+                     "type,ref,detail,created_at) VALUES (?,?,?,?,?,?,?,?)",
+                     (oid, campaign_id, recipient_id, candidate_id, typ, str(ref or ''), detail[:300], ts()))
+        conn.commit(); conn.close()
+    except Exception as e:
+        print('[campaign] event error:', e)
+
+
+@app.route('/t/o/<token>.gif')
+def campaign_track_open(token):
+    v = _trk_parse(token, 2)
+    if v:
+        oid, rid = v
+        try:
+            conn = get_db()
+            r = conn.execute('SELECT campaign_id, candidate_id FROM campaign_recipients WHERE id=? AND owner_id=?',
+                             (rid, oid)).fetchone()
+            conn.close()
+            if r:
+                _camp_event(oid, r['campaign_id'], rid, r['candidate_id'], 'open')
+        except Exception:
+            pass
+    resp = Response(_PIXEL_GIF, mimetype='image/gif')
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
+    return resp
+
+
+@app.route('/t/c/<token>')
+def campaign_track_click(token):
+    """Click redirect. The destination is looked up from the DB by id — the URL
+    is never taken from the request, so this can't be abused as an open
+    redirect."""
+    v = _trk_parse(token, 3)
+    if not v:
+        return redirect(_camp_base_url(), code=302)
+    oid, rid, lid = v
+    url = _camp_base_url()
+    try:
+        conn = get_db()
+        lr = conn.execute('SELECT url, campaign_id FROM campaign_links WHERE id=? AND owner_id=?',
+                          (lid, oid)).fetchone()
+        rr = conn.execute('SELECT campaign_id, candidate_id FROM campaign_recipients WHERE id=? AND owner_id=?',
+                          (rid, oid)).fetchone()
+        conn.close()
+        if lr and lr['url']:
+            url = lr['url']
+        if rr:
+            _camp_event(oid, rr['campaign_id'], rid, rr['candidate_id'], 'click', ref=lid, detail=url)
+    except Exception as e:
+        print('[campaign] click error:', e)
+    return redirect(url, code=302)
+
+
+_BOUNCE_FROM = ('mailer-daemon', 'postmaster', 'mail delivery subsystem')
+_BOUNCE_SUBJ = ('undelivered', 'delivery status notification', 'delivery has failed',
+                'returned mail', 'mail delivery failed', 'failure notice')
+_ADDR_RE = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
+
+
+def _camp_scan_inbox(oid):
+    """Read the already-synced inbox and turn it into campaign signal:
+      * a bounce → suppress that candidate everywhere, permanently
+      * a reply  → recorded against the campaign (the metric that matters)
+    No extra IMAP traffic; this only reads what the email sync already stored."""
+    conn = get_db()
+    try:
+        sent = conn.execute(
+            "SELECT r.id, r.campaign_id, r.candidate_id, r.email, r.thread_id "
+            "FROM campaign_recipients r WHERE r.owner_id=? AND r.status='sent'", (oid,)).fetchall()
+    except Exception:
+        conn.close()
+        return
+    if not sent:
+        conn.close()
+        return
+    by_email = {}
+    by_thread = {}
+    for r in sent:
+        if r['email']:
+            by_email.setdefault(r['email'].strip().lower(), r)
+        if r['thread_id']:
+            by_thread.setdefault(r['thread_id'], r)
+    inbound = conn.execute(
+        "SELECT msg_id, from_addr, subject, body, thread_id FROM emails "
+        "WHERE owner_id=? AND COALESCE(folder,'')!='Sent' AND COALESCE(folder,'')!='Drafts' "
+        "ORDER BY id DESC LIMIT 400", (oid,)).fetchall()
+    conn.close()
+
+    for m in inbound:
+        frm = (m['from_addr'] or '').lower()
+        subj = (m['subject'] or '').lower()
+        is_bounce = (any(b in frm for b in _BOUNCE_FROM)
+                     or any(b in subj for b in _BOUNCE_SUBJ))
+        if is_bounce:
+            hay = (m['subject'] or '') + ' ' + (m['body'] or '')[:4000]
+            for addr in set(a.lower() for a in _ADDR_RE.findall(hay)):
+                rec = by_email.get(addr)
+                if not rec:
+                    continue
+                _camp_event(oid, rec['campaign_id'], rec['id'], rec['candidate_id'],
+                            'bounce', ref=m['msg_id'] or addr, detail=(m['subject'] or '')[:200])
+                try:
+                    c2 = get_db()
+                    c2.execute("UPDATE candidates SET do_not_email=1 WHERE id=? AND owner_id=?",
+                               (rec['candidate_id'], oid))
+                    c2.execute("UPDATE campaign_recipients SET status='cancelled', reason='Email bounced' "
+                               "WHERE owner_id=? AND candidate_id=? AND status='pending'",
+                               (oid, rec['candidate_id']))
+                    c2.commit(); c2.close()
+                except Exception as e:
+                    print('[campaign] bounce suppress error:', e)
+            continue
+        rec = by_thread.get(m['thread_id'] or '__none__')
+        if not rec:
+            sender = _ADDR_RE.findall(m['from_addr'] or '')
+            rec = by_email.get(sender[0].lower()) if sender else None
+        if rec:
+            _camp_event(oid, rec['campaign_id'], rec['id'], rec['candidate_id'],
+                        'reply', ref=m['msg_id'] or '', detail=(m['subject'] or '')[:200])
+
+
+def _camp_event_counts(conn, cid, oid):
+    out = {'open': 0, 'click': 0, 'bounce': 0, 'reply': 0, 'complaint': 0, 'soft_bounce': 0}
+    for r in conn.execute("SELECT type, COUNT(DISTINCT recipient_id) n FROM campaign_events "
+                          "WHERE owner_id=? AND campaign_id=? GROUP BY type", (oid, cid)).fetchall():
+        if r['type'] in out:
+            out[r['type']] = r['n']
+    return out
+
+
+# ── Routes ────────────────────────────────────────────────────────────────
+@app.route('/api/campaigns', methods=['GET'])
+@login_required
+def campaigns_list():
+    oid = effective_company_id()
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM campaigns WHERE owner_id=? ORDER BY id DESC LIMIT 100', (oid,)).fetchall()
+    out = []
+    for r in rows:
+        d = _camp_public(r, _camp_counts(conn, r['id'], oid))
+        d['events'] = _camp_event_counts(conn, r['id'], oid)
+        out.append(d)
+    cap = int(get_setting('campaign_daily_cap', '') or 120)
+    warm = _ses_warmup_cap() if _ses_enabled() else None
+    if warm is not None:
+        cap = min(cap, warm)
+    today = _camp_sent_today(conn, oid)
+    conn.close()
+    return jsonify({'ok': True, 'campaigns': out, 'daily_cap': cap, 'sent_today': today,
+                    'transport': 'ses' if _ses_enabled() else 'gmail',
+                    'warmup_cap': warm})
+
+
+@app.route('/api/campaigns', methods=['POST'])
+@login_required
+def campaigns_create():
+    d = request.json or {}
+    name = (d.get('name') or '').strip()
+    subject = (d.get('subject') or '').strip()
+    body = (d.get('body') or '').strip()
+    if not name or not subject or not body:
+        return jsonify({'error': 'Name, subject and message are all required'}), 400
+    oid = effective_company_id()
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO campaigns (owner_id,created_by,name,mandate_id,subject,body,filter_stages,"
+        "candidate_ids,status,daily_cap,dedupe_days,sent_count,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,'draft',?,?,0,?,?)",
+        (oid, (current_user() or {}).get('id'), name, d.get('mandate_id') or None, subject, body,
+         json.dumps(d.get('filter_stages') or []), json.dumps(d.get('candidate_ids') or []),
+         int(d.get('daily_cap') or get_setting('campaign_daily_cap', '') or 120),
+         (14 if d.get('dedupe_days') is None else int(d.get('dedupe_days'))), ts(), ts()))
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return jsonify({'ok': True, 'id': new_id})
+
+
+@app.route('/api/campaigns/<int:cid>', methods=['GET'])
+@login_required
+def campaigns_get(cid):
+    oid = effective_company_id()
+    conn = get_db()
+    r = _camp_row(conn, cid, oid)
+    if not r:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    out = _camp_public(r, _camp_counts(conn, cid, oid))
+    out['events'] = _camp_event_counts(conn, cid, oid)
+    conn.close()
+    return jsonify({'ok': True, 'campaign': out})
+
+
+@app.route('/api/campaigns/<int:cid>', methods=['POST'])
+@login_required
+def campaigns_update(cid):
+    d = request.json or {}
+    oid = effective_company_id()
+    conn = get_db()
+    r = _camp_row(conn, cid, oid)
+    if not r:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    if r['status'] == 'running':
+        conn.close()
+        return jsonify({'error': 'Pause the campaign before editing it'}), 400
+    conn.execute("UPDATE campaigns SET name=?, mandate_id=?, subject=?, body=?, filter_stages=?, "
+                 "candidate_ids=?, daily_cap=?, dedupe_days=?, updated_at=? WHERE id=? AND owner_id=?",
+                 ((d.get('name') or r['name']).strip(), d.get('mandate_id') or None,
+                  (d.get('subject') or r['subject']), (d.get('body') or r['body']),
+                  json.dumps(d.get('filter_stages') or []), json.dumps(d.get('candidate_ids') or []),
+                  int(d.get('daily_cap') or r['daily_cap'] or 120),
+                  (r['dedupe_days'] if d.get('dedupe_days') is None else int(d.get('dedupe_days'))), ts(), cid, oid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/campaigns/<int:cid>', methods=['DELETE'])
+@login_required
+def campaigns_delete(cid):
+    oid = effective_company_id()
+    conn = get_db()
+    r = _camp_row(conn, cid, oid)
+    if not r:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    if r['status'] == 'running':
+        conn.close()
+        return jsonify({'error': 'Stop the campaign before deleting it'}), 400
+    conn.execute('DELETE FROM campaign_recipients WHERE owner_id=? AND campaign_id=?', (oid, cid))
+    conn.execute('DELETE FROM campaigns WHERE owner_id=? AND id=?', (oid, cid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/campaigns/<int:cid>/preview', methods=['GET'])
+@login_required
+def campaigns_preview(cid):
+    """Dry run: who would receive this, who would be skipped and why, plus the
+    first few emails rendered exactly as they would go out."""
+    oid = effective_company_id()
+    conn = get_db()
+    camp = _camp_row(conn, cid, oid)
+    if not camp:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    built = _camp_build_list(conn, oid, camp)
+    cand_by_id = {}
+    for r in _camp_resolve(conn, oid, camp):
+        cand_by_id[r['id']] = dict(r)
+    mand = None
+    if camp['mandate_id']:
+        mr = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                          (camp['mandate_id'], oid)).fetchone()
+        mand = dict(mr) if mr else None
+    conn.close()
+
+    samples, skipped = [], []
+    would_send = 0
+    for cand_id, email, status, reason in built:
+        cd = cand_by_id.get(cand_id, {})
+        if status != 'pending':
+            skipped.append({'candidate_id': cand_id, 'name': cd.get('name', ''),
+                            'email': email, 'reason': reason})
+            continue
+        unsub = _camp_base_url() + '/u/' + _unsub_token(oid, cand_id)
+        subj, ms = _camp_render(camp['subject'], cd, mand or {}, unsub)
+        body, mb = _camp_render(camp['body'], cd, mand or {}, unsub)
+        missing = sorted(set(ms + mb))
+        if missing:
+            skipped.append({'candidate_id': cand_id, 'name': cd.get('name', ''), 'email': email,
+                            'reason': 'Could not fill: ' + ', '.join(missing)})
+            continue
+        would_send += 1
+        if len(samples) < 3:
+            samples.append({'name': cd.get('name', ''), 'email': email,
+                            'subject': subj, 'body': body})
+    return jsonify({'ok': True, 'would_send': would_send, 'skipped_count': len(skipped),
+                    'skipped': skipped[:100], 'samples': samples})
+
+
+@app.route('/api/campaigns/<int:cid>/test-send', methods=['POST'])
+@login_required
+def campaigns_test_send(cid):
+    """Send ONE rendered sample to yourself. Never touches the recipient list."""
+    oid = effective_company_id()
+    conn = get_db()
+    camp = _camp_row(conn, cid, oid)
+    if not camp:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    rows = _camp_resolve(conn, oid, camp)
+    mand = None
+    if camp['mandate_id']:
+        mr = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                          (camp['mandate_id'], oid)).fetchone()
+        mand = dict(mr) if mr else None
+    conn.close()
+    cd = dict(rows[0]) if rows else {'name': 'Sample Candidate'}
+    to = (request.json or {}).get('to') or get_setting('smtp_email', '')
+    if not to:
+        return jsonify({'error': 'No test address. Set your Gmail in Settings first.'}), 400
+    unsub = _camp_base_url() + '/u/' + _unsub_token(oid, cd.get('id') or 0)
+    subj, _ = _camp_render(camp['subject'], cd, mand or {}, unsub)
+    body, _ = _camp_render(camp['body'], cd, mand or {}, unsub)
+    ok, err, _mid, _tid = _camp_transport_send(to, '[TEST] ' + subj, body, None, unsub)
+    if not ok:
+        return jsonify({'error': err or 'Send failed'}), 400
+    return jsonify({'ok': True, 'to': to})
+
+
+@app.route('/api/campaigns/<int:cid>/start', methods=['POST'])
+@login_required
+def campaigns_start(cid):
+    oid = effective_company_id()
+    conn = get_db()
+    camp = _camp_row(conn, cid, oid)
+    if not camp:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    if camp['status'] == 'running':
+        conn.close()
+        return jsonify({'ok': True, 'already': True})
+    if _ses_enabled():
+        if not _ses_params()[0]:
+            conn.close()
+            return jsonify({'error': 'Amazon SES is selected but not fully configured. '
+                                     'Settings → Communication → Bulk sending.'}), 400
+    elif not get_setting('smtp_email', '') or not get_setting('smtp_app_password', ''):
+        conn.close()
+        return jsonify({'error': 'Email is not configured. Settings → Communication → Email Configuration.'}), 400
+    # Build the list only the first time; resuming a paused campaign keeps it.
+    have = conn.execute('SELECT COUNT(*) n FROM campaign_recipients WHERE owner_id=? AND campaign_id=?',
+                        (oid, cid)).fetchone()['n']
+    if not have:
+        for cand_id, email, status, reason in _camp_build_list(conn, oid, camp):
+            conn.execute("INSERT OR IGNORE INTO campaign_recipients (owner_id,campaign_id,candidate_id,email,"
+                         "status,reason,created_at) VALUES (?,?,?,?,?,?,?)",
+                         (oid, cid, cand_id, email, status, reason, ts()))
+    pending = conn.execute("SELECT COUNT(*) n FROM campaign_recipients WHERE owner_id=? AND campaign_id=? "
+                           "AND status='pending'", (oid, cid)).fetchone()['n']
+    if not pending:
+        conn.execute("UPDATE campaigns SET status='done', finished_at=?, updated_at=? WHERE id=? AND owner_id=?",
+                     (ts(), ts(), cid, oid))
+        conn.commit()
+        counts = _camp_counts(conn, cid, oid)
+        conn.close()
+        return jsonify({'ok': True, 'status': 'done', 'counts': counts,
+                        'note': 'Nobody was eligible — every candidate was skipped.'})
+    conn.execute("UPDATE campaigns SET status='running', started_at=COALESCE(NULLIF(started_at,''),?), "
+                 "updated_at=? WHERE id=? AND owner_id=?", (ts(), ts(), cid, oid))
+    conn.commit()
+    counts = _camp_counts(conn, cid, oid)
+    conn.close()
+    return jsonify({'ok': True, 'status': 'running', 'counts': counts})
+
+
+@app.route('/api/campaigns/<int:cid>/pause', methods=['POST'])
+@login_required
+def campaigns_pause(cid):
+    oid = effective_company_id()
+    conn = get_db()
+    conn.execute("UPDATE campaigns SET status='paused', updated_at=? WHERE id=? AND owner_id=? "
+                 "AND status='running'", (ts(), cid, oid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'status': 'paused'})
+
+
+@app.route('/api/campaigns/<int:cid>/stop', methods=['POST'])
+@login_required
+def campaigns_stop(cid):
+    """Hard stop: cancels everything still pending. Cannot be resumed."""
+    oid = effective_company_id()
+    conn = get_db()
+    conn.execute("UPDATE campaign_recipients SET status='cancelled', reason='Campaign stopped' "
+                 "WHERE owner_id=? AND campaign_id=? AND status='pending'", (oid, cid))
+    conn.execute("UPDATE campaigns SET status='stopped', finished_at=?, updated_at=? WHERE id=? AND owner_id=?",
+                 (ts(), ts(), cid, oid))
+    conn.commit()
+    counts = _camp_counts(conn, cid, oid)
+    conn.close()
+    return jsonify({'ok': True, 'status': 'stopped', 'counts': counts})
+
+
+@app.route('/api/campaigns/<int:cid>/recipients', methods=['GET'])
+@login_required
+def campaigns_recipients(cid):
+    oid = effective_company_id()
+    status = (request.args.get('status') or '').strip()
+    conn = get_db()
+    q = ("SELECT r.*, c.name FROM campaign_recipients r LEFT JOIN candidates c ON c.id=r.candidate_id "
+         "WHERE r.owner_id=? AND r.campaign_id=?")
+    args = [oid, cid]
+    if status:
+        q += ' AND r.status=?'
+        args.append(status)
+    rows = conn.execute(q + ' ORDER BY r.id LIMIT 500', tuple(args)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'recipients': [dict(r) for r in rows]})
+
+
+@app.route('/api/campaigns/<int:cid>/report', methods=['GET'])
+@login_required
+def campaigns_report(cid):
+    """Delivery + engagement for one campaign, plus who actually replied —
+    that list is the point of the whole feature."""
+    oid = effective_company_id()
+    conn = get_db()
+    camp = _camp_row(conn, cid, oid)
+    if not camp:
+        conn.close()
+        return jsonify({'error': 'Not found'}), 404
+    counts = _camp_counts(conn, cid, oid)
+    events = _camp_event_counts(conn, cid, oid)
+    people = {}
+    for e in conn.execute(
+            "SELECT e.type, e.detail, e.created_at, e.candidate_id, c.name "
+            "FROM campaign_events e LEFT JOIN candidates c ON c.id=e.candidate_id "
+            "WHERE e.owner_id=? AND e.campaign_id=? AND e.type IN ('reply','bounce','click','complaint') "
+            "ORDER BY e.id DESC LIMIT 300", (oid, cid)).fetchall():
+        key = (e['type'], e['candidate_id'])
+        if key in people:
+            continue
+        people[key] = {'type': e['type'], 'candidate_id': e['candidate_id'],
+                       'name': e['name'] or ('#%s' % e['candidate_id']),
+                       'detail': e['detail'] or '', 'at': e['created_at']}
+    links = [dict(r) for r in conn.execute(
+        "SELECT l.url, COUNT(DISTINCT e.recipient_id) clicks FROM campaign_links l "
+        "LEFT JOIN campaign_events e ON e.type='click' AND e.ref=CAST(l.id AS TEXT) AND e.campaign_id=l.campaign_id "
+        "WHERE l.owner_id=? AND l.campaign_id=? GROUP BY l.id ORDER BY clicks DESC LIMIT 20",
+        (oid, cid)).fetchall()]
+    conn.close()
+    rows = list(people.values())
+    return jsonify({'ok': True, 'name': camp['name'], 'status': camp['status'],
+                    'counts': counts, 'events': events, 'links': links,
+                    'replies': [r for r in rows if r['type'] == 'reply'],
+                    'bounces': [r for r in rows if r['type'] in ('bounce', 'complaint')]})
+
+
+@app.route('/api/campaigns/scan-inbox', methods=['POST'])
+@login_required
+def campaigns_scan_inbox():
+    """Manual 'check for bounces and replies now'. Also runs automatically."""
+    oid = effective_company_id()
+    _camp_scan_inbox(oid)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/candidates/<int:cid>/do-not-email', methods=['POST'])
+@login_required
+def candidate_do_not_email(cid):
+    on = 1 if (request.json or {}).get('on') else 0
+    oid = effective_company_id()
+    conn = get_db()
+    conn.execute("UPDATE candidates SET do_not_email=?, unsub_at=? WHERE id=? AND owner_id=?",
+                 (on, ts() if on else '', cid, oid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'on': bool(on)})
+
+
+# ── Public unsubscribe (no auth — the link is signed) ─────────────────────
+_UNSUB_PAGE = ("<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
+               "<div style=\"font-family:system-ui,sans-serif;max-width:460px;margin:14vh auto;padding:0 22px;"
+               "color:#1a1a1a;line-height:1.6\">%s</div>")
+
+
+@app.route('/u/<token>', methods=['GET', 'POST'])
+def unsubscribe_public(token):
+    oid, cid = _unsub_parse(token)
+    if not oid:
+        return Response(_UNSUB_PAGE % "<h2>Link not valid</h2><p>This unsubscribe link is broken or expired.</p>",
+                        mimetype='text/html'), 400
+    if request.method == 'GET':
+        return Response(_UNSUB_PAGE % (
+            "<h2>Unsubscribe</h2><p>Stop receiving job emails from us?</p>"
+            "<form method='post'><button style=\"font-size:15px;padding:11px 22px;border:none;border-radius:9px;"
+            "background:#1a1a1a;color:#fff;cursor:pointer\">Yes, unsubscribe me</button></form>"),
+            mimetype='text/html')
+    conn = get_db()
+    conn.execute("UPDATE candidates SET do_not_email=1, unsub_at=? WHERE id=? AND owner_id=?",
+                 (ts(), cid, oid))
+    conn.execute("UPDATE campaign_recipients SET status='cancelled', reason='Unsubscribed' "
+                 "WHERE owner_id=? AND candidate_id=? AND status='pending'", (oid, cid))
+    conn.commit(); conn.close()
+    return Response(_UNSUB_PAGE % "<h2>Done</h2><p>You will not receive further job emails from us.</p>",
+                    mimetype='text/html')
 
 
 @app.route('/api/email/signature', methods=['GET'])
@@ -19714,6 +21010,10 @@ try:
         _start_email_agent()
     except Exception as _ea_err:
         print(f'[email-agent] failed to start: {_ea_err}')
+    try:
+        _start_campaign_worker()
+    except Exception as _cw_err:
+        print(f'[campaign] failed to start: {_cw_err}')
     _ucount = _db_user_count(DB_PATH)
     print('\n' + '=' * 56)
     print('  HireLab Screener — startup')

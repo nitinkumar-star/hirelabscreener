@@ -4685,6 +4685,18 @@ async function generatePlan(btn){
 window._emailFolder='';
 async function renderEmailBox(){
   var el=document.getElementById('emailbox-body'); if(!el) return;
+  // Mass email campaigns (lives inside the Email Box)
+  if(window._emailFolder==='__campaigns'){
+    el.innerHTML='<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">'
+      +'<button class="btn btn-o" style="font-size:12px" onclick="window._emailFolder=\'\';renderEmailBox()">&#8592; Inbox</button>'
+      +'<button class="btn" style="font-size:12px;background:#B4530A;color:#fff;border:none">&#128227; Campaigns</button>'
+      +'<button class="btn btn-o" style="font-size:12px;margin-left:auto" onclick="campScanInbox(this)">&#8635; Check replies &amp; bounces</button>'
+      +'<button class="btn btn-o" style="font-size:12px" onclick="campNew()">&#10133; New campaign</button></div>'
+      +'<div id="camp-quota" style="font-size:11px;color:#777;margin-bottom:10px"></div>'
+      +'<div id="camp-body"></div>';
+    loadCampaigns();
+    return;
+  }
   // Email Agent view (lives inside the Email Box)
   if(window._emailFolder==='__agent'){
     el.innerHTML='<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">'
@@ -4707,7 +4719,7 @@ async function renderEmailBox(){
   window._ebEmails=emails;
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap">'+tab('','All')+tab('Inbox','Inbox')+tab('Unread','Unread')+tab('Sent','Sent')+tab('Drafts','Drafts')+'</div>'
-    +'<div style="display:flex;gap:6px;align-items:center"><input class="inp" id="eb-search" placeholder="Search mail" style="font-size:12px;width:160px;padding:5px 9px" oninput="renderEmailList()"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="openCompose()">&#9998; Compose</button><button class="btn btn-o" style="font-size:12px" onclick="openSignatureEditor()">&#9997; Signature</button><button class="btn btn-o" style="font-size:12px" title="Regroup existing emails into conversations" onclick="ebRethread(this)">&#128260; Fix threads</button><button class="btn btn-o" style="font-size:12px" title="Test email sending, receiving, threading and attachments" onclick="openEmailSelfTest()">&#129658; Self-Test</button><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync</button></div></div>'
+    +'<div style="display:flex;gap:6px;align-items:center"><input class="inp" id="eb-search" placeholder="Search mail" style="font-size:12px;width:160px;padding:5px 9px" oninput="renderEmailList()"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="openCompose()">&#9998; Compose</button><button class="btn btn-o" style="font-size:12px" onclick="openSignatureEditor()">&#9997; Signature</button><button class="btn btn-o" style="font-size:12px" title="Regroup existing emails into conversations" onclick="ebRethread(this)">&#128260; Fix threads</button><button class="btn btn-o" style="font-size:12px" title="Test email sending, receiving, threading and attachments" onclick="openEmailSelfTest()">&#129658; Self-Test</button><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn btn-o" style="font-size:12px;color:#B4530A;border-color:#F0CBA8" title="Send a personalised email to many candidates" onclick="window._emailFolder=\'__campaigns\';renderEmailBox()">&#128227; Campaigns</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync</button></div></div>'
     +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden" id="eb-list"></div>';
   renderEmailList();
 }
@@ -6636,6 +6648,8 @@ function renderSettings(){
       + _setHead('Communication', 'Everything the candidate or client actually receives &mdash; in one place.')
       + _sec('sec-email', 'comm', 'Email Configuration &amp; Templates', 'gmail smtp app password signature cc share template',
              emailConfigHTML(s))
+      + _sec('sec-bulk', 'comm', 'Bulk sending &mdash; Amazon SES', 'ses amazon bulk campaign transport warmup webhook sns bounce region smtp',
+             sesConfigHTML(s))
       + _sec('sec-outreach', 'comm', 'WhatsApp Outreach Sequence', 'outreach first message follow up 1 2 timing hours',
              outreachSeqHTML(s))
       + _sec('sec-wa', 'comm', 'WhatsApp Templates', 'whatsapp library listener reply capture', waConfigHTML(s))
@@ -6699,6 +6713,7 @@ function renderSettings(){
   renderWaSettings();
   loadEmailTemplates();
   if(wsMode()==='corporate') loadDepartments();
+  loadSesStatus();
 }
 
 function setTab(id){
@@ -6804,6 +6819,86 @@ async function saveSettingsTab(tab){
 }
 
 // ── Section builders split out of the old single-column page ──────────────
+function sesConfigHTML(s){
+  var isSes = (s.email_transport || 'gmail') === 'ses';
+  return '<div style="margin:18px 0;border-top:2px solid #B4530A;padding-top:16px">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:15px">&#128227;</span>'
+    + '<div style="font-size:15px;font-weight:700;color:var(--navy)">Bulk sending</div></div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5">Which pipe mass-email campaigns leave through. '
+    + 'Your 1:1 recruiter emails always keep using your own mailbox above &mdash; this only affects campaigns.</div>'
+    + '<div class="card"><div class="card-body">'
+    + '<div class="fg-row"><label>Campaigns send via</label><select class="inp" id="s-email_transport" onchange="sesToggle()">'
+    + '<option value="gmail"' + (isSes?'':' selected') + '>My mailbox (Gmail / Workspace) &mdash; small volumes only</option>'
+    + '<option value="ses"' + (isSes?' selected':'') + '>Amazon SES &mdash; recommended for real volume</option></select></div>'
+    + '<div id="ses-warn" style="font-size:11px;line-height:1.6;background:#FBEEE2;border:0.5px solid #F0CBA8;border-radius:7px;padding:9px 12px;margin-bottom:12px;'
+    + (isSes?'display:none':'') + '">Sending campaigns from your own Workspace mailbox puts your <b>primary domain</b> on the line. '
+    + 'If complaints rise, your normal recruiter and client emails start landing in spam too. Keep this under ~100&ndash;150 a day.</div>'
+    + '<div id="ses-fields" style="' + (isSes?'':'display:none') + '">'
+    + '<div class="g2">'
+    + '<div class="fg-row"><label>AWS region</label><input class="inp" id="s-ses_region" value="' + esc(s.ses_region||'') + '" placeholder="ap-south-1"></div>'
+    + '<div class="fg-row"><label>SES SMTP username</label><input class="inp" id="s-ses_smtp_user" value="' + esc(s.ses_smtp_user||'') + '" placeholder="AKIA..."></div>'
+    + '</div>'
+    + '<div class="fg-row"><label>SES SMTP password</label><input class="inp" id="s-ses_smtp_password" type="password" value="" placeholder="' + _secretPh(s.ses_smtp_password, 'Generated in the SES console') + '">'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">This is the <b>SMTP credential</b> from SES &mdash; not your AWS access key.</div></div>'
+    + '<div class="g2">'
+    + '<div class="fg-row"><label>Send from (verified)</label><input class="inp" id="s-ses_from_email" value="' + esc(s.ses_from_email||'') + '" placeholder="jobs@mail.yourdomain.com"></div>'
+    + '<div class="fg-row"><label>From name</label><input class="inp" id="s-ses_from_name" value="' + esc(s.ses_from_name||'') + '" placeholder="Your company name"></div>'
+    + '</div>'
+    + '<div class="g2">'
+    + '<div class="fg-row"><label>Reply-To</label><input class="inp" id="s-ses_reply_to" value="' + esc(s.ses_reply_to||'') + '" placeholder="you@yourdomain.com">'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">Replies come back to this mailbox &mdash; keep it as your real inbox so the Email Box still threads them.</div></div>'
+    + '<div class="fg-row"><label>Warm-up started on</label><input class="inp" id="s-ses_warmup_start" type="date" value="' + esc((s.ses_warmup_start||'').substring(0,10)) + '">'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">Blank = no ramp. Set it and the daily cap climbs 50 &rarr; 100 &rarr; 200 &rarr; 400 &rarr; 700 &rarr; 1200 &rarr; 2000 over two weeks.</div></div>'
+    + '</div>'
+    + '<div class="fg-row"><label>Bounce &amp; complaint webhook (SNS)</label>'
+    + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+    + '<code id="ses-hook" style="font-size:11px;background:#F1F0EC;padding:6px 9px;border-radius:6px;word-break:break-all;flex:1;min-width:200px">loading&hellip;</code>'
+    + '<button class="btn btn-o" style="font-size:11px" onclick="sesCopyHook()">Copy</button></div>'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:4px">In SES create a Configuration Set with Bounce + Complaint events publishing to an SNS topic, then add this URL as an <b>HTTPS subscription</b>. A hard bounce or spam complaint then suppresses that candidate immediately and permanently.</div></div>'
+    + '<div id="ses-state" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>'
+    + '<button class="btn btn-o" style="font-size:11px" onclick="sesTest(this)">&#128231; Send test through SES</button>'
+    + '</div>'
+    + '</div></div></div>';
+}
+
+function sesToggle(){
+  var sel = document.getElementById('s-email_transport'); if(!sel) return;
+  var isSes = sel.value === 'ses';
+  var f = document.getElementById('ses-fields'); if(f) f.style.display = isSes ? '' : 'none';
+  var w = document.getElementById('ses-warn'); if(w) w.style.display = isSes ? 'none' : '';
+}
+
+async function loadSesStatus(){
+  var box = document.getElementById('ses-hook'); if(!box) return;
+  try{
+    var r = await req('GET','/ses/status');
+    if(!r || !r.ok) return;
+    box.textContent = r.webhook_url || '';
+    var st = document.getElementById('ses-state');
+    if(st){
+      var bits = [];
+      bits.push(r.enabled ? 'Campaigns are sending via <b>Amazon SES</b>.' : 'Campaigns are sending via <b>your own mailbox</b>.');
+      if(r.enabled && !r.configured) bits.push('<b style="color:#A33">Configuration is incomplete &mdash; campaigns will refuse to start.</b>');
+      if(r.warmup_cap_today) bits.push('Warm-up is limiting today to <b>' + r.warmup_cap_today + '</b> emails.');
+      if(r.topic_arn) bits.push('SNS topic connected.');
+      st.innerHTML = bits.join(' ');
+    }
+  }catch(e){}
+}
+
+function sesCopyHook(){
+  var el = document.getElementById('ses-hook'); if(!el) return;
+  navigator.clipboard.writeText(el.textContent || '').then(function(){ toast('&#9989;','Webhook URL copied'); });
+}
+
+async function sesTest(btn){
+  if(btn){ btn.disabled = true; btn.innerHTML = 'Sending&hellip;'; }
+  var r = await req('POST','/ses/test', {});
+  if(btn){ btn.disabled = false; btn.innerHTML = '&#128231; Send test through SES'; }
+  if(r && r.ok) toast('&#9989;','Test sent to ' + r.to + ' from ' + r.from);
+  else toast('&#9888;&#65039;', (r && r.error) || 'SES test failed');
+}
+
 function outreachSeqHTML(s){
   return '<div style="margin:18px 0;border-top:2px solid #1D9E75;padding-top:16px">'
     + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:15px">&#128241;</span>'
@@ -7619,6 +7714,10 @@ async function saveSettings(){
   put('stale_days','s-stale_days','7');      put('promise_hours','s-promise_hours','24');
   put('analytics_stale_days','s-analytics_stale_days','7');
   put('interview_template','s-interview_template');
+  put('email_transport','s-email_transport');   put('ses_region','s-ses_region');
+  put('ses_smtp_user','s-ses_smtp_user');      putSecret('ses_smtp_password','s-ses_smtp_password');
+  put('ses_from_email','s-ses_from_email');    put('ses_from_name','s-ses_from_name');
+  put('ses_reply_to','s-ses_reply_to');        put('ses_warmup_start','s-ses_warmup_start');
   put('careers_enabled','s-careers_enabled');
   put('careers_show_ctc','s-careers_show_ctc');
   put('careers_intro','s-careers_intro');
@@ -8009,6 +8108,337 @@ function closeJourney(){
   var main=document.getElementById('main');
   if(main){ main.style.marginRight=''; }
   document.removeEventListener('mousedown', _journeyOutside);
+}
+
+// ── Mass email campaigns ──────────────────────────────────────────────────
+window._camps = [];
+window._campOpen = null;
+
+async function loadCampaigns(){
+  var box = document.getElementById('camp-body'); if(!box) return;
+  box.innerHTML = '<div style="font-size:12px;color:var(--muted)">Loading&hellip;</div>';
+  var r = await req('GET','/campaigns');
+  if(!r || !r.ok){ box.innerHTML = '<div style="font-size:12px;color:#B4530A">Could not load campaigns.</div>'; return; }
+  window._camps = r.campaigns || [];
+  var q = document.getElementById('camp-quota');
+  if(q){
+    var left = Math.max(0, (r.daily_cap||120) - (r.sent_today||0));
+    q.innerHTML = '<b>' + (r.sent_today||0) + '</b> sent today &middot; <b>' + left + '</b> left before today\'s cap of '
+      + (r.daily_cap||120) + '. Sending is throttled to one email every 30&ndash;90 seconds &mdash; a burst is what gets a sender blocked.'
+      + (r.transport === 'ses'
+          ? ' Sending via <b>Amazon SES</b>.' + (r.warmup_cap ? ' Warm-up is holding today at <b>' + r.warmup_cap + '</b>.' : '')
+          : ' Sending via <b>your own mailbox</b> — keep this well under 150 a day.');
+  }
+  if(!window._camps.length){
+    box.innerHTML = '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:22px;text-align:center">'
+      + '<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:5px">No campaigns yet</div>'
+      + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Pick a job, pick the stages, write once &mdash; every candidate gets their own personalised email.</div>'
+      + '<button class="btn btn-g" onclick="campNew()">&#10133; New campaign</button></div>';
+    return;
+  }
+  box.innerHTML = window._camps.map(campCard).join('');
+}
+
+function campStatusPill(st){
+  var m = {draft:['#6B6B6B','#F0EFEA','Draft'], running:['#0F6E56','#E1F5EE','Running'],
+           paused:['#B4530A','#FBEEE2','Paused'], done:['#185FA5','#E4EFFA','Finished'],
+           stopped:['#A33','#FBE9E9','Stopped']};
+  var c = m[st] || m.draft;
+  return '<span style="font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px;background:'
+    + c[1] + ';color:' + c[0] + '">' + c[2] + '</span>';
+}
+
+function campCard(c){
+  var n = c.counts || {};
+  var total = n.total || 0, done = (n.sent||0) + (n.skipped||0) + (n.failed||0) + (n.cancelled||0);
+  var pct = total ? Math.round(done * 100 / total) : 0;
+  return '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px">'
+    + '<div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:6px">'
+    + '<span style="font-size:13.5px;font-weight:700;color:var(--navy)">' + esc(c.name||'Untitled') + '</span>'
+    + campStatusPill(c.status) + '</div>'
+    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:9px">' + esc(c.subject||'') + '</div>'
+    + (total ? '<div style="height:5px;background:#F0EFEA;border-radius:4px;overflow:hidden;margin-bottom:7px">'
+        + '<div style="height:100%;width:' + pct + '%;background:#0F6E56"></div></div>'
+        + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">'
+        + '<b style="color:#0F6E56">' + (n.sent||0) + '</b> sent &middot; ' + (n.pending||0) + ' pending &middot; '
+        + (n.skipped||0) + ' skipped' + ((n.failed||0) ? ' &middot; <b style="color:#A33">' + n.failed + ' failed</b>' : '')
+        + ((n.cancelled||0) ? ' &middot; ' + n.cancelled + ' cancelled' : '') + '</div>' : '')
+    + (((c.events && (c.events.reply || c.events.click || c.events.open || c.events.bounce)))
+        ? '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">'
+          + '<b style="color:#0F6E56">' + (c.events.reply||0) + '</b> replied &middot; '
+          + '<b>' + (c.events.click||0) + '</b> clicked &middot; ' + (c.events.open||0) + ' opened'
+          + ((c.events.bounce||0) ? ' &middot; <b style="color:#A33">' + c.events.bounce + ' bounced</b>' : '')
+          + '</div>' : '')
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+    + '<button class="btn btn-o" style="font-size:11px" onclick="campEdit(' + c.id + ')">' + (c.status==='draft'?'Edit':'View') + '</button>'
+    + '<button class="btn btn-o" style="font-size:11px" onclick="campPreview(' + c.id + ')">&#128065; Preview</button>'
+    + (c.status==='running'
+        ? '<button class="btn btn-o" style="font-size:11px" onclick="campAct(' + c.id + ',\'pause\')">&#9208; Pause</button>'
+          + '<button class="btn btn-o" style="font-size:11px;color:#A33;border-color:#E9C4C4" onclick="campAct(' + c.id + ',\'stop\')">&#9209; Stop</button>'
+        : (c.status==='draft' || c.status==='paused'
+            ? '<button class="btn btn-g" style="font-size:11px" onclick="campStart(' + c.id + ')">&#9654; '
+              + (c.status==='paused'?'Resume':'Start') + '</button>' : ''))
+    + (total ? '<button class="btn btn-o" style="font-size:11px" onclick="campRecipients(' + c.id + ')">Recipients</button>' : '')
+    + ((n.sent||0) ? '<button class="btn btn-o" style="font-size:11px" onclick="campReport(' + c.id + ')">&#128202; Report</button>' : '')
+    + ((c.status!=='running')
+        ? '<button class="btn btn-o" style="font-size:11px;margin-left:auto;color:#A33;border-color:#E9C4C4" onclick="campDelete(' + c.id + ')">Delete</button>' : '')
+    + '</div></div>';
+}
+
+function campNew(){ campForm(null); }
+
+async function campEdit(id){
+  var r = await req('GET','/campaigns/' + id);
+  if(r && r.ok) campForm(r.campaign);
+}
+
+function campForm(c){
+  c = c || {};
+  var readOnly = (c.status && c.status !== 'draft');
+  var mands = (S.mandates || []).map(function(m){
+    return '<option value="' + m.id + '"' + ((c.mandate_id == m.id) ? ' selected' : '') + '>'
+      + esc((m.client||'') + ' — ' + (m.role||'')) + '</option>';
+  }).join('');
+  var stages = (typeof PIPELINE_STAGES !== 'undefined' ? PIPELINE_STAGES : []).map(function(x){ return x.id || x; });
+  var sel = c.filter_stages || [];
+  var stageBoxes = stages.map(function(st){
+    return '<label style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;margin:0 10px 6px 0">'
+      + '<input type="checkbox" class="camp-stage" value="' + esc(st) + '"'
+      + ((sel.indexOf(st) >= 0) ? ' checked' : '') + (readOnly?' disabled':'') + '> ' + esc(st) + '</label>';
+  }).join('');
+  var ex = document.getElementById('modal-camp'); if(ex) ex.remove();
+  var bg = document.createElement('div'); bg.className = 'modal-bg open'; bg.id = 'modal-camp';
+  bg.innerHTML = '<div class="modal" style="max-width:640px;width:96%"><div class="modal-head">'
+    + '<span class="modal-title" style="font-size:15px">&#128227; ' + (c.id ? 'Campaign' : 'New campaign') + '</span>'
+    + '<button class="modal-x" onclick="document.getElementById(\'modal-camp\').remove()">&#10005;</button></div>'
+    + '<div class="modal-body" style="max-height:70vh;overflow-y:auto">'
+    + (readOnly ? '<div style="font-size:11px;color:#B4530A;background:#FBEEE2;border-radius:7px;padding:8px 11px;margin-bottom:12px">'
+        + 'This campaign has already started, so it is read-only. Pause it first if you need to change anything.</div>' : '')
+    + '<div class="fg-row"><label>Campaign name</label><input class="inp" id="camp-name" value="' + esc(c.name||'') + '"'
+    + (readOnly?' disabled':'') + ' placeholder="e.g. Solar Design Engineer — L&amp;T outreach"></div>'
+    + '<div class="fg-row"><label>Job / mandate</label><select class="inp" id="camp-mandate"' + (readOnly?' disabled':'') + '>'
+    + '<option value="">— Any job —</option>' + mands + '</select></div>'
+    + '<div class="fg-row"><label>Send to candidates in these stages</label><div>' + stageBoxes + '</div></div>'
+    + '<div class="fg-row"><label>Use a saved template</label><select class="inp" id="camp-tpl" onchange="campApplyTpl()"'
+    + (readOnly?' disabled':'') + '><option value="">— Start from scratch —</option></select></div>'
+    + '<div class="fg-row"><label>Subject</label><input class="inp" id="camp-subject" value="' + esc(c.subject||'') + '"'
+    + (readOnly?' disabled':'') + '></div>'
+    + '<div class="fg-row"><label>Message</label><textarea class="ta" id="camp-body-text" rows="10"'
+    + (readOnly?' disabled':'') + '>' + esc(c.body||'') + '</textarea></div>'
+    + '<div style="font-size:10.5px;color:#666;background:#EEEDFE;border:0.5px solid #AFA9EC;border-radius:7px;padding:9px 11px;margin-bottom:12px;line-height:1.6">'
+    + '<b>Variables:</b> <code>{name}</code> <code>{first_name}</code> <code>{role}</code> <code>{client}</code> '
+    + '<code>{location}</code> <code>{ctc}</code> <code>{notice}</code> <code>{recruiter}</code> <code>{company}</code> '
+    + '<code>{unsubscribe}</code><br>'
+    + 'If a variable cannot be filled for someone, <b>that person is skipped instead of emailed</b>. '
+    + 'An unsubscribe link is added to the email headers automatically; put <code>{unsubscribe}</code> in the body to show it there too.</div>'
+    + '<div class="g2"><div class="fg-row"><label>Daily cap</label><input class="inp" type="number" id="camp-cap" value="'
+    + (c.daily_cap || 120) + '"' + (readOnly?' disabled':'') + '></div>'
+    + '<div class="fg-row"><label>Don&#39;t re-email within (days)</label><input class="inp" type="number" id="camp-dedupe" value="'
+    + ((c.dedupe_days === 0 || c.dedupe_days) ? c.dedupe_days : 14) + '"' + (readOnly?' disabled':'') + '></div></div>'
+    + '</div><div class="modal-foot">'
+    + (readOnly ? '' : '<button class="btn btn-g" onclick="campSave(' + (c.id||0) + ')">&#128190; Save</button>')
+    + (c.id ? '<button class="btn btn-o" onclick="campTestSend(' + c.id + ')">&#128231; Send test to me</button>' : '')
+    + (c.id ? '<button class="btn btn-o" onclick="campPreview(' + c.id + ')">&#128065; Preview</button>' : '')
+    + '<button class="btn btn-o" onclick="document.getElementById(\'modal-camp\').remove()">Close</button>'
+    + '</div></div>';
+  document.body.appendChild(bg);
+  campLoadTpls();
+}
+
+async function campLoadTpls(){
+  var sel = document.getElementById('camp-tpl'); if(!sel) return;
+  try{
+    var r = await req('GET','/email-templates');
+    window._campTpls = (r && r.ok) ? (r.templates || []) : [];
+    sel.innerHTML = '<option value="">— Start from scratch —</option>'
+      + window._campTpls.map(function(t, i){
+          return '<option value="' + i + '">' + esc(t.title || ('Template ' + (i+1))) + '</option>';
+        }).join('');
+  }catch(e){}
+}
+function campApplyTpl(){
+  var sel = document.getElementById('camp-tpl'); if(!sel || sel.value === '') return;
+  var t = (window._campTpls || [])[parseInt(sel.value, 10)]; if(!t) return;
+  var su = document.getElementById('camp-subject'); if(su) su.value = t.subject || '';
+  var bd = document.getElementById('camp-body-text');
+  if(bd) bd.value = (t.body || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '');
+}
+
+function campPayload(){
+  var stages = [];
+  Array.prototype.forEach.call(document.querySelectorAll('.camp-stage'), function(cb){
+    if(cb.checked) stages.push(cb.value);
+  });
+  return {
+    name: (document.getElementById('camp-name')||{}).value || '',
+    mandate_id: (document.getElementById('camp-mandate')||{}).value || null,
+    subject: (document.getElementById('camp-subject')||{}).value || '',
+    body: (document.getElementById('camp-body-text')||{}).value || '',
+    filter_stages: stages,
+    daily_cap: parseInt((document.getElementById('camp-cap')||{}).value || '120', 10) || 120,
+    dedupe_days: parseInt((document.getElementById('camp-dedupe')||{}).value || '14', 10) || 0
+  };
+}
+
+async function campSave(id){
+  var d = campPayload();
+  if(!d.name.trim() || !d.subject.trim() || !d.body.trim()){
+    toast('&#9888;&#65039;','Name, subject aur message — teeno chahiye'); return;
+  }
+  var r = id ? await req('POST','/campaigns/' + id, d) : await req('POST','/campaigns', d);
+  if(!r || !r.ok){ toast('&#9888;&#65039;', (r && r.error) || 'Save failed'); return; }
+  toast('&#9989;','Campaign saved');
+  var m = document.getElementById('modal-camp'); if(m) m.remove();
+  loadCampaigns();
+}
+
+async function campPreview(id){
+  var r = await req('GET','/campaigns/' + id + '/preview');
+  if(!r || !r.ok){ toast('&#9888;&#65039;', (r && r.error) || 'Preview failed'); return; }
+  var ex = document.getElementById('modal-camp-pv'); if(ex) ex.remove();
+  var bg = document.createElement('div'); bg.className = 'modal-bg open'; bg.id = 'modal-camp-pv';
+  bg.innerHTML = '<div class="modal" style="max-width:640px;width:96%"><div class="modal-head">'
+    + '<span class="modal-title" style="font-size:15px">&#128065; Preview &mdash; nothing is sent</span>'
+    + '<button class="modal-x" onclick="document.getElementById(\'modal-camp-pv\').remove()">&#10005;</button></div>'
+    + '<div class="modal-body" style="max-height:70vh;overflow-y:auto">'
+    + '<div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap">'
+    + '<div style="background:#E1F5EE;border-radius:9px;padding:10px 16px"><div style="font-size:20px;font-weight:700;color:#0F6E56">'
+    + r.would_send + '</div><div style="font-size:10.5px;color:#0F6E56">will receive</div></div>'
+    + '<div style="background:#FBEEE2;border-radius:9px;padding:10px 16px"><div style="font-size:20px;font-weight:700;color:#B4530A">'
+    + r.skipped_count + '</div><div style="font-size:10.5px;color:#B4530A">skipped</div></div></div>'
+    + (r.samples || []).map(function(sm){
+        return '<div style="border:0.5px solid var(--line);border-radius:9px;margin-bottom:10px;overflow:hidden">'
+          + '<div style="background:#F7F6F2;padding:8px 12px;font-size:11px;color:var(--muted)">To: <b>'
+          + esc(sm.name||'') + '</b> &lt;' + esc(sm.email||'') + '&gt;</div>'
+          + '<div style="padding:11px 12px"><div style="font-size:12.5px;font-weight:600;margin-bottom:7px">'
+          + esc(sm.subject||'') + '</div>'
+          + '<div style="font-size:11.5px;color:#444;white-space:pre-wrap;line-height:1.6">' + esc(sm.body||'') + '</div></div></div>';
+      }).join('')
+    + ((r.skipped && r.skipped.length)
+        ? '<div style="font-size:12px;font-weight:600;color:var(--navy);margin:14px 0 7px">Skipped, and why</div>'
+          + '<div style="border:0.5px solid var(--line);border-radius:9px;overflow:hidden">'
+          + r.skipped.map(function(sk){
+              return '<div style="display:flex;gap:10px;padding:7px 12px;font-size:11px;border-bottom:0.5px solid #F2F1ED">'
+                + '<span style="min-width:120px;font-weight:600">' + esc(sk.name || ('#' + sk.candidate_id)) + '</span>'
+                + '<span style="color:var(--muted)">' + esc(sk.reason||'') + '</span></div>';
+            }).join('') + '</div>'
+        : '')
+    + '</div><div class="modal-foot"><button class="btn btn-o" onclick="document.getElementById(\'modal-camp-pv\').remove()">Close</button></div></div>';
+  document.body.appendChild(bg);
+}
+
+async function campTestSend(id){
+  var r = await req('POST','/campaigns/' + id + '/test-send', {});
+  if(r && r.ok) toast('&#9989;','Test email sent to ' + r.to);
+  else toast('&#9888;&#65039;', (r && r.error) || 'Test send failed');
+}
+
+async function campStart(id){
+  var pv = await req('GET','/campaigns/' + id + '/preview');
+  var n = (pv && pv.ok) ? pv.would_send : '?';
+  if(!confirm('Start this campaign?\n\n' + n + ' candidates will each receive their own email, one every 30-90 seconds.\n\nYou can pause or stop it at any time.')) return;
+  var r = await req('POST','/campaigns/' + id + '/start');
+  if(!r || !r.ok){ toast('&#9888;&#65039;', (r && r.error) || 'Could not start'); return; }
+  toast('&#9989;', r.note || 'Campaign started');
+  loadCampaigns();
+}
+
+async function campAct(id, act){
+  if(act === 'stop' && !confirm('Stop this campaign for good?\n\nEveryone still pending will be cancelled. This cannot be resumed.')) return;
+  var r = await req('POST','/campaigns/' + id + '/' + act);
+  if(r && r.ok) toast('&#9989;','Campaign ' + r.status);
+  loadCampaigns();
+}
+
+async function campDelete(id){
+  if(!confirm('Delete this campaign and its send log?')) return;
+  var r = await req('DELETE','/campaigns/' + id);
+  if(!r || !r.ok){ toast('&#9888;&#65039;', (r && r.error) || 'Could not delete'); return; }
+  loadCampaigns();
+}
+
+async function campScanInbox(btn){
+  if(btn){ btn.disabled = true; btn.textContent = 'Checking…'; }
+  try{ await req('POST','/campaigns/scan-inbox'); toast('&#9989;','Inbox checked'); }
+  catch(e){}
+  if(btn){ btn.disabled = false; btn.innerHTML = '&#8635; Check replies &amp; bounces'; }
+  loadCampaigns();
+}
+
+function _campStat(n, label, colour, note){
+  return '<div style="background:' + (colour[1]) + ';border-radius:9px;padding:10px 15px;min-width:88px">'
+    + '<div style="font-size:20px;font-weight:700;color:' + colour[0] + '">' + n + '</div>'
+    + '<div style="font-size:10.5px;color:' + colour[0] + '">' + label + '</div>'
+    + (note ? '<div style="font-size:9.5px;color:var(--muted);margin-top:2px">' + note + '</div>' : '')
+    + '</div>';
+}
+
+async function campReport(id){
+  var r = await req('GET','/campaigns/' + id + '/report');
+  if(!r || !r.ok){ toast('&#9888;&#65039;','Could not load report'); return; }
+  var n = r.counts || {}, e = r.events || {};
+  var ex = document.getElementById('modal-camp-rep'); if(ex) ex.remove();
+  var bg = document.createElement('div'); bg.className = 'modal-bg open'; bg.id = 'modal-camp-rep';
+  var list = function(rows, empty){
+    if(!rows || !rows.length) return '<div style="font-size:11.5px;color:var(--muted);padding:6px 2px">' + empty + '</div>';
+    return '<div style="border:0.5px solid var(--line);border-radius:9px;overflow:hidden">'
+      + rows.map(function(x){
+          return '<div style="display:flex;gap:10px;align-items:baseline;padding:7px 12px;font-size:11.5px;border-bottom:0.5px solid #F2F1ED">'
+            + '<span style="min-width:130px;font-weight:600">' + esc(x.name||'') + '</span>'
+            + '<span style="color:var(--muted)">' + esc(x.detail||'') + '</span></div>';
+        }).join('') + '</div>';
+  };
+  bg.innerHTML = '<div class="modal" style="max-width:640px;width:96%"><div class="modal-head">'
+    + '<span class="modal-title" style="font-size:15px">&#128202; ' + esc(r.name||'Campaign') + '</span>'
+    + '<button class="modal-x" onclick="document.getElementById(\'modal-camp-rep\').remove()">&#10005;</button></div>'
+    + '<div class="modal-body" style="max-height:70vh;overflow-y:auto">'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
+    + _campStat(n.sent||0, 'delivered', ['#0F6E56','#E1F5EE'])
+    + _campStat(e.reply||0, 'replied', ['#185FA5','#E4EFFA'])
+    + _campStat(e.click||0, 'clicked', ['#534AB7','#EEEDFE'])
+    + _campStat(e.open||0, 'opened', ['#7A6A55','#F3F0E9'], 'unreliable')
+    + _campStat(e.bounce||0, 'bounced', ['#A33','#FBE9E9'])
+    + '</div>'
+    + '<div style="font-size:10.5px;color:var(--muted);background:#F7F6F2;border-radius:7px;padding:8px 11px;margin-bottom:16px;line-height:1.6">'
+    + 'Open counts are a soft signal only: Apple Mail loads the tracking pixel whether or not the person read the mail, '
+    + 'and Gmail pre-fetches images. <b>Replies and clicks are the numbers to act on.</b></div>'
+    + '<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:6px">Replied</div>'
+    + list(r.replies, 'No replies yet.')
+    + '<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin:16px 0 6px">Bounced &mdash; suppressed automatically</div>'
+    + list(r.bounces, 'No bounces. Good sign for your sender reputation.')
+    + '<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin:16px 0 6px">Link clicks</div>'
+    + ((r.links && r.links.length)
+        ? '<div style="border:0.5px solid var(--line);border-radius:9px;overflow:hidden">'
+          + r.links.map(function(l){
+              return '<div style="display:flex;gap:10px;align-items:baseline;padding:7px 12px;font-size:11.5px;border-bottom:0.5px solid #F2F1ED">'
+                + '<span style="min-width:44px;font-weight:700;color:#534AB7">' + l.clicks + '</span>'
+                + '<span style="color:var(--muted);word-break:break-all">' + esc(l.url||'') + '</span></div>';
+            }).join('') + '</div>'
+        : '<div style="font-size:11.5px;color:var(--muted);padding:6px 2px">This campaign had no links.</div>')
+    + '</div><div class="modal-foot">'
+    + '<button class="btn btn-o" onclick="campScanInbox()">&#8635; Check for new replies</button>'
+    + '<button class="btn btn-o" onclick="document.getElementById(\'modal-camp-rep\').remove()">Close</button></div></div>';
+  document.body.appendChild(bg);
+}
+
+async function campRecipients(id){
+  var r = await req('GET','/campaigns/' + id + '/recipients');
+  if(!r || !r.ok) return;
+  var ex = document.getElementById('modal-camp-rc'); if(ex) ex.remove();
+  var bg = document.createElement('div'); bg.className = 'modal-bg open'; bg.id = 'modal-camp-rc';
+  var col = {sent:'#0F6E56', pending:'#6B6B6B', skipped:'#B4530A', failed:'#A33', cancelled:'#888'};
+  bg.innerHTML = '<div class="modal" style="max-width:620px;width:96%"><div class="modal-head">'
+    + '<span class="modal-title" style="font-size:15px">Recipients</span>'
+    + '<button class="modal-x" onclick="document.getElementById(\'modal-camp-rc\').remove()">&#10005;</button></div>'
+    + '<div class="modal-body" style="max-height:70vh;overflow-y:auto">'
+    + (r.recipients || []).map(function(x){
+        return '<div style="display:flex;gap:10px;align-items:baseline;padding:7px 2px;font-size:11.5px;border-bottom:0.5px solid #F2F1ED">'
+          + '<span style="min-width:130px;font-weight:600">' + esc(x.name || ('#' + x.candidate_id)) + '</span>'
+          + '<span style="min-width:70px;color:' + (col[x.status]||'#666') + ';font-weight:600">' + esc(x.status) + '</span>'
+          + '<span style="color:var(--muted)">' + esc(x.reason || x.email || '') + '</span></div>';
+      }).join('')
+    + '</div><div class="modal-foot"><button class="btn btn-o" onclick="document.getElementById(\'modal-camp-rc\').remove()">Close</button></div></div>';
+  document.body.appendChild(bg);
 }
 
 // ── Template variables: shared fill engine ────────────────────────────────
