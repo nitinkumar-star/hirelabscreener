@@ -747,6 +747,28 @@ body{font-size:14px !important; line-height:1.5}
 .sb-grp-body.collapsed{max-height:0}
 .cc-taskcard{transition:box-shadow .15s,transform .15s;}
 .cc-taskcard:hover{box-shadow:0 4px 14px rgba(83,74,183,.13)!important;transform:translateY(-1px);}
+
+/* ── Skill chip editor (mandate must-have / good-to-have) ──────────────── */
+.chipbox{
+  border:1px solid var(--line,#E8E4DC); border-radius:8px; background:#fff;
+  padding:6px 6px 2px; display:flex; flex-wrap:wrap; gap:5px; align-items:center;
+  min-height:38px; cursor:text; transition:border-color .15s;
+}
+.chipbox:focus-within{ border-color:#13A37E; }
+.chipbox .chip-in{
+  border:none; outline:none; flex:1; min-width:120px; font-size:12.5px;
+  font-family:inherit; padding:4px 2px; background:transparent; margin-bottom:4px;
+}
+.chipbox .sk-chip{
+  display:inline-flex; align-items:center; gap:5px; font-size:11.5px;
+  font-weight:600; padding:3px 6px 3px 9px; border-radius:20px;
+  white-space:nowrap; margin-bottom:4px; line-height:1.5;
+}
+.chipbox.must .sk-chip{ background:#FDF0EC; color:#B4451F; border:1px solid #F3CDBE; }
+.chipbox.good .sk-chip{ background:#EEF4FB; color:#2A5580; border:1px solid #C6DAF0; }
+.chipbox .sk-x{ cursor:pointer; opacity:.5; font-size:13px; line-height:1; padding:0 1px; }
+.chipbox .sk-x:hover{ opacity:1; }
+.chip-hint{ font-size:10.5px; color:var(--muted,#8A92A0); margin-top:4px; line-height:1.45; }
 </style>
 </head>
 <body>
@@ -1147,6 +1169,18 @@ body{font-size:14px !important; line-height:1.5}
         <div class="fg-row"><label>Experience Max (Yrs)</label><input class="inp" id="m-expmax" type="number" step="0.5" placeholder="12"></div>
       </div>
       <div class="fg-row"><label>Job Description</label><textarea class="ta" id="m-jd" rows="5" placeholder="Paste JD..."></textarea></div>
+      <div class="fg-row"><label>Must-Have Skills</label>
+        <div class="chipbox must" id="m-must-box" onclick="chipFocus('m-must')">
+          <input class="chip-in" id="m-must" placeholder="Type a skill, press Enter">
+        </div>
+        <div class="chip-hint">Hard requirements. The Chrome extension scores a CV against these &mdash; a candidate missing them is marked down.</div>
+      </div>
+      <div class="fg-row"><label>Good-To-Have Skills</label>
+        <div class="chipbox good" id="m-good-box" onclick="chipFocus('m-good')">
+          <input class="chip-in" id="m-good" placeholder="Type a skill, press Enter">
+        </div>
+        <div class="chip-hint">Bonus skills. Never penalised when absent.</div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-o" onclick="closeModal('modal-mandate')">Cancel</button>
@@ -3165,6 +3199,17 @@ function renderMandateSetup(el){
       + '</div>'
       + '</div></div>';
   }
+  // Hydrate the skill chips once this render's HTML is in the DOM. The API
+  // stores them as a JSON string, but a plain array is tolerated too.
+  setTimeout(function(){
+    var parse=function(raw){
+      if(Array.isArray(raw)) return raw;
+      try{ var p=JSON.parse(raw||'[]'); return Array.isArray(p)?p:[]; }catch(e){ return []; }
+    };
+    chipSet('ms-must', parse(m.must_have_skills));
+    chipSet('ms-good', parse(m.good_to_have_skills));
+    chipBind('ms-must'); chipBind('ms-good');
+  },0);
   el.innerHTML=approvalBarHtml(m)+orgSummaryHtml(m)+'<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
     +'<div class="g2">'
     +(wsMode()==='corporate' ? '' : field('ms-client',wfL().client,m.client||''))
@@ -3198,6 +3243,18 @@ function renderMandateSetup(el){
       : '')
     +'<div class="fg-row"><label>Job Description</label>'
     + buildJDEditor('ms-jd', m.jd||'')
+    +'</div>'
+    +'<div class="fg-row"><label>Must-Have Skills</label>'
+      +'<div class="chipbox must" id="ms-must-box" onclick="chipFocus(\'ms-must\')">'
+      +'<input class="chip-in" id="ms-must" placeholder="Type a skill, press Enter">'
+      +'</div>'
+      +'<div class="chip-hint">Hard requirements. The Chrome extension scores a CV against these.</div>'
+    +'</div>'
+    +'<div class="fg-row"><label>Good-To-Have Skills</label>'
+      +'<div class="chipbox good" id="ms-good-box" onclick="chipFocus(\'ms-good\')">'
+      +'<input class="chip-in" id="ms-good" placeholder="Type a skill, press Enter">'
+      +'</div>'
+      +'<div class="chip-hint">Bonus skills. Never penalised when absent.</div>'
     +'</div>'
     +'</div></div>'
     + (wsMode()==='corporate' ? '' :
@@ -3821,7 +3878,7 @@ async function saveMandateSetup(){
   if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
   // Corporate has no client field on the form, so the key is omitted and the
   // server preserves whatever is stored rather than blanking it.
-  var payload={role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status};
+  var payload={role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status,must_have_skills:chipCommit('ms-must'),good_to_have_skills:chipCommit('ms-good')};
   // Only sent in Corporate mode, so an Agency save can never null these out.
   if(wsMode()!=='corporate') payload.client=v('ms-client');
   if(wsMode()==='corporate'){
@@ -7791,6 +7848,103 @@ async function loadNewReqDepartments(){
       : '<option value="">No departments yet — add one in Settings</option>';
   }catch(e){ sel.innerHTML='<option value="">Could not load departments</option>'; }
 }
+
+// ── SKILL CHIP EDITOR ──────────────────────────────────────────────────────
+// One shared store keyed by input id ('m-must', 'ms-good', ...). Each chip box
+// is <div class="chipbox"><input class="chip-in"></div>; chips are rendered as
+// siblings BEFORE the input, so the input always stays last and keeps focus.
+var S_CHIPS = {};
+
+function chipNorm(s){
+  return String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
+}
+
+// Read the current list. Always returns an array, even for an id never set up.
+function chipGet(id){ return (S_CHIPS[id]||[]).slice(); }
+
+// Replace the whole list and repaint. Used when loading a saved mandate.
+function chipSet(id, list){
+  var out=[], seen={};
+  (list||[]).forEach(function(x){
+    var s=chipNorm(x);
+    if(s && s.length<=60 && !seen[s]){ seen[s]=1; out.push(s); }
+  });
+  S_CHIPS[id]=out.slice(0,40);
+  chipRender(id);
+}
+
+function chipAdd(id, raw){
+  // A paste of "plc, scada; hmi" becomes three chips, not one.
+  var parts=String(raw||'').split(/[,;\n\t]/);
+  var list=S_CHIPS[id]||[];
+  parts.forEach(function(p){
+    var s=chipNorm(p);
+    if(!s || s.length>60) return;
+    if(list.indexOf(s)===-1 && list.length<40) list.push(s);
+  });
+  S_CHIPS[id]=list;
+  chipRender(id);
+}
+
+function chipRemove(id, skill){
+  S_CHIPS[id]=(S_CHIPS[id]||[]).filter(function(x){ return x!==skill; });
+  chipRender(id);
+}
+
+function chipRender(id){
+  var box=document.getElementById(id+'-box'); if(!box) return;
+  var inp=document.getElementById(id);
+  // Remove old chips only — the input element itself is never touched, so an
+  // in-progress keystroke survives a repaint.
+  Array.prototype.slice.call(box.querySelectorAll('.sk-chip')).forEach(function(c){ c.remove(); });
+  (S_CHIPS[id]||[]).forEach(function(s){
+    var el=document.createElement('span');
+    el.className='sk-chip';
+    el.appendChild(document.createTextNode(s));
+    var x=document.createElement('span');
+    x.className='sk-x'; x.textContent='\u00D7'; x.title='Remove';
+    x.onclick=function(e){ e.stopPropagation(); chipRemove(id,s); };
+    el.appendChild(x);
+    box.insertBefore(el, inp);
+  });
+}
+
+function chipFocus(id){ var el=document.getElementById(id); if(el) el.focus(); }
+
+// Wire one input up. Safe to call repeatedly — re-binding the same handlers on
+// a re-rendered element is harmless, and the Mandate Setup tab re-renders often.
+function chipBind(id){
+  var inp=document.getElementById(id); if(!inp) return;
+  inp.onkeydown=function(e){
+    if(e.key==='Enter' || e.key===','){
+      e.preventDefault();
+      if(inp.value.trim()){ chipAdd(id, inp.value); inp.value=''; }
+    } else if(e.key==='Backspace' && !inp.value){
+      // Backspace on an empty input deletes the last chip — the behaviour
+      // every tag input has, so nobody has to reach for the mouse.
+      var list=S_CHIPS[id]||[];
+      if(list.length) chipRemove(id, list[list.length-1]);
+    }
+  };
+  // Losing focus commits whatever was typed, so a half-typed skill is not
+  // silently discarded when the user clicks Save.
+  inp.onblur=function(){
+    if(inp.value.trim()){ chipAdd(id, inp.value); inp.value=''; }
+  };
+  inp.onpaste=function(e){
+    var t=(e.clipboardData||window.clipboardData).getData('text');
+    if(t && /[,;\n\t]/.test(t)){ e.preventDefault(); chipAdd(id,t); inp.value=''; }
+  };
+}
+
+// Commit any uncommitted text, then hand back the list. Every save path calls
+// this rather than reading S_CHIPS directly.
+function chipCommit(id){
+  var inp=document.getElementById(id);
+  if(inp && inp.value.trim()){ chipAdd(id, inp.value); inp.value=''; }
+  return chipGet(id);
+}
+
 async function saveMandate(){
   const corp = wsMode()==='corporate';
   const client=v('m-client').trim(),role=v('m-role').trim();
@@ -7809,7 +7963,7 @@ async function saveMandate(){
   if(btn){if(btn.disabled)return; btn.disabled=true; btn.textContent='Creating...';}
   const emin=parseFloat(v('m-expmin'))||0, emax=parseFloat(v('m-expmax'))||0;
   if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
-  var _body={client:corp?'':client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd')};
+  var _body={client:corp?'':client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd'),must_have_skills:chipCommit('m-must'),good_to_have_skills:chipCommit('m-good')};
   if(corp) _body.department_id=dept;
   const r=await req('POST','/mandates',_body);
   if(r.ok){closeModal('modal-mandate');await loadMandates();await selectMandate(r.id);S.activeTab='Mandate Setup';renderTabs();renderContent();toast('✅',T('mandate','Mandate')+' created!');}
@@ -9030,6 +9184,10 @@ function openModal(id){
     } else {
       loadNewReqDepartments();
     }
+    // A new mandate always starts with empty skill lists, otherwise the chips
+    // from the last one created would carry over into this one.
+    chipSet('m-must',[]); chipSet('m-good',[]);
+    chipBind('m-must');  chipBind('m-good');
   }
   document.getElementById(id).classList.add('open');
 }

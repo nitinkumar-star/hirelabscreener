@@ -3137,6 +3137,18 @@ def init_db():
     # already exists (Step 3) and the requisition reaches it through its
     # department. Duplicating it on mandates would create a second source of
     # truth, which is the mistake `offered_ctc`/`ctc_offered` already made.
+    # Migrate: mandate skill requirements (Wave 2 — extension CV scorer).
+    # must_have_skills      -> REQUIRED skills; a candidate missing these is penalised
+    # good_to_have_skills   -> bonus skills; never penalised when absent
+    # Both are JSON arrays of lowercase strings, mirroring candidates.key_skills.
+    # Purely additive: existing mandates default to '[]' and behave exactly as before.
+    for col, typ in [('must_have_skills', "TEXT DEFAULT '[]'"),
+                     ('good_to_have_skills', "TEXT DEFAULT '[]'")]:
+        try:
+            c.execute(f'ALTER TABLE mandates ADD COLUMN {col} {typ}')
+        except sqlite3.OperationalError:
+            pass  # already exists
+
     for col, typ in [('priority', "TEXT DEFAULT ''"),          # critical|high|medium|low
                      ('hiring_reason', "TEXT DEFAULT ''"),     # controlled list, see HIRING_REASONS
                      ('target_hire_date', "TEXT DEFAULT ''"),  # ISO yyyy-mm-dd, planning only
@@ -5741,6 +5753,147 @@ def extension_mandates():
                        'client': 'save for later', 'location': '', 'is_central': True})
     return jsonify({'ok': True, 'mandates': out})
 
+
+@app.route('/api/extension/score-match', methods=['POST', 'OPTIONS'])
+def extension_score_match():
+    """Score a Naukri profile against one mandate — used by the Chrome extension.
+
+    Two independent signals are combined:
+      • SEMANTIC  — cosine similarity between the mandate's stored JD vector and
+                    a freshly embedded vector of the candidate's page text.
+      • SKILLS    — keyword presence of the mandate's must-have skills in that
+                    same text (plus the skill chips Naukri renders).
+
+    Neither signal is trusted alone: the semantic score understands wording the
+    keyword pass would miss, and the keyword pass catches hard requirements the
+    embedding would happily average away.
+    """
+    if request.method == 'OPTIONS':
+        return ('', 204)
+    if not session.get('user_id'):
+        return jsonify({'error': 'auth_required',
+                        'message': 'Please log into HireLab in this browser first.'}), 401
+
+    d = request.json or {}
+    mid_raw = d.get('mandate_id')
+    if not mid_raw or str(mid_raw) == 'central':
+        return jsonify({'error': 'Pick an active mandate — the Central Database has no JD to score against.'}), 400
+    try:
+        mid = int(mid_raw)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid mandate_id'}), 400
+
+    candidate_text = (d.get('candidate_text') or '').strip()
+    if not candidate_text:
+        return jsonify({'error': 'No candidate text was read from the page.'}), 400
+
+    candidate_skills_lc = {str(s).lower().strip()
+                           for s in (d.get('candidate_skills') or []) if s}
+
+    conn = get_db()
+    m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, effective_company_id())).fetchone()
+    if not m:
+        conn.close()
+        return jsonify({'error': 'Mandate not found, or it is not yours.'}), 404
+
+    must_have = mandate_skills(m, 'must_have_skills')
+    good_have = mandate_skills(m, 'good_to_have_skills')
+
+    # ── Keyword skill pass ────────────────────────────────────────────────
+    ctext_lc = candidate_text.lower()
+
+    def present(skill):
+        return (skill in ctext_lc) or (skill in candidate_skills_lc)
+
+    matched_must = [s for s in must_have if present(s)]
+    missing_must = [s for s in must_have if not present(s)]
+    matched_good = [s for s in good_have if present(s)]
+
+    if must_have:
+        skill_pct = round(len(matched_must) / len(must_have) * 100, 1)
+        # Good-to-haves lift the skill score by up to 10 points, but only once
+        # the must-haves are largely satisfied — a candidate cannot bonus their
+        # way past a missing hard requirement.
+        if good_have and skill_pct >= 60:
+            skill_pct = min(100.0, round(skill_pct + (len(matched_good) / len(good_have)) * 10, 1))
+        skills_defined = True
+    elif good_have:
+        # No hard requirements set, so this is informational only and is capped
+        # well below a confident score.
+        skill_pct = min(65.0, round(len(matched_good) / len(good_have) * 100, 1))
+        skills_defined = True
+    else:
+        # Nothing to match against. 50 is a neutral placeholder, and it is never
+        # blended into the final score (see the composite block below).
+        skill_pct = 50.0
+        skills_defined = False
+
+    # ── Semantic pass ─────────────────────────────────────────────────────
+    semantic_pct, embed_used, embed_error = 0.0, False, ''
+    try:
+        mvec = _mandate_jd_vector(conn, mid)
+        if mvec is None:
+            jd_text = mandate_jd_text(m)
+            if jd_text.strip():
+                mvec = embed_one(jd_text)
+                if isinstance(mvec, dict):
+                    embed_error, mvec = str(mvec.get('error', 'embed failed'))[:200], None
+        if mvec:
+            cvec = embed_one(candidate_text[:8000])
+            if isinstance(cvec, dict):
+                embed_error, cvec = str(cvec.get('error', 'embed failed'))[:200], None
+            if cvec:
+                semantic_pct = round(max(0.0, cosine(list(mvec), list(cvec)) * 100), 1)
+                embed_used = True
+    except Exception as exc:
+        embed_error = str(exc)[:200]
+        print(f'[score-match] mandate {mid} embed error: {exc}')
+
+    conn.close()
+
+    # ── Composite ─────────────────────────────────────────────────────────
+    # A signal that could not be computed is left out of the blend entirely
+    # rather than contributing a neutral 50, which would drag every score
+    # toward the middle and make the number meaningless.
+    if embed_used and skills_defined:
+        final = round(semantic_pct * 0.6 + skill_pct * 0.4, 1)
+    elif embed_used:
+        final = semantic_pct
+    elif skills_defined:
+        final = skill_pct
+    else:
+        final = 0.0
+
+    if final >= 75:
+        verdict, colour = 'Strong Match', '#0F8A6B'
+    elif final >= 55:
+        verdict, colour = 'Good Fit', '#2A73C5'
+    elif final >= 35:
+        verdict, colour = 'Partial Match', '#D97706'
+    else:
+        verdict, colour = 'Not Suitable', '#A32D2D'
+
+    return jsonify({
+        'ok': True,
+        'score': final,
+        'semantic_pct': semantic_pct,
+        'skill_pct': skill_pct if skills_defined else None,
+        'skills_defined': skills_defined,
+        'must_have': must_have,
+        'matched_skills': matched_must,
+        'missing_skills': missing_must,
+        'good_have': good_have,
+        'matched_good': matched_good,
+        'verdict': verdict,
+        'verdict_color': colour,
+        'embed_used': embed_used,
+        'embed_error': embed_error,
+        'mandate_role': str(_row_get(m, 'role', '')),
+        'mandate_client': str(_row_get(m, 'client', '')),
+    })
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  AI INSIGHTS — Semantic Search (embeddings) + Stats (SQL + LLM summary)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -7004,7 +7157,9 @@ def _backfill_candidate_facets(conn, cap, api_key):
 #  Embed each mandate's JD ONCE and reuse it, so candidate<->JD matching
 #  never re-embeds the JD. Mandates are few, so this runs on by default.
 # ══════════════════════════════════════════════════════════════════════
-JD_TEXT_VERSION = 1
+# v1 = role/client/division/location/CTC + JD body
+# v2 = v1 + Must-Have and Good-To-Have skill lists (Wave 2)
+JD_TEXT_VERSION = 2
 JD_TEXT_TEMPLATE = f'jd-template-v{JD_TEXT_VERSION}'
 
 def _jd_cfg_enabled():
@@ -7013,6 +7168,59 @@ def _jd_cfg_enabled():
         return True if (v is None or str(v).strip() == '') else bool(int(float(v)))
     except Exception:
         return True
+
+
+def _norm_skill_list(raw, cap=40):
+    """Accept a list OR a comma-separated string, return a clean lowercase list.
+
+    Deduplicates while preserving order, trims blanks, drops anything longer
+    than 60 chars (that is a sentence, not a skill), and caps the list length.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        # Split on the SAME delimiters the chip editor in index.html uses, so a
+        # value typed in the UI and a value posted by an API client normalise
+        # identically. Splitting on comma alone left "plc; scada" as one skill.
+        _split = lambda s: re.split(r'[,;\n\t]', s)
+        try:
+            parsed = json.loads(raw)
+            raw = parsed if isinstance(parsed, list) else _split(raw)
+        except Exception:
+            raw = _split(raw)
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out, seen = [], set()
+    for item in raw:
+        s = str(item or '').strip().lower()
+        if not s or len(s) > 60 or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+        if len(out) >= cap:
+            break
+    return out
+
+
+def mandate_skills(m, col):
+    """Read a mandate's stored skill column as a list. Safe on legacy rows that
+    predate the column (returns [] rather than raising)."""
+    try:
+        return _norm_skill_list(_row_get(m, col, '[]') or '[]')
+    except Exception:
+        return []
+
+
+def _invalidate_mandate_vector(conn, mid):
+    """Mark a mandate's JD vector stale so the background embedder rebuilds it.
+
+    Used after the JD or the skill lists change. The row is NOT deleted — only
+    its status flips, so embedding history and metadata survive.
+    """
+    try:
+        conn.execute("UPDATE mandate_vectors SET status='pending' WHERE mandate_id=?", (mid,))
+    except Exception:
+        pass  # table may not exist yet on a fresh DB; backfill will handle it
 
 
 def mandate_jd_text(m):
@@ -7030,6 +7238,15 @@ def mandate_jd_text(m):
     cmin, cmax = _row_get(m, 'ctc_min', ''), _row_get(m, 'ctc_max', '')
     if cmin or cmax:
         add('CTC Range', f'{cmin}-{cmax} LPA')
+    # Skill requirements are part of what the role IS, so they belong in the
+    # embedded text. Must-haves are listed first and labelled as required, which
+    # gives them more weight in the vector than the free-text JD alone would.
+    must = mandate_skills(m, 'must_have_skills')
+    good = mandate_skills(m, 'good_to_have_skills')
+    if must:
+        add('Must-Have Skills (required)', ', '.join(must))
+    if good:
+        add('Good-To-Have Skills', ', '.join(good))
     jd = str(_row_get(m, 'jd')).strip()
     if jd:
         lines.append('Job Description:\n' + jd[:6000])
@@ -10724,6 +10941,14 @@ def create_mandate():
                _approval, _headcount, real_user_id() or 0,
                _nid('department_id'), _nid('hiring_manager_id'), _nid('hrbp_user_id')))
     mid = c.lastrowid
+    # Skill lists are written as a separate UPDATE rather than being folded into
+    # the INSERT above, so the INSERT column order stays byte-identical to the
+    # previous version and nothing that depends on it can break.
+    _must = _norm_skill_list(d.get('must_have_skills'))
+    _good = _norm_skill_list(d.get('good_to_have_skills'))
+    if _must or _good:
+        c.execute('UPDATE mandates SET must_have_skills=?, good_to_have_skills=? WHERE id=?',
+                  (json.dumps(_must), json.dumps(_good), mid))
     if _plan:
         _k = list(_plan.keys())
         c.execute('UPDATE mandates SET {} WHERE id=?'.format(','.join(x + '=?' for x in _k)),
@@ -11868,6 +12093,16 @@ def update_mandate(mid):
             _v = str(d.get(_f) or '').strip()
             conn.execute(f'UPDATE mandates SET {_f}=? WHERE id=?',
                          (int(_v) if _v not in ('', '0') else None, mid))
+    # Skill lists are written ONLY when present in the payload. A save from a
+    # screen that does not carry these fields therefore cannot blank them.
+    for _sf in ('must_have_skills', 'good_to_have_skills'):
+        if _sf in d:
+            conn.execute(f'UPDATE mandates SET {_sf}=? WHERE id=?',
+                         (json.dumps(_norm_skill_list(d.get(_sf))), mid))
+    # The JD vector was built from the old text. Anything that feeds that text
+    # invalidates it, and the background embedder rebuilds it within a minute.
+    if 'jd' in d or 'must_have_skills' in d or 'good_to_have_skills' in d:
+        _invalidate_mandate_vector(conn, mid)
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
