@@ -18423,6 +18423,101 @@ def _docx_sanitize(data):
     return buf.getvalue(), len(bad_ids)
 
 
+# Job boards hand out files whose extension lies. Sniff the real format from
+# the magic bytes instead of trusting ".docx", so each one gets the right
+# reader and the recruiter gets a precise message when it truly can't be shown.
+def _esc_html_min(x):
+    return (str(x).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+
+def _sniff_doc(data):
+    head = data[:8]
+    if head[:4] == b'PK\x03\x04':
+        return 'zip'
+    if head[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+        return 'ole'          # Word 97-2003 .doc wearing a .docx name
+    if head[:5] == b'%PDF-':
+        return 'pdf'
+    if data[:5].lower() == b'{\\rtf':
+        return 'rtf'
+    probe = data[:600].lstrip().lower()
+    if probe.startswith(b'<html') or probe.startswith(b'<!doctype html') or b'<body' in probe:
+        return 'html'
+    return 'unknown'
+
+
+_XML_BAD_AMP_RE = re.compile(rb'&(?!(?:[a-zA-Z][a-zA-Z0-9]{1,10}|#[0-9]{1,7}|#x[0-9a-fA-F]{1,6});)')
+
+
+def _docx_repair_xml(data):
+    """Some exports write raw '&' straight into the XML, which is simply not
+    well-formed. Word tolerates it; every real XML parser refuses. Escape only
+    the ampersands that are not already part of an entity."""
+    import zipfile as _zf
+    try:
+        zin = _zf.ZipFile(io.BytesIO(data))
+    except Exception:
+        return data, 0
+    fixed = 0
+    parts = {}
+    for n in zin.namelist():
+        if not (n.endswith('.xml') or n.endswith('.rels')):
+            continue
+        try:
+            d = zin.read(n)
+        except Exception:
+            continue
+        nd, cnt = _XML_BAD_AMP_RE.subn(b'&amp;', d)
+        if cnt:
+            parts[n] = nd
+            fixed += cnt
+    if not fixed:
+        return data, 0
+    buf = io.BytesIO()
+    zout = _zf.ZipFile(buf, 'w', _zf.ZIP_DEFLATED)
+    for it in zin.infolist():
+        zout.writestr(it, parts.get(it.filename) or zin.read(it.filename))
+    zout.close()
+    return buf.getvalue(), fixed
+
+
+_RTF_GROUP_RE = re.compile(r'\{\\\*.*?\}', re.S)
+_RTF_CTRL_RE = re.compile(r'\\[a-zA-Z]+-?[0-9]*ing?[ ]?|\\[a-zA-Z]+-?[0-9]*[ ]?')
+_RTF_HEX_RE = re.compile(r"\\'([0-9a-fA-F]{2})")
+
+
+def _rtf_to_text(data):
+    try:
+        x = data.decode('utf-8', 'ignore')
+    except Exception:
+        return ''
+    x = _RTF_GROUP_RE.sub('', x)
+    x = x.replace('\\par', '\n').replace('\\line', '\n').replace('\\tab', '\t')
+    x = _RTF_HEX_RE.sub(lambda m: bytes([int(m.group(1), 16)]).decode('cp1252', 'ignore'), x)
+    x = _RTF_CTRL_RE.sub('', x)
+    x = x.replace('{', '').replace('}', '')
+    return re.sub(r'\n{3,}', '\n\n', x).strip()
+
+
+_HTML_STRIP_RE = re.compile(r'<(script|style|iframe|object|embed)\b.*?</\1>', re.I | re.S)
+_HTML_ON_ATTR_RE = re.compile(r'\son[a-z]+\s*=\s*(".*?"|\'.*?\'|[^\s>]+)', re.I | re.S)
+
+
+def _html_doc_clean(data):
+    """Word's 'save as HTML' export. Show it, minus anything executable."""
+    x = data.decode('utf-8', 'ignore')
+    m = re.search(r'<body\b[^>]*>(.*?)</body>', x, re.I | re.S)
+    x = m.group(1) if m else x
+    x = _HTML_STRIP_RE.sub('', x)
+    x = _HTML_ON_ATTR_RE.sub('', x)
+    return x
+
+
+def _cv_view_note(msg, tone='#C0522B'):
+    return ('<p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:22px;'
+            'font-size:13px;line-height:1.6;color:%s;max-width:640px">%s</p>' % (tone, msg))
+
+
 @app.route('/api/cv-view/<path:filename>')
 @login_required
 def view_cv_html(filename):
@@ -18434,18 +18529,50 @@ def view_cv_html(filename):
     if not fp or not os.path.exists(fp):
         return ('<p style="font-family:sans-serif;padding:20px;color:#888">CV file not found.</p>', 404)
     ext = os.path.splitext(filename)[1].lower()
-    if ext != '.docx':
-        return ('<p style="font-family:sans-serif;padding:20px;color:#888">Preview only supports .docx. Please download to view.</p>', 200)
+    if ext not in ('.docx', '.doc', '.rtf'):
+        return (_cv_view_note('Inline preview supports Word files only. Please use Download to open it.', '#888'), 200)
     try:
-        import mammoth
         with open(fp, 'rb') as f:
             raw = f.read()
-        clean, stripped = _docx_sanitize(raw)
-        if stripped:
-            print('[cv-view] stripped %d external tracking relationship(s) from %s'
-                  % (stripped, filename))
-        result = mammoth.convert_to_html(io.BytesIO(clean))
-        body = result.value or '<p style="color:#888">(Empty document)</p>'
+        kind = _sniff_doc(raw)
+
+        if kind == 'ole':
+            print('[cv-view] %s is an OLE .doc wearing a .docx name' % filename)
+            return (_cv_view_note(
+                'This is an old <b>Word 97&ndash;2003 (.doc)</b> file that was saved with a .docx name &mdash; '
+                'a common job-board export quirk. It cannot be shown inline. Use <b>Download</b> to open it in Word, '
+                'and if you re-save it as a real .docx it will preview here from then on.'), 200)
+        if kind == 'pdf':
+            return (_cv_view_note('This file is actually a PDF. Use Download &mdash; your browser will open it directly.', '#888'), 200)
+        if kind == 'html':
+            print('[cv-view] %s is a Word HTML export' % filename)
+            body = _html_doc_clean(raw) or '<p style="color:#888">(Empty document)</p>'
+        elif kind == 'rtf':
+            print('[cv-view] %s is RTF' % filename)
+            txt = _rtf_to_text(raw)
+            if not txt:
+                return (_cv_view_note('This RTF file could not be read. Please use Download to open it.'), 200)
+            body = ''.join('<p>%s</p>' % _esc_html_min(line) for line in txt.split('\n') if line.strip())
+        elif kind != 'zip':
+            print('[cv-view] %s: unrecognised format, first bytes %r' % (filename, raw[:8]))
+            return (_cv_view_note('This file is not a readable Word document &mdash; the contents do not match its '
+                                  '.docx name. Please use Download to open it.'), 200)
+        else:
+            import mammoth
+            clean, stripped = _docx_sanitize(raw)
+            if stripped:
+                print('[cv-view] stripped %d external tracking relationship(s) from %s' % (stripped, filename))
+            try:
+                result = mammoth.convert_to_html(io.BytesIO(clean))
+            except Exception as first_err:
+                # Malformed XML (usually a raw '&') — repair and try once more.
+                repaired, n_amp = _docx_repair_xml(clean)
+                if not n_amp:
+                    raise
+                print('[cv-view] %s: escaped %d bad ampersand(s) after %s'
+                      % (filename, n_amp, type(first_err).__name__))
+                result = mammoth.convert_to_html(io.BytesIO(repaired))
+            body = result.value or '<p style="color:#888">(Empty document)</p>'
         page = (
             '<!doctype html><html><head><meta charset="utf-8">'
             '<style>'
@@ -18461,9 +18588,13 @@ def view_cv_html(filename):
     except Exception as e:
         # Log the real reason; show the recruiter something useful instead of a
         # raw stack message (which also used to echo the tracking URL back).
-        print('[cv-view] render failed for %s: %s' % (filename, e))
-        return ('<p style="font-family:sans-serif;padding:20px;color:#C0522B">'
-                'This Word file could not be shown inline. Please use Download to open it.</p>', 200)
+        print('[cv-view] render failed for %s: %s: %s' % (filename, type(e).__name__, e))
+        # Show the reason, with any URLs scrubbed out (a job-board tracking link
+        # used to get echoed straight back onto the page).
+        reason = re.sub(r'(?:https?|ftp)://\S+', '[link]', str(e))[:180]
+        return (_cv_view_note('This Word file could not be shown inline. Please use Download to open it.'
+                              '<br><span style="font-size:11px;color:#888">Reason: %s: %s</span>'
+                              % (type(e).__name__, _esc_html_min(reason))), 200)
 
 @app.route('/api/candidates/<int:cid>/cv', methods=['DELETE'])
 @login_required
