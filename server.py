@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, send_file, Response, redirect
 from flask_cors import CORS
-import sqlite3, json, os, datetime, requests, shutil, io, re, smtplib, time
+import sqlite3, json, os, datetime, requests, shutil, io, re, smtplib, time, struct
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
@@ -18440,6 +18440,162 @@ def _docx_sanitize(data):
 # Job boards hand out files whose extension lies. Sniff the real format from
 # the magic bytes instead of trusting ".docx", so each one gets the right
 # reader and the recruiter gets a precise message when it truly can't be shown.
+# ── Word 97-2003 (.doc) reader ────────────────────────────────────────────
+# Job boards still hand out plenty of binary .doc CVs. Nothing in the stack
+# could read them: no preview, and resume parsing rejected them outright. This
+# is a minimal OLE2 compound-file reader plus the Word FIB piece table — pure
+# stdlib, no new dependency to install on the server.
+
+_OLE_ENDOFCHAIN, _OLE_FREESECT = 0xFFFFFFFE, 0xFFFFFFFF
+
+
+class _OleFile(object):
+    def __init__(self, data):
+        if data[:8] != b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+            raise ValueError('not an OLE2 file')
+        self.d = data
+        self.ssz = 1 << struct.unpack_from('<H', data, 30)[0]
+        self.msz = 1 << struct.unpack_from('<H', data, 32)[0]
+        n_fat = struct.unpack_from('<I', data, 44)[0]
+        dir_start = struct.unpack_from('<I', data, 48)[0]
+        self.mini_cutoff = struct.unpack_from('<I', data, 56)[0] or 4096
+        mini_fat_start = struct.unpack_from('<I', data, 60)[0]
+        n_mini_fat = struct.unpack_from('<I', data, 64)[0]
+        difat_start = struct.unpack_from('<I', data, 68)[0]
+        n_difat = struct.unpack_from('<I', data, 72)[0]
+
+        difat = list(struct.unpack_from('<109I', data, 76))
+        sid, guard = difat_start, 0
+        while sid not in (_OLE_ENDOFCHAIN, _OLE_FREESECT) and guard < n_difat + 8:
+            vals = struct.unpack_from('<%dI' % (self.ssz // 4), self._sector(sid), 0)
+            difat.extend(vals[:-1]); sid = vals[-1]; guard += 1
+
+        self.fat = []
+        for fs in difat[:n_fat]:
+            if fs in (_OLE_ENDOFCHAIN, _OLE_FREESECT):
+                continue
+            self.fat.extend(struct.unpack_from('<%dI' % (self.ssz // 4), self._sector(fs), 0))
+
+        self.minifat = []
+        sid, guard = mini_fat_start, 0
+        while sid not in (_OLE_ENDOFCHAIN, _OLE_FREESECT) and guard < n_mini_fat + 8:
+            self.minifat.extend(struct.unpack_from('<%dI' % (self.ssz // 4), self._sector(sid), 0))
+            sid = self.fat[sid] if sid < len(self.fat) else _OLE_ENDOFCHAIN
+            guard += 1
+
+        self.dirs = []
+        raw = self._chain(dir_start)
+        for off in range(0, len(raw) - 127, 128):
+            e = raw[off:off + 128]
+            nlen = struct.unpack_from('<H', e, 64)[0]
+            self.dirs.append({'name': e[:max(0, nlen - 2)].decode('utf-16-le', 'ignore'),
+                              'type': e[66],
+                              'start': struct.unpack_from('<I', e, 116)[0],
+                              'size': struct.unpack_from('<I', e, 120)[0]})
+        root = next((d for d in self.dirs if d['type'] == 5), None)
+        self.ministream = self._chain(root['start']) if root else b''
+
+    def _sector(self, sid):
+        off = (sid + 1) * self.ssz
+        return self.d[off:off + self.ssz]
+
+    def _chain(self, sid, limit=None):
+        out, total, guard = [], 0, 0
+        while sid not in (_OLE_ENDOFCHAIN, _OLE_FREESECT) and guard < (1 << 20):
+            blk = self._sector(sid)
+            out.append(blk); total += len(blk)
+            sid = self.fat[sid] if sid < len(self.fat) else _OLE_ENDOFCHAIN
+            guard += 1
+            if limit and total >= limit:
+                break
+        return b''.join(out)
+
+    def _mini_chain(self, sid, size):
+        out, guard = [], 0
+        while sid not in (_OLE_ENDOFCHAIN, _OLE_FREESECT) and guard < (1 << 20):
+            off = sid * self.msz
+            out.append(self.ministream[off:off + self.msz])
+            sid = self.minifat[sid] if sid < len(self.minifat) else _OLE_ENDOFCHAIN
+            guard += 1
+        return b''.join(out)[:size]
+
+    def stream(self, name):
+        for d in self.dirs:
+            if d['name'] == name and d['type'] == 2:
+                if d['size'] < self.mini_cutoff:
+                    return self._mini_chain(d['start'], d['size'])
+                return self._chain(d['start'], d['size'])[:d['size']]
+        return None
+
+
+_DOC_CTRL_MAP = dict.fromkeys(range(0, 32))
+for _k in (9, 10, 13):
+    _DOC_CTRL_MAP.pop(_k, None)
+
+
+def _doc_clean_text(t):
+    t = t.replace('\r', '\n').replace('\x0b', '\n').replace('\x07', '\t')
+    for junk in ('\x13', '\x14', '\x15'):
+        t = t.replace(junk, '')
+    t = t.translate(_DOC_CTRL_MAP)
+    t = re.sub(r'[ \t]+\n', '\n', t)
+    return re.sub(r'\n{3,}', '\n\n', t).strip()
+
+
+def _doc_to_text(data):
+    """Plain text from a Word 97-2003 .doc. Returns '' if it cannot be read."""
+    try:
+        ole = _OleFile(data)
+        wd = ole.stream('WordDocument')
+        if not wd or len(wd) < 0x1A8:
+            return ''
+        flags = struct.unpack_from('<H', wd, 0x0A)[0]
+        table = ole.stream('1Table' if (flags & 0x0200) else '0Table') or b''
+        fcClx, lcbClx = struct.unpack_from('<II', wd, 0x01A2)
+        if not lcbClx or fcClx + lcbClx > len(table):
+            fcMin, fcMac = struct.unpack_from('<II', wd, 0x18)
+            return _doc_clean_text(wd[fcMin:fcMac].decode('cp1252', 'ignore'))
+
+        clx = table[fcClx:fcClx + lcbClx]
+        i, pcdt = 0, None
+        while i < len(clx):
+            if clx[i] == 1:                                  # Prc — skip over
+                i += 3 + struct.unpack_from('<h', clx, i + 1)[0]
+            elif clx[i] == 2:                                # Pcdt — piece table
+                lcb = struct.unpack_from('<I', clx, i + 1)[0]
+                pcdt = clx[i + 5:i + 5 + lcb]
+                break
+            else:
+                break
+        if not pcdt or len(pcdt) < 16:
+            return ''
+        n = (len(pcdt) - 4) // 12
+        cps = struct.unpack_from('<%dI' % (n + 1), pcdt, 0)
+        parts = []
+        for k in range(n):
+            off = 4 * (n + 1) + 8 * k
+            fc = struct.unpack_from('<I', pcdt, off + 2)[0]
+            n_chars = cps[k + 1] - cps[k]
+            if fc & 0x40000000:                              # 8-bit compressed
+                start = (fc & 0x3FFFFFFF) // 2
+                parts.append(wd[start:start + n_chars].decode('cp1252', 'ignore'))
+            else:
+                start = fc & 0x3FFFFFFF
+                parts.append(wd[start:start + n_chars * 2].decode('utf-16-le', 'ignore'))
+        return _doc_clean_text(''.join(parts))
+    except Exception as e:
+        print('[doc] extraction failed:', e)
+        return ''
+
+
+def _text_to_cv_html(text):
+    out = []
+    for line in text.split('\n'):
+        line = line.strip()
+        out.append('<p>%s</p>' % _esc_html_min(line) if line else '<p>&nbsp;</p>')
+    return ''.join(out)
+
+
 def _esc_html_min(x):
     return (str(x).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
 
@@ -18550,15 +18706,19 @@ def view_cv_html(filename):
             raw = f.read()
         kind = _sniff_doc(raw)
 
-        if kind == 'ole':
-            print('[cv-view] %s is an OLE .doc wearing a .docx name' % filename)
-            return (_cv_view_note(
-                'This is an old <b>Word 97&ndash;2003 (.doc)</b> file that was saved with a .docx name &mdash; '
-                'a common job-board export quirk. It cannot be shown inline. Use <b>Download</b> to open it in Word, '
-                'and if you re-save it as a real .docx it will preview here from then on.'), 200)
         if kind == 'pdf':
             return (_cv_view_note('This file is actually a PDF. Use Download &mdash; your browser will open it directly.', '#888'), 200)
-        if kind == 'html':
+
+        if kind == 'ole':
+            txt = _doc_to_text(raw)
+            if not txt:
+                print('[cv-view] %s: OLE .doc could not be read' % filename)
+                return (_cv_view_note(
+                    'This is an old <b>Word 97&ndash;2003 (.doc)</b> file and its text could not be read. '
+                    'Please use <b>Download</b> to open it in Word.'), 200)
+            print('[cv-view] %s: extracted %d chars from Word 97-2003 .doc' % (filename, len(txt)))
+            body = _text_to_cv_html(txt)
+        elif kind == 'html':
             print('[cv-view] %s is a Word HTML export' % filename)
             body = _html_doc_clean(raw) or '<p style="color:#888">(Empty document)</p>'
         elif kind == 'rtf':
@@ -18736,8 +18896,20 @@ def extract_text_from_file(file_bytes, filename):
                 text = '\n'.join(p.text for p in doc.paragraphs if p.text.strip())
             else:
                 return None, 'python-docx not installed. Run: pip install python-docx'
-        elif ext == '.doc':
-            return None, '.doc format not supported. Please convert to .docx or .pdf'
+        elif ext in ('.doc', '.rtf'):
+            if ext == '.rtf' or _sniff_doc(file_bytes) == 'rtf':
+                text = _rtf_to_text(file_bytes)
+            elif _sniff_doc(file_bytes) == 'zip':
+                if HAS_DOCX:
+                    clean, _n = _docx_sanitize(file_bytes)
+                    doc = DocxDocument(io.BytesIO(clean))
+                    text = '\n'.join(p.text for p in doc.paragraphs if p.text.strip())
+            elif _sniff_doc(file_bytes) == 'html':
+                text = re.sub(r'<[^>]+>', ' ', _html_doc_clean(file_bytes))
+            else:
+                text = _doc_to_text(file_bytes)
+            if not text.strip():
+                return None, 'Could not read this .doc file. Please re-save it as .docx or PDF.'
         else:
             return None, 'Unsupported file type'
         return text.strip() if text.strip() else None, None
