@@ -768,21 +768,48 @@ body{font-size:14px !important; line-height:1.5}
 .chipbox.good .sk-chip{ background:#EEF4FB; color:#2A5580; border:1px solid #C6DAF0; }
 .chipbox .sk-x{ cursor:pointer; opacity:.5; font-size:13px; line-height:1; padding:0 1px; }
 .chipbox .sk-x:hover{ opacity:1; }
-.msec{ border:1px solid var(--line,#E8E4DC); border-radius:9px; margin-bottom:11px; overflow:hidden; background:#fff; }
-.msec-hd{ display:flex; align-items:center; gap:9px; padding:11px 13px; cursor:pointer;
-          background:linear-gradient(180deg,#FBFAF8,#F3F1EC); user-select:none; }
-.msec-hd .ic{ width:22px; height:22px; border-radius:6px; background:#0E2A47; color:#fff;
-              font-size:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-.msec-hd .tt{ font-weight:600; font-size:13px; flex:1; color:#1B2B3A; }
-.msec-hd .tt small{ font-weight:400; color:#8A92A0; font-size:10.5px; margin-left:6px; }
-.msec-hd .chev{ font-size:13px; color:#8A92A0; transition:transform .2s; }
+.msec{ border:1px solid var(--line,#E8E4DC); border-radius:10px; margin-bottom:12px;
+       overflow:hidden; background:#fff; transition:border-color .18s, box-shadow .18s; }
+.msec:focus-within{ border-color:#13A37E; box-shadow:0 0 0 3px rgba(19,163,126,.08); }
+.msec-hd{ display:flex; align-items:center; gap:11px; padding:13px 15px; cursor:pointer;
+          user-select:none; transition:background .15s; }
+.msec-hd:hover{ background:#FBFAF8; }
+.msec-hd .ic{ width:26px; height:26px; border-radius:8px;
+              background:#0E2A47; color:#fff; font-size:13px; font-weight:700;
+              display:flex; align-items:center; justify-content:center; flex-shrink:0;
+              font-variant-numeric:tabular-nums; }
+.msec-hd .tt{ font-weight:600; font-size:13.5px; flex:1; color:#1B2B3A; letter-spacing:-.1px; }
+.msec-hd .tt small{ display:block; font-weight:400; color:#8A92A0; font-size:11px;
+                    margin-top:2px; letter-spacing:0; }
+/* status dot: filled when the section has content, hollow when empty */
+.msec-hd .stat{ width:9px; height:9px; border-radius:50%; flex-shrink:0;
+                border:1.5px solid #CDD3DA; background:transparent; transition:all .2s; }
+.msec-hd .stat.on{ border-color:#13A37E; background:#13A37E;
+                   box-shadow:0 0 0 3px rgba(19,163,126,.15); }
+.msec-hd .chev{ font-size:11px; color:#A8AEB6; transition:transform .2s; flex-shrink:0; margin-left:2px; }
 .msec.collapsed .chev{ transform:rotate(-90deg); }
-.msec-bd{ padding:13px; }
+.msec-bd{ padding:0 15px 15px; }
 .msec.collapsed .msec-bd{ display:none; }
-.intentbox{ width:100%; font-size:12.5px; line-height:1.55; padding:10px; border:1px solid var(--line,#E8E4DC);
+
+/* paired min–max range input */
+.rangepair{ display:flex; align-items:center; gap:8px; }
+.rangepair input{ flex:1; min-width:0; }
+.rangepair .dash{ color:#A8AEB6; font-size:13px; flex-shrink:0; }
+
+/* sub-tabs inside section 3 */
+.subtabs{ display:flex; gap:4px; margin-bottom:14px; background:#F3F1EC;
+          padding:3px; border-radius:9px; }
+.subtab{ flex:1; padding:8px 0; border:none; background:transparent; cursor:pointer;
+         font-family:inherit; font-size:12.5px; font-weight:600; color:#8A92A0;
+         border-radius:6px; transition:all .15s; }
+.subtab.active{ background:#fff; color:#0E2A47; box-shadow:0 1px 3px rgba(14,42,71,.1); }
+.subpane{ display:none; }
+.subpane.active{ display:block; }
+
+.intentbox{ width:100%; font-size:12.5px; line-height:1.55; padding:11px; border:1px solid var(--line,#E8E4DC);
             border-radius:8px; background:#fff; resize:vertical; outline:none; font-family:inherit; }
 .intentbox:focus{ border-color:#13A37E; }
-.boolbox{ width:100%; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
+.boolbox{.boolbox{ width:100%; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
           line-height:1.5; padding:9px; border:1px solid var(--line,#E8E4DC);
           border-radius:8px; background:#fff; resize:vertical; outline:none; }
 .boolbox:focus{ border-color:#13A37E; }
@@ -1190,7 +1217,9 @@ body{font-size:14px !important; line-height:1.5}
       <!-- ── SECTION 1: Mandate Detail ─────────────────────────────────── -->
       <div class="msec" id="msec-detail">
         <div class="msec-hd" onclick="toggleMsec('msec-detail')">
-          <span class="ic">1</span><span class="tt">Mandate Detail</span><span class="chev">&#9660;</span>
+          <span class="ic">1</span>
+          <span class="tt">Mandate Detail<small>Client, role, JD and the basics</small></span>
+          <span class="stat" id="stat-detail"></span><span class="chev">&#9660;</span>
         </div>
         <div class="msec-bd">
           <div class="g2">
@@ -1199,10 +1228,20 @@ body{font-size:14px !important; line-height:1.5}
             <div class="fg-row"><label data-vocab-tpl="{role_field} *">Role / Position *</label><input class="inp" id="m-role" placeholder="e.g. Sr. Sales Manager"></div>
             <div class="fg-row"><label>Location</label><input class="inp" id="m-location" placeholder="e.g. Noida"></div>
             <div class="fg-row"><label>Division</label><input class="inp" id="m-division" placeholder="e.g. LV Switchgear"></div>
-            <div class="fg-row"><label>CTC Min (LPA)</label><input class="inp" id="m-ctcmin" type="number" placeholder="8"></div>
-            <div class="fg-row"><label>CTC Max (LPA)</label><input class="inp" id="m-ctcmax" type="number" placeholder="18"></div>
-            <div class="fg-row"><label>Experience Min (Yrs)</label><input class="inp" id="m-expmin" type="number" step="0.5" placeholder="8"></div>
-            <div class="fg-row"><label>Experience Max (Yrs)</label><input class="inp" id="m-expmax" type="number" step="0.5" placeholder="12"></div>
+            <div class="fg-row"><label>CTC Range (LPA)</label>
+              <div class="rangepair">
+                <input class="inp" id="m-ctcmin" type="number" placeholder="Min 8">
+                <span class="dash">&ndash;</span>
+                <input class="inp" id="m-ctcmax" type="number" placeholder="Max 18">
+              </div>
+            </div>
+            <div class="fg-row"><label>Experience (Yrs)</label>
+              <div class="rangepair">
+                <input class="inp" id="m-expmin" type="number" step="0.5" placeholder="Min 8">
+                <span class="dash">&ndash;</span>
+                <input class="inp" id="m-expmax" type="number" step="0.5" placeholder="Max 12">
+              </div>
+            </div>
           </div>
           <div class="fg-row"><label>Job Description</label><textarea class="ta" id="m-jd" rows="5" placeholder="Paste JD..."></textarea></div>
         </div>
@@ -1211,7 +1250,9 @@ body{font-size:14px !important; line-height:1.5}
       <!-- ── SECTION 2: SPOC Details ───────────────────────────────────── -->
       <div class="msec collapsed" id="msec-spoc">
         <div class="msec-hd" onclick="toggleMsec('msec-spoc')">
-          <span class="ic">2</span><span class="tt">SPOC Details <small>client point of contact</small></span><span class="chev">&#9660;</span>
+          <span class="ic">2</span>
+          <span class="tt">SPOC Details<small>Client point of contact</small></span>
+          <span class="stat" id="stat-spoc"></span><span class="chev">&#9660;</span>
         </div>
         <div class="msec-bd">
           <div class="dest-hint" style="margin-top:0">
@@ -1224,29 +1265,41 @@ body{font-size:14px !important; line-height:1.5}
       <!-- ── SECTION 3: Keyword, Skill & Intent ────────────────────────── -->
       <div class="msec collapsed" id="msec-match">
         <div class="msec-hd" onclick="toggleMsec('msec-match')">
-          <span class="ic">3</span><span class="tt">Keyword, Skill &amp; Intent <small>drives the Chrome-extension scoring</small></span><span class="chev">&#9660;</span>
+          <span class="ic">3</span>
+          <span class="tt">Keyword, Skill &amp; Intent<small>Drives the Chrome-extension scoring</small></span>
+          <span class="stat" id="stat-match"></span><span class="chev">&#9660;</span>
         </div>
         <div class="msec-bd">
-          <div class="fg-row"><label>Search Boolean <span style="font-weight:400;color:#8A92A0">(optional — overrides the skill lists below)</span></label>
-            <textarea class="boolbox" id="m-bool" rows="3" placeholder='("Business Analyst" OR "Functional Analyst") AND (Salesforce OR SFDC) AND ("Channel Partner" OR "Dealer Management" OR DMS)'></textarea>
-            <div class="boolprev" id="m-bool-prev"></div>
-            <div class="chip-hint">Each bracketed group is one requirement; any term inside it satisfies that requirement. Check the preview matches what you meant.</div>
+          <div class="subtabs">
+            <button type="button" class="subtab active" data-sub="kw" onclick="switchSub('kw')">Keywords &amp; Skills</button>
+            <button type="button" class="subtab" data-sub="intent" onclick="switchSub('intent')">Search Intent</button>
           </div>
-          <div class="fg-row"><label>Must-Have Skills</label>
-            <div class="chipbox must" id="m-must-box" onclick="chipFocus('m-must')">
-              <input class="chip-in" id="m-must" placeholder="Type a skill, press Enter">
+
+          <div class="subpane active" id="sub-kw">
+            <div class="fg-row"><label>Search Boolean <span style="font-weight:400;color:#8A92A0">(optional — overrides the skill lists)</span></label>
+              <textarea class="boolbox" id="m-bool" rows="3" placeholder='("Business Analyst" OR "Functional Analyst") AND (Salesforce OR SFDC) AND ("Channel Partner" OR "Dealer Management" OR DMS)'></textarea>
+              <div class="boolprev" id="m-bool-prev"></div>
+              <div class="chip-hint">Each bracketed group is one requirement; any term inside it satisfies it.</div>
             </div>
-            <div class="chip-hint">Hard requirements. The Chrome extension scores a CV against these &mdash; a candidate missing them is marked down.</div>
-          </div>
-          <div class="fg-row"><label>Good-To-Have Skills</label>
-            <div class="chipbox good" id="m-good-box" onclick="chipFocus('m-good')">
-              <input class="chip-in" id="m-good" placeholder="Type a skill, press Enter">
+            <div class="fg-row"><label>Must-Have Skills</label>
+              <div class="chipbox must" id="m-must-box" onclick="chipFocus('m-must')">
+                <input class="chip-in" id="m-must" placeholder="Type a skill, press Enter">
+              </div>
+              <div class="chip-hint">Hard requirements &mdash; a candidate missing them is marked down.</div>
             </div>
-            <div class="chip-hint">Bonus skills. Never penalised when absent.</div>
+            <div class="fg-row"><label>Good-To-Have Skills</label>
+              <div class="chipbox good" id="m-good-box" onclick="chipFocus('m-good')">
+                <input class="chip-in" id="m-good" placeholder="Type a skill, press Enter">
+              </div>
+              <div class="chip-hint">Bonus skills. Never penalised when absent.</div>
+            </div>
           </div>
-          <div class="fg-row"><label>Search Intent <span style="font-weight:400;color:#8A92A0">(plain English — what you actually mean)</span></label>
-            <textarea class="intentbox" id="m-intent" rows="4" placeholder="e.g. Need a Helpdesk / Support Manager who has SUPPORTED a Salesforce-based CRM product for end users — NOT a Salesforce developer who merely used Salesforce as a build tool. Must have run an L2/L3 support desk with SLA ownership."></textarea>
-            <div class="chip-hint">Keywords can't tell "used Salesforce" from "supported a Salesforce product". Write the distinction here in your own words &mdash; an AI judge checks each CV against this intent and can catch what keywords miss.</div>
+
+          <div class="subpane" id="sub-intent">
+            <div class="fg-row"><label>Search Intent <span style="font-weight:400;color:#8A92A0">(plain English)</span></label>
+              <textarea class="intentbox" id="m-intent" rows="5" placeholder="e.g. Need a Helpdesk / Support Manager who has SUPPORTED a Salesforce-based CRM product for end users — NOT a Salesforce developer who merely used Salesforce as a build tool. Must have run an L2/L3 support desk with SLA ownership."></textarea>
+              <div class="chip-hint">Keywords can't tell "used Salesforce" from "supported a Salesforce product". Write the distinction here &mdash; an AI judge checks each CV against it and catches what keywords miss.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -7979,6 +8032,8 @@ function chipRemove(id, skill){
 }
 
 function chipRender(id){
+  // Keep the mandate section dots in sync when chips change.
+  if(id==='m-must'||id==='m-good'){ try{ refreshMandateDots(); }catch(e){} }
   var box=document.getElementById(id+'-box'); if(!box) return;
   var inp=document.getElementById(id);
   // Remove old chips only — the input element itself is never touched, so an
@@ -8037,6 +8092,28 @@ function chipCommit(id){
 function toggleMsec(id){
   var el=document.getElementById(id);
   if(el) el.classList.toggle('collapsed');
+}
+
+// Section 3 sub-tabs (Keywords/Skills  vs  Intent)
+function switchSub(which){
+  document.querySelectorAll('#msec-match .subtab').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-sub')===which);
+  });
+  document.querySelectorAll('#msec-match .subpane').forEach(function(pn){
+    pn.classList.toggle('active', pn.id==='sub-'+which);
+  });
+}
+
+// Header status dots: filled once a section carries any content, so a recruiter
+// can see at a glance what's been filled without expanding every section.
+function refreshMandateDots(){
+  var val=function(id){ var e=document.getElementById(id); return e?(e.value||'').trim():''; };
+  var d1 = val('m-client')||val('m-role')||val('m-jd')||val('m-location');
+  var d3 = val('m-bool')||val('m-intent')||chipGet('m-must').length||chipGet('m-good').length;
+  var set=function(id,on){ var e=document.getElementById(id); if(e) e.classList.toggle('on', !!on); };
+  set('stat-detail', d1);
+  set('stat-match',  d3);
+  // SPOC is set later from the CRM, so its dot stays hollow in the new-mandate modal.
 }
 
 // ── BOOLEAN SEARCH PREVIEW ─────────────────────────────────────────────────
@@ -9321,6 +9398,12 @@ function openModal(id){
     if(_mb){ _mb.value=''; document.getElementById('m-bool-prev').innerHTML='';
              _mb.oninput=function(){ boolPreview('m-bool','m-bool-prev'); }; }
     var _mi=document.getElementById('m-intent'); if(_mi) _mi.value='';
+    // Live status dots + default to the Keywords sub-tab.
+    switchSub('kw');
+    ['m-client','m-role','m-jd','m-location','m-bool','m-intent'].forEach(function(id){
+      var e=document.getElementById(id); if(e) e.addEventListener('input', refreshMandateDots);
+    });
+    setTimeout(refreshMandateDots, 20);
     // Always open on section 1; collapse 2 and 3 so the form isn't a wall.
     ['msec-detail'].forEach(function(x){var e=document.getElementById(x);if(e)e.classList.remove('collapsed');});
     ['msec-spoc','msec-match'].forEach(function(x){var e=document.getElementById(x);if(e)e.classList.add('collapsed');});
