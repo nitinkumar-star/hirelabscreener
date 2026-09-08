@@ -768,33 +768,43 @@ body{font-size:14px !important; line-height:1.5}
 .chipbox.good .sk-chip{ background:#EEF4FB; color:#2A5580; border:1px solid #C6DAF0; }
 .chipbox .sk-x{ cursor:pointer; opacity:.5; font-size:13px; line-height:1; padding:0 1px; }
 .chipbox .sk-x:hover{ opacity:1; }
-/* ── Mandate modal: top tabs ─────────────────────────────────────────── */
-.mtabs{ display:flex; gap:2px; border-bottom:1px solid var(--line,#E8E4DC);
-        margin:-4px -2px 16px; padding:0 2px; }
-.mtab{ padding:11px 15px; font-size:12.5px; font-weight:600; color:#8A92A0;
-       border:none; background:transparent; cursor:pointer; font-family:inherit;
-       border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .15s, border-color .15s;
-       display:flex; align-items:center; gap:7px; white-space:nowrap; }
-.mtab:hover{ color:#5A6472; }
-.mtab.active{ color:#0E2A47; border-bottom-color:#13A37E; }
-.mtab .dot{ width:6px; height:6px; border-radius:50%; background:#CDD3DA; transition:background .2s; }
-.mtab.active .dot, .mtab .dot.on{ background:#13A37E; }
-.mtpane{ display:none; }
-.mtpane.active{ display:block; }
+/* ── Mandate modal: Settings-style left rail ─────────────────────────── */
+#modal-mandate .modal{ max-width:660px; }
+#modal-mandate .modal-body{ padding:0; display:flex; min-height:430px; }
+.mrail{ width:206px; flex-shrink:0; padding:14px 12px; border-right:1px solid var(--line,#E8E4DC);
+        background:#FBFAF8; }
+.mrtab{ display:flex; align-items:center; gap:9px; width:100%; text-align:left; border:none;
+        background:none; padding:9px 10px; border-radius:9px; cursor:pointer; margin-bottom:3px;
+        font-family:inherit; transition:background .12s; }
+.mrtab:hover{ background:#F0EFEA; }
+.mrtab.active{ background:#E9E7FA; }
+.mrtab .ic{ font-size:14px; width:20px; text-align:center; flex-shrink:0; }
+.mrtab .l{ font-size:12.5px; font-weight:600; color:var(--navy,#0E2A47); line-height:1.3; display:block; }
+.mrtab .s{ font-size:10px; color:var(--muted,#8A92A0); line-height:1.3; display:block; }
+.mrtab .dot{ width:7px; height:7px; border-radius:50%; background:#CDD3DA; margin-left:auto;
+             flex-shrink:0; transition:background .2s; }
+.mrtab.active .dot, .mrtab .dot.on{ background:#534AB7; }
+.mrbody{ flex:1; padding:20px 22px; overflow:auto; }
+.mrpane{ display:none; }
+.mrpane.active{ display:block; }
+.mr-h{ font-size:15px; font-weight:700; color:var(--navy,#0E2A47); margin-bottom:3px; }
+.mr-hsub{ font-size:11.5px; color:var(--muted,#8A92A0); margin-bottom:16px; }
+@media(max-width:640px){
+  #modal-mandate .modal-body{ flex-direction:column; }
+  .mrail{ width:100%; display:flex; gap:6px; overflow-x:auto; border-right:none;
+          border-bottom:1px solid var(--line,#E8E4DC); padding:10px; }
+  .mrail .mrtab{ width:auto; white-space:nowrap; flex-shrink:0; margin-bottom:0; }
+  .mrail .s{ display:none; }
+}
 .rangepair{ display:flex; align-items:center; gap:8px; }
 .rangepair input{ flex:1; min-width:0; }
 .rangepair .dash{ color:#A8AEB6; font-size:13px; flex-shrink:0; }
-.subtabs{ display:flex; gap:4px; margin-bottom:14px; background:#F3F1EC; padding:3px; border-radius:9px; }
-.subtab{ flex:1; padding:8px 0; border:none; background:transparent; cursor:pointer;
-         font-family:inherit; font-size:12.5px; font-weight:600; color:#8A92A0; border-radius:6px; transition:all .15s; }
-.subtab.active{ background:#fff; color:#0E2A47; box-shadow:0 1px 3px rgba(14,42,71,.1); }
-.subpane{ display:none; } .subpane.active{ display:block; }
 .intentbox{ width:100%; font-size:12.5px; line-height:1.55; padding:11px; border:1px solid var(--line,#E8E4DC);
             border-radius:8px; background:#fff; resize:vertical; outline:none; font-family:inherit; }
 .intentbox:focus{ border-color:#13A37E; }
 .spoc-note{ font-size:12px; line-height:1.55; color:#5A6472; background:#F7F6F2;
             border:1px solid var(--line,#E8E4DC); border-radius:8px; padding:13px 15px; }
-.boolbox{.boolbox{.boolbox{ width:100%; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
+.boolbox{.boolbox{.boolbox{.boolbox{ width:100%; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
           line-height:1.5; padding:9px; border:1px solid var(--line,#E8E4DC);
           border-radius:8px; background:#fff; resize:vertical; outline:none; }
 .boolbox:focus{ border-color:#13A37E; }
@@ -1198,61 +1208,83 @@ body{font-size:14px !important; line-height:1.5}
   <div class="modal">
     <div class="modal-head"><span class="modal-title" id="mandate-modal-title" data-vocab-tpl="{mandate_new}">New Mandate</span><button class="modal-x" onclick="closeModal('modal-mandate')">&#10005;</button></div>
     <div class="modal-body">
-      <div class="mtabs">
-        <button type="button" class="mtab active" data-mt="detail" onclick="switchMTab('detail')"><span class="dot" id="mdot-detail"></span>Detail</button>
-        <button type="button" class="mtab" data-mt="spoc" onclick="switchMTab('spoc')"><span class="dot" id="mdot-spoc"></span>SPOC</button>
-        <button type="button" class="mtab" data-mt="kw" onclick="switchMTab('kw')"><span class="dot" id="mdot-kw"></span>Keywords &amp; Skills</button>
-        <button type="button" class="mtab" data-mt="intent" onclick="switchMTab('intent')"><span class="dot" id="mdot-intent"></span>Intent</button>
+      <div class="mrail">
+        <button type="button" class="mrtab active" data-mt="detail" onclick="switchMTab('detail')">
+          <span class="ic">&#128203;</span>
+          <span style="min-width:0"><span class="l">Mandate Detail</span><span class="s">Client, role, JD</span></span>
+          <span class="dot" id="mdot-detail"></span></button>
+        <button type="button" class="mrtab" data-mt="spoc" onclick="switchMTab('spoc')">
+          <span class="ic">&#128100;</span>
+          <span style="min-width:0"><span class="l">SPOC</span><span class="s">Point of contact</span></span>
+          <span class="dot" id="mdot-spoc"></span></button>
+        <button type="button" class="mrtab" data-mt="kw" onclick="switchMTab('kw')">
+          <span class="ic">&#128269;</span>
+          <span style="min-width:0"><span class="l">Keywords &amp; Skills</span><span class="s">Boolean, must-haves</span></span>
+          <span class="dot" id="mdot-kw"></span></button>
+        <button type="button" class="mrtab" data-mt="intent" onclick="switchMTab('intent')">
+          <span class="ic">&#127919;</span>
+          <span style="min-width:0"><span class="l">Search Intent</span><span class="s">Plain-English rule</span></span>
+          <span class="dot" id="mdot-intent"></span></button>
       </div>
 
-      <!-- Detail -->
-      <div class="mtpane active" id="mt-detail">
-        <div class="g2">
-          <div class="fg-row" id="m-client-row"><label data-vocab-tpl="{client_field} *">Client Name *</label><input class="inp" id="m-client" data-vocab-ph="client_hint" placeholder="e.g. Legrand India"></div>
-          <div class="fg-row" id="m-dept-row" style="display:none"><label>Department *</label><select class="inp" id="m-department"><option value="">Loading…</option></select></div>
-          <div class="fg-row"><label data-vocab-tpl="{role_field} *">Role / Position *</label><input class="inp" id="m-role" placeholder="e.g. Sr. Sales Manager"></div>
-          <div class="fg-row"><label>Location</label><input class="inp" id="m-location" placeholder="e.g. Noida"></div>
-          <div class="fg-row"><label>Division</label><input class="inp" id="m-division" placeholder="e.g. LV Switchgear"></div>
-          <div class="fg-row"><label>CTC Range (LPA)</label>
-            <div class="rangepair"><input class="inp" id="m-ctcmin" type="number" placeholder="Min 8"><span class="dash">&ndash;</span><input class="inp" id="m-ctcmax" type="number" placeholder="Max 18"></div>
+      <div class="mrbody">
+        <!-- Detail -->
+        <div class="mrpane active" id="mt-detail">
+          <div class="mr-h">Mandate Detail</div>
+          <div class="mr-hsub">The basics &mdash; client, role, and the job description.</div>
+          <div class="g2">
+            <div class="fg-row" id="m-client-row"><label data-vocab-tpl="{client_field} *">Client Name *</label><input class="inp" id="m-client" data-vocab-ph="client_hint" placeholder="e.g. Legrand India"></div>
+            <div class="fg-row" id="m-dept-row" style="display:none"><label>Department *</label><select class="inp" id="m-department"><option value="">Loading…</option></select></div>
+            <div class="fg-row"><label data-vocab-tpl="{role_field} *">Role / Position *</label><input class="inp" id="m-role" placeholder="e.g. Sr. Sales Manager"></div>
+            <div class="fg-row"><label>Location</label><input class="inp" id="m-location" placeholder="e.g. Noida"></div>
+            <div class="fg-row"><label>Division</label><input class="inp" id="m-division" placeholder="e.g. LV Switchgear"></div>
+            <div class="fg-row"><label>CTC Range (LPA)</label>
+              <div class="rangepair"><input class="inp" id="m-ctcmin" type="number" placeholder="Min 8"><span class="dash">&ndash;</span><input class="inp" id="m-ctcmax" type="number" placeholder="Max 18"></div>
+            </div>
+            <div class="fg-row"><label>Experience (Yrs)</label>
+              <div class="rangepair"><input class="inp" id="m-expmin" type="number" step="0.5" placeholder="Min 8"><span class="dash">&ndash;</span><input class="inp" id="m-expmax" type="number" step="0.5" placeholder="Max 12"></div>
+            </div>
           </div>
-          <div class="fg-row"><label>Experience (Yrs)</label>
-            <div class="rangepair"><input class="inp" id="m-expmin" type="number" step="0.5" placeholder="Min 8"><span class="dash">&ndash;</span><input class="inp" id="m-expmax" type="number" step="0.5" placeholder="Max 12"></div>
+          <div class="fg-row"><label>Job Description</label><textarea class="ta" id="m-jd" rows="4" placeholder="Paste JD..."></textarea></div>
+        </div>
+
+        <!-- SPOC -->
+        <div class="mrpane" id="mt-spoc">
+          <div class="mr-h">SPOC Details</div>
+          <div class="mr-hsub">Client point of contact.</div>
+          <div class="spoc-note">
+            The client SPOC is pulled from that client's CRM contacts, so it stays linked to one source of truth.
+            Create the mandate first, then set the SPOC from the <b>Mandate Setup</b> tab &mdash; it auto-fills the "To" when you share profiles.
           </div>
         </div>
-        <div class="fg-row"><label>Job Description</label><textarea class="ta" id="m-jd" rows="4" placeholder="Paste JD..."></textarea></div>
-      </div>
 
-      <!-- SPOC -->
-      <div class="mtpane" id="mt-spoc">
-        <div class="spoc-note">
-          The client SPOC is pulled from that client's CRM contacts, so it stays linked to one source of truth.
-          Create the mandate first, then set the SPOC from the <b>Mandate Setup</b> tab &mdash; it auto-fills the "To" when you share profiles.
+        <!-- Keywords & Skills -->
+        <div class="mrpane" id="mt-kw">
+          <div class="mr-h">Keywords &amp; Skills</div>
+          <div class="mr-hsub">Drives the Chrome-extension scoring.</div>
+          <div class="fg-row"><label>Search Boolean <span style="font-weight:400;color:#8A92A0">(optional — overrides the skill lists)</span></label>
+            <textarea class="boolbox" id="m-bool" rows="3" placeholder='("Business Analyst" OR "Functional Analyst") AND (Salesforce OR SFDC) AND ("Channel Partner" OR "Dealer Management" OR DMS)'></textarea>
+            <div class="boolprev" id="m-bool-prev"></div>
+            <div class="chip-hint">Each bracketed group is one requirement; any term inside it satisfies it.</div>
+          </div>
+          <div class="fg-row"><label>Must-Have Skills</label>
+            <div class="chipbox must" id="m-must-box" onclick="chipFocus('m-must')"><input class="chip-in" id="m-must" placeholder="Type a skill, press Enter"></div>
+            <div class="chip-hint">Hard requirements &mdash; a candidate missing them is marked down.</div>
+          </div>
+          <div class="fg-row"><label>Good-To-Have Skills</label>
+            <div class="chipbox good" id="m-good-box" onclick="chipFocus('m-good')"><input class="chip-in" id="m-good" placeholder="Type a skill, press Enter"></div>
+            <div class="chip-hint">Bonus skills. Never penalised when absent.</div>
+          </div>
         </div>
-      </div>
 
-      <!-- Keywords & Skills -->
-      <div class="mtpane" id="mt-kw">
-        <div class="fg-row"><label>Search Boolean <span style="font-weight:400;color:#8A92A0">(optional — overrides the skill lists)</span></label>
-          <textarea class="boolbox" id="m-bool" rows="3" placeholder='("Business Analyst" OR "Functional Analyst") AND (Salesforce OR SFDC) AND ("Channel Partner" OR "Dealer Management" OR DMS)'></textarea>
-          <div class="boolprev" id="m-bool-prev"></div>
-          <div class="chip-hint">Each bracketed group is one requirement; any term inside it satisfies it.</div>
-        </div>
-        <div class="fg-row"><label>Must-Have Skills</label>
-          <div class="chipbox must" id="m-must-box" onclick="chipFocus('m-must')"><input class="chip-in" id="m-must" placeholder="Type a skill, press Enter"></div>
-          <div class="chip-hint">Hard requirements &mdash; a candidate missing them is marked down.</div>
-        </div>
-        <div class="fg-row"><label>Good-To-Have Skills</label>
-          <div class="chipbox good" id="m-good-box" onclick="chipFocus('m-good')"><input class="chip-in" id="m-good" placeholder="Type a skill, press Enter"></div>
-          <div class="chip-hint">Bonus skills. Never penalised when absent.</div>
-        </div>
-      </div>
-
-      <!-- Intent -->
-      <div class="mtpane" id="mt-intent">
-        <div class="fg-row"><label>Search Intent <span style="font-weight:400;color:#8A92A0">(plain English)</span></label>
-          <textarea class="intentbox" id="m-intent" rows="5" placeholder="e.g. Need a Helpdesk / Support Manager who has SUPPORTED a Salesforce-based CRM product for end users — NOT a Salesforce developer who merely used Salesforce as a build tool. Must have run an L2/L3 support desk with SLA ownership."></textarea>
-          <div class="chip-hint">Keywords can't tell "used Salesforce" from "supported a Salesforce product". Write the distinction here &mdash; an AI judge checks each CV against it and catches what keywords miss.</div>
+        <!-- Intent -->
+        <div class="mrpane" id="mt-intent">
+          <div class="mr-h">Search Intent</div>
+          <div class="mr-hsub">Plain English &mdash; what you actually mean.</div>
+          <div class="fg-row"><label>Search Intent</label>
+            <textarea class="intentbox" id="m-intent" rows="5" placeholder="e.g. Need a Helpdesk / Support Manager who has SUPPORTED a Salesforce-based CRM product for end users — NOT a Salesforce developer who merely used Salesforce as a build tool. Must have run an L2/L3 support desk with SLA ownership."></textarea>
+            <div class="chip-hint">Keywords can't tell "used Salesforce" from "supported a Salesforce product". Write the distinction here &mdash; an AI judge checks each CV against it and catches what keywords miss.</div>
+          </div>
         </div>
       </div>
 
@@ -8042,10 +8074,10 @@ function chipCommit(id){
 
 // ── Mandate modal: top tabs ────────────────────────────────────────────────
 function switchMTab(which){
-  document.querySelectorAll('#modal-mandate .mtab').forEach(function(b){
+  document.querySelectorAll('#modal-mandate .mrtab').forEach(function(b){
     b.classList.toggle('active', b.getAttribute('data-mt')===which);
   });
-  document.querySelectorAll('#modal-mandate .mtpane').forEach(function(pn){
+  document.querySelectorAll('#modal-mandate .mrpane').forEach(function(pn){
     pn.classList.toggle('active', pn.id==='mt-'+which);
   });
 }
