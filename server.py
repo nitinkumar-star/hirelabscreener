@@ -3149,7 +3149,11 @@ def init_db():
     # think. The flat columns stay so existing mandates keep working unchanged.
     for col, typ in [('must_have_skills', "TEXT DEFAULT '[]'"),
                      ('good_to_have_skills', "TEXT DEFAULT '[]'"),
-                     ('boolean_query', "TEXT DEFAULT ''")]:
+                     ('boolean_query', "TEXT DEFAULT ''"),
+                     # Plain-English hiring intent, used by the DeepSeek judge in
+                     # the extension scorer to catch tool-vs-domain confusions
+                     # that keywords and embeddings both miss.
+                     ('search_intent', "TEXT DEFAULT ''")]:
         try:
             c.execute(f'ALTER TABLE mandates ADD COLUMN {col} {typ}')
         except sqlite3.OperationalError:
@@ -5760,6 +5764,82 @@ def extension_mandates():
     return jsonify({'ok': True, 'mandates': out})
 
 
+def intent_judge(intent_text, candidate_text, resume_text, timeout=25):
+    """Ask DeepSeek whether a candidate matches the recruiter's plain-English
+    intent — the tool-vs-domain kind of distinction that keywords and
+    embeddings both get wrong.
+
+    Returns a dict: {ran, verdict, confidence, score, reason, evidence} or
+    {ran: False, error} when no key is configured or the call fails. The caller
+    treats "did not run" very differently from "ran and said no", so those two
+    outcomes are never collapsed.
+    """
+    intent_text = (intent_text or '').strip()
+    if not intent_text:
+        return {'ran': False, 'error': 'no_intent'}
+
+    ds_key = get_setting('deepseek_api_key')
+    if not ds_key:
+        return {'ran': False, 'error': 'no_key'}
+
+    # Resume is the stronger evidence, so it leads. Both are truncated hard:
+    # the judge needs enough to decide, not the whole document, and this keeps
+    # the per-call cost near-constant.
+    cand = (('RESUME:\n' + resume_text[:4000] + '\n\n') if resume_text else '') \
+         + 'NAUKRI PROFILE:\n' + (candidate_text or '')[:4000]
+
+    system = (
+        "You are a strict recruitment screener. You are given a recruiter's "
+        "hiring INTENT and a candidate's profile/resume. Decide how well the "
+        "candidate matches the INTENT specifically — not just whether keywords "
+        "appear. Pay attention to distinctions like whether a person USED a "
+        "tool versus SUPPORTED/BUILT a product, seniority, and domain. "
+        "Respond ONLY with JSON: "
+        '{"verdict":"strong|partial|weak|mismatch",'
+        '"confidence":0-100,"reason":"one sentence",'
+        '"evidence":"short quote from the profile or empty"}'
+    )
+    user = 'HIRING INTENT:\n' + intent_text[:2000] + '\n\n---\nCANDIDATE:\n' + cand
+
+    payload = {
+        'model': 'deepseek-chat',
+        'messages': [{'role': 'system', 'content': system},
+                     {'role': 'user', 'content': user}],
+        'temperature': 0,
+        'max_tokens': 300,
+    }
+    try:
+        resp = call_deepseek(ds_key, payload, timeout=timeout, endpoint='intent-judge')
+        if resp.status_code != 200:
+            return {'ran': False, 'error': f'http_{resp.status_code}'}
+        content = resp.json()['choices'][0]['message']['content']
+        data = parse_json(content) or {}
+    except TokenCapError:
+        return {'ran': False, 'error': 'token_cap'}
+    except Exception as exc:
+        return {'ran': False, 'error': str(exc)[:120]}
+
+    verdict = str(data.get('verdict', '')).lower().strip()
+    if verdict not in ('strong', 'partial', 'weak', 'mismatch'):
+        verdict = 'partial'
+    # A single 0-100 the composite can fold in, derived from the verdict but
+    # nudged by the model's own confidence.
+    base = {'strong': 90, 'partial': 60, 'weak': 35, 'mismatch': 10}[verdict]
+    try:
+        conf = max(0, min(100, int(data.get('confidence', 70))))
+    except Exception:
+        conf = 70
+    score = round(base * 0.7 + conf * 0.3 * (base / 90.0), 1)
+    return {
+        'ran': True,
+        'verdict': verdict,
+        'confidence': conf,
+        'score': score,
+        'reason': str(data.get('reason', ''))[:300],
+        'evidence': str(data.get('evidence', ''))[:300],
+    }
+
+
 @app.route('/api/mandates/parse-boolean', methods=['POST'])
 @login_required
 def parse_boolean_preview():
@@ -5851,6 +5931,10 @@ def _extension_score_match():
     must_have = mandate_skills(m, 'must_have_skills')
     good_have = mandate_skills(m, 'good_to_have_skills')
     bool_query = str(_row_get(m, 'boolean_query', '') or '').strip()
+    search_intent = str(_row_get(m, 'search_intent', '') or '').strip()
+    # The judge is an extra paid call, so the extension asks for it explicitly.
+    # Auto-mode can enable it globally; a manual re-score can force it on.
+    want_judge = bool(d.get('run_intent_judge', True))
 
     resume_lc   = resume_text.lower()
     profile_lc  = profile_text.lower()
@@ -6048,6 +6132,15 @@ def _extension_score_match():
 
     conn.close()
 
+    # ── Intent judge (DeepSeek) ───────────────────────────────────────────
+    # Runs only when the mandate carries an intent AND the caller opted in.
+    # Its outcome is reported separately and, when present, folded into the
+    # final score — because "used Salesforce" vs "supported a Salesforce
+    # product" is exactly what neither embeddings nor keywords can resolve.
+    judge = {'ran': False, 'error': 'skipped'}
+    if search_intent and want_judge:
+        judge = intent_judge(search_intent, profile_text, resume_text)
+
     # ── Weighted semantic ─────────────────────────────────────────────────
     # Tunable without a redeploy via the score_musthave_weight setting.
     try:
@@ -6067,13 +6160,26 @@ def _extension_score_match():
     # A signal that could not be computed is dropped from the blend rather than
     # contributing a neutral 50, which would pull every score toward the middle.
     if embed_used and skills_defined:
-        final = round(semantic_pct * 0.6 + skill_pct * 0.4, 1)
+        base_final = semantic_pct * 0.6 + skill_pct * 0.4
     elif embed_used:
-        final = round(semantic_pct, 1)
+        base_final = semantic_pct
     elif skills_defined:
-        final = round(skill_pct, 1)
+        base_final = skill_pct
     else:
-        final = 0.0
+        base_final = 0.0
+
+    # When the judge ran, it gets a real say — a keyword/embedding match that
+    # the judge calls a tool-vs-domain mismatch should not survive as a high
+    # score. 35% is enough to pull an otherwise-strong false positive down into
+    # "review", without letting one model override everything else.
+    if judge.get('ran'):
+        final = round(base_final * 0.65 + judge['score'] * 0.35, 1)
+        # A confident mismatch is a hard signal: cap the score so it cannot be
+        # rescued by keyword stuffing.
+        if judge['verdict'] == 'mismatch' and judge['confidence'] >= 60:
+            final = min(final, 34.0)
+    else:
+        final = round(base_final, 1)
 
     if final >= 75:
         verdict, colour = 'Strong Match', '#0F8A6B'
@@ -6123,6 +6229,8 @@ def _extension_score_match():
         'embed_error': embed_error,
         'cv_status': cv_status,
         'confidence': confidence,
+        'intent': search_intent,
+        'judge': judge,
         'resume_chars': len(resume_text),
         'profile_chars': len(profile_text),
         'mandate_role': str(_row_get(m, 'role', '')),
@@ -11441,9 +11549,10 @@ def create_mandate():
     _must = _norm_skill_list(d.get('must_have_skills'))
     _good = _norm_skill_list(d.get('good_to_have_skills'))
     _bq   = str(d.get('boolean_query') or '').strip()[:2000]
-    if _must or _good or _bq:
-        c.execute('UPDATE mandates SET must_have_skills=?, good_to_have_skills=?, boolean_query=? WHERE id=?',
-                  (json.dumps(_must), json.dumps(_good), _bq, mid))
+    _intent = str(d.get('search_intent') or '').strip()[:3000]
+    if _must or _good or _bq or _intent:
+        c.execute('UPDATE mandates SET must_have_skills=?, good_to_have_skills=?, boolean_query=?, search_intent=? WHERE id=?',
+                  (json.dumps(_must), json.dumps(_good), _bq, _intent, mid))
     if _plan:
         _k = list(_plan.keys())
         c.execute('UPDATE mandates SET {} WHERE id=?'.format(','.join(x + '=?' for x in _k)),
@@ -12597,6 +12706,9 @@ def update_mandate(mid):
     if 'boolean_query' in d:
         conn.execute('UPDATE mandates SET boolean_query=? WHERE id=?',
                      (str(d.get('boolean_query') or '').strip()[:2000], mid))
+    if 'search_intent' in d:
+        conn.execute('UPDATE mandates SET search_intent=? WHERE id=?',
+                     (str(d.get('search_intent') or '').strip()[:3000], mid))
     # The JD vector was built from the old text. Anything that feeds that text
     # invalidates it, and the background embedder rebuilds it within a minute.
     if ('jd' in d or 'must_have_skills' in d or 'good_to_have_skills' in d

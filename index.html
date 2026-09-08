@@ -768,6 +768,20 @@ body{font-size:14px !important; line-height:1.5}
 .chipbox.good .sk-chip{ background:#EEF4FB; color:#2A5580; border:1px solid #C6DAF0; }
 .chipbox .sk-x{ cursor:pointer; opacity:.5; font-size:13px; line-height:1; padding:0 1px; }
 .chipbox .sk-x:hover{ opacity:1; }
+.msec{ border:1px solid var(--line,#E8E4DC); border-radius:9px; margin-bottom:11px; overflow:hidden; background:#fff; }
+.msec-hd{ display:flex; align-items:center; gap:9px; padding:11px 13px; cursor:pointer;
+          background:linear-gradient(180deg,#FBFAF8,#F3F1EC); user-select:none; }
+.msec-hd .ic{ width:22px; height:22px; border-radius:6px; background:#0E2A47; color:#fff;
+              font-size:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.msec-hd .tt{ font-weight:600; font-size:13px; flex:1; color:#1B2B3A; }
+.msec-hd .tt small{ font-weight:400; color:#8A92A0; font-size:10.5px; margin-left:6px; }
+.msec-hd .chev{ font-size:13px; color:#8A92A0; transition:transform .2s; }
+.msec.collapsed .chev{ transform:rotate(-90deg); }
+.msec-bd{ padding:13px; }
+.msec.collapsed .msec-bd{ display:none; }
+.intentbox{ width:100%; font-size:12.5px; line-height:1.55; padding:10px; border:1px solid var(--line,#E8E4DC);
+            border-radius:8px; background:#fff; resize:vertical; outline:none; font-family:inherit; }
+.intentbox:focus{ border-color:#13A37E; }
 .boolbox{ width:100%; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
           line-height:1.5; padding:9px; border:1px solid var(--line,#E8E4DC);
           border-radius:8px; background:#fff; resize:vertical; outline:none; }
@@ -1172,35 +1186,71 @@ body{font-size:14px !important; line-height:1.5}
   <div class="modal">
     <div class="modal-head"><span class="modal-title" id="mandate-modal-title" data-vocab-tpl="{mandate_new}">New Mandate</span><button class="modal-x" onclick="closeModal('modal-mandate')">&#10005;</button></div>
     <div class="modal-body">
-      <div class="g2">
-        <div class="fg-row" id="m-client-row"><label data-vocab-tpl="{client_field} *">Client Name *</label><input class="inp" id="m-client" data-vocab-ph="client_hint" placeholder="e.g. Legrand India"></div>
-        <div class="fg-row" id="m-dept-row" style="display:none"><label>Department *</label><select class="inp" id="m-department"><option value="">Loading…</option></select></div>
-        <div class="fg-row"><label data-vocab-tpl="{role_field} *">Role / Position *</label><input class="inp" id="m-role" placeholder="e.g. Sr. Sales Manager"></div>
-        <div class="fg-row"><label>Location</label><input class="inp" id="m-location" placeholder="e.g. Noida"></div>
-        <div class="fg-row"><label>Division</label><input class="inp" id="m-division" placeholder="e.g. LV Switchgear"></div>
-        <div class="fg-row"><label>CTC Min (LPA)</label><input class="inp" id="m-ctcmin" type="number" placeholder="8"></div>
-        <div class="fg-row"><label>CTC Max (LPA)</label><input class="inp" id="m-ctcmax" type="number" placeholder="18"></div>
-        <div class="fg-row"><label>Experience Min (Yrs)</label><input class="inp" id="m-expmin" type="number" step="0.5" placeholder="8"></div>
-        <div class="fg-row"><label>Experience Max (Yrs)</label><input class="inp" id="m-expmax" type="number" step="0.5" placeholder="12"></div>
-      </div>
-      <div class="fg-row"><label>Job Description</label><textarea class="ta" id="m-jd" rows="5" placeholder="Paste JD..."></textarea></div>
-      <div class="fg-row"><label>Search Boolean <span style="font-weight:400;color:#8A92A0">(optional — overrides the skill lists below)</span></label>
-        <textarea class="boolbox" id="m-bool" rows="3" placeholder='("Business Analyst" OR "Functional Analyst") AND (Salesforce OR SFDC) AND ("Channel Partner" OR "Dealer Management" OR DMS)'></textarea>
-        <div class="boolprev" id="m-bool-prev"></div>
-        <div class="chip-hint">Each bracketed group is one requirement; any term inside it satisfies that requirement. Check the preview matches what you meant.</div>
-      </div>
-      <div class="fg-row"><label>Must-Have Skills</label>
-        <div class="chipbox must" id="m-must-box" onclick="chipFocus('m-must')">
-          <input class="chip-in" id="m-must" placeholder="Type a skill, press Enter">
+
+      <!-- ── SECTION 1: Mandate Detail ─────────────────────────────────── -->
+      <div class="msec" id="msec-detail">
+        <div class="msec-hd" onclick="toggleMsec('msec-detail')">
+          <span class="ic">1</span><span class="tt">Mandate Detail</span><span class="chev">&#9660;</span>
         </div>
-        <div class="chip-hint">Hard requirements. The Chrome extension scores a CV against these &mdash; a candidate missing them is marked down.</div>
-      </div>
-      <div class="fg-row"><label>Good-To-Have Skills</label>
-        <div class="chipbox good" id="m-good-box" onclick="chipFocus('m-good')">
-          <input class="chip-in" id="m-good" placeholder="Type a skill, press Enter">
+        <div class="msec-bd">
+          <div class="g2">
+            <div class="fg-row" id="m-client-row"><label data-vocab-tpl="{client_field} *">Client Name *</label><input class="inp" id="m-client" data-vocab-ph="client_hint" placeholder="e.g. Legrand India"></div>
+            <div class="fg-row" id="m-dept-row" style="display:none"><label>Department *</label><select class="inp" id="m-department"><option value="">Loading…</option></select></div>
+            <div class="fg-row"><label data-vocab-tpl="{role_field} *">Role / Position *</label><input class="inp" id="m-role" placeholder="e.g. Sr. Sales Manager"></div>
+            <div class="fg-row"><label>Location</label><input class="inp" id="m-location" placeholder="e.g. Noida"></div>
+            <div class="fg-row"><label>Division</label><input class="inp" id="m-division" placeholder="e.g. LV Switchgear"></div>
+            <div class="fg-row"><label>CTC Min (LPA)</label><input class="inp" id="m-ctcmin" type="number" placeholder="8"></div>
+            <div class="fg-row"><label>CTC Max (LPA)</label><input class="inp" id="m-ctcmax" type="number" placeholder="18"></div>
+            <div class="fg-row"><label>Experience Min (Yrs)</label><input class="inp" id="m-expmin" type="number" step="0.5" placeholder="8"></div>
+            <div class="fg-row"><label>Experience Max (Yrs)</label><input class="inp" id="m-expmax" type="number" step="0.5" placeholder="12"></div>
+          </div>
+          <div class="fg-row"><label>Job Description</label><textarea class="ta" id="m-jd" rows="5" placeholder="Paste JD..."></textarea></div>
         </div>
-        <div class="chip-hint">Bonus skills. Never penalised when absent.</div>
       </div>
+
+      <!-- ── SECTION 2: SPOC Details ───────────────────────────────────── -->
+      <div class="msec collapsed" id="msec-spoc">
+        <div class="msec-hd" onclick="toggleMsec('msec-spoc')">
+          <span class="ic">2</span><span class="tt">SPOC Details <small>client point of contact</small></span><span class="chev">&#9660;</span>
+        </div>
+        <div class="msec-bd">
+          <div class="dest-hint" style="margin-top:0">
+            The client SPOC is pulled from that client's CRM contacts, so it stays linked to one source of truth.
+            Create the mandate first, then set the SPOC from the <b>Mandate Setup</b> tab (it auto-fills the "To" when you share profiles).
+          </div>
+        </div>
+      </div>
+
+      <!-- ── SECTION 3: Keyword, Skill & Intent ────────────────────────── -->
+      <div class="msec collapsed" id="msec-match">
+        <div class="msec-hd" onclick="toggleMsec('msec-match')">
+          <span class="ic">3</span><span class="tt">Keyword, Skill &amp; Intent <small>drives the Chrome-extension scoring</small></span><span class="chev">&#9660;</span>
+        </div>
+        <div class="msec-bd">
+          <div class="fg-row"><label>Search Boolean <span style="font-weight:400;color:#8A92A0">(optional — overrides the skill lists below)</span></label>
+            <textarea class="boolbox" id="m-bool" rows="3" placeholder='("Business Analyst" OR "Functional Analyst") AND (Salesforce OR SFDC) AND ("Channel Partner" OR "Dealer Management" OR DMS)'></textarea>
+            <div class="boolprev" id="m-bool-prev"></div>
+            <div class="chip-hint">Each bracketed group is one requirement; any term inside it satisfies that requirement. Check the preview matches what you meant.</div>
+          </div>
+          <div class="fg-row"><label>Must-Have Skills</label>
+            <div class="chipbox must" id="m-must-box" onclick="chipFocus('m-must')">
+              <input class="chip-in" id="m-must" placeholder="Type a skill, press Enter">
+            </div>
+            <div class="chip-hint">Hard requirements. The Chrome extension scores a CV against these &mdash; a candidate missing them is marked down.</div>
+          </div>
+          <div class="fg-row"><label>Good-To-Have Skills</label>
+            <div class="chipbox good" id="m-good-box" onclick="chipFocus('m-good')">
+              <input class="chip-in" id="m-good" placeholder="Type a skill, press Enter">
+            </div>
+            <div class="chip-hint">Bonus skills. Never penalised when absent.</div>
+          </div>
+          <div class="fg-row"><label>Search Intent <span style="font-weight:400;color:#8A92A0">(plain English — what you actually mean)</span></label>
+            <textarea class="intentbox" id="m-intent" rows="4" placeholder="e.g. Need a Helpdesk / Support Manager who has SUPPORTED a Salesforce-based CRM product for end users — NOT a Salesforce developer who merely used Salesforce as a build tool. Must have run an L2/L3 support desk with SLA ownership."></textarea>
+            <div class="chip-hint">Keywords can't tell "used Salesforce" from "supported a Salesforce product". Write the distinction here in your own words &mdash; an AI judge checks each CV against this intent and can catch what keywords miss.</div>
+          </div>
+        </div>
+      </div>
+
     </div>
     <div class="modal-foot">
       <button class="btn btn-o" onclick="closeModal('modal-mandate')">Cancel</button>
@@ -3235,6 +3285,8 @@ function renderMandateSetup(el){
       _sb.oninput = function(){ boolPreview('ms-bool','ms-bool-prev'); };
       if(_sb.value) boolPreview('ms-bool','ms-bool-prev');
     }
+    var _si=document.getElementById('ms-intent');
+    if(_si) _si.value = m.search_intent || '';
   },0);
   el.innerHTML=approvalBarHtml(m)+orgSummaryHtml(m)+'<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
     +'<div class="g2">'
@@ -3286,6 +3338,10 @@ function renderMandateSetup(el){
       +'<input class="chip-in" id="ms-good" placeholder="Type a skill, press Enter">'
       +'</div>'
       +'<div class="chip-hint">Bonus skills. Never penalised when absent.</div>'
+    +'</div>'
+    +'<div class="fg-row"><label>Search Intent <span style="font-weight:400;color:#8A92A0">(plain English — what you actually mean)</span></label>'
+      +'<textarea class="intentbox" id="ms-intent" rows="4"></textarea>'
+      +'<div class="chip-hint">An AI judge checks each CV against this intent, catching what keywords miss (e.g. "supported a Salesforce product" vs "used Salesforce").</div>'
     +'</div>'
     +'</div></div>'
     + (wsMode()==='corporate' ? '' :
@@ -3909,7 +3965,7 @@ async function saveMandateSetup(){
   if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
   // Corporate has no client field on the form, so the key is omitted and the
   // server preserves whatever is stored rather than blanking it.
-  var payload={role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status,must_have_skills:chipCommit('ms-must'),good_to_have_skills:chipCommit('ms-good'),boolean_query:(v('ms-bool')||'').trim()};
+  var payload={role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status,must_have_skills:chipCommit('ms-must'),good_to_have_skills:chipCommit('ms-good'),boolean_query:(v('ms-bool')||'').trim(),search_intent:(v('ms-intent')||'').trim()};
   // Only sent in Corporate mode, so an Agency save can never null these out.
   if(wsMode()!=='corporate') payload.client=v('ms-client');
   if(wsMode()==='corporate'){
@@ -7977,6 +8033,12 @@ function chipCommit(id){
 }
 
 
+// ── Collapsible mandate sections ───────────────────────────────────────────
+function toggleMsec(id){
+  var el=document.getElementById(id);
+  if(el) el.classList.toggle('collapsed');
+}
+
 // ── BOOLEAN SEARCH PREVIEW ─────────────────────────────────────────────────
 // The preview is rendered from the SERVER's parser, not a copy of it here.
 // A second implementation in the browser would drift from the one that scores,
@@ -8030,7 +8092,7 @@ async function saveMandate(){
   if(btn){if(btn.disabled)return; btn.disabled=true; btn.textContent='Creating...';}
   const emin=parseFloat(v('m-expmin'))||0, emax=parseFloat(v('m-expmax'))||0;
   if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
-  var _body={client:corp?'':client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd'),must_have_skills:chipCommit('m-must'),good_to_have_skills:chipCommit('m-good'),boolean_query:(v('m-bool')||'').trim()};
+  var _body={client:corp?'':client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd'),must_have_skills:chipCommit('m-must'),good_to_have_skills:chipCommit('m-good'),boolean_query:(v('m-bool')||'').trim(),search_intent:(v('m-intent')||'').trim()};
   if(corp) _body.department_id=dept;
   const r=await req('POST','/mandates',_body);
   if(r.ok){closeModal('modal-mandate');await loadMandates();await selectMandate(r.id);S.activeTab='Mandate Setup';renderTabs();renderContent();toast('✅',T('mandate','Mandate')+' created!');}
@@ -9258,6 +9320,10 @@ function openModal(id){
     var _mb=document.getElementById('m-bool');
     if(_mb){ _mb.value=''; document.getElementById('m-bool-prev').innerHTML='';
              _mb.oninput=function(){ boolPreview('m-bool','m-bool-prev'); }; }
+    var _mi=document.getElementById('m-intent'); if(_mi) _mi.value='';
+    // Always open on section 1; collapse 2 and 3 so the form isn't a wall.
+    ['msec-detail'].forEach(function(x){var e=document.getElementById(x);if(e)e.classList.remove('collapsed');});
+    ['msec-spoc','msec-match'].forEach(function(x){var e=document.getElementById(x);if(e)e.classList.add('collapsed');});
   }
   document.getElementById(id).classList.add('open');
 }
