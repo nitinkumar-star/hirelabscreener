@@ -5756,6 +5756,25 @@ def extension_mandates():
 
 @app.route('/api/extension/score-match', methods=['POST', 'OPTIONS'])
 def extension_score_match():
+    """Thin guard around the scorer.
+
+    Flask's default handler turns any uncaught exception into an HTML 500,
+    which a fetch() client can only report as an unexplained failure. Returning
+    the error as JSON instead means the extension can show what actually broke,
+    and the traceback still reaches the server log for the full picture.
+    """
+    if request.method == 'OPTIONS':
+        return ('', 204)
+    try:
+        return _extension_score_match()
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': False,
+                        'error': f'Scoring failed on the server: {type(exc).__name__}: {exc}'}), 500
+
+
+def _extension_score_match():
     """Score a Naukri profile against one mandate — used by the Chrome extension.
 
     Two independent signals are combined:
@@ -5876,9 +5895,13 @@ def extension_score_match():
 
     return jsonify({
         'ok': True,
-        'score': final,
-        'semantic_pct': semantic_pct,
-        'skill_pct': skill_pct if skills_defined else None,
+        # Every number is coerced at the boundary. A vector loaded from disk can
+        # carry numpy scalars through the arithmetic above, and jsonify() cannot
+        # serialise those — which surfaced as an opaque HTML 500 rather than an
+        # error the extension could show.
+        'score': float(final),
+        'semantic_pct': float(semantic_pct),
+        'skill_pct': float(skill_pct) if skills_defined else None,
         'skills_defined': skills_defined,
         'must_have': must_have,
         'matched_skills': matched_must,
@@ -6207,6 +6230,16 @@ def candidate_embed_text(c, conn=None):
     return '\n'.join(lines)
 
 def cosine(a, b):
+    """Cosine similarity, always as a plain Python float.
+
+    The float() on the return is load-bearing. Vectors loaded from a stored
+    BLOB come back as numpy.float32 elements, which makes this return a
+    numpy.float32 — and jsonify() cannot serialise that, so any endpoint
+    putting the score straight into a JSON response raised a 500. Vectors that
+    came fresh from the embedding API are plain lists, so the same endpoint
+    worked until the background embedder wrote the vector to disk, which made
+    the failure look intermittent.
+    """
     if not a or not b or len(a) != len(b):
         return 0.0
     dot = sum(x * y for x, y in zip(a, b))
@@ -6214,7 +6247,7 @@ def cosine(a, b):
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0 or nb == 0:
         return 0.0
-    return dot / (na * nb)
+    return float(dot / (na * nb))
 
 
 @app.route('/api/candidates/<int:cid>/rate', methods=['POST'])
@@ -7322,9 +7355,11 @@ def _mandate_jd_vector(conn, mid):
                          (mid,)).fetchone()
         if not r or not r['embedding_vec']:
             return None
+        # Plain Python floats, not numpy scalars: these vectors flow into JSON
+        # responses, and numpy.float32 is not JSON-serialisable.
         if _HAS_NUMPY:
-            return list(_np.frombuffer(r['embedding_vec'], dtype=_np.float32))
-        a = _array.array('f'); a.frombytes(r['embedding_vec']); return list(a)
+            return [float(x) for x in _np.frombuffer(r['embedding_vec'], dtype=_np.float32)]
+        a = _array.array('f'); a.frombytes(r['embedding_vec']); return [float(x) for x in a]
     except Exception:
         return None
 
