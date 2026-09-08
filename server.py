@@ -5961,10 +5961,52 @@ def _extension_score_match():
     cv_full = (profile_text
                + ('\n\n' + resume_text if resume_text else '')
                + ('\n\nMay also know (self-suggested): ' + weak_text if weak_text else '')).strip()
+
+    # cv_core is the focused facet's view of the candidate: skills + role + the
+    # parts of the CV that actually bear on the requirements. It is kept SHORT
+    # on purpose (so must-have matching is not diluted by pages of unrelated
+    # prose), but "short" must not mean "just the top of the CV" — a decisive
+    # skill often sits deep in the resume (Nikita's "Channel Partner" was
+    # mid-document). So instead of the first N chars, pull the resume LINES that
+    # sit near a required term, wherever they are.
+    def _relevant_lines(text, terms, radius=1, cap_lines=30):
+        if not text:
+            return ''
+        lines = [ln for ln in text.split('\n') if ln.strip()]
+        if not terms:
+            return '\n'.join(lines[:15])
+        # Rank lines by HOW MANY distinct required terms they hit, so a line
+        # mentioning a rare requirement is never crowded out by many lines that
+        # merely repeat a common one. A line matching two requirements beats a
+        # line matching one; ties keep document order.
+        scored = []
+        for idx, ln in enumerate(lines):
+            low = ln.lower()
+            hits = sum(1 for t in terms if term_present(t, low))
+            if hits:
+                scored.append((hits, idx))
+        if not scored:
+            return '\n'.join(lines[:12])   # nothing matched — small head sample
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        keep = set()
+        for _, idx in scored:
+            for j in range(max(0, idx - radius), min(len(lines), idx + radius + 1)):
+                keep.add(j)
+            if len(keep) >= cap_lines:
+                break
+        picked = [lines[i] for i in sorted(keep)][:cap_lines]
+        return '\n'.join(picked)
+
+    # Terms that define the role: boolean groups if present, else the flat list.
+    if using_boolean:
+        _core_terms = [t for g in groups_out for t in g['terms']]
+    else:
+        _core_terms = list(must_have) + list(good_have)
+
     core_bits = [b for b in [
-        'Skills: ' + ', '.join(sorted(candidate_skills_lc)) if candidate_skills_lc else '',
-        profile_text[:900],
-        resume_text[:1200],
+        ('Skills: ' + ', '.join(sorted(candidate_skills_lc))) if candidate_skills_lc else '',
+        'Current: ' + profile_text[:600],
+        _relevant_lines(resume_text, _core_terms),
     ] if b]
     cv_core = '\n'.join(core_bits)
 
