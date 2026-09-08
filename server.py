@@ -5831,6 +5831,7 @@ def _extension_score_match():
 
     profile_text = (d.get('candidate_text') or '').strip()
     resume_text  = (d.get('resume_text') or '').strip()
+    weak_text    = (d.get('weak_text') or '').strip()
     cv_status    = (d.get('cv_status') or 'unknown').strip()
     bypassed     = bool(d.get('bypass_cv'))
 
@@ -5853,18 +5854,26 @@ def _extension_score_match():
 
     resume_lc   = resume_text.lower()
     profile_lc  = profile_text.lower()
+    weak_lc     = weak_text.lower()
     chips_lc    = ' , '.join(sorted(candidate_skills_lc))
     have_resume = len(resume_text) >= 200
 
-    CREDIT = {'resume': 1.0, 'profile': 0.5, 'none': 0.0}
+    # Three tiers, because the three sources are not equally trustworthy:
+    #   resume   the candidate wrote it into their CV
+    #   profile  the candidate typed it into their Naukri fields
+    #   weak     it only appears under "May also know", which is Naukri's own
+    #            suggestion list that candidates tick through casually — barely
+    #            evidence at all, but not quite nothing either
+    CREDIT = {'resume': 1.0, 'profile': 0.5, 'weak': 0.15, 'none': 0.0}
 
     def evidence(term):
-        """Where a term is backed up. The resume outranks the profile because
-        Naukri chips are self-declared and nobody verifies them."""
+        """Strongest source this term can be traced to."""
         if have_resume and term_present(term, resume_lc):
             return 'resume'
         if term_present(term, profile_lc, chips_lc):
             return 'profile'
+        if weak_lc and term_present(term, weak_lc):
+            return 'weak'
         return 'none'
 
     groups_out   = []      # per-requirement detail for the panel
@@ -5881,13 +5890,13 @@ def _extension_score_match():
             using_boolean = True
             for gi, terms in enumerate(and_groups):
                 best_term, best_ev = None, 'none'
+                RANK = {'none': 0, 'weak': 1, 'profile': 2, 'resume': 3}
                 for t in terms:
                     e = evidence(t)
-                    if e == 'resume':
-                        best_term, best_ev = t, 'resume'
+                    if RANK[e] > RANK[best_ev]:
+                        best_term, best_ev = t, e
+                    if best_ev == 'resume':
                         break                       # cannot do better
-                    if e == 'profile' and best_ev == 'none':
-                        best_term, best_ev = t, 'profile'
                 groups_out.append({
                     'index': gi + 1,
                     'terms': terms,
@@ -5910,6 +5919,7 @@ def _extension_score_match():
                 missing_must.extend(g['terms'])
             resume_backed = [g['matched'] for g in groups_out if g['evidence'] == 'resume']
             profile_only  = [g['matched'] for g in groups_out if g['evidence'] == 'profile']
+            weak_only     = [g['matched'] for g in groups_out if g['evidence'] == 'weak']
             must_evidence = {g['matched'] or ' / '.join(g['terms']): g['evidence']
                              for g in groups_out}
             matched_good  = []
@@ -5923,6 +5933,7 @@ def _extension_score_match():
         missing_must  = [s for s, e in must_evidence.items() if e == 'none']
         resume_backed = [s for s, e in must_evidence.items() if e == 'resume']
         profile_only  = [s for s, e in must_evidence.items() if e == 'profile']
+        weak_only     = [s for s, e in must_evidence.items() if e == 'weak']
         matched_good  = [s for s, e in good_evidence.items() if e != 'none']
         missing_groups = []
 
@@ -5945,7 +5956,11 @@ def _extension_score_match():
     # The candidate is embedded twice on purpose: once as their whole story,
     # once as just their skill/role core, so the must-have comparison is not
     # diluted by pages of unrelated project prose.
-    cv_full = (profile_text + ('\n\n' + resume_text if resume_text else '')).strip()
+    # cv_full keeps the weak block for context; cv_core deliberately excludes it,
+    # so the must-have comparison is not diluted by auto-suggested skills.
+    cv_full = (profile_text
+               + ('\n\n' + resume_text if resume_text else '')
+               + ('\n\nMay also know (self-suggested): ' + weak_text if weak_text else '')).strip()
     core_bits = [b for b in [
         'Skills: ' + ', '.join(sorted(candidate_skills_lc)) if candidate_skills_lc else '',
         profile_text[:900],
@@ -6055,6 +6070,8 @@ def _extension_score_match():
         'missing_skills': missing_must,
         'resume_backed': resume_backed,
         'profile_only': profile_only,
+        'weak_only': weak_only,
+        'weak_chars': len(weak_text),
         'skill_evidence': must_evidence,
         'good_have': good_have,
         'matched_good': matched_good,
