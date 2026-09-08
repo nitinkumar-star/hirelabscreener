@@ -3142,8 +3142,14 @@ def init_db():
     # good_to_have_skills   -> bonus skills; never penalised when absent
     # Both are JSON arrays of lowercase strings, mirroring candidates.key_skills.
     # Purely additive: existing mandates default to '[]' and behave exactly as before.
+    # boolean_query holds the recruiter's own search string, e.g.
+    #   ("Business Analyst" OR "Functional Analyst") AND (Salesforce OR SFDC)
+    # When set it OVERRIDES the flat skill lists, because a flat list cannot
+    # express "any one of these synonyms", which is how recruiters actually
+    # think. The flat columns stay so existing mandates keep working unchanged.
     for col, typ in [('must_have_skills', "TEXT DEFAULT '[]'"),
-                     ('good_to_have_skills', "TEXT DEFAULT '[]'")]:
+                     ('good_to_have_skills', "TEXT DEFAULT '[]'"),
+                     ('boolean_query', "TEXT DEFAULT ''")]:
         try:
             c.execute(f'ALTER TABLE mandates ADD COLUMN {col} {typ}')
         except sqlite3.OperationalError:
@@ -5754,6 +5760,23 @@ def extension_mandates():
     return jsonify({'ok': True, 'mandates': out})
 
 
+@app.route('/api/mandates/parse-boolean', methods=['POST'])
+@login_required
+def parse_boolean_preview():
+    """Show the recruiter how their boolean was understood.
+
+    This deliberately calls the SAME parser the scorer uses. A preview built
+    from a second, similar implementation would eventually drift, and the
+    recruiter would be verifying something other than what actually runs.
+    """
+    d = request.json or {}
+    q = str(d.get('boolean_query') or '').strip()
+    if not q:
+        return jsonify({'ok': True, 'groups': [], 'excluded': []})
+    groups, excluded = boolean_groups(parse_boolean_query(q))
+    return jsonify({'ok': True, 'groups': groups, 'excluded': excluded})
+
+
 @app.route('/api/extension/score-match', methods=['POST', 'OPTIONS'])
 def extension_score_match():
     """Thin guard around the scorer.
@@ -5775,24 +5798,24 @@ def extension_score_match():
 
 
 def _extension_score_match():
-    """Score a Naukri profile against one mandate — used by the Chrome extension.
+    """Score a Naukri candidate against one mandate.
 
-    Two independent signals are combined:
-      • SEMANTIC  — cosine similarity between the mandate's stored JD vector and
-                    a freshly embedded vector of the candidate's page text.
-      • SKILLS    — keyword presence of the mandate's must-have skills in that
-                    same text (plus the skill chips Naukri renders).
+    Three signals, deliberately kept separate because each fails differently:
 
-    Neither signal is trusted alone: the semantic score understands wording the
-    keyword pass would miss, and the keyword pass catches hard requirements the
-    embedding would happily average away.
+      BROAD SEMANTIC  full JD vector  vs  everything known about the candidate
+                      (profile + attached resume). Catches wording a keyword
+                      pass cannot: "S7-1500 programming" against "Siemens PLC".
+
+      FOCUSED SEMANTIC  must-have skills vector  vs  the candidate's skills,
+                      current role and headline. Asks the narrower question
+                      "is this person actually THIS kind of engineer".
+
+      SKILL EVIDENCE  each must-have skill located in the text, and — crucially
+                      — WHERE it was found. A skill backed by the attached
+                      resume counts full; one appearing only in the Naukri chips
+                      counts half, because chips are self-declared and nobody
+                      verifies them.
     """
-    if request.method == 'OPTIONS':
-        return ('', 204)
-    if not session.get('user_id'):
-        return jsonify({'error': 'auth_required',
-                        'message': 'Please log into HireLab in this browser first.'}), 401
-
     d = request.json or {}
     mid_raw = d.get('mandate_id')
     if not mid_raw or str(mid_raw) == 'central':
@@ -5802,8 +5825,16 @@ def _extension_score_match():
     except (TypeError, ValueError):
         return jsonify({'error': 'Invalid mandate_id'}), 400
 
-    candidate_text = (d.get('candidate_text') or '').strip()
-    if not candidate_text:
+    if not session.get('user_id'):
+        return jsonify({'error': 'auth_required',
+                        'message': 'Please log into HireLab in this browser first.'}), 401
+
+    profile_text = (d.get('candidate_text') or '').strip()
+    resume_text  = (d.get('resume_text') or '').strip()
+    cv_status    = (d.get('cv_status') or 'unknown').strip()
+    bypassed     = bool(d.get('bypass_cv'))
+
+    if not profile_text and not resume_text:
         return jsonify({'error': 'No candidate text was read from the page.'}), 400
 
     candidate_skills_lc = {str(s).lower().strip()
@@ -5818,69 +5849,172 @@ def _extension_score_match():
 
     must_have = mandate_skills(m, 'must_have_skills')
     good_have = mandate_skills(m, 'good_to_have_skills')
+    bool_query = str(_row_get(m, 'boolean_query', '') or '').strip()
 
-    # ── Keyword skill pass ────────────────────────────────────────────────
-    ctext_lc = candidate_text.lower()
+    resume_lc   = resume_text.lower()
+    profile_lc  = profile_text.lower()
+    chips_lc    = ' , '.join(sorted(candidate_skills_lc))
+    have_resume = len(resume_text) >= 200
 
-    def present(skill):
-        return (skill in ctext_lc) or (skill in candidate_skills_lc)
+    CREDIT = {'resume': 1.0, 'profile': 0.5, 'none': 0.0}
 
-    matched_must = [s for s in must_have if present(s)]
-    missing_must = [s for s in must_have if not present(s)]
-    matched_good = [s for s in good_have if present(s)]
+    def evidence(term):
+        """Where a term is backed up. The resume outranks the profile because
+        Naukri chips are self-declared and nobody verifies them."""
+        if have_resume and term_present(term, resume_lc):
+            return 'resume'
+        if term_present(term, profile_lc, chips_lc):
+            return 'profile'
+        return 'none'
 
-    if must_have:
-        skill_pct = round(len(matched_must) / len(must_have) * 100, 1)
-        # Good-to-haves lift the skill score by up to 10 points, but only once
-        # the must-haves are largely satisfied — a candidate cannot bonus their
-        # way past a missing hard requirement.
-        if good_have and skill_pct >= 60:
-            skill_pct = min(100.0, round(skill_pct + (len(matched_good) / len(good_have)) * 10, 1))
-        skills_defined = True
-    elif good_have:
-        # No hard requirements set, so this is informational only and is capped
-        # well below a confident score.
-        skill_pct = min(65.0, round(len(matched_good) / len(good_have) * 100, 1))
-        skills_defined = True
+    groups_out   = []      # per-requirement detail for the panel
+    excluded_hit = []
+    using_boolean = False
+
+    if bool_query:
+        # ── Boolean mode ──────────────────────────────────────────────────
+        # Each AND-group is one requirement; ANY synonym inside satisfies it.
+        parsed = parse_boolean_query(bool_query)
+        and_groups, excluded = boolean_groups(parsed)
+
+        if and_groups:
+            using_boolean = True
+            for gi, terms in enumerate(and_groups):
+                best_term, best_ev = None, 'none'
+                for t in terms:
+                    e = evidence(t)
+                    if e == 'resume':
+                        best_term, best_ev = t, 'resume'
+                        break                       # cannot do better
+                    if e == 'profile' and best_ev == 'none':
+                        best_term, best_ev = t, 'profile'
+                groups_out.append({
+                    'index': gi + 1,
+                    'terms': terms,
+                    'matched': best_term,
+                    'evidence': best_ev,
+                    'satisfied': best_ev != 'none',
+                })
+            excluded_hit = [t for t in excluded if evidence(t) != 'none']
+
+            earned = sum(CREDIT[g['evidence']] for g in groups_out)
+            skill_pct = round(earned / len(groups_out) * 100, 1)
+            skills_defined = True
+
+            # Requirements the candidate does not meet at all. Named in full so
+            # the recruiter sees WHICH requirement failed, not just a number.
+            missing_groups = [g for g in groups_out if not g['satisfied']]
+            matched_must = [g['matched'] for g in groups_out if g['matched']]
+            missing_must = []
+            for g in missing_groups:
+                missing_must.extend(g['terms'])
+            resume_backed = [g['matched'] for g in groups_out if g['evidence'] == 'resume']
+            profile_only  = [g['matched'] for g in groups_out if g['evidence'] == 'profile']
+            must_evidence = {g['matched'] or ' / '.join(g['terms']): g['evidence']
+                             for g in groups_out}
+            matched_good  = []
+            good_evidence = {}
+
+    if not using_boolean:
+        # ── Flat-list mode (unchanged behaviour for existing mandates) ─────
+        must_evidence = {s: evidence(s) for s in must_have}
+        good_evidence = {s: evidence(s) for s in good_have}
+        matched_must  = [s for s, e in must_evidence.items() if e != 'none']
+        missing_must  = [s for s, e in must_evidence.items() if e == 'none']
+        resume_backed = [s for s, e in must_evidence.items() if e == 'resume']
+        profile_only  = [s for s, e in must_evidence.items() if e == 'profile']
+        matched_good  = [s for s, e in good_evidence.items() if e != 'none']
+        missing_groups = []
+
+        if must_have:
+            earned = sum(CREDIT[e] for e in must_evidence.values())
+            skill_pct = round(earned / len(must_have) * 100, 1)
+            if good_have and skill_pct >= 60:
+                bonus = sum(CREDIT[e] for e in good_evidence.values()) / len(good_have)
+                skill_pct = min(100.0, round(skill_pct + bonus * 10, 1))
+            skills_defined = True
+        elif good_have:
+            earned = sum(CREDIT[e] for e in good_evidence.values())
+            skill_pct = min(65.0, round(earned / len(good_have) * 100, 1))
+            skills_defined = True
+        else:
+            skill_pct = 50.0
+            skills_defined = False
+
+    # ── Semantic passes ───────────────────────────────────────────────────
+    # The candidate is embedded twice on purpose: once as their whole story,
+    # once as just their skill/role core, so the must-have comparison is not
+    # diluted by pages of unrelated project prose.
+    cv_full = (profile_text + ('\n\n' + resume_text if resume_text else '')).strip()
+    core_bits = [b for b in [
+        'Skills: ' + ', '.join(sorted(candidate_skills_lc)) if candidate_skills_lc else '',
+        profile_text[:900],
+        resume_text[:1200],
+    ] if b]
+    cv_core = '\n'.join(core_bits)
+
+    if using_boolean:
+        must_text = 'Required: ' + '; '.join(', '.join(g['terms']) for g in groups_out)
+    elif must_have:
+        must_text = 'Required skills: ' + ', '.join(must_have)
     else:
-        # Nothing to match against. 50 is a neutral placeholder, and it is never
-        # blended into the final score (see the composite block below).
-        skill_pct = 50.0
-        skills_defined = False
+        must_text = ''
 
-    # ── Semantic pass ─────────────────────────────────────────────────────
-    semantic_pct, embed_used, embed_error = 0.0, False, ''
+    sem_broad, sem_focus = 0.0, 0.0
+    embed_used, embed_error = False, ''
     try:
-        mvec = _mandate_jd_vector(conn, mid)
-        if mvec is None:
-            jd_text = mandate_jd_text(m)
-            if jd_text.strip():
-                mvec = embed_one(jd_text)
-                if isinstance(mvec, dict):
-                    embed_error, mvec = str(mvec.get('error', 'embed failed'))[:200], None
-        if mvec:
-            cvec = embed_one(candidate_text[:8000])
-            if isinstance(cvec, dict):
-                embed_error, cvec = str(cvec.get('error', 'embed failed'))[:200], None
-            if cvec:
-                semantic_pct = round(max(0.0, cosine(list(mvec), list(cvec)) * 100), 1)
-                embed_used = True
+        jd_vec = _mandate_jd_vector(conn, mid)
+        to_embed, slots = [], []
+        if jd_vec is None:
+            to_embed.append(mandate_jd_text(m)); slots.append('jd')
+        to_embed.append(cv_full);  slots.append('cv_full')
+        to_embed.append(cv_core);  slots.append('cv_core')
+        if must_text:
+            to_embed.append(must_text); slots.append('must')
+
+        vecs = embed_many_long(to_embed)          # ONE provider round trip
+        got = dict(zip(slots, vecs))
+        if jd_vec is None:
+            jd_vec = got.get('jd')
+
+        if jd_vec and got.get('cv_full'):
+            sem_broad = round(max(0.0, cosine(list(jd_vec), list(got['cv_full'])) * 100), 1)
+            embed_used = True
+        if got.get('must') and got.get('cv_core'):
+            sem_focus = round(max(0.0, cosine(list(got['must']), list(got['cv_core'])) * 100), 1)
+            embed_used = True
+        if not embed_used:
+            embed_error = _LAST_EMBED_ERROR or 'embedding unavailable'
     except Exception as exc:
         embed_error = str(exc)[:200]
         print(f'[score-match] mandate {mid} embed error: {exc}')
 
     conn.close()
 
+    # ── Weighted semantic ─────────────────────────────────────────────────
+    # Tunable without a redeploy via the score_musthave_weight setting.
+    try:
+        W_MUST = float(get_setting('score_musthave_weight', '0.65') or 0.65)
+    except Exception:
+        W_MUST = 0.65
+    W_MUST = min(0.9, max(0.1, W_MUST))
+
+    if must_text and sem_focus and sem_broad:
+        semantic_pct = round(sem_broad * (1 - W_MUST) + sem_focus * W_MUST, 1)
+    elif sem_broad:
+        semantic_pct = sem_broad
+    else:
+        semantic_pct = sem_focus
+
     # ── Composite ─────────────────────────────────────────────────────────
-    # A signal that could not be computed is left out of the blend entirely
-    # rather than contributing a neutral 50, which would drag every score
-    # toward the middle and make the number meaningless.
+    # A signal that could not be computed is dropped from the blend rather than
+    # contributing a neutral 50, which would pull every score toward the middle.
     if embed_used and skills_defined:
         final = round(semantic_pct * 0.6 + skill_pct * 0.4, 1)
     elif embed_used:
-        final = semantic_pct
+        final = round(semantic_pct, 1)
     elif skills_defined:
-        final = skill_pct
+        final = round(skill_pct, 1)
     else:
         final = 0.0
 
@@ -5893,29 +6027,48 @@ def _extension_score_match():
     else:
         verdict, colour = 'Not Suitable', '#A32D2D'
 
+    # How complete was the evidence base? The recruiter must never mistake a
+    # profile-only score for a resume-verified one.
+    if have_resume:
+        confidence = 'full'
+    elif bypassed:
+        confidence = 'profile_only'
+    else:
+        confidence = 'partial'
+
     return jsonify({
         'ok': True,
-        # Every number is coerced at the boundary. A vector loaded from disk can
-        # carry numpy scalars through the arithmetic above, and jsonify() cannot
-        # serialise those — which surfaced as an opaque HTML 500 rather than an
-        # error the extension could show.
         'score': float(final),
         'semantic_pct': float(semantic_pct),
+        'semantic_broad': float(sem_broad),
+        'semantic_focus': float(sem_focus),
+        'musthave_weight': float(W_MUST),
         'skill_pct': float(skill_pct) if skills_defined else None,
         'skills_defined': skills_defined,
+        'boolean_query': bool_query,
+        'using_boolean': using_boolean,
+        'groups': groups_out,
+        'missing_groups': [{'index': g['index'], 'terms': g['terms']} for g in missing_groups],
+        'excluded_hit': excluded_hit,
         'must_have': must_have,
         'matched_skills': matched_must,
         'missing_skills': missing_must,
+        'resume_backed': resume_backed,
+        'profile_only': profile_only,
+        'skill_evidence': must_evidence,
         'good_have': good_have,
         'matched_good': matched_good,
         'verdict': verdict,
         'verdict_color': colour,
         'embed_used': embed_used,
         'embed_error': embed_error,
+        'cv_status': cv_status,
+        'confidence': confidence,
+        'resume_chars': len(resume_text),
+        'profile_chars': len(profile_text),
         'mandate_role': str(_row_get(m, 'role', '')),
         'mandate_client': str(_row_get(m, 'client', '')),
     })
-
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  AI INSIGHTS — Semantic Search (embeddings) + Stats (SQL + LLM summary)
@@ -6039,6 +6192,80 @@ def embed_one(text):
     if not res or not res[0]:
         return {'error': 'Jina embedding failed — ' + (_LAST_EMBED_ERROR or 'provider returned nothing; check key/model/base URL')}
     return res[0]
+
+
+def _chunk_text(text, size=5000, overlap=250):
+    """Split text into overlapping chunks that fit the provider's input cap.
+
+    _embed_texts() hard-truncates every input at 6,000 characters. Anything
+    longer was silently lost — and in a JD or a resume the tail is often where
+    the specific requirements and the most recent role live. Chunking keeps all
+    of it. The overlap stops a sentence that straddles a boundary from being
+    split into two halves that each look like noise.
+    """
+    text = (text or '').strip()
+    if not text:
+        return []
+    if len(text) <= size:
+        return [text]
+    chunks, i = [], 0
+    while i < len(text):
+        chunks.append(text[i:i + size])
+        if i + size >= len(text):
+            break
+        i += (size - overlap)
+    return chunks[:12]   # ~55k chars; beyond this a document is not a CV or JD
+
+
+def embed_many_long(texts):
+    """Embed several possibly-long texts in ONE provider round trip.
+
+    Every text is chunked, all chunks go up in a single batched call, then each
+    text's chunks are mean-pooled back into one vector. Returns a list aligned
+    with `texts`, holding None where a text was empty or embedding failed.
+
+    Pooling in one call matters for cost and latency: scoring a candidate needs
+    three vectors, and this keeps that at one HTTP request rather than three.
+    """
+    plan, flat = [], []
+    for t in texts:
+        ch = _chunk_text(t)
+        plan.append((len(flat), len(ch)))
+        flat.extend(ch)
+    if not flat:
+        return [None] * len(texts)
+
+    vecs = _embed_texts(flat)
+    if not vecs or len(vecs) != len(flat):
+        return [None] * len(texts)
+
+    out = []
+    for start, count in plan:
+        if count == 0:
+            out.append(None)
+            continue
+        part = [v for v in vecs[start:start + count] if v]
+        if not part:
+            out.append(None)
+            continue
+        if len(part) == 1:
+            out.append([float(x) for x in part[0]])
+            continue
+        dim = len(part[0])
+        pooled = [0.0] * dim
+        for v in part:
+            if len(v) != dim:
+                continue
+            for i in range(dim):
+                pooled[i] += float(v[i])
+        n = float(len(part))
+        out.append([x / n for x in pooled])
+    return out
+
+
+def embed_long(text):
+    """Single-text convenience wrapper around embed_many_long()."""
+    return embed_many_long([text])[0]
 
 
 def _row_get(c, key, default=''):
@@ -7192,7 +7419,9 @@ def _backfill_candidate_facets(conn, cap, api_key):
 # ══════════════════════════════════════════════════════════════════════
 # v1 = role/client/division/location/CTC + JD body
 # v2 = v1 + Must-Have and Good-To-Have skill lists (Wave 2)
-JD_TEXT_VERSION = 2
+# v3 = v2 with the JD no longer truncated at 6,000 chars (chunked embedding)
+# v4 = v3 + boolean-query requirement terms
+JD_TEXT_VERSION = 4
 JD_TEXT_TEMPLATE = f'jd-template-v{JD_TEXT_VERSION}'
 
 def _jd_cfg_enabled():
@@ -7201,6 +7430,161 @@ def _jd_cfg_enabled():
         return True if (v is None or str(v).strip() == '') else bool(int(float(v)))
     except Exception:
         return True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  RECRUITER BOOLEAN QUERIES
+# ══════════════════════════════════════════════════════════════════════════
+#  A flat must-have list says "needs A and B and C". Real sourcing says
+#  "needs (A or A-synonym) and (B or B-synonym)". These helpers parse the
+#  boolean string a recruiter already writes for Naukri, and reduce it to the
+#  top-level AND groups they think in — one group per requirement, synonyms
+#  inside it.
+
+def _bool_tokenize(s):
+    return re.findall(r'"[^"]*"|\(|\)|\bAND\b|\bOR\b|\bNOT\b|[^\s()]+', s or '', re.I)
+
+
+def parse_boolean_query(s):
+    """Parse a boolean string into an AST, or None if it is empty/unparseable.
+
+    Node shapes: ('TERM', text) | ('NOT', node) | ('AND', a, b) | ('OR', a, b)
+    Adjacent terms with no operator are treated as AND, matching the convention
+    of every job-board search box.
+    """
+    toks = _bool_tokenize(s)
+    if not toks:
+        return None
+    pos = [0]
+
+    def peek():
+        return toks[pos[0]] if pos[0] < len(toks) else None
+
+    def eat():
+        t = peek(); pos[0] += 1; return t
+
+    def unary():
+        t = peek()
+        if t is None:
+            return None
+        if t == '(':
+            eat()
+            n = expr_or()
+            if peek() == ')':
+                eat()
+            return n
+        if t.upper() == 'NOT':
+            eat()
+            inner = unary()
+            return ('NOT', inner) if inner else None
+        if t in (')',) or t.upper() in ('AND', 'OR'):
+            eat()
+            return None
+        t = eat()
+        term = t.strip('"').strip().lower()
+        return ('TERM', term) if term else None
+
+    def expr_and():
+        n = unary()
+        while True:
+            t = peek()
+            if t is None or t == ')' or t.upper() == 'OR':
+                break
+            if t.upper() == 'AND':
+                eat()
+            rhs = unary()
+            if rhs is None:
+                continue
+            n = ('AND', n, rhs) if n else rhs
+        return n
+
+    def expr_or():
+        n = expr_and()
+        while peek() and peek().upper() == 'OR':
+            eat()
+            rhs = expr_and()
+            if rhs is None:
+                continue
+            n = ('OR', n, rhs) if n else rhs
+        return n
+
+    try:
+        return expr_or()
+    except Exception:
+        return None
+
+
+def boolean_groups(node):
+    """Split an AST into (and_groups, excluded_terms).
+
+    and_groups is a list of term-lists: each inner list is one requirement, and
+    ANY of its terms satisfies it. excluded_terms come from top-level NOT.
+    """
+    if not node:
+        return [], []
+    groups, excluded = [], []
+
+    def terms_of(n, acc):
+        if not n:
+            return
+        if n[0] == 'TERM':
+            acc.append(n[1])
+        elif n[0] == 'NOT':
+            terms_of(n[1], [])          # NOT inside a group is not a synonym
+        else:
+            for c in n[1:]:
+                terms_of(c, acc)
+
+    def walk(n):
+        if not n:
+            return
+        if n[0] == 'AND':
+            walk(n[1]); walk(n[2])
+        elif n[0] == 'NOT':
+            ex = []; terms_of(n[1], ex); excluded.extend(ex)
+        else:
+            acc = []
+            terms_of(n, acc)
+            acc = [t for t in dict.fromkeys(acc) if t]
+            if acc:
+                groups.append(acc[:20])
+
+    walk(node)
+    return groups[:15], list(dict.fromkeys(excluded))[:20]
+
+
+_TERM_RX_CACHE = {}
+
+def term_matcher(term):
+    """Word-boundary regex for one search term.
+
+    Substring matching cannot be used once short synonyms are in play: 'sap'
+    hits inside 'Sapient', 'analyst' inside... nothing, but 'analysis' would
+    wrongly satisfy it under a looser rule. This anchors at word boundaries,
+    tolerates simple plurals (Analyst/Analysts), and treats spaces, hyphens,
+    dots and underscores as interchangeable so 'Channel-Partner',
+    'Channel Partner' and 'channel  partner' all match.
+    """
+    rx = _TERM_RX_CACHE.get(term)
+    if rx is None:
+        parts = [re.escape(w) for w in re.split(r'[\s\-\._]+', (term or '').strip()) if w]
+        if not parts:
+            return None
+        core = r'[\s\-\._]*'.join(parts)
+        rx = re.compile(r'(?<![a-z0-9])' + core + r'(?:s|es)?(?![a-z0-9])', re.I)
+        if len(_TERM_RX_CACHE) < 4000:
+            _TERM_RX_CACHE[term] = rx
+    return rx
+
+
+def term_present(term, *texts):
+    rx = term_matcher(term)
+    if not rx:
+        return False
+    for t in texts:
+        if t and rx.search(t):
+            return True
+    return False
 
 
 def _norm_skill_list(raw, cap=40):
@@ -7274,6 +7658,16 @@ def mandate_jd_text(m):
     # Skill requirements are part of what the role IS, so they belong in the
     # embedded text. Must-haves are listed first and labelled as required, which
     # gives them more weight in the vector than the free-text JD alone would.
+    bq = str(_row_get(m, 'boolean_query', '') or '').strip()
+    if bq:
+        # The boolean's terms describe what the role IS, so they belong in the
+        # embedded text as plain requirements. The operators are dropped: an
+        # embedding model has no use for AND/OR, only for the vocabulary.
+        _g, _ex = boolean_groups(parse_boolean_query(bq))
+        if _g:
+            add('Required (any of each line)', '; '.join(', '.join(gr) for gr in _g))
+        if _ex:
+            add('Excluded', ', '.join(_ex))
     must = mandate_skills(m, 'must_have_skills')
     good = mandate_skills(m, 'good_to_have_skills')
     if must:
@@ -7282,7 +7676,10 @@ def mandate_jd_text(m):
         add('Good-To-Have Skills', ', '.join(good))
     jd = str(_row_get(m, 'jd')).strip()
     if jd:
-        lines.append('Job Description:\n' + jd[:6000])
+        # No truncation here. Long JDs are handled by embed_long(), which chunks
+        # and mean-pools them, so cutting text at this layer would silently
+        # discard requirements that usually sit at the END of a JD.
+        lines.append('Job Description:\n' + jd)
     return '\n'.join(lines)
 
 
@@ -7312,7 +7709,10 @@ def embed_mandate_jd(conn, m, api_key):
         _store_mandate_vec(conn, mid, None, '', 'empty')
         return 'empty'
     t0 = _time.perf_counter()
-    vec = embed_one(txt)
+    # embed_long, not embed_one: the stored vector must represent the WHOLE JD.
+    # embed_one() would truncate at 6,000 chars, and every future score against
+    # this mandate would inherit that loss.
+    vec = embed_long(txt)
     dur = int((_time.perf_counter() - t0) * 1000)
     if isinstance(vec, dict) and vec.get('error'):
         _store_mandate_vec(conn, mid, None, txt, 'failed')
@@ -10981,9 +11381,10 @@ def create_mandate():
     # previous version and nothing that depends on it can break.
     _must = _norm_skill_list(d.get('must_have_skills'))
     _good = _norm_skill_list(d.get('good_to_have_skills'))
-    if _must or _good:
-        c.execute('UPDATE mandates SET must_have_skills=?, good_to_have_skills=? WHERE id=?',
-                  (json.dumps(_must), json.dumps(_good), mid))
+    _bq   = str(d.get('boolean_query') or '').strip()[:2000]
+    if _must or _good or _bq:
+        c.execute('UPDATE mandates SET must_have_skills=?, good_to_have_skills=?, boolean_query=? WHERE id=?',
+                  (json.dumps(_must), json.dumps(_good), _bq, mid))
     if _plan:
         _k = list(_plan.keys())
         c.execute('UPDATE mandates SET {} WHERE id=?'.format(','.join(x + '=?' for x in _k)),
@@ -12134,9 +12535,13 @@ def update_mandate(mid):
         if _sf in d:
             conn.execute(f'UPDATE mandates SET {_sf}=? WHERE id=?',
                          (json.dumps(_norm_skill_list(d.get(_sf))), mid))
+    if 'boolean_query' in d:
+        conn.execute('UPDATE mandates SET boolean_query=? WHERE id=?',
+                     (str(d.get('boolean_query') or '').strip()[:2000], mid))
     # The JD vector was built from the old text. Anything that feeds that text
     # invalidates it, and the background embedder rebuilds it within a minute.
-    if 'jd' in d or 'must_have_skills' in d or 'good_to_have_skills' in d:
+    if ('jd' in d or 'must_have_skills' in d or 'good_to_have_skills' in d
+            or 'boolean_query' in d):
         _invalidate_mandate_vector(conn, mid)
     conn.commit(); conn.close()
     return jsonify({'ok': True})

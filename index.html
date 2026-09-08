@@ -768,6 +768,21 @@ body{font-size:14px !important; line-height:1.5}
 .chipbox.good .sk-chip{ background:#EEF4FB; color:#2A5580; border:1px solid #C6DAF0; }
 .chipbox .sk-x{ cursor:pointer; opacity:.5; font-size:13px; line-height:1; padding:0 1px; }
 .chipbox .sk-x:hover{ opacity:1; }
+.boolbox{ width:100%; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
+          line-height:1.5; padding:9px; border:1px solid var(--line,#E8E4DC);
+          border-radius:8px; background:#fff; resize:vertical; outline:none; }
+.boolbox:focus{ border-color:#13A37E; }
+.boolprev{ margin-top:7px; }
+.boolgrp{ display:flex; align-items:flex-start; gap:7px; margin-bottom:5px; }
+.boolgrp .n{ flex-shrink:0; width:19px; height:19px; border-radius:50%;
+             background:#0E2A47; color:#fff; font-size:10px; font-weight:700;
+             display:flex; align-items:center; justify-content:center; margin-top:1px; }
+.boolgrp .tt{ display:flex; flex-wrap:wrap; gap:4px; }
+.boolgrp .tt span{ font-size:11px; padding:2px 8px; border-radius:20px;
+                   background:#EEF4FB; color:#2A5580; border:1px solid #C6DAF0; font-weight:600; }
+.boolgrp .tt em{ font-size:10px; color:#8A92A0; font-style:normal; align-self:center; }
+.boolex .tt span{ background:#FCEBEB; color:#A32D2D; border-color:#F5C6C6; }
+.boolerr{ font-size:11px; color:#A32D2D; }
 .chip-hint{ font-size:10.5px; color:var(--muted,#8A92A0); margin-top:4px; line-height:1.45; }
 </style>
 </head>
@@ -1169,6 +1184,11 @@ body{font-size:14px !important; line-height:1.5}
         <div class="fg-row"><label>Experience Max (Yrs)</label><input class="inp" id="m-expmax" type="number" step="0.5" placeholder="12"></div>
       </div>
       <div class="fg-row"><label>Job Description</label><textarea class="ta" id="m-jd" rows="5" placeholder="Paste JD..."></textarea></div>
+      <div class="fg-row"><label>Search Boolean <span style="font-weight:400;color:#8A92A0">(optional — overrides the skill lists below)</span></label>
+        <textarea class="boolbox" id="m-bool" rows="3" placeholder='("Business Analyst" OR "Functional Analyst") AND (Salesforce OR SFDC) AND ("Channel Partner" OR "Dealer Management" OR DMS)'></textarea>
+        <div class="boolprev" id="m-bool-prev"></div>
+        <div class="chip-hint">Each bracketed group is one requirement; any term inside it satisfies that requirement. Check the preview matches what you meant.</div>
+      </div>
       <div class="fg-row"><label>Must-Have Skills</label>
         <div class="chipbox must" id="m-must-box" onclick="chipFocus('m-must')">
           <input class="chip-in" id="m-must" placeholder="Type a skill, press Enter">
@@ -3209,6 +3229,12 @@ function renderMandateSetup(el){
     chipSet('ms-must', parse(m.must_have_skills));
     chipSet('ms-good', parse(m.good_to_have_skills));
     chipBind('ms-must'); chipBind('ms-good');
+    var _sb=document.getElementById('ms-bool');
+    if(_sb){
+      _sb.value = m.boolean_query || '';
+      _sb.oninput = function(){ boolPreview('ms-bool','ms-bool-prev'); };
+      if(_sb.value) boolPreview('ms-bool','ms-bool-prev');
+    }
   },0);
   el.innerHTML=approvalBarHtml(m)+orgSummaryHtml(m)+'<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
     +'<div class="g2">'
@@ -3243,6 +3269,11 @@ function renderMandateSetup(el){
       : '')
     +'<div class="fg-row"><label>Job Description</label>'
     + buildJDEditor('ms-jd', m.jd||'')
+    +'</div>'
+    +'<div class="fg-row"><label>Search Boolean <span style=\'font-weight:400;color:#8A92A0\'>(optional — overrides the skill lists below)</span></label>'
+      +'<textarea class="boolbox" id="ms-bool" rows="3"></textarea>'
+      +'<div class="boolprev" id="ms-bool-prev"></div>'
+      +'<div class="chip-hint">Each bracketed group is one requirement; any term inside it satisfies it.</div>'
     +'</div>'
     +'<div class="fg-row"><label>Must-Have Skills</label>'
       +'<div class="chipbox must" id="ms-must-box" onclick="chipFocus(\'ms-must\')">'
@@ -3878,7 +3909,7 @@ async function saveMandateSetup(){
   if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
   // Corporate has no client field on the form, so the key is omitted and the
   // server preserves whatever is stored rather than blanking it.
-  var payload={role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status,must_have_skills:chipCommit('ms-must'),good_to_have_skills:chipCommit('ms-good')};
+  var payload={role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status,must_have_skills:chipCommit('ms-must'),good_to_have_skills:chipCommit('ms-good'),boolean_query:(v('ms-bool')||'').trim()};
   // Only sent in Corporate mode, so an Agency save can never null these out.
   if(wsMode()!=='corporate') payload.client=v('ms-client');
   if(wsMode()==='corporate'){
@@ -7945,6 +7976,42 @@ function chipCommit(id){
   return chipGet(id);
 }
 
+
+// ── BOOLEAN SEARCH PREVIEW ─────────────────────────────────────────────────
+// The preview is rendered from the SERVER's parser, not a copy of it here.
+// A second implementation in the browser would drift from the one that scores,
+// and the recruiter would end up verifying something that never runs.
+var _boolTimer = {};
+
+function boolPreview(inputId, prevId){
+  clearTimeout(_boolTimer[inputId]);
+  _boolTimer[inputId] = setTimeout(function(){
+    var inp = document.getElementById(inputId), box = document.getElementById(prevId);
+    if(!inp || !box) return;
+    var q = (inp.value||'').trim();
+    if(!q){ box.innerHTML=''; return; }
+    fetch('/api/mandates/parse-boolean', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({boolean_query:q})
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if(!d || !d.ok){ box.innerHTML='<div class="boolerr">Could not parse this boolean.</div>'; return; }
+      var g = d.groups||[], ex = d.excluded||[];
+      if(!g.length){ box.innerHTML='<div class="boolerr">No requirements found — check your brackets.</div>'; return; }
+      var html = g.map(function(terms, i){
+        var chips = terms.map(function(t,j){
+          return (j?'<em>or</em>':'') + '<span>'+esc(t)+'</span>';
+        }).join('');
+        return '<div class="boolgrp"><div class="n">'+(i+1)+'</div><div class="tt">'+chips+'</div></div>';
+      }).join('');
+      if(ex.length){
+        html += '<div class="boolgrp boolex"><div class="n" style="background:#A32D2D">✕</div><div class="tt">'
+              + ex.map(function(t){ return '<span>'+esc(t)+'</span>'; }).join('') + '</div></div>';
+      }
+      box.innerHTML = html;
+    }).catch(function(){ box.innerHTML=''; });
+  }, 350);
+}
+
 async function saveMandate(){
   const corp = wsMode()==='corporate';
   const client=v('m-client').trim(),role=v('m-role').trim();
@@ -7963,7 +8030,7 @@ async function saveMandate(){
   if(btn){if(btn.disabled)return; btn.disabled=true; btn.textContent='Creating...';}
   const emin=parseFloat(v('m-expmin'))||0, emax=parseFloat(v('m-expmax'))||0;
   if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
-  var _body={client:corp?'':client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd'),must_have_skills:chipCommit('m-must'),good_to_have_skills:chipCommit('m-good')};
+  var _body={client:corp?'':client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd'),must_have_skills:chipCommit('m-must'),good_to_have_skills:chipCommit('m-good'),boolean_query:(v('m-bool')||'').trim()};
   if(corp) _body.department_id=dept;
   const r=await req('POST','/mandates',_body);
   if(r.ok){closeModal('modal-mandate');await loadMandates();await selectMandate(r.id);S.activeTab='Mandate Setup';renderTabs();renderContent();toast('✅',T('mandate','Mandate')+' created!');}
@@ -9188,6 +9255,9 @@ function openModal(id){
     // from the last one created would carry over into this one.
     chipSet('m-must',[]); chipSet('m-good',[]);
     chipBind('m-must');  chipBind('m-good');
+    var _mb=document.getElementById('m-bool');
+    if(_mb){ _mb.value=''; document.getElementById('m-bool-prev').innerHTML='';
+             _mb.oninput=function(){ boolPreview('m-bool','m-bool-prev'); }; }
   }
   document.getElementById(id).classList.add('open');
 }
