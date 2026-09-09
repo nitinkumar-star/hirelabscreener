@@ -768,11 +768,42 @@ body{font-size:14px !important; line-height:1.5}
 .chipbox.good .sk-chip{ background:#EEF4FB; color:#2A5580; border:1px solid #C6DAF0; }
 .chipbox .sk-x{ cursor:pointer; opacity:.5; font-size:13px; line-height:1; padding:0 1px; }
 .chipbox .sk-x:hover{ opacity:1; }
+/* ── Mandate Setup: full-page left rail ── */
+.setup-fp{ display:flex; height:100%; min-height:0; }
+.setup-rail{ width:230px; flex-shrink:0; padding:22px 14px; border-right:1px solid var(--line,#E8E4DC);
+             background:#FBFAF8; overflow-y:auto; }
+.setup-rail .mrtab{ display:flex; align-items:center; gap:10px; width:100%; text-align:left; border:none;
+             background:none; padding:11px 12px; border-radius:9px; cursor:pointer; margin-bottom:4px; font-family:inherit; }
+.setup-rail .mrtab:hover{ background:#F0EFEA; }
+.setup-rail .mrtab.active{ background:#E9E7FA; }
+.setup-rail .mrtab .ic{ font-size:15px; width:22px; text-align:center; flex-shrink:0; }
+.setup-rail .mrtab .l{ font-size:13px; font-weight:600; color:var(--navy,#0E2A47); display:block; line-height:1.3; }
+.setup-rail .mrtab .s{ font-size:10.5px; color:var(--muted,#8A92A0); display:block; margin-top:1px; }
+.setup-body{ flex:1; padding:24px 30px; overflow-y:auto; min-width:0; }
+.setup-pane{ display:none; }
+.setup-pane.active{ display:block; }
+/* let cards breathe wider on the full page */
+.setup-pane .card{ max-width:720px !important; }
+@media(max-width:640px){
+  .setup-fp{ flex-direction:column; }
+  .setup-rail{ width:100%; display:flex; gap:6px; overflow-x:auto; border-right:none;
+               border-bottom:1px solid var(--line,#E8E4DC); padding:10px; }
+  .setup-rail .mrtab{ width:auto; white-space:nowrap; flex-shrink:0; margin-bottom:0; }
+  .setup-rail .s{ display:none; }
+}
+
+/* ── Mandate: FULL-PAGE sheet ── */
+#modal-mandate.modal-bg{ align-items:stretch; justify-content:stretch; background:#fff; }
+#modal-mandate .modal{ width:100vw !important; max-width:100vw !important; height:100vh; max-height:100vh !important;
+  border-radius:0 !important; display:flex; flex-direction:column; box-shadow:none; overflow:hidden; }
+#modal-mandate .modal-head{ padding:16px 28px !important; flex-shrink:0; }
+#modal-mandate .modal-foot{ padding:14px 28px; flex-shrink:0; }
+
 /* ── Mandate modal: Settings-style left rail ─────────────────────────── */
 #modal-mandate .modal{ max-width:660px; }
-#modal-mandate .modal-body{ padding:0; display:flex; min-height:430px; }
-.mrail{ width:206px; flex-shrink:0; padding:14px 12px; border-right:1px solid var(--line,#E8E4DC);
-        background:#FBFAF8; }
+#modal-mandate .modal-body{ padding:0; display:flex; flex:1; min-height:0; overflow:hidden; }
+.mrail{ width:230px; flex-shrink:0; padding:22px 14px; border-right:1px solid var(--line,#E8E4DC);
+        background:#FBFAF8; overflow-y:auto; }
 .mrtab{ display:flex; align-items:center; gap:9px; width:100%; text-align:left; border:none;
         background:none; padding:9px 10px; border-radius:9px; cursor:pointer; margin-bottom:3px;
         font-family:inherit; transition:background .12s; }
@@ -784,7 +815,9 @@ body{font-size:14px !important; line-height:1.5}
 .mrtab .dot{ width:7px; height:7px; border-radius:50%; background:#CDD3DA; margin-left:auto;
              flex-shrink:0; transition:background .2s; }
 .mrtab.active .dot, .mrtab .dot.on{ background:#534AB7; }
-.mrbody{ flex:1; padding:20px 22px; overflow:auto; }
+.mrbody{ flex:1; padding:26px 34px; overflow:auto; }
+.mrbody > .mrpane{ max-width:840px; }
+#modal-mandate .g2{ display:grid; grid-template-columns:1fr 1fr; gap:14px 18px; }
 .mrpane{ display:none; }
 .mrpane.active{ display:block; }
 .mr-h{ font-size:15px; font-weight:700; color:var(--navy,#0E2A47); margin-bottom:3px; }
@@ -1206,7 +1239,13 @@ body{font-size:14px !important; line-height:1.5}
 <!-- Modals -->
 <div class="modal-bg" id="modal-mandate">
   <div class="modal">
-    <div class="modal-head"><span class="modal-title" id="mandate-modal-title" data-vocab-tpl="{mandate_new}">New Mandate</span><button class="modal-x" onclick="closeModal('modal-mandate')">&#10005;</button></div>
+    <div class="modal-head">
+      <div>
+        <span class="modal-title" id="mandate-modal-title" data-vocab-tpl="{mandate_new}">New Mandate</span>
+        <div style="font-size:12px;color:#8A92A0;margin-top:2px">Set up the role, then the matching rules that drive extension scoring</div>
+      </div>
+      <button class="modal-x" onclick="closeModal('modal-mandate')">&#10005;</button>
+    </div>
     <div class="modal-body">
       <div class="mrail">
         <button type="button" class="mrtab active" data-mt="detail" onclick="switchMTab('detail')">
@@ -3293,7 +3332,7 @@ function renderMandateSetup(el){
   el.style.padding='16px';
   var adminCard = '';
   if (S.currentUser && S.currentUser.is_company_admin) {
-    adminCard = '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head"><span style="font-weight:500">Assignment &amp; Job Management</span></div><div class="card-body">'
+    adminCard = '<div class="card setup-card" data-sc="manage" style="max-width:580px;margin-top:16px"><div class="card-head"><span style="font-weight:500">Assignment &amp; Job Management</span></div><div class="card-body">'
       + '<div class="fg-row"><label>Assign this job to recruiter</label>'
       + '<select id="ms-assign" class="inp" style="width:100%"><option value="">Loading team...</option></select></div>'
       + '<button class="btn btn-g" style="margin-top:8px" onclick="assignMandateTo()">Save Assignment</button>'
@@ -3325,7 +3364,7 @@ function renderMandateSetup(el){
     var _si=document.getElementById('ms-intent');
     if(_si) _si.value = m.search_intent || '';
   },0);
-  el.innerHTML=approvalBarHtml(m)+orgSummaryHtml(m)+'<div class="card" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
+  el.innerHTML=approvalBarHtml(m)+orgSummaryHtml(m)+'<div class="card setup-card" data-sc="detail" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
     +'<div class="g2">'
     +(wsMode()==='corporate' ? '' : field('ms-client',wfL().client,m.client||''))
     +field('ms-role',T('role_field','Role'),m.role||'')
@@ -3359,6 +3398,7 @@ function renderMandateSetup(el){
     +'<div class="fg-row"><label>Job Description</label>'
     + buildJDEditor('ms-jd', m.jd||'')
     +'</div>'
+    +'<div id="ms-kwblock">'
     +'<div class="fg-row"><label>Search Boolean <span style=\'font-weight:400;color:#8A92A0\'>(optional — overrides the skill lists below)</span></label>'
       +'<textarea class="boolbox" id="ms-bool" rows="3"></textarea>'
       +'<div class="boolprev" id="ms-bool-prev"></div>'
@@ -3376,20 +3416,23 @@ function renderMandateSetup(el){
       +'</div>'
       +'<div class="chip-hint">Bonus skills. Never penalised when absent.</div>'
     +'</div>'
+    +'</div>'
+    +'<div id="ms-intentblock">'
     +'<div class="fg-row"><label>Search Intent <span style="font-weight:400;color:#8A92A0">(plain English — what you actually mean)</span></label>'
       +'<textarea class="intentbox" id="ms-intent" rows="4"></textarea>'
       +'<div class="chip-hint">An AI judge checks each CV against this intent, catching what keywords miss (e.g. "supported a Salesforce product" vs "used Salesforce").</div>'
     +'</div>'
+    +'</div>'
     +'</div></div>'
     + (wsMode()==='corporate' ? '' :
-        '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
+        '<div class="card setup-card" data-sc="manage" style="max-width:580px;margin-top:16px"><div class="card-head">'
       + '<span style="font-weight:500">&#128100; Client SPOC <span style="font-size:10.5px;color:var(--muted);font-weight:400">(auto-fills the "To" when you share profiles)</span></span></div>'
       + '<div class="card-body"><div id="ms-spoc-wrap"><div style="font-size:12px;color:var(--muted)">Loading contacts…</div></div></div></div>')
-    + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
+    + '<div class="card setup-card" data-sc="manage" style="max-width:580px;margin-top:16px"><div class="card-head">'
     + '<span style="font-weight:500">&#128231; Submission CC <span style="font-size:10.5px;color:var(--muted);font-weight:400">(auto-CC these when you share profiles)</span></span>'
     + '<button class="btn btn-g" onclick="saveCcConfig()">Save CC</button></div>'
     + '<div class="card-body"><div id="ms-cc-wrap"><div style="font-size:12px;color:var(--muted)">Loading…</div></div></div></div>'
-    + '<div class="card" style="max-width:580px;margin-top:16px"><div class="card-head">'
+    + '<div class="card setup-card" data-sc="manage" style="max-width:580px;margin-top:16px"><div class="card-head">'
     + '<span style="font-weight:500">&#128273; '+esc(T('notes_title','Client Notes'))+' <span style="font-size:10.5px;color:var(--muted);font-weight:400">(private &mdash; used by AI rating, never shared with candidates)</span></span></div>'
     + '<div class="card-body">'
     + '<div style="display:flex;gap:8px;margin-bottom:12px">'
@@ -3403,11 +3446,77 @@ function renderMandateSetup(el){
   loadSpocOptions();
   loadCcOptions();
   if (wsMode()==='corporate') { loadOrgOptions(m); loadApprovalHistory(m); }
+  // Reorganise the rendered cards into a full-page left-rail layout. This MOVES
+  // existing DOM nodes into panes rather than rebuilding them, so all the
+  // handlers, chip hydration and async loaders wired above keep working.
+  try { wrapSetupAsRail(el); } catch(e) { console.warn('rail wrap skipped', e); }
   if (S.currentUser && S.currentUser.is_company_admin) loadTeamForAssign(m.assigned_user_id);
 }
 
 // Read-only summary of who owns this requisition. Rendered from ids resolved
 // server-side, so a name only ever appears if the record belongs to this tenant.
+function wrapSetupAsRail(el){
+  // Cards were tagged in the assembly with data-sc = detail | manage.
+  // The Detail card additionally holds #ms-kwblock and #ms-intentblock, which
+  // become their own tabs. Anything untagged (approval/org bars) rides along
+  // at the top of the Detail pane so nothing is ever dropped.
+  var detailCard = el.querySelector('.setup-card[data-sc="detail"]');
+  if(!detailCard) return;                 // safety: leave as-is if unexpected
+
+  var kw     = document.getElementById('ms-kwblock');
+  var intent = document.getElementById('ms-intentblock');
+  var manageCards = Array.prototype.slice.call(el.querySelectorAll('.setup-card[data-sc="manage"]'));
+  // Bars rendered before the detail card (approval, org summary).
+  var topBars = [];
+  var n = el.firstChild;
+  while(n && n !== detailCard){ var next=n.nextSibling; topBars.push(n); n=next; }
+
+  // Build the shell.
+  var shell = document.createElement('div');
+  shell.className = 'setup-fp';
+  shell.innerHTML =
+    '<div class="setup-rail">'
+    + '<button class="mrtab active" data-st="detail" onclick="switchSetupTab(this)"><span class="ic">&#128203;</span><span style="flex:1;min-width:0"><span class="l">Mandate Detail</span><span class="s">Client, role, JD</span></span></button>'
+    + '<button class="mrtab" data-st="kw" onclick="switchSetupTab(this)"><span class="ic">&#128269;</span><span style="flex:1;min-width:0"><span class="l">Keywords &amp; Skills</span><span class="s">Boolean, must-haves</span></span></button>'
+    + '<button class="mrtab" data-st="intent" onclick="switchSetupTab(this)"><span class="ic">&#127919;</span><span style="flex:1;min-width:0"><span class="l">Search Intent</span><span class="s">Plain-English rule</span></span></button>'
+    + '<button class="mrtab" data-st="manage" onclick="switchSetupTab(this)"><span class="ic">&#9881;</span><span style="flex:1;min-width:0"><span class="l">Manage</span><span class="s">SPOC, CC, notes, admin</span></span></button>'
+    + '</div>'
+    + '<div class="setup-body">'
+    + '<div class="setup-pane active" data-st="detail"></div>'
+    + '<div class="setup-pane" data-st="kw"></div>'
+    + '<div class="setup-pane" data-st="intent"></div>'
+    + '<div class="setup-pane" data-st="manage"></div>'
+    + '</div>';
+
+  var pDetail = shell.querySelector('.setup-pane[data-st="detail"]');
+  var pKw     = shell.querySelector('.setup-pane[data-st="kw"]');
+  var pIntent = shell.querySelector('.setup-pane[data-st="intent"]');
+  var pManage = shell.querySelector('.setup-pane[data-st="manage"]');
+
+  // Move kw + intent blocks OUT of the detail card first (they keep their nodes).
+  if(kw)     pKw.appendChild(kw);
+  if(intent) pIntent.appendChild(intent);
+
+  // Top bars + the (now trimmed) detail card go to the Detail pane.
+  topBars.forEach(function(b){ pDetail.appendChild(b); });
+  pDetail.appendChild(detailCard);
+
+  // Manage cards.
+  manageCards.forEach(function(c){ pManage.appendChild(c); });
+
+  // Swap shell in.
+  el.innerHTML='';
+  el.style.padding='0';
+  el.appendChild(shell);
+}
+
+function switchSetupTab(btn){
+  var st = btn.getAttribute('data-st');
+  var root = btn.closest('.setup-fp');
+  root.querySelectorAll('.mrtab').forEach(function(b){ b.classList.toggle('active', b===btn); });
+  root.querySelectorAll('.setup-pane').forEach(function(pn){ pn.classList.toggle('active', pn.getAttribute('data-st')===st); });
+}
+
 function orgSummaryHtml(m){
   if(wsMode()!=='corporate' || !m) return '';
   var row=function(label,val,muted){
