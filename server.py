@@ -12103,17 +12103,22 @@ APPROVAL_STATUSES = ('pending', 'approved', 'rejected')
 APPROVAL_ACTIONS = ('submitted', 'approved', 'rejected')
 
 
-def _validate_planning_fields(d, requested_headcount=None, allow_approved_headcount=False):
+def _validate_planning_fields(d, requested_headcount=None, allow_approved_headcount=False,
+                              current_approved_headcount=None):
     """(ok, error, cleaned). Controlled values only — no free-text priorities.
 
     A field absent from the payload is left alone; a field present but empty
     clears it. Nothing is inferred.
 
     `approved_headcount` is NOT an ordinary planning field. It records what
-    management signed off, so it is only accepted when the caller is performing
-    an approval action (`allow_approved_headcount`). An ordinary edit that
-    carries it is rejected outright rather than silently ignored, so the caller
-    knows the value was not applied.
+    management signed off, so it is only *changed* through an approval action
+    (`allow_approved_headcount`). An ordinary edit is allowed to *carry* the
+    field only when it does not actually change the stored value — this is the
+    common case of a client that resends the whole mandate row (which includes
+    approved_headcount) purely to update some other field such as status. Such
+    a no-op resend is ignored, not rejected. An ordinary edit that tries to
+    change the value to something different is still rejected outright, so the
+    caller knows the value was not applied.
     """
     cleaned = {}
     for field, allowed, label in (('priority', PRIORITIES, 'Priority'),
@@ -12138,24 +12143,35 @@ def _validate_planning_fields(d, requested_headcount=None, allow_approved_headco
 
     if 'approved_headcount' in d:
         if not allow_approved_headcount:
-            return False, ('Approved headcount can only be set through an approval action, '
-                           'not an ordinary edit'), {}
-        v = str(d.get('approved_headcount') or '').strip()
-        if v == '':
-            cleaned['approved_headcount'] = None   # not yet decided
+            # Ordinary edit. Tolerate a no-op resend of the stored value (a
+            # whole-row PUT that carries approved_headcount but does not intend
+            # to touch it); reject only a genuine attempt to change it.
+            _sent_raw = d.get('approved_headcount')
+            _sent = str(_sent_raw).strip() if _sent_raw not in (None, '') else ''
+            _cur = ('' if current_approved_headcount in (None, '')
+                    else str(current_approved_headcount).strip())
+            if _sent == _cur:
+                pass  # unchanged → silently leave it alone, do not write it
+            else:
+                return False, ('Approved headcount can only be set through an approval action, '
+                               'not an ordinary edit'), {}
         else:
-            try:
-                n = int(v)
-            except (TypeError, ValueError):
-                return False, 'Approved headcount must be a whole number', {}
-            if n < 0:
-                return False, 'Approved headcount cannot be negative', {}
-            # No existing business rule anywhere in this codebase permits
-            # approving more capacity than was requested, so it is rejected.
-            if requested_headcount is not None and n > int(requested_headcount or 0):
-                return False, (f'Approved headcount ({n}) cannot exceed the requested '
-                               f'headcount ({int(requested_headcount or 0)})'), {}
-            cleaned['approved_headcount'] = n
+            v = str(d.get('approved_headcount') or '').strip()
+            if v == '':
+                cleaned['approved_headcount'] = None   # not yet decided
+            else:
+                try:
+                    n = int(v)
+                except (TypeError, ValueError):
+                    return False, 'Approved headcount must be a whole number', {}
+                if n < 0:
+                    return False, 'Approved headcount cannot be negative', {}
+                # No existing business rule anywhere in this codebase permits
+                # approving more capacity than was requested, so it is rejected.
+                if requested_headcount is not None and n > int(requested_headcount or 0):
+                    return False, (f'Approved headcount ({n}) cannot exceed the requested '
+                                   f'headcount ({int(requested_headcount or 0)})'), {}
+                cleaned['approved_headcount'] = n
     return True, None, cleaned
 
 
@@ -12632,6 +12648,44 @@ def duplicate_mandate(mid):
     return jsonify({'ok': True, 'id': new_id, 'notes_copied': copied_notes})
 
 
+@app.route('/api/mandates/<int:mid>/status', methods=['POST'])
+@login_required
+def set_mandate_status(mid):
+    """Change ONLY the requisition status (active / hold / closed / draft).
+
+    A focused endpoint that writes the single `status` column and nothing
+    else. It exists so a status change can never be blocked by validation of
+    unrelated fields (headcount, org links, planning data) that a whole-row
+    payload might carry. Tenant-ownership is enforced; 'central' is not an
+    assignable status (that pool is managed internally, not from the UI).
+    """
+    d = request.json or {}
+    _st = str(d.get('status') or '').strip().lower()
+    # Only these three are user-assignable from the pipeline. 'draft' stays
+    # allowed for parity with the requisition lifecycle; 'central' never is.
+    if _st not in ('draft', 'active', 'hold', 'closed'):
+        return jsonify({'error': 'Invalid status'}), 400
+
+    conn = get_db()
+    own = conn.execute('SELECT owner_id, status, role, client FROM mandates WHERE id=?',
+                       (mid,)).fetchone()
+    if not own or own['owner_id'] != effective_user_id():
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    # The Central Database pool is not an ordinary opening and its status is
+    # not editable through this path.
+    if (own['status'] or '') == 'central':
+        conn.close(); return jsonify({'error': 'This pool cannot change status'}), 400
+
+    conn.execute('UPDATE mandates SET status=? WHERE id=?', (_st, mid))
+    conn.commit(); conn.close()
+    log_activity('mandate_status',
+                 f"{own['role']}"
+                 + (f" @ {own['client']}" if own['client'] else '')
+                 + f" → {_st}",
+                 entity_type='mandate', entity_id=mid)
+    return jsonify({'ok': True, 'id': mid, 'status': _st})
+
+
 @app.route('/api/mandates/<int:mid>', methods=['PUT'])
 @login_required
 def update_mandate(mid):
@@ -12659,9 +12713,14 @@ def update_mandate(mid):
 
     # Validated before ANY write, so a rejected value leaves the requisition
     # completely unmodified — same contract as the org-link validation above.
-    # approved_headcount is deliberately NOT accepted here; it belongs to the
-    # approval action, and supplying it is rejected rather than ignored.
-    _pok, _perr, _plan = _validate_planning_fields(d)
+    # approved_headcount cannot be *changed* here; it belongs to the approval
+    # action. But a whole-row PUT (e.g. a status change that resends the full
+    # mandate) legitimately carries the current value, so we pass the stored
+    # value in — an unchanged resend is tolerated, only a real change rejected.
+    _cur_appr = conn.execute('SELECT approved_headcount FROM mandates WHERE id=?',
+                             (mid,)).fetchone()
+    _pok, _perr, _plan = _validate_planning_fields(
+        d, current_approved_headcount=(_cur_appr['approved_headcount'] if _cur_appr else None))
     if not _pok:
         conn.close(); return jsonify({'error': _perr}), 400
 

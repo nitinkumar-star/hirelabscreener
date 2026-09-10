@@ -8265,7 +8265,13 @@ async function saveMandate(){
 function openStatusModal(mid){S.statusMid=mid;openModal('modal-status');}
 async function setStatus(status){
   const m=S.mandates.find(x=>x.id===S.statusMid);if(!m)return;
-  await req('PUT','/mandates/'+m.id,{...m,status});
+  // Dedicated status-only endpoint. It writes just the status column, so the
+  // change can never be silently rejected by validation of unrelated fields.
+  const r=await req('POST','/mandates/'+m.id+'/status',{status});
+  // Update local state and UI ONLY after the server confirms the write. This
+  // is what prevents the old "status reverts a little later" bug, where the
+  // UI showed the new status but the save had actually failed on the server.
+  if(!r||r.error){ toast('&#9888;&#65039;',(r&&r.error)||'Could not change status'); return; }
   m.status=status;S.mandates=S.mandates.map(x=>x.id===m.id?m:x);
   if(S.activeMandate?.id===m.id)S.activeMandate.status=status;
   renderSidebar();closeModal('modal-status');
