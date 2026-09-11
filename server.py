@@ -325,6 +325,19 @@ def real_user_id():
     return session.get('user_id')
 
 
+def current_scope():
+    """The access scope of the logged-in user. '' for a normal full user."""
+    u = current_user()
+    return (u.get('access_scope') or '') if u else ''
+
+
+def is_invoice_viewer():
+    """True if this login is a scoped, view-only Invoicing account (an external
+    accountant/CA). Such a login may only read/print invoices — never create,
+    edit or delete anything, and never see any other module."""
+    return current_scope() == 'invoices_ro'
+
+
 def _tenant_owns_candidate(conn, cid):
     """True if candidate `cid` belongs to the current tenant (company).
     owner_id stores the company id, so this enforces cross-agency isolation."""
@@ -512,6 +525,65 @@ def admin_required(f):
     return decorated
 
 
+# ── Scoped-login gate: external accountant / CA (invoices, view-only) ────────
+# A single choke-point that runs before every request. If the logged-in user is
+# a scoped Invoicing viewer, it permits ONLY what that role legitimately needs
+# and refuses everything else — regardless of which URL is hit or how. This is
+# the real boundary; hiding buttons in the UI is convenience, not security.
+#
+# Allowed for an invoice viewer:
+#   • any non-/api/ path  (the SPA page, /login, static assets, sw.js, icons)
+#   • a small GET whitelist: the boot/auth endpoints + invoice viewing/printing
+#   • POST /api/auth/logout  (so they can sign out)
+# Denied (403) for an invoice viewer:
+#   • every write (POST/PUT/DELETE) except logout  → no create/edit/delete/paid/convert
+#   • every other module's API                     → invoicing only
+_INVOICE_RO_GET_EXACT = {
+    '/api/auth/status', '/api/me', '/api/workspace',
+    '/api/invoices', '/api/invoices/summary', '/api/invoices/next-number',
+    '/api/billing/me',
+}
+
+
+def _invoice_ro_path_allowed(method, path):
+    """True if a GET `path` is one an invoice-viewer may read. POST is handled
+    separately (only logout). Path is request.path (no query string)."""
+    if method != 'GET':
+        return False
+    if path in _INVOICE_RO_GET_EXACT:
+        return True
+    # /api/invoices/<id>  and  /api/invoices/<id>/print  — view + PDF download.
+    m = re.match(r'^/api/invoices/(\d+)(/print)?$', path)
+    if m:
+        return True
+    return False
+
+
+@app.before_request
+def _invoice_ro_gate():
+    # OPTIONS pre-flight is never a data action; let CORS handle it.
+    if request.method == 'OPTIONS':
+        return None
+    if not session.get('user_id'):
+        return None                      # not logged in → normal auth flow
+    if current_scope() != 'invoices_ro':
+        return None                      # full user → unaffected
+
+    path = request.path or ''
+    # Non-API paths: the app shell, login page, static files, service worker,
+    # icons, manifest. These carry no tenant data of other modules.
+    if not path.startswith('/api/'):
+        return None
+    # The one write they may perform: sign out.
+    if request.method == 'POST' and path == '/api/auth/logout':
+        return None
+    # Everything else must be a whitelisted GET.
+    if _invoice_ro_path_allowed(request.method, path):
+        return None
+    # Refuse. 404 rather than 403 so the login cannot even map the surface.
+    return jsonify({'error': 'Not found'}), 404
+
+
 @app.route('/api/diag')
 @admin_required
 def diag():
@@ -592,6 +664,7 @@ def auth_status():
         'id': u['id'], 'username': u['username'], 'display_name': u['display_name'],
         'role': u['role'], 'company': own_company,
         'is_company_admin': (u.get('role') == 'admin' or u.get('is_company_admin') == 1),
+        'access_scope': (u.get('access_scope') or ''),
         'workflow_mode': (get_setting('workflow_mode', 'agency') or 'agency')
     }, 'viewing_as': viewing, 'pending_count': pending_count})
 
@@ -1274,6 +1347,7 @@ def list_users():
     conn = get_db()
     rows = conn.execute('''SELECT u.id, u.username, u.display_name, u.role, u.created_at,
                                   u.last_login, u.status, u.company_name, u.company_id,
+                                  u.access_scope,
                                   co.name AS company_label, co.status AS company_status
                            FROM users u LEFT JOIN companies co ON co.id = u.company_id
                            ORDER BY u.id''').fetchall()
@@ -1307,6 +1381,12 @@ def create_user():
     # recruiters (role='user'); optionally flag as their company's admin.
     role = 'user'
     is_company_admin = 1 if d.get('is_company_admin') else 0
+    # A scoped, view-only login (external accountant/CA). It is NEVER an admin
+    # and only the whitelisted value is accepted — anything else is treated as
+    # a normal full user.
+    access_scope = 'invoices_ro' if (d.get('access_scope') == 'invoices_ro') else ''
+    if access_scope:
+        is_company_admin = 0
     # Only the platform owner may place a user in a DIFFERENT company; everyone
     # else (incl. agency admins) can only add to their own company.
     if is_admin() and d.get('company_id'):
@@ -1315,19 +1395,21 @@ def create_user():
         company_id = current_company_id()
     if not username or len(password) < 8:
         return jsonify({'error': 'Username required and password min 8 chars'}), 400
-    # Enforce the agency's seat (user) limit set by the platform owner.
-    _lim = company_user_limit(company_id)
-    if _lim and company_approved_users(company_id) >= _lim:
-        return jsonify({'error': f'User limit reached ({_lim} recruiters). Ask the platform owner to increase your limit.'}), 403
+    # Enforce the agency's seat (user) limit set by the platform owner. A scoped
+    # view-only account is not a recruiter seat, so it is exempt from that cap.
+    if not access_scope:
+        _lim = company_user_limit(company_id)
+        if _lim and company_approved_users(company_id) >= _lim:
+            return jsonify({'error': f'User limit reached ({_lim} recruiters). Ask the platform owner to increase your limit.'}), 403
     conn = get_db()
     exists = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
     if exists:
         conn.close()
         return jsonify({'error': 'Username already taken'}), 400
-    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_id,is_company_admin) VALUES (?,?,?,?,?,?,?,?)',
-                 (username, hash_password(password), display, role, ts(), 'approved', company_id, is_company_admin))
+    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_id,is_company_admin,access_scope) VALUES (?,?,?,?,?,?,?,?,?)',
+                 (username, hash_password(password), display, role, ts(), 'approved', company_id, is_company_admin, access_scope))
     conn.commit(); conn.close()
-    log_activity('create_user', username + ' (recruiter)')
+    log_activity('create_user', username + (' (accountant · view-only)' if access_scope else ' (recruiter)'))
     return jsonify({'ok': True})
 
 @app.route('/api/users/<int:uid>/password', methods=['POST'])
@@ -2714,6 +2796,14 @@ def init_db():
         pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    # A restricted, scoped login. '' = a normal full user (recruiter/admin).
+    # 'invoices_ro' = an external accountant/CA who may only VIEW the Invoicing
+    # section (read + print), nothing else. Enforced server-side by a global
+    # gate (see _invoice_ro_gate); the UI restriction is convenience only.
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN access_scope TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
     c.execute('''CREATE TABLE IF NOT EXISTS password_resets (

@@ -2009,6 +2009,16 @@ async function init(){
   // ── Workspace mode (agency vs corporate) drives labels + which modules show.
   // Loaded before the first render so nothing flashes the wrong wording.
   await loadWorkspace();
+
+  // ── Accountant / CA: invoices-only, view-only. A completely separate,
+  // minimal screen. Dispatched BEFORE any recruiter data loads (mandates,
+  // settings, departments) so this login never even requests them.
+  if (S.currentUser && S.currentUser.access_scope === 'invoices_ro') {
+    document.getElementById('app').style.display = 'none';
+    bootInvoiceViewer();
+    return;
+  }
+
   await loadDeptNameMap();
 
   // ── Freelancer Sourcer gets a completely separate, restricted interface ──
@@ -5319,7 +5329,7 @@ async function renderInvoicing(){
         +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="printInvoice('+v.id+')">&#128424; Print</button> '
         +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="openInvoiceForm('+v.id+')">Edit</button> '
         +(isPro?'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#534AB7;font-weight:700" onclick="convertProforma('+v.id+')">&#8594; Convert to Tax</button> ':(v.status!=='Paid'?'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#0F7A52" onclick="markInvoicePaid('+v.id+')">Paid</button> ':''))
-        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#C0392B" onclick="deleteInvoice('+v.id+')">&#10005;</button>'
+        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#C0392B;border-color:#E7B3AE;font-weight:600" onclick="deleteInvoice('+v.id+',\''+esc(v.invoice_no||'')+'\')" title="Delete this invoice permanently">&#128465; Delete</button>'
       +'</td></tr>';
   }).join('');
   el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
@@ -5334,6 +5344,73 @@ async function renderInvoicing(){
 }
 function printInvoice(id){ window.open(API+'/invoices/'+id+'/print?auto=1','_blank'); }
 function _invSwitch(t){ window._invTab=t; renderInvoicing(); }
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ACCOUNTANT / CA VIEW — invoices only, view + print, no edits
+//  A self-contained, read-only screen. This login can never see or reach
+//  any other module (the server also enforces this independently).
+// ═══════════════════════════════════════════════════════════════════════
+function bootInvoiceViewer(){
+  var host=document.getElementById('inv-ro-app');
+  if(!host){
+    host=document.createElement('div');
+    host.id='inv-ro-app';
+    host.style.cssText='position:fixed;inset:0;background:#F6F5FB;overflow:auto;z-index:1;font-family:inherit';
+    document.body.appendChild(host);
+  }
+  host.style.display='block';
+  var u=S.currentUser||{};
+  var co=(u.company&&u.company.name)?u.company.name:'HireLab';
+  var who=esc(u.display_name||u.username||'Accountant');
+  host.innerHTML=
+    '<div style="max-width:1000px;margin:0 auto;padding:20px 16px 60px">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px">'
+      +'<div>'
+        +'<div style="font-size:20px;font-weight:800;color:#101828">'+esc(co)+' &middot; Invoices</div>'
+        +'<div style="font-size:12px;color:#667085;margin-top:2px">Accountant view (read-only) &middot; '+who+'</div>'
+      +'</div>'
+      +'<button class="btn btn-o" style="font-size:12.5px" onclick="doLogout()">Logout</button>'
+    +'</div>'
+    +'<div id="inv-ro-body"><div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div></div>'
+    +'</div>';
+  renderInvoiceViewer();
+}
+
+async function renderInvoiceViewer(){
+  var el=document.getElementById('inv-ro-body'); if(!el) return;
+  var sum={}, list={};
+  try{ sum=await req('GET','/invoices/summary'); }catch(e){}
+  try{ list=await req('GET','/invoices'); }catch(e){}
+  if((list&&list.error)||(sum&&sum.error)){
+    el.innerHTML='<div style="color:#C0392B;padding:20px">Could not load invoices. Please try again, or ask the administrator.</div>';
+    return;
+  }
+  var invs=(list&&list.invoices)||[];
+  var cards='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
+    +_invCard('Total Invoiced',_invRup(sum.invoiced),'#534AB7')
+    +_invCard('Received',_invRup(sum.received),'#0F7A52')
+    +_invCard('Outstanding',_invRup(sum.outstanding),'#B4690E')
+    +'</div>';
+  var rows=invs.map(function(v){
+    var gross=Math.round((v.amount||0)*(1+(v.gst_rate||18)/100));
+    var isPro=(v.doc_type==='proforma');
+    var stCol={'Paid':'#0F7A52','Overdue':'#C0392B','Sent':'#B4690E','Draft':'#888'}[v.status]||'#888';
+    var badge=isPro?'<span style="font-size:9px;font-weight:700;color:#fff;background:#B4690E;border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:middle">PROFORMA</span>':'';
+    return '<tr style="border-top:1px solid #f0f0f0'+(isPro?';background:#FFFDF7':'')+'">'
+      +'<td style="padding:8px;font-weight:600">'+esc(v.invoice_no||'')+badge+'</td>'
+      +'<td style="padding:8px">'+esc(v.invoice_date||'')+'</td>'
+      +'<td style="padding:8px">'+esc(v.buyer_name||'')+(v.candidate_name?'<div style="font-size:10.5px;color:#999">'+esc(v.candidate_name)+'</div>':'')+'</td>'
+      +'<td style="padding:8px;text-align:right">'+_invRup(gross)+'</td>'
+      +'<td style="padding:8px">'+(isPro?'<span style="font-size:10.5px;font-weight:700;color:#B4690E">Estimate</span>':'<span style="font-size:10.5px;font-weight:700;color:'+stCol+'">'+esc(v.status||'Draft')+'</span>')+'</td>'
+      +'<td style="padding:8px;text-align:right;white-space:nowrap">'
+        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="printInvoice('+v.id+')">&#128424; View / Print</button>'
+      +'</td></tr>';
+  }).join('');
+  el.innerHTML=cards
+    +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
+    +'<thead><tr style="background:#F6F5FB;text-align:left"><th style="padding:8px">Invoice No</th><th style="padding:8px">Date</th><th style="padding:8px">Client</th><th style="padding:8px;text-align:right">Amount (incl GST)</th><th style="padding:8px">Status</th><th style="padding:8px;text-align:right">Action</th></tr></thead>'
+    +'<tbody>'+(rows||'<tr><td colspan="6" style="padding:20px;text-align:center;color:#aaa">No invoices yet.</td></tr>')+'</tbody></table></div>';
+}
 var _expCats=['Freelancer Salary','Freelancer Commission','Owner Salary','Tools & Subscriptions','Marketing','Office & Admin','Travel','Other'];
 async function renderExpenses(el){
   el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
@@ -5438,9 +5515,13 @@ async function markInvoicePaid(id){
   if(amt && !isNaN(parseFloat(amt))) body.received_amount=parseFloat(amt);
   await req('PUT','/invoices/'+id,body); toast('OK','Marked paid'); renderInvoicing();
 }
-async function deleteInvoice(id){
-  if(!confirm('Delete this invoice?')) return;
-  await req('DELETE','/invoices/'+id); toast('Deleted',''); renderInvoicing();
+async function deleteInvoice(id, no){
+  var label = no ? ('invoice '+no) : 'this invoice';
+  if(!confirm('Delete '+label+' permanently? This cannot be undone.')) return;
+  var r=await req('DELETE','/invoices/'+id);
+  // Only report success and refresh once the server confirms the delete.
+  if(!r||r.error){ toast('&#9888;&#65039;',(r&&r.error)||'Could not delete invoice'); return; }
+  toast('&#128465;','Invoice deleted'); renderInvoicing();
 }
 async function convertProforma(id){
   if(!confirm('Is proforma ko real Tax Invoice bana dein? Naya GST invoice number milega.')) return;
@@ -7810,7 +7891,7 @@ function adminUserMgmtHTML() {
     + '</div>'
     + '<div style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:center">'
     + '<input class="inp" id="nu-password" type="text" placeholder="Password (min 4 chars)">'
-    + '<select class="inp" id="nu-role"><option value="user">User (own workspace)</option><option value="admin">Admin (full access)</option></select>'
+    + '<select class="inp" id="nu-role"><option value="user">User (own workspace)</option><option value="admin">Admin (full access)</option><option value="invoices_ro">Accountant (invoices &middot; view-only)</option></select>'
     + '<button class="btn btn-g" style="background:#13A37E;white-space:nowrap" onclick="createUser()">+ Create</button>'
     + '</div>'
     + '<div id="nu-msg" style="font-size:11px;margin-top:8px;min-height:14px"></div>'
@@ -7830,7 +7911,9 @@ async function loadUsersList() {
     var isMe = u.id === meId;
     var roleBadge = u.role==='admin'
       ? '<span style="font-size:9.5px;background:#EEE9F8;color:#6B4FA0;padding:2px 7px;border-radius:8px;font-weight:600">ADMIN</span>'
-      : '<span style="font-size:9.5px;background:#E6F6F1;color:#0F8A6B;padding:2px 7px;border-radius:8px;font-weight:600">USER</span>';
+      : (u.access_scope==='invoices_ro'
+          ? '<span style="font-size:9.5px;background:#FDF1DD;color:#8A5A0B;padding:2px 7px;border-radius:8px;font-weight:600">ACCOUNTANT · VIEW-ONLY</span>'
+          : '<span style="font-size:9.5px;background:#E6F6F1;color:#0F8A6B;padding:2px 7px;border-radius:8px;font-weight:600">USER</span>');
     h += '<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:0.5px solid var(--line);border-radius:9px;margin-bottom:7px;background:#fff">'
       + avatarHtml(u.display_name||u.username, 32)
       + '<div style="flex:1;min-width:0">'
@@ -7854,13 +7937,18 @@ async function createUser() {
   var display = (document.getElementById('nu-display').value||'').trim();
   var username = (document.getElementById('nu-username').value||'').trim();
   var password = document.getElementById('nu-password').value||'';
-  var role = document.getElementById('nu-role').value;
+  var roleSel = document.getElementById('nu-role').value;
   var msg = document.getElementById('nu-msg');
-  if (!username || password.length < 4) { msg.style.color='#C0522B'; msg.textContent='Username required, password min 4 chars'; return; }
+  if (!username || password.length < 8) { msg.style.color='#C0522B'; msg.textContent='Username required, password min 8 chars'; return; }
   msg.style.color='#888'; msg.textContent='Creating...';
-  var r = await req('POST', '/users', {username:username, password:password, display_name:display, role:role});
+  // The Accountant option is a scoped, view-only login — not a role the server
+  // mints as admin. It is sent as access_scope; the account stays role=user.
+  var body = (roleSel === 'invoices_ro')
+    ? {username:username, password:password, display_name:display, role:'user', access_scope:'invoices_ro'}
+    : {username:username, password:password, display_name:display, role:roleSel};
+  var r = await req('POST', '/users', body);
   if (r.ok) {
-    msg.style.color='#0F8A6B'; msg.textContent='\u2713 User created';
+    msg.style.color='#0F8A6B'; msg.textContent=(roleSel==='invoices_ro')?'\u2713 Accountant login created (invoices, view-only)':'\u2713 User created';
     document.getElementById('nu-display').value='';
     document.getElementById('nu-username').value='';
     document.getElementById('nu-password').value='';
