@@ -325,19 +325,6 @@ def real_user_id():
     return session.get('user_id')
 
 
-def current_scope():
-    """The access scope of the logged-in user. '' for a normal full user."""
-    u = current_user()
-    return (u.get('access_scope') or '') if u else ''
-
-
-def is_invoice_viewer():
-    """True if this login is a scoped, view-only Invoicing account (an external
-    accountant/CA). Such a login may only read/print invoices — never create,
-    edit or delete anything, and never see any other module."""
-    return current_scope() == 'invoices_ro'
-
-
 def _tenant_owns_candidate(conn, cid):
     """True if candidate `cid` belongs to the current tenant (company).
     owner_id stores the company id, so this enforces cross-agency isolation."""
@@ -525,65 +512,6 @@ def admin_required(f):
     return decorated
 
 
-# ── Scoped-login gate: external accountant / CA (invoices, view-only) ────────
-# A single choke-point that runs before every request. If the logged-in user is
-# a scoped Invoicing viewer, it permits ONLY what that role legitimately needs
-# and refuses everything else — regardless of which URL is hit or how. This is
-# the real boundary; hiding buttons in the UI is convenience, not security.
-#
-# Allowed for an invoice viewer:
-#   • any non-/api/ path  (the SPA page, /login, static assets, sw.js, icons)
-#   • a small GET whitelist: the boot/auth endpoints + invoice viewing/printing
-#   • POST /api/auth/logout  (so they can sign out)
-# Denied (403) for an invoice viewer:
-#   • every write (POST/PUT/DELETE) except logout  → no create/edit/delete/paid/convert
-#   • every other module's API                     → invoicing only
-_INVOICE_RO_GET_EXACT = {
-    '/api/auth/status', '/api/me', '/api/workspace',
-    '/api/invoices', '/api/invoices/summary', '/api/invoices/next-number',
-    '/api/billing/me',
-}
-
-
-def _invoice_ro_path_allowed(method, path):
-    """True if a GET `path` is one an invoice-viewer may read. POST is handled
-    separately (only logout). Path is request.path (no query string)."""
-    if method != 'GET':
-        return False
-    if path in _INVOICE_RO_GET_EXACT:
-        return True
-    # /api/invoices/<id>  and  /api/invoices/<id>/print  — view + PDF download.
-    m = re.match(r'^/api/invoices/(\d+)(/print)?$', path)
-    if m:
-        return True
-    return False
-
-
-@app.before_request
-def _invoice_ro_gate():
-    # OPTIONS pre-flight is never a data action; let CORS handle it.
-    if request.method == 'OPTIONS':
-        return None
-    if not session.get('user_id'):
-        return None                      # not logged in → normal auth flow
-    if current_scope() != 'invoices_ro':
-        return None                      # full user → unaffected
-
-    path = request.path or ''
-    # Non-API paths: the app shell, login page, static files, service worker,
-    # icons, manifest. These carry no tenant data of other modules.
-    if not path.startswith('/api/'):
-        return None
-    # The one write they may perform: sign out.
-    if request.method == 'POST' and path == '/api/auth/logout':
-        return None
-    # Everything else must be a whitelisted GET.
-    if _invoice_ro_path_allowed(request.method, path):
-        return None
-    # Refuse. 404 rather than 403 so the login cannot even map the surface.
-    return jsonify({'error': 'Not found'}), 404
-
-
 @app.route('/api/diag')
 @admin_required
 def diag():
@@ -664,7 +592,6 @@ def auth_status():
         'id': u['id'], 'username': u['username'], 'display_name': u['display_name'],
         'role': u['role'], 'company': own_company,
         'is_company_admin': (u.get('role') == 'admin' or u.get('is_company_admin') == 1),
-        'access_scope': (u.get('access_scope') or ''),
         'workflow_mode': (get_setting('workflow_mode', 'agency') or 'agency')
     }, 'viewing_as': viewing, 'pending_count': pending_count})
 
@@ -1347,7 +1274,6 @@ def list_users():
     conn = get_db()
     rows = conn.execute('''SELECT u.id, u.username, u.display_name, u.role, u.created_at,
                                   u.last_login, u.status, u.company_name, u.company_id,
-                                  u.access_scope,
                                   co.name AS company_label, co.status AS company_status
                            FROM users u LEFT JOIN companies co ON co.id = u.company_id
                            ORDER BY u.id''').fetchall()
@@ -1381,12 +1307,6 @@ def create_user():
     # recruiters (role='user'); optionally flag as their company's admin.
     role = 'user'
     is_company_admin = 1 if d.get('is_company_admin') else 0
-    # A scoped, view-only login (external accountant/CA). It is NEVER an admin
-    # and only the whitelisted value is accepted — anything else is treated as
-    # a normal full user.
-    access_scope = 'invoices_ro' if (d.get('access_scope') == 'invoices_ro') else ''
-    if access_scope:
-        is_company_admin = 0
     # Only the platform owner may place a user in a DIFFERENT company; everyone
     # else (incl. agency admins) can only add to their own company.
     if is_admin() and d.get('company_id'):
@@ -1395,21 +1315,19 @@ def create_user():
         company_id = current_company_id()
     if not username or len(password) < 8:
         return jsonify({'error': 'Username required and password min 8 chars'}), 400
-    # Enforce the agency's seat (user) limit set by the platform owner. A scoped
-    # view-only account is not a recruiter seat, so it is exempt from that cap.
-    if not access_scope:
-        _lim = company_user_limit(company_id)
-        if _lim and company_approved_users(company_id) >= _lim:
-            return jsonify({'error': f'User limit reached ({_lim} recruiters). Ask the platform owner to increase your limit.'}), 403
+    # Enforce the agency's seat (user) limit set by the platform owner.
+    _lim = company_user_limit(company_id)
+    if _lim and company_approved_users(company_id) >= _lim:
+        return jsonify({'error': f'User limit reached ({_lim} recruiters). Ask the platform owner to increase your limit.'}), 403
     conn = get_db()
     exists = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
     if exists:
         conn.close()
         return jsonify({'error': 'Username already taken'}), 400
-    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_id,is_company_admin,access_scope) VALUES (?,?,?,?,?,?,?,?,?)',
-                 (username, hash_password(password), display, role, ts(), 'approved', company_id, is_company_admin, access_scope))
+    conn.execute('INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_id,is_company_admin) VALUES (?,?,?,?,?,?,?,?)',
+                 (username, hash_password(password), display, role, ts(), 'approved', company_id, is_company_admin))
     conn.commit(); conn.close()
-    log_activity('create_user', username + (' (accountant · view-only)' if access_scope else ' (recruiter)'))
+    log_activity('create_user', username + ' (recruiter)')
     return jsonify({'ok': True})
 
 @app.route('/api/users/<int:uid>/password', methods=['POST'])
@@ -2796,14 +2714,6 @@ def init_db():
         pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
-    except sqlite3.OperationalError:
-        pass
-    # A restricted, scoped login. '' = a normal full user (recruiter/admin).
-    # 'invoices_ro' = an external accountant/CA who may only VIEW the Invoicing
-    # section (read + print), nothing else. Enforced server-side by a global
-    # gate (see _invoice_ro_gate); the UI restriction is convenience only.
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN access_scope TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
     c.execute('''CREATE TABLE IF NOT EXISTS password_resets (
@@ -6040,7 +5950,15 @@ def _extension_score_match():
     #            evidence at all, but not quite nothing either
     CREDIT = {'resume': 1.0, 'profile': 0.5, 'weak': 0.15, 'none': 0.0}
 
-    def evidence(term):
+    def evidence(term, prox=False):
+        if prox:
+            if have_resume and term_present_prox(term, resume_lc):
+                return 'resume'
+            if term_present_prox(term, profile_lc) or term_present_prox(term, chips_lc):
+                return 'profile'
+            if weak_lc and term_present_prox(term, weak_lc):
+                return 'weak'
+            return 'none'
         """Strongest source this term can be traced to."""
         if have_resume and term_present(term, resume_lc):
             return 'resume'
@@ -6066,7 +5984,7 @@ def _extension_score_match():
                 best_term, best_ev = None, 'none'
                 RANK = {'none': 0, 'weak': 1, 'profile': 2, 'resume': 3}
                 for t in terms:
-                    e = evidence(t)
+                    e = evidence(t, prox=True)      # titles survive column-mix
                     if RANK[e] > RANK[best_ev]:
                         best_term, best_ev = t, e
                     if best_ev == 'resume':
@@ -7832,6 +7750,26 @@ def term_matcher(term):
         if len(_TERM_RX_CACHE) < 4000:
             _TERM_RX_CACHE[term] = rx
     return rx
+
+
+def term_present_prox(term, text, slack=2):
+    """Proximity match for a MULTI-WORD term: every word within a window of
+    len(words)+slack consecutive tokens. Fixes titles broken by two-column CV
+    layouts (Naukri injects the other column mid-title). Single words fall back
+    to strict word-boundary matching so short tokens never loosen."""
+    words=[w for w in re.split(r'[\s\-\._]+', (term or '').strip()) if w]
+    if not words: return False
+    if len(words)==1: return term_present(term, text)
+    toks=re.findall(r'[a-z0-9]+', (text or '').lower())
+    def variants(w):
+        wl=w.lower(); return (wl, wl+'s', wl+'es')
+    varsets=[variants(w) for w in words]
+    span=len(words)+slack
+    for i in range(len(toks)):
+        wnd=toks[i:i+span]
+        if len(wnd)<len(words): break
+        if all(any(tk in vs for tk in wnd) for vs in varsets): return True
+    return False
 
 
 def term_present(term, *texts):
@@ -12193,22 +12131,17 @@ APPROVAL_STATUSES = ('pending', 'approved', 'rejected')
 APPROVAL_ACTIONS = ('submitted', 'approved', 'rejected')
 
 
-def _validate_planning_fields(d, requested_headcount=None, allow_approved_headcount=False,
-                              current_approved_headcount=None):
+def _validate_planning_fields(d, requested_headcount=None, allow_approved_headcount=False):
     """(ok, error, cleaned). Controlled values only — no free-text priorities.
 
     A field absent from the payload is left alone; a field present but empty
     clears it. Nothing is inferred.
 
     `approved_headcount` is NOT an ordinary planning field. It records what
-    management signed off, so it is only *changed* through an approval action
-    (`allow_approved_headcount`). An ordinary edit is allowed to *carry* the
-    field only when it does not actually change the stored value — this is the
-    common case of a client that resends the whole mandate row (which includes
-    approved_headcount) purely to update some other field such as status. Such
-    a no-op resend is ignored, not rejected. An ordinary edit that tries to
-    change the value to something different is still rejected outright, so the
-    caller knows the value was not applied.
+    management signed off, so it is only accepted when the caller is performing
+    an approval action (`allow_approved_headcount`). An ordinary edit that
+    carries it is rejected outright rather than silently ignored, so the caller
+    knows the value was not applied.
     """
     cleaned = {}
     for field, allowed, label in (('priority', PRIORITIES, 'Priority'),
@@ -12233,35 +12166,24 @@ def _validate_planning_fields(d, requested_headcount=None, allow_approved_headco
 
     if 'approved_headcount' in d:
         if not allow_approved_headcount:
-            # Ordinary edit. Tolerate a no-op resend of the stored value (a
-            # whole-row PUT that carries approved_headcount but does not intend
-            # to touch it); reject only a genuine attempt to change it.
-            _sent_raw = d.get('approved_headcount')
-            _sent = str(_sent_raw).strip() if _sent_raw not in (None, '') else ''
-            _cur = ('' if current_approved_headcount in (None, '')
-                    else str(current_approved_headcount).strip())
-            if _sent == _cur:
-                pass  # unchanged → silently leave it alone, do not write it
-            else:
-                return False, ('Approved headcount can only be set through an approval action, '
-                               'not an ordinary edit'), {}
+            return False, ('Approved headcount can only be set through an approval action, '
+                           'not an ordinary edit'), {}
+        v = str(d.get('approved_headcount') or '').strip()
+        if v == '':
+            cleaned['approved_headcount'] = None   # not yet decided
         else:
-            v = str(d.get('approved_headcount') or '').strip()
-            if v == '':
-                cleaned['approved_headcount'] = None   # not yet decided
-            else:
-                try:
-                    n = int(v)
-                except (TypeError, ValueError):
-                    return False, 'Approved headcount must be a whole number', {}
-                if n < 0:
-                    return False, 'Approved headcount cannot be negative', {}
-                # No existing business rule anywhere in this codebase permits
-                # approving more capacity than was requested, so it is rejected.
-                if requested_headcount is not None and n > int(requested_headcount or 0):
-                    return False, (f'Approved headcount ({n}) cannot exceed the requested '
-                                   f'headcount ({int(requested_headcount or 0)})'), {}
-                cleaned['approved_headcount'] = n
+            try:
+                n = int(v)
+            except (TypeError, ValueError):
+                return False, 'Approved headcount must be a whole number', {}
+            if n < 0:
+                return False, 'Approved headcount cannot be negative', {}
+            # No existing business rule anywhere in this codebase permits
+            # approving more capacity than was requested, so it is rejected.
+            if requested_headcount is not None and n > int(requested_headcount or 0):
+                return False, (f'Approved headcount ({n}) cannot exceed the requested '
+                               f'headcount ({int(requested_headcount or 0)})'), {}
+            cleaned['approved_headcount'] = n
     return True, None, cleaned
 
 
@@ -12738,44 +12660,6 @@ def duplicate_mandate(mid):
     return jsonify({'ok': True, 'id': new_id, 'notes_copied': copied_notes})
 
 
-@app.route('/api/mandates/<int:mid>/status', methods=['POST'])
-@login_required
-def set_mandate_status(mid):
-    """Change ONLY the requisition status (active / hold / closed / draft).
-
-    A focused endpoint that writes the single `status` column and nothing
-    else. It exists so a status change can never be blocked by validation of
-    unrelated fields (headcount, org links, planning data) that a whole-row
-    payload might carry. Tenant-ownership is enforced; 'central' is not an
-    assignable status (that pool is managed internally, not from the UI).
-    """
-    d = request.json or {}
-    _st = str(d.get('status') or '').strip().lower()
-    # Only these three are user-assignable from the pipeline. 'draft' stays
-    # allowed for parity with the requisition lifecycle; 'central' never is.
-    if _st not in ('draft', 'active', 'hold', 'closed'):
-        return jsonify({'error': 'Invalid status'}), 400
-
-    conn = get_db()
-    own = conn.execute('SELECT owner_id, status, role, client FROM mandates WHERE id=?',
-                       (mid,)).fetchone()
-    if not own or own['owner_id'] != effective_user_id():
-        conn.close(); return jsonify({'error': 'Not found'}), 404
-    # The Central Database pool is not an ordinary opening and its status is
-    # not editable through this path.
-    if (own['status'] or '') == 'central':
-        conn.close(); return jsonify({'error': 'This pool cannot change status'}), 400
-
-    conn.execute('UPDATE mandates SET status=? WHERE id=?', (_st, mid))
-    conn.commit(); conn.close()
-    log_activity('mandate_status',
-                 f"{own['role']}"
-                 + (f" @ {own['client']}" if own['client'] else '')
-                 + f" → {_st}",
-                 entity_type='mandate', entity_id=mid)
-    return jsonify({'ok': True, 'id': mid, 'status': _st})
-
-
 @app.route('/api/mandates/<int:mid>', methods=['PUT'])
 @login_required
 def update_mandate(mid):
@@ -12803,14 +12687,9 @@ def update_mandate(mid):
 
     # Validated before ANY write, so a rejected value leaves the requisition
     # completely unmodified — same contract as the org-link validation above.
-    # approved_headcount cannot be *changed* here; it belongs to the approval
-    # action. But a whole-row PUT (e.g. a status change that resends the full
-    # mandate) legitimately carries the current value, so we pass the stored
-    # value in — an unchanged resend is tolerated, only a real change rejected.
-    _cur_appr = conn.execute('SELECT approved_headcount FROM mandates WHERE id=?',
-                             (mid,)).fetchone()
-    _pok, _perr, _plan = _validate_planning_fields(
-        d, current_approved_headcount=(_cur_appr['approved_headcount'] if _cur_appr else None))
+    # approved_headcount is deliberately NOT accepted here; it belongs to the
+    # approval action, and supplying it is rejected rather than ignored.
+    _pok, _perr, _plan = _validate_planning_fields(d)
     if not _pok:
         conn.close(); return jsonify({'error': _perr}), 400
 
