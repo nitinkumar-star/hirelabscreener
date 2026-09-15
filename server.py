@@ -15957,13 +15957,14 @@ OUTPUT FORMAT — strict, no exceptions:
 <h3>What We Offer</h3>
 <ul><li>...</li></ul>
 
-CONTENT RULES:
+CONTENT RULES — write a FULL-LENGTH, detailed JD. Depth is wanted; do not summarise or compress:
 - Job Snapshot: include a <li> ONLY for a field that was actually supplied. Omit the rest — never write "N/A", "TBD", "Not specified", and never invent a value.
-- About the Role: 2-4 sentences in a single <p>.
-- Key Responsibilities: 6-8 bullets, each a complete action sentence.
-- Required Skills & Experience: 6-8 bullets, specific to the role and sector (products, standards, tools, customer segments) — no generic filler.
-- Qualifications: 2-4 bullets (degree, certifications, domain exposure).
-- What We Offer: 3-5 bullets on growth, ownership, exposure, team and stability.
+- About the Role: 4-6 sentences in a single <p> — the business context, why the role exists, who it reports to, and the scope it owns.
+- Key Responsibilities: 10-14 bullets. Each is a complete sentence naming the activity AND its outcome or measure. Cover the full scope of the job — delivery, stakeholders, commercial/technical ownership, reporting, compliance, team.
+- Required Skills & Experience: 8-12 bullets, concrete and sector-specific — products, standards, tools, customer segments, project types. No generic filler like "good communication skills" unless you say exactly what it is used for.
+- Qualifications: 3-5 bullets (degree, certifications, domain exposure, preferred extras).
+- What We Offer: 4-6 bullets on growth, ownership, exposure, team, stability and learning.
+- Longer is better than shorter here, as long as every line is specific and true to the role. Never end early, never write "etc." as a substitute for listing items.
 - NEVER mention CTC, salary, package, LPA, compensation, budget, pay, perks-in-money or any figure related to money — anywhere in the JD, including the Snapshot and What We Offer.
 - Do not invent a company description if the client name was not supplied.
 - Indian context (notice-period norms, regional markets). Professional English, no emojis."""
@@ -16110,6 +16111,34 @@ def strip_ctc_from_jd_text(text):
     return ' '.join(kept).strip()
 
 
+# Email clients ignore <style> blocks and apply their own defaults, which makes
+# a bare <h3>/<ul> JD look oversized and unevenly spaced. Every tag therefore
+# carries its own inline style on the way out.
+_JD_EMAIL_STYLES = {
+    'h3': ('margin:16px 0 6px;font-family:Arial,Helvetica,sans-serif;font-size:14px;'
+           'line-height:1.4;font-weight:bold;color:#0F2F4F'),
+    'p':  ('margin:0 0 10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;'
+           'line-height:1.6;color:#222222'),
+    'ul': 'margin:0 0 12px;padding-left:20px',
+    'ol': 'margin:0 0 12px;padding-left:20px',
+    'li': ('margin:0 0 5px;font-family:Arial,Helvetica,sans-serif;font-size:14px;'
+           'line-height:1.6;color:#222222'),
+}
+
+
+def jd_html_for_email(html):
+    """Same JD markup, with inline styles so it survives Gmail/Outlook."""
+    if not html:
+        return ''
+
+    def _style(m):
+        name = m.group(1).lower()
+        st = _JD_EMAIL_STYLES.get(name)
+        return '<%s style="%s">' % (name, st) if st else m.group(0)
+
+    return re.sub(r'<(h3|p|ul|ol|li)(?:\s[^>]*)?>', _style, html, flags=re.I)
+
+
 @app.route('/api/crm/clients-billing', methods=['GET'])
 @login_required
 def crm_clients_billing():
@@ -16161,7 +16190,7 @@ def generate_jd():
     user_msg = "Write the Job Description for:\n" + "\n".join(parts)
     try:
         rr = call_deepseek(ds_key,
-            {'model': 'deepseek-chat', 'temperature': 0.6, 'max_tokens': 1400,
+            {'model': 'deepseek-chat', 'temperature': 0.6, 'max_tokens': 4000,
              'messages': [{'role': 'system', 'content': JD_WRITER_PROMPT},
                           {'role': 'user', 'content': user_msg}]},
             timeout=150, endpoint='jd-writer')
@@ -16496,6 +16525,22 @@ def _text_to_html(text):
             + safe.replace('\n', '<br>') + '</div>')
 
 
+def _wrap_email_html(html):
+    """Give the outgoing HTML one inline-styled base container.
+
+    A bare fragment inherits whatever each client defaults to — Gmail, Outlook
+    and Apple Mail all disagree on font, size and heading margins, which is why
+    a JD pasted into a mail looked nothing like it did in the JD editor. One
+    wrapper with inline typography makes them agree.
+    """
+    if not html or not html.strip():
+        return html
+    if re.search(r'<(?:html|body)\b', html, flags=re.I):
+        return html          # already a full document — leave it alone
+    return ('<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;'
+            'line-height:1.6;color:#222222">' + html + '</div>')
+
+
 def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
                        in_reply_to='', references='', thread_id='', candidate_id=None,
                        append_signature=True, attachment_ids=None, forward_from_email_id=None,
@@ -16519,9 +16564,9 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
     if append_signature and sig_plain and not _has_signature(text):
         text = text + '\n\n' + sig_plain
     if body_html:
-        html = body_html
+        html = _wrap_email_html(body_html)
     else:
-        html = _text_to_html(body_text or '')
+        html = _wrap_email_html(_text_to_html(body_text or ''))
     if append_signature and sig_html and not _has_signature(body_text or ''):
         html = html + sig_html
 
@@ -21659,7 +21704,7 @@ def mandate_jd_clean(mid):
         return jsonify({'ok': True, 'html': '', 'text': ''})
     if not m['jd']:
         return jsonify({'ok': True, 'html': '', 'text': ''})
-    html = strip_ctc_from_jd_html(normalize_jd_html(m['jd']))
+    html = jd_html_for_email(strip_ctc_from_jd_html(normalize_jd_html(m['jd'])))
     return jsonify({'ok': True,
                     'html': html,
                     'text': strip_ctc_from_jd_text(html_to_text(m['jd']))})

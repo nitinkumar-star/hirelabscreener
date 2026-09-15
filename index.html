@@ -3913,6 +3913,7 @@ function buildJDEditor(id, value) {
     }
   });
   toolbarHtml += '<span class="jd-sep"></span><button type="button" class="jd-tb-btn" style="width:auto;padding:0 10px;background:#534AB7;color:#fff;font-weight:600" title="AI se JD likhwao" onclick="generateJDForEditor(\'' + id + '\')">&#10024; AI Write JD</button>';
+  toolbarHtml += '<button type="button" class="jd-tb-btn" style="width:auto;padding:0 10px;margin-left:4px" title="JD ko AI se chhota karo (optional)" onclick="shortenJDNow(\'' + id + '\')">&#9986; Shorten</button>';
   toolbarHtml += '</div>';
 
   // value may be plain text (legacy) or HTML — detect and wrap plain text in <p>
@@ -3948,6 +3949,29 @@ async function generateJDForEditor(targetId){
   toast('OK','JD ready — edit karke Save karo');
 }
 
+// Shortening is now opt-in only. Pasting or generating a JD never shrinks it;
+// this runs only when the recruiter clicks Shorten, and asks first because the
+// full version is replaced.
+async function shortenJDNow(targetId){
+  var ed=document.getElementById(targetId); if(!ed) return;
+  var fullText=(ed.innerText||ed.textContent||'').trim();
+  if(!fullText){ toast('JD','Editor khali hai'); return; }
+  if(!((S.settings&&S.settings.deepseek_api_key)||'')){ toast('ERR','Pehle Settings me DeepSeek API key daalo'); return; }
+  if(!confirm('AI se is JD ko chhota karein?\n\nPoori JD ('+fullText.length+' chars) replace ho jayegi. Full length rakhni hai to Cancel karo.')) return;
+  var prev=ed.innerHTML;
+  ed.innerHTML='<p style="color:#888">&#9986; Shortening…</p>';
+  var sr;
+  try{ sr=await req('POST','/shorten-jd',{text:fullText,max_chars:1500}); }
+  catch(e){ ed.innerHTML=prev; toast('ERR','Shorten fail'); return; }
+  if(sr && sr.ok && sr.shortened){
+    ed.innerHTML=shortenedJDToHtml(sr.shortened.trim());
+    toast('OK','JD shortened ('+sr.shortened.trim().length+' chars) — review karke Save karo');
+  } else {
+    ed.innerHTML=prev;
+    toast('ERR',esc((sr&&sr.error)||'Could not shorten'));
+  }
+}
+
 function attachJDToolbar() {
   document.querySelectorAll('.jd-toolbar').forEach(function(bar) {
     var targetId = bar.dataset.target;
@@ -3975,38 +3999,68 @@ function attachJDToolbar() {
       editor.addEventListener('mouseup', function(){ updateJDToolbarState(bar); });
       editor.addEventListener('focus', function(){ updateJDToolbarState(bar); });
 
-      // Clean paste: strip all formatting from Word/Docs/Naukri pastes.
-      // Only manual toolbar formatting (B/I/U/Heading/Lists) should ever
-      // end up in the JD, so email/AI conversion stays predictable.
-      // After pasting, if the JD is too long for Gmail's compose URL,
-      // automatically shorten it via DeepSeek and replace the content.
-      editor.addEventListener('paste', async function(e) {
+      // Clean paste: strip Word/Docs/Naukri formatting, then rebuild the
+      // structure ourselves. The JD is NEVER shortened on paste — every line
+      // the recruiter pasted survives; only the markup is rewritten into the
+      // same h3/ul/li shape the AI writer produces.
+      editor.addEventListener('paste', function(e) {
         e.preventDefault();
         var text = (e.clipboardData || window.clipboardData).getData('text/plain') || '';
-        // Insert as plain text at the cursor position
-        document.execCommand('insertText', false, text);
-
-        var JD_CHAR_LIMIT = 1500; // safe size for Gmail compose URL + email template
-        var fullText = (editor.innerText || editor.textContent || '').trim();
-        if (fullText.length <= JD_CHAR_LIMIT) return;
-
-        var dsKey = (S.settings && S.settings.deepseek_api_key) || '';
-        if (!dsKey) {
-          toast('ERR', 'JD is long (' + fullText.length + ' chars) — add a DeepSeek API key in Settings to auto-shorten it');
-          return;
-        }
-
-        toast('OK', 'JD is long (' + fullText.length + ' chars) — shortening with AI...');
-        var sr = await req('POST', '/shorten-jd', {text: fullText, max_chars: JD_CHAR_LIMIT});
-        if (sr.ok && sr.shortened) {
-          editor.innerHTML = shortenedJDToHtml(sr.shortened.trim());
-          toast('OK', 'JD shortened by AI (' + sr.shortened.trim().length + ' chars) — review and save');
+        if (!text) return;
+        var trimmed = text.trim();
+        // A multi-line chunk is a whole JD -> structure it. A short inline
+        // paste is just editing, so leave it as plain text.
+        if (trimmed.indexOf('\n') >= 0 && trimmed.length > 120) {
+          var html = plainJDToHtml(trimmed);
+          var ok = false;
+          try { ok = document.execCommand('insertHTML', false, html); } catch(err) {}
+          if (!ok) { editor.innerHTML = (editor.innerHTML || '') + html; }
+          toast('OK', 'JD formatted — full text kept, review and Save');
         } else {
-          toast('ERR', 'Could not shorten JD: ' + (sr.error || 'unknown error') + '. Please shorten it manually.');
+          document.execCommand('insertText', false, text);
         }
       });
     }
   });
+}
+
+// Section names that appear in real-world JDs (Naukri, Word, LinkedIn exports)
+// as bare lines with no bullet or markdown marker.
+var JD_HEADING_RE = /^(job\s+snapshot|about\s+(the\s+)?(role|company|us|client)|company\s+(profile|overview)|job\s+(description|summary|title|purpose|overview|profile)|role\s+(summary|overview|purpose|description)|position\s+(summary|overview)|key\s+responsibilities|responsibilities|roles?\s*(&|and|\/)?\s*responsibilities|key\s+(deliverables|result\s+areas)|kra|duties|requirements?|required\s+skills.*|skills?\s*(&|and|\/)?\s*(experience|competencies)?|technical\s+skills|desired\s+candidate\s+profile|candidate\s+profile|who\s+(we\s+are\s+looking|you\s+are).*|qualifications?|education(al)?\s+qualifications?|experience|preferred\s+qualifications?|nice\s+to\s+have|what\s+we\s+offer|benefits?|perks.*|compensation.*|why\s+join.*|reporting\s+(to|structure)|work\s+location|location|industry|functional\s+area|employment\s+type|key\s+skills|about\s+us)\s*$/i;
+
+// Rebuilds a pasted plain-text JD into the editor's tag set WITHOUT dropping a
+// single line. Headings are detected from known section names, trailing colons
+// and short all-caps lines; everything else becomes a bullet or a paragraph.
+function plainJDToHtml(text) {
+  function esc2(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function inline(s) { return esc2(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>'); }
+  var lines = String(text || '').replace(/\r/g, '').split('\n');
+  var out = '', inList = false;
+  function closeList() { if (inList) { out += '</ul>'; inList = false; } }
+  for (var i = 0; i < lines.length; i++) {
+    var ln = lines[i].replace(/\s+$/, '').trim();
+    if (!ln) { closeList(); continue; }
+    // Markdown heading, or a line that is entirely bold
+    var m = ln.match(/^#{1,6}\s*(.+?)\s*#*$/) || ln.match(/^\*\*(.+?)\*\*\s*:?$/);
+    if (m) { closeList(); out += '<h3>' + esc2(m[1]) + '</h3>'; continue; }
+    // Bullet or numbered item
+    var b = ln.match(/^(?:[-*\u2022\u25cf\u25cb\u25aa\u00b7\u2023\u2043>]|\d+[.)]|\(\d+\))\s+(.+)$/);
+    if (b) {
+      if (!inList) { out += '<ul>'; inList = true; }
+      out += '<li>' + inline(b[1]) + '</li>';
+      continue;
+    }
+    var bare = ln.replace(/[:\uFF1A]\s*$/, '').trim();
+    var words = bare.split(/\s+/).length;
+    var isHeading = JD_HEADING_RE.test(bare)
+      || (/[:\uFF1A]$/.test(ln) && bare.length <= 60 && words <= 7)
+      || (ln.length <= 60 && ln === ln.toUpperCase() && /[A-Z]{3}/.test(ln) && !/[.!?]$/.test(ln));
+    if (isHeading) { closeList(); out += '<h3>' + esc2(bare) + '</h3>'; continue; }
+    closeList();
+    out += '<p>' + inline(ln) + '</p>';
+  }
+  closeList();
+  return out;
 }
 
 function updateJDToolbarState(bar) {
@@ -9089,7 +9143,7 @@ function openEmailPanel(cid, candidateEmail, mandateId){
     + '<button onclick="emailFmt(\'justifyCenter\')" class="fmt-btn" title="Center">&#8633;</button>'
     + '<button onclick="emailFmt(\'insertUnorderedList\')" class="fmt-btn" title="Bullet List">&#8226;</button>'
     + '</div>'
-    + '<div id="email-body" contenteditable="true" style="min-height:140px;max-height:300px;overflow-y:auto;padding:10px;font-size:13px;line-height:1.6;font-family:sans-serif;outline:none" data-placeholder="Dear Candidate,..."></div>'
+    + '<div id="email-body" contenteditable="true" style="min-height:140px;max-height:300px;overflow-y:auto;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#222222;outline:none" data-placeholder="Dear Candidate,..."></div>'
     + '</div></div>'
     + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px">'
     + '<button id="email-send-btn" onclick="sendEmailFromPanel()" class="btn btn-g" style="font-size:12px;padding:8px 18px">&#128228; Send</button>'
@@ -9460,7 +9514,10 @@ function _getEmailBody(){
   if(!el) return '';
   var h = el.innerHTML || '';
   // Preserve line breaks: <br> and closing block tags -> newline, then strip tags.
+  // List items keep a bullet marker so the plain-text alternative of the email
+  // still reads as a list (a JD is mostly bullets).
   h = h.replace(/<br\s*\/?>/gi, '\n')
+       .replace(/<li[^>]*>/gi, '\n• ')
        .replace(/<\/(p|div|li|h[1-6]|tr|blockquote)>/gi, '\n')
        .replace(/<[^>]+>/g, '');
   // Decode HTML entities (&amp; &nbsp; etc.) so the stored plain text is clean.
