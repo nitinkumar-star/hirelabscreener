@@ -5222,6 +5222,7 @@ async function _cmpCtx(){
     }catch(e){}
   }
   window._cmpCtxKey=to; window._cmpCtxVal=ctx;
+  await _ensureJdForCtx(ctx);
   return ctx;
 }
 async function cmpApplyTemplate(){
@@ -5230,9 +5231,10 @@ async function cmpApplyTemplate(){
   var t=(window._cmpTpls||[])[i]; if(!t) return;
   var ctx=await _cmpCtx();
   var subEl=document.getElementById('cmp-sub'); var ed=document.getElementById('cmp-editor');
-  if(subEl && t.subject) subEl.value=fillTplVars(t.subject,ctx);
-  if(ed){ var b=fillTplVars(t.body||'',ctx);
-    ed.innerHTML=(/<[a-z!/][\s\S]*>/i.test(b)) ? b : b.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+  if(subEl && t.subject) subEl.value=fillTplVars(t.subject,ctx,false);
+  if(ed){ var raw=t.body||'';
+    var base=(/<[a-z!/][\s\S]*>/i.test(raw)) ? raw : raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+    ed.innerHTML=fillTplVars(base,ctx,true); }
   sel.value='-1';
 }
 function ebRenderAttachList(){
@@ -7480,7 +7482,7 @@ function savedTemplatesHTML(s){
   return '<div style="margin-top:16px;border-top:1px dashed #ddd;padding-top:14px">'
     + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:14px">&#128196;</span>'
     + '<div style="font-size:13px;font-weight:700;color:var(--navy)">Email Templates</div></div>'
-    + '<div style="font-size:10.5px;color:var(--muted);margin-bottom:10px;line-height:1.5">Pick one from the dropdown to view/edit, or create a new one. Type <b>{</b> in the body to auto-suggest variables, or use <b>Insert variable</b>.</div>'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-bottom:10px;line-height:1.5">Pick one from the dropdown to view/edit, or create a new one. Type <b>{</b> in the body to auto-suggest variables, or use <b>Insert variable</b>.<br><b>{jd}</b> pulls in the job\'s saved JD automatically (CTC lines removed) &mdash; write the JD once on the job, reuse it in every email.</div>'
     + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">'
     + '<select class="inp" id="et-sel" onchange="etSelect()" style="font-size:12px;min-width:220px;flex:1"></select>'
     + '<button class="btn btn-o" style="font-size:12px" onclick="etNew()">&#43; New</button></div>'
@@ -7510,7 +7512,8 @@ var ET_VARS=[
   {tag:'{recruiter}', label:'Your name'},
   {tag:'{company}', label:'Your company'},
   {tag:'{ctc}', label:'Current CTC'},
-  {tag:'{notice}', label:'Notice period'}
+  {tag:'{notice}', label:'Notice period'},
+  {tag:'{jd}', label:'Job description (from the job, no CTC)'}
 ];
 function etTB(cmd,label){ return '<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="etCmd(\''+cmd+'\')">'+label+'</button>'; }
 var _etRange=null;
@@ -8987,11 +8990,13 @@ async function campRecipients(id){
 // template written once in Settings behaves identically everywhere.
 // Unknown/empty values deliberately leave the {tag} in place, so the recruiter
 // can SEE what could not be filled instead of sending a blank.
-function _tplVarMap(ctx){
+function _tplVarMap(ctx, asHtml){
   ctx = ctx || {};
   var c = ctx.cand || {}, m = ctx.mand || {}, st = (window.S && S.settings) || {};
   var full = String(c.name || '').trim();
   var first = full ? full.split(/\s+/)[0] : '';
+  // {jd} is rich text in an email body, plain text in a subject line.
+  var jd = asHtml ? (ctx.jdHtml || ctx.jdText || '') : (ctx.jdText || '');
   return {
     '{name}':        full,
     '{first_name}':  first,
@@ -9001,13 +9006,27 @@ function _tplVarMap(ctx){
     '{recruiter}':   st.recruiter_name || st.smtp_display_name || '',
     '{company}':     st.company_name || st.seller_name || '',
     '{ctc}':         c.ctc_current ? (c.ctc_current + ' LPA') : '',
-    '{notice}':      c.notice_period ? (c.notice_period + ' days') : ''
+    '{notice}':      c.notice_period ? (c.notice_period + ' days') : '',
+    '{jd}':          jd
   };
 }
-function fillTplVars(text, ctx){
+// Loads the job's JD once per context so {jd} resolves without the recruiter
+// having to ask AI for a JD every time. CTC is stripped server-side.
+async function _ensureJdForCtx(ctx){
+  if(!ctx || ctx._jdLoaded) return ctx;
+  ctx._jdLoaded = true; ctx.jdHtml = ''; ctx.jdText = '';
+  var mid = (ctx.mand && ctx.mand.id) || null;
+  if(!mid) return ctx;
+  try{
+    var r = await req('GET', '/mandates/' + mid + '/jd-clean');
+    if(r && !r.error){ ctx.jdHtml = r.html || ''; ctx.jdText = r.text || ''; }
+  }catch(e){}
+  return ctx;
+}
+function fillTplVars(text, ctx, asHtml){
   var out = String(text == null ? '' : text);
   if(!out) return out;
-  var map = _tplVarMap(ctx);
+  var map = _tplVarMap(ctx, asHtml);
   Object.keys(map).forEach(function(k){
     var v = map[k];
     if(v === null || v === undefined || v === '') return;   // leave tag visible
@@ -9192,6 +9211,7 @@ async function _ensureEmailCtx(){
   if(mid){
     try{ var m = await req('GET', '/mandates/' + mid); if(m && !m.error) ctx.mand = m; }catch(e){}
   }
+  await _ensureJdForCtx(ctx);
   S._emailCtx = ctx;
   return ctx;
 }
@@ -9208,11 +9228,13 @@ async function applyEmailTemplate(){
   if(!t) return;
   var ctx = await _ensureEmailCtx();
   var subj = document.getElementById('email-subject');
-  if(subj) subj.value = fillTplVars(t.subject || '', ctx);
+  if(subj) subj.value = fillTplVars(t.subject || '', ctx, false);
   var be = document.getElementById('email-body');
   if(be){
-    var b = fillTplVars(t.body || '', ctx);
-    be.innerHTML = _etLooksHtml(b) ? b : _etToHtml(b);
+    // Convert the template to HTML BEFORE substituting, so a plain-text
+    // template keeps its line breaks and the injected JD keeps its markup.
+    var raw = t.body || '';
+    be.innerHTML = fillTplVars(_etLooksHtml(raw) ? raw : _etToHtml(raw), ctx, true);
   }
 }
 

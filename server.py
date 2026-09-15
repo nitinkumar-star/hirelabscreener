@@ -15932,16 +15932,182 @@ def set_candidate_billing(cid):
     return jsonify({'ok': True, 'billing': res})
 
 
-JD_WRITER_PROMPT = """You are an expert recruitment consultant writing a professional Job Description for an Indian hiring mandate (sectors often: Solar, Electrical, Automation, Renewable Energy, Power). Write a clear, realistic, well-structured JD.
+JD_WRITER_PROMPT = """You are an expert recruitment consultant writing a professional Job Description for an Indian hiring mandate (sectors often: Solar, Electrical, Automation, Renewable Energy, Power). Write a clear, realistic, recruiter-ready JD.
 
-Output ONLY clean HTML (no markdown, no code fences, no <html>/<body> wrapper). Use this structure:
-<h3>About the Role</h3><p>...</p>
-<h3>Key Responsibilities</h3><ul><li>...</li>...</ul>
-<h3>Required Skills &amp; Experience</h3><ul><li>...</li>...</ul>
-<h3>Qualifications</h3><ul><li>...</li></ul>
-<h3>What We Offer</h3><ul><li>...</li></ul>
+OUTPUT FORMAT — strict, no exceptions:
+- Output ONLY clean HTML. No markdown at all (never **bold**, never "- " bullets, never "#" headings), no code fences, no <html>/<body>/<div> wrapper, no style or class attributes.
+- Use ONLY these tags: <h3>, <p>, <ul>, <li>, <strong>.
+- Follow this EXACT section order, with these EXACT headings:
 
-Rules: Be specific to the role and sector. 5-8 responsibilities, 5-8 skills. Reflect the given experience range and location. Do not invent a fake company description if the client isn't given. Keep it concise and recruiter-ready. Indian context (CTC in LPA, notice period norms)."""
+<h3>Job Snapshot</h3>
+<ul>
+<li><strong>Role:</strong> ...</li>
+<li><strong>Company:</strong> ...</li>
+<li><strong>Location:</strong> ...</li>
+<li><strong>Experience:</strong> ...</li>
+</ul>
+<h3>About the Role</h3>
+<p>...</p>
+<h3>Key Responsibilities</h3>
+<ul><li>...</li></ul>
+<h3>Required Skills &amp; Experience</h3>
+<ul><li>...</li></ul>
+<h3>Qualifications</h3>
+<ul><li>...</li></ul>
+<h3>What We Offer</h3>
+<ul><li>...</li></ul>
+
+CONTENT RULES:
+- Job Snapshot: include a <li> ONLY for a field that was actually supplied. Omit the rest — never write "N/A", "TBD", "Not specified", and never invent a value.
+- About the Role: 2-4 sentences in a single <p>.
+- Key Responsibilities: 6-8 bullets, each a complete action sentence.
+- Required Skills & Experience: 6-8 bullets, specific to the role and sector (products, standards, tools, customer segments) — no generic filler.
+- Qualifications: 2-4 bullets (degree, certifications, domain exposure).
+- What We Offer: 3-5 bullets on growth, ownership, exposure, team and stability.
+- NEVER mention CTC, salary, package, LPA, compensation, budget, pay, perks-in-money or any figure related to money — anywhere in the JD, including the Snapshot and What We Offer.
+- Do not invent a company description if the client name was not supplied.
+- Indian context (notice-period norms, regional markets). Professional English, no emojis."""
+
+
+# ── JD post-processing ─────────────────────────────────────────────────────
+# DeepSeek is asked for clean HTML, but LLM output drifts: sometimes markdown,
+# sometimes <h2>/<b>/styled <div> soup. Rather than hoping the prompt holds, we
+# normalise whatever comes back into the exact tag set the JD editor styles.
+# The same normaliser is reused when a saved JD (possibly pasted plain text) is
+# pushed into an email, so both paths render identically.
+
+_JD_ALLOWED_TAGS = {'h3', 'p', 'ul', 'ol', 'li', 'strong', 'em', 'br'}
+
+# Anything money-related is stripped from generated JDs and from the JD that
+# goes out in emails/WhatsApp — client budget never leaves the ATS.
+_JD_CTC_KEYWORDS = ('ctc', 'salary', 'compensation', 'package', 'lpa', 'lakh',
+                    'stipend', 'remuneration', 'pay range', 'pay scale', 'budget',
+                    'per annum', 'in-hand', 'in hand', 'take home', 'take-home',
+                    'emolument')
+
+
+def _jd_esc(t):
+    return (str(t).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+
+def _jd_inline_md(t):
+    """Escape text, then re-apply bold/italic markdown as real tags."""
+    t = _jd_esc(t)
+    t = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', t)
+    t = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', t)
+    t = re.sub(r'`([^`]+)`', r'\1', t)
+    return t
+
+
+def _jd_md_to_html(text):
+    """Turn markdown / plain text into the JD editor's tag set."""
+    out, in_list = [], False
+    for raw in (text or '').splitlines():
+        ln = raw.strip()
+        if not ln:
+            if in_list:
+                out.append('</ul>'); in_list = False
+            continue
+        m = re.match(r'^#{1,6}\s*(.+?)\s*#*$', ln)
+        if not m:
+            # A line that is entirely bold is being used as a heading
+            m = re.match(r'^\*\*(.+?)\*\*\s*:?$', ln)
+        if m:
+            if in_list:
+                out.append('</ul>'); in_list = False
+            out.append('<h3>' + _jd_esc(m.group(1)) + '</h3>')
+            continue
+        m = re.match(r'^(?:[-*\u2022\u25cf]|\d+[.)])\s+(.+)$', ln)
+        if m:
+            if not in_list:
+                out.append('<ul>'); in_list = True
+            out.append('<li>' + _jd_inline_md(m.group(1)) + '</li>')
+            continue
+        if in_list:
+            out.append('</ul>'); in_list = False
+        out.append('<p>' + _jd_inline_md(ln) + '</p>')
+    if in_list:
+        out.append('</ul>')
+    return ''.join(out)
+
+
+def normalize_jd_html(raw):
+    """Return JD markup restricted to <h3>/<p>/<ul>/<ol>/<li>/<strong>/<em>/<br>."""
+    if not raw:
+        return ''
+    s = str(raw).strip()
+    s = re.sub(r'^```[a-zA-Z]*\s*', '', s)
+    s = re.sub(r'```\s*$', '', s).strip()
+    s = re.sub(r'<!DOCTYPE[^>]*>', '', s, flags=re.I)
+    s = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', s, flags=re.I | re.S)
+    s = re.sub(r'</?(?:html|head|body|main|article|section|div|span|font)[^>]*>', '', s, flags=re.I)
+
+    # No block-level HTML at all -> it is markdown or plain text
+    if not re.search(r'<(h[1-6]|p|ul|ol|li)\b', s, flags=re.I):
+        return _jd_md_to_html(s)
+
+    # Markdown that leaked into otherwise-HTML output
+    s = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', s, flags=re.S)
+    s = re.sub(r'^\s*#{1,6}\s*(.+?)\s*$', r'<h3>\1</h3>', s, flags=re.M)
+    # Every heading level collapses to h3 (the only one the editor styles)
+    s = re.sub(r'<(/?)h[1-6][^>]*>', r'<\1h3>', s, flags=re.I)
+    s = re.sub(r'<(/?)(?:b|bold)>', r'<\1strong>', s, flags=re.I)
+    s = re.sub(r'<(/?)i>', r'<\1em>', s, flags=re.I)
+
+    def _clean_tag(m):
+        closing, name = m.group(1), m.group(2).lower()
+        if name not in _JD_ALLOWED_TAGS:
+            return ''                      # drop the tag, keep its text
+        if name == 'br':
+            return '<br>'
+        return '<' + closing + name + '>'  # drop every attribute
+
+    s = re.sub(r'<(/?)([a-zA-Z][a-zA-Z0-9]*)(?:\s[^>]*)?/?>', _clean_tag, s)
+    for _ in range(2):
+        s = re.sub(r'<(h3|p|li|strong|em)>\s*(?:<br>\s*)*</\1>', '', s, flags=re.I)
+        s = re.sub(r'<(ul|ol)>\s*</\1>', '', s, flags=re.I)
+    s = re.sub(r'[ \t]{2,}', ' ', s)
+    s = re.sub(r'\n{2,}', '\n', s)
+    return s.strip()
+
+
+def _jd_mentions_money(text):
+    t = (text or '').lower()
+    return any(k in t for k in _JD_CTC_KEYWORDS)
+
+
+def strip_ctc_from_jd_html(html):
+    """Remove money-related headings, sections, bullets and paragraphs."""
+    if not html:
+        return ''
+    s = str(html)
+
+    def _section(m):
+        heading = re.sub(r'<[^>]+>', '', m.group(1))
+        return '' if _jd_mentions_money(heading) else m.group(0)
+
+    # A whole "Compensation" section = its <h3> plus the block right after it
+    s = re.sub(r'<h3[^>]*>(.*?)</h3>\s*(?:<ul[^>]*>.*?</ul>|<ol[^>]*>.*?</ol>|<p[^>]*>.*?</p>)?',
+               _section, s, flags=re.I | re.S)
+
+    def _item(m):
+        return '' if _jd_mentions_money(re.sub(r'<[^>]+>', '', m.group(0))) else m.group(0)
+
+    s = re.sub(r'<li[^>]*>.*?</li>', _item, s, flags=re.I | re.S)
+    s = re.sub(r'<p[^>]*>.*?</p>', _item, s, flags=re.I | re.S)
+    s = re.sub(r'<(ul|ol)[^>]*>\s*</\1>', '', s, flags=re.I)
+    # A heading whose content was just emptied out
+    s = re.sub(r'<h3[^>]*>[^<]*</h3>\s*(?=<h3|$)', '', s, flags=re.I)
+    return s.strip()
+
+
+def strip_ctc_from_jd_text(text):
+    """Clause-level money strip for plain-text JD (WhatsApp / plain email)."""
+    if not text or not text.strip():
+        return ''
+    parts = re.split(r'(?<=[.\n;])\s+', text)
+    kept = [p for p in parts if not _jd_mentions_money(p)]
+    return ' '.join(kept).strip()
 
 
 @app.route('/api/crm/clients-billing', methods=['GET'])
@@ -15988,8 +16154,8 @@ def generate_jd():
         parts.append(f"Client / Company: {d['client']}")
     if d.get('location'): parts.append(f"Location: {d['location']}")
     if d.get('experience'): parts.append(f"Experience required: {d['experience']}")
-    if d.get('ctc_min') or d.get('ctc_max'):
-        parts.append(f"CTC range: {d.get('ctc_min','')}-{d.get('ctc_max','')} LPA")
+    # CTC is deliberately NOT sent — client budget must never appear in a JD
+    # that gets shared with candidates.
     if d.get('division'): parts.append(f"Division/Department: {d['division']}")
     if d.get('notes'): parts.append(f"Extra instructions from recruiter: {d['notes']}")
     user_msg = "Write the Job Description for:\n" + "\n".join(parts)
@@ -16011,8 +16177,11 @@ def generate_jd():
         html = rr.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
         return jsonify({'error': f'Unexpected DeepSeek response: {e}'}), 502
-    # strip accidental code fences
-    html = re.sub(r'^```[a-zA-Z]*\n?|```$', '', html).strip()
+    # Never trust the model's formatting — force it into the editor's tag set,
+    # then remove anything money-related that slipped through.
+    html = strip_ctc_from_jd_html(normalize_jd_html(html))
+    if not html:
+        return jsonify({'error': 'AI returned an empty JD. Try again.'}), 502
     return jsonify({'ok': True, 'html': html})
 
 
@@ -21468,15 +21637,32 @@ def candidate_jd_text(cid):
     conn.close()
     if not m:
         return jsonify({'ok': True, 'jd': ''})
-    jd = html_to_text(m['jd']) if m['jd'] else ''
-    if jd.strip():
-        # Sentence/clause-level strip: drop only the bits mentioning
-        # compensation, keep the rest of the JD intact.
-        _kws = ['ctc', 'salary', 'compensation', 'package', 'lpa', 'lakh', 'stipend',
-                'remuneration', 'pay range', 'budget', 'per annum', 'in-hand', 'take home']
-        parts = re.split(r'(?<=[.\n;])\s+', jd)
-        jd = ' '.join([p for p in parts if not any(k in p.lower() for k in _kws)]).strip()
+    jd = strip_ctc_from_jd_text(html_to_text(m['jd'])) if m['jd'] else ''
     return jsonify({'ok': True, 'jd': jd.strip()})
+
+
+@app.route('/api/mandates/<int:mid>/jd-clean')
+@login_required
+def mandate_jd_clean(mid):
+    """The mandate JD, normalised and with all money references removed.
+
+    Returns both a rich-text and a plain-text form so the {jd} email-template
+    variable renders correctly in an HTML body as well as a plain subject line.
+    """
+    conn = get_db()
+    m = conn.execute('SELECT jd, assigned_user_id FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, effective_company_id())).fetchone()
+    conn.close()
+    if not m:
+        return jsonify({'ok': True, 'html': '', 'text': ''})
+    if not is_company_admin() and m['assigned_user_id'] != real_user_id():
+        return jsonify({'ok': True, 'html': '', 'text': ''})
+    if not m['jd']:
+        return jsonify({'ok': True, 'html': '', 'text': ''})
+    html = strip_ctc_from_jd_html(normalize_jd_html(m['jd']))
+    return jsonify({'ok': True,
+                    'html': html,
+                    'text': strip_ctc_from_jd_text(html_to_text(m['jd']))})
 
 
 # ── Agent learning: capture how the recruiter approves/edits AI drafts, so the
