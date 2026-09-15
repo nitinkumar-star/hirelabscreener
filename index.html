@@ -3951,12 +3951,15 @@ async function generateJDForEditor(targetId){
 function attachJDToolbar() {
   document.querySelectorAll('.jd-toolbar').forEach(function(bar) {
     var targetId = bar.dataset.target;
-    bar.querySelectorAll('.jd-tb-btn').forEach(function(btn) {
+    bar.querySelectorAll('.jd-tb-btn[data-cmd]').forEach(function(btn) {
       btn.addEventListener('click', function(e) {
+        var cmd = btn.dataset.cmd;
+        // Buttons that carry their own onclick (AI Write JD) share the toolbar
+        // class for styling but have no execCommand behaviour — leave them be.
+        if (!cmd) return;
         e.preventDefault();
         var editor = document.getElementById(targetId);
         if (editor) editor.focus();
-        var cmd = btn.dataset.cmd;
         if (cmd.indexOf('formatBlock:') === 0) {
           document.execCommand('formatBlock', false, '<' + cmd.split(':')[1] + '>');
         } else {
