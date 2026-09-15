@@ -5941,7 +5941,10 @@ function renderProfileDetail(c){
   // Notes
   var notesCard='<div class="cp-card2"><div class="cp-lbl2">Notes</div>'
     +'<div style="display:flex;gap:8px"><input class="inp" id="cp-note-'+c.id+'" placeholder="Add a note…" style="flex:1" onkeydown="if(event.key===\'Enter\')cpAddNote('+c.id+')"><button class="btn btn-o" onclick="cpAddNote('+c.id+')">Add</button></div>'
-    +'<div style="font-size:11px;color:var(--muted);margin-top:8px">Notes save to the candidate journey (History tab).</div></div>';
+    +'<div style="font-size:11px;color:var(--muted);margin-top:8px">Notes save to the candidate journey shown below.</div></div>';
+
+  // Candidate Journey (was the "History" tab — now rendered inline under Notes)
+  var historyCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">Candidate Journey</div><button class="cp-hbtn" onclick="cpLoadHistory('+c.id+')">&#8635; Refresh</button></div><div id="cp-hist-'+c.id+'"><div class="loading" style="padding:12px"><div class="spinner"></div>Loading…</div></div></div>';
 
   // Tags (product / function)
   var productTags=[]; try{productTags=JSON.parse(c.product_handles||'[]');}catch(e){}
@@ -6018,11 +6021,11 @@ function renderProfileDetail(c){
 
   // Reminder popup hidden holder is not needed; reminders are inline.
   // Tab bar
-  var tabs=[['overview','Overview'],['ai','&#10024; AI Analysis'],['billing','&#128176; Placement &amp; Billing'],['resume','Resume'],['comms','Communications'],['call','Call Analysis'],['history','History']];
+  var tabs=[['overview','Overview'],['ai','&#10024; AI Analysis'],['billing','&#128176; Placement &amp; Billing'],['resume','Resume'],['comms','Communications'],['call','Call Analysis']];
   html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
-  html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+'</div><div>'+keyFacts+reminders+workCard+_cpOrgShell(c.id)+_cpInterviewShell(c.id)+'</div></div></div>';
+  html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+historyCard+'</div><div>'+keyFacts+reminders+workCard+_cpOrgShell(c.id)+_cpInterviewShell(c.id)+'</div></div></div>';
   // AI Analysis (capability-first hiring-manager evaluation)
   html+='<div class="cp-pane" id="cp-pane-ai" style="display:none"><div id="cp-ai-'+c.id+'"></div></div>';
   // Placement & Billing (closes the lifecycle: Joined -> Invoiced -> Paid)
@@ -6033,8 +6036,7 @@ function renderProfileDetail(c){
   html+='<div class="cp-pane" id="cp-pane-comms" style="display:none">'+waCard+emailCard+'</div>';
   // Call Analysis (its own tab, next to Communications)
   html+='<div class="cp-pane" id="cp-pane-call" style="display:none">'+callCard+'</div>';
-  // History
-  html+='<div class="cp-pane" id="cp-pane-history" style="display:none"><div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">Candidate Journey</div><button class="cp-hbtn" onclick="cpLoadHistory('+c.id+')">&#8635; Refresh</button></div><div id="cp-hist-'+c.id+'"><div class="loading" style="padding:12px"><div class="spinner"></div>Loading…</div></div></div></div>';
+  // History pane removed — Candidate Journey now renders inline under Notes in Overview.
 
   el.innerHTML=html;
   window._cpCid=c.id;
@@ -6058,7 +6060,7 @@ function renderProfileDetail(c){
 }
 
 function cpTab(name){
-  ['overview','ai','billing','resume','comms','call','history'].forEach(function(t){
+  ['overview','ai','billing','resume','comms','call'].forEach(function(t){
     var p=document.getElementById('cp-pane-'+t); if(p) p.style.display=(t===name)?'block':'none';
     var b=document.getElementById('cp-tab-'+t); if(b) b.classList.toggle('active', t===name);
   });
@@ -6066,7 +6068,7 @@ function cpTab(name){
   if(!cid) return;
   if(name==='comms'){ try{ cpLoadEmailThread(cid); }catch(e){} try{ cpLoadWaThread(cid); }catch(e){} startWaPoll(cid); }
   else { stopWaPoll(); }
-  if(name==='history'){ cpLoadHistory(cid); }
+  if(name==='overview'){ try{ cpLoadHistory(cid); }catch(e){} }
   if(name==='ai'){ cpLoadDeepAnalysis(cid); }
   if(name==='billing'){ try{ cpLoadBilling(cid); }catch(e){} }
 }
@@ -6303,7 +6305,7 @@ async function cpLoadHistory(cid){
   var r;
   try{ r=await req('GET','/candidates/'+cid+'/journey'); }catch(e){ box.innerHTML='<div style="color:#B42318;font-size:12px;padding:12px">Could not load journey: '+esc(String(e))+'</div>'; return; }
   if(r && r.error){ box.innerHTML='<div style="color:#B42318;font-size:12px;padding:12px">Journey error: '+esc(String(r.error))+'</div>'; return; }
-  if(!r||!r.events||!r.events.length){ box.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px">No journey events yet. Add a note in Overview to start.</div>'; return; }
+  if(!r||!r.events||!r.events.length){ box.innerHTML='<div style="color:var(--muted);font-size:12px;padding:12px">No journey events yet. Add a note above to start.</div>'; return; }
   var html=''; var lastDate='';
   r.events.forEach(function(e){
     var dl=_journeyDateLabel(e.ts);
