@@ -5635,7 +5635,7 @@ async function openInvoiceForm(id){
       +_invF('inv-cand','Candidate Name (Format 2 — blank = no name)',inv.candidate_name)+_invF('inv-role','Role',inv.role)
       +_invF('inv-desc','Description',inv.description||'Charge Towards Recruitment Services',true)
     +'</div>'
-    +'<div style="margin-top:8px"><label style="font-size:11px;font-weight:600;color:#555">Extra lines (one per line — optional)</label><textarea id="inv-extra" class="inp" rows="2" style="width:100%;font-size:12.5px" placeholder="Position: ...\nDate of Joining: ...">'+esc(extra)+'</textarea></div>'
+    +'<div style="margin-top:8px"><label style="font-size:11px;font-weight:600;color:#555">Extra lines (one per line — each prints on its own line)</label><textarea id="inv-extra" class="inp" rows="2" style="width:100%;font-size:12.5px" placeholder="Date of Joining: 01-Oct-2026&#10;Offered CTC: 18.00 LPA">'+esc(extra)+'</textarea></div>'
     +'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:8px">'
       +_invF('inv-qty','Quantity (CTC)',inv.quantity,'3913044')+_invF('inv-rate','Rate',inv.rate,'.1')
       +_invF('inv-per','per',inv.per||'CTC')+_invF('inv-hsn','HSN/SAC',inv.hsn||'998512')

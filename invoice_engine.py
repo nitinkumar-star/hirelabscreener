@@ -68,14 +68,38 @@ def build_invoice_html(d, for_print=True):
         cgst = round(taxable * (gst_rate/2) / 100, 2); sgst = cgst; igst = 0.0; tax_total = cgst + sgst
     gross = taxable + tax_total; rounded = round(gross); round_off = round(rounded - gross, 2)
 
-    cand_html = ''
+    # Placement details — one per line, label and value in aligned columns so a
+    # long name or designation never runs into the next field. Extra lines the
+    # user typed as "Label: value" (Date of Joining, Offered CTC, ...) get the
+    # same alignment; anything else prints as a full-width line.
+    def _detail_row(label, value):
+        if label is None:
+            return ('<div style="font-size:9.5pt;line-height:1.35;margin-top:3px">'
+                    + _esc(value) + '</div>')
+        return ('<div style="font-size:9.5pt;line-height:1.35;margin-top:3px;display:table;width:100%">'
+                '<span style="display:table-cell;white-space:nowrap;padding-right:4px">'
+                + _esc(label) + '</span>'
+                '<span style="display:table-cell;width:100%">: ' + _esc(value) + '</span></div>')
+
+    details = []
     if d.get('candidate_name'):
-        role = (' — ' + _esc(d['role'])) if d.get('role') else ''
-        cand_html = '<div style="font-weight:normal;font-size:9.5pt;margin-top:2px">Candidate: ' + _esc(d['candidate_name']) + role + '</div>'
-    extra_html = ''
+        details.append(('Candidate Name', d['candidate_name']))
+    if d.get('role'):
+        details.append(('Designation', d['role']))
     for ln in (d.get('extra_lines') or []):
-        if str(ln).strip():
-            extra_html += '<div style="font-size:9.5pt;margin-top:3px">' + _esc(ln) + '</div>'
+        s = str(ln).strip()
+        if not s:
+            continue
+        if ':' in s:
+            lab, val = s.split(':', 1)
+            lab, val = lab.strip(), val.strip()
+            if lab and val and len(lab) <= 30:
+                details.append((lab, val))
+                continue
+        details.append((None, s))
+
+    cand_html = ''.join(_detail_row(lab, val) for lab, val in details)
+    extra_html = ''
 
     if inter_state:
         tax_lines = '<div>IGST</div>'; tax_amt_lines = '<div>' + inr(igst) + '</div>'
