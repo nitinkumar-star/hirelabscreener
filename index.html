@@ -5597,7 +5597,7 @@ async function openInvoiceForm(id){
   window._invCrmClients=crmClients;
   window._invClientId=0;
   if(!id){ window._invNewDocType='tax'; }
-  if(id){ var r=await req('GET','/invoices/'+id); inv=(r&&r.invoice)||{}; window._invClientId=inv.client_id||0; }
+  if(id){ var r=await req('GET','/invoices/'+id); inv=(r&&r.invoice)||{}; window._invClientId=inv.client_id||0; window._invCandId=inv.candidate_id||0; }
   else { inv.doc_type=window._invNewDocType||'tax'; try{ var nn=await req('GET','/invoices/next-number?doc_type='+inv.doc_type); inv.invoice_no=nn.invoice_no; }catch(e){} inv.description='Charge Towards Recruitment Services'; inv.per='CTC'; inv.rate='.1'; inv.gst_rate=18; inv.invoice_date=new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).replace(/ /g,'-'); }
   if(!id && window._invPrefill){ inv.candidate_name=window._invPrefill.candidate_name||''; inv.role=window._invPrefill.role||''; if(window._invPrefill.amount) inv.amount=window._invPrefill.amount; window._invCandId=window._invPrefill.candidate_id||0; window._invPrefill=null; }
   else if(!id){ window._invCandId=0; }

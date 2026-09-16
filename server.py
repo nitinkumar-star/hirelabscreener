@@ -13884,12 +13884,41 @@ def update_invoice(iid):
         sets.append('received_amount=?'); vals.append(float(d['received_amount'] or 0))
     if 'consignee_same' in d:
         sets.append('consignee_same=?'); vals.append(1 if d['consignee_same'] else 0)
+    # Switching the CRM client on an edit used to update the printed buyer
+    # details but leave the invoice linked to the old client, which skewed the
+    # client-wise billing numbers.
+    if 'client_id' in d:
+        sets.append('client_id=?'); vals.append(int(d.get('client_id') or 0))
     if 'amount' in d:
         sets.append('amount=?'); vals.append(float(d['amount'] or 0))
     if 'gst_rate' in d:
         sets.append('gst_rate=?'); vals.append(float(d['gst_rate'] or 18))
     if 'extra_lines' in d:
         sets.append('extra_lines=?'); vals.append(json.dumps(d['extra_lines'] or []))
+    # The invoice number was missing from `cols` above, so an edit reported
+    # success while the number silently stayed as-is and the PDF kept printing
+    # the old one. It is editable now, but a GST invoice number must stay
+    # unique, so a clash is rejected rather than saved.
+    if 'invoice_no' in d:
+        new_no = str(d['invoice_no'] or '').strip()
+        if not new_no:
+            conn.close()
+            return jsonify({'error': 'Invoice number cannot be blank.'}), 400
+        clash = conn.execute(
+            'SELECT id FROM invoices WHERE owner_id=? AND invoice_no=? AND id<>? LIMIT 1',
+            (oid, new_no, iid)).fetchone()
+        if clash:
+            conn.close()
+            return jsonify({'error': 'Invoice number "%s" is already used by another invoice.' % new_no}), 400
+        sets.append('invoice_no=?'); vals.append(new_no)
+        # Keep fy/seq in step with the number the user typed, otherwise the next
+        # auto-generated invoice could reuse a number that now exists.
+        m_fy = re.search(r'(\d{4}-\d{2})', new_no)
+        if m_fy:
+            sets.append('fy=?'); vals.append(m_fy.group(1))
+        m_seq = re.search(r'(\d+)\s*$', new_no)
+        if m_seq:
+            sets.append('seq=?'); vals.append(int(m_seq.group(1)))
     sets.append('updated_at=?'); vals.append(ts())
     vals += [iid, oid]
     conn.execute(f'UPDATE invoices SET {",".join(sets)} WHERE id=? AND owner_id=?', tuple(vals))
