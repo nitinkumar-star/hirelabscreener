@@ -775,6 +775,9 @@ def auth_login():
     if u['status'] == 'rejected':
         conn.close()
         return jsonify({'error': 'This account request was declined. Contact your admin for access.'}), 403
+    if u['status'] == 'disabled':
+        conn.close()
+        return jsonify({'error': 'This account has been deactivated. Contact your admin for access.'}), 403
     # Block login if the tenant company is suspended (super-admin can suspend
     # an agency e.g. for non-payment). The platform owner is never blocked.
     if u['role'] != 'admin' and u['company_id']:
@@ -3948,6 +3951,15 @@ def init_db():
     except Exception as e:
         print(f'[modules] migration hook skipped: {e}')
 
+    # Audit fix: core init adds crm_clients.is_internal BEFORE modules/crm.py
+    # creates crm_clients, so on a FRESH database the ALTER silently failed and
+    # CRM / BD / Command Center crashed with "no such column: is_internal".
+    # Re-apply now that module tables exist (no-op on existing databases).
+    try:
+        c.execute('ALTER TABLE crm_clients ADD COLUMN is_internal INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit(); conn.close()
 
     # One-time safety migration: if this DB file still has a pending -wal file
@@ -5560,12 +5572,12 @@ def extension_push():
         _is_freelancer_upload = True
         try:
             from modules.freelancer import freelancer_can_access_mandate
-            ok_access = freelancer_can_access_mandate(_conn, real_user_id(), int(mid), effective_company_id())
+            ok_access = freelancer_can_access_mandate(_conn, real_user_id(), int(mid), effective_company_id(), require_active=True)
         except Exception:
             ok_access = False
         _conn.close()
         if not ok_access:
-            return jsonify({'error': 'This mandate is not assigned to you'}), 403
+            return jsonify({'error': 'This mandate is not assigned to you, or it is no longer active'}), 403
     else:
         _conn.close()
         if not _own or _own['owner_id'] != effective_user_id():
@@ -19425,6 +19437,14 @@ def upload_cv(cid):
         return ('', 204)
     if not session.get('user_id'):
         return jsonify({'error': 'auth_required', 'message': 'Please log into HireLab first.'}), 401
+    # Audit fix: this route had no ownership check, so any logged-in user of
+    # ANY tenant could overwrite (and delete) any candidate's CV. Checked
+    # BEFORE the file is written, so a denied request leaves nothing on disk.
+    _own_conn = get_db()
+    _owns = _tenant_owns_candidate(_own_conn, cid)
+    _own_conn.close()
+    if not _owns:
+        return jsonify({'error': 'Candidate not found'}), 404
     if 'cv' not in request.files: return jsonify({'error': 'No file uploaded'}), 400
     f = request.files['cv']
     ext = Path(f.filename).suffix.lower()
