@@ -217,7 +217,7 @@ _ROUTE_LABEL = {
     ('POST', 'send-email'): 'Email sent to candidate',
     ('POST', 'interview-message'): 'Interview message sent to candidate',
     ('POST', 'request-update'): 'Profile update requested from candidate',
-    ('POST', 'cv'): 'CV uploaded / replaced',
+    # POST cv: not labelled — the route writes its own 'CV uploaded: <file>' journey line
     ('DELETE', 'cv'): 'CV removed',
     ('POST', 'work-history'): 'Work history updated',
     ('POST', 'tags'): 'Tags updated',
@@ -297,6 +297,11 @@ def _ntf_before():
             conn.close()
         if not snap or not int(snap['row'].get('sourced_by') or 0):
             return   # not a freelancer's candidate — nothing to track
+        # Tenant check: a user of another company must never trigger a
+        # notification to this company's freelancer (some routes answer 200
+        # without touching a foreign row, e.g. log endpoints).
+        if snap['row'].get('owner_id') != effective_company_id():
+            return
         g._ntf = {'cid': cid, 'suffix': suffix, 'method': request.method, 'snap': snap}
     except Exception as e:
         print(f'[notifications] before-hook: {e}')
@@ -461,8 +466,20 @@ def ntf_ack():
         for i in ids:
             conn.execute("UPDATE notifications SET acked_at=?, read_at=CASE WHEN read_at='' THEN ? ELSE read_at END "
                          "WHERE id=? AND user_id=?", (now, now, i, uid))
+    _prune(conn, uid)
     conn.commit(); conn.close()
     return jsonify({'ok': True})
+
+
+def _prune(conn, uid):
+    """Keep the table small: drop this user's acknowledged notifications
+    older than 90 days. Cheap (indexed by user) and runs only on ack."""
+    try:
+        cutoff = (_now_dt() - datetime.timedelta(days=90)).isoformat(timespec='seconds')
+        conn.execute("DELETE FROM notifications WHERE user_id=? AND acked_at!='' AND updated_at<?",
+                     (uid, cutoff))
+    except Exception as e:
+        print(f'[notifications] prune: {e}')
 
 
 @bp.route('/notifications/read-all', methods=['POST'])

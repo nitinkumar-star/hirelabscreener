@@ -80,13 +80,131 @@ def _require_freelancer():
     return None
 
 
-def freelancer_can_access_mandate(conn, freelancer_user_id, mandate_id, company_id):
-    """Is this mandate assigned to this freelancer?"""
+# ══════════════════════════════════════════════════════════════════════════
+#  GLOBAL API GUARD  (security audit, Sep 2026)
+#
+#  Root cause fixed here: login_required only checks "is someone logged in",
+#  and core routes scope data by COMPANY. A freelancer belongs to the company,
+#  so before this guard a freelancer could read every candidate, every
+#  mandate's pipeline, billing, the central DB — and edit/delete candidates.
+#
+#  Fix = DENY BY DEFAULT: a freelancer session may call ONLY the API paths
+#  listed below. Every other /api/ path answers 403, including any route added
+#  in future — new features are safe unless someone deliberately allowlists
+#  them here.
+#
+#  Also: a user whose status is 'disabled' or 'rejected' loses their session
+#  on the next request (previously a deactivated freelancer stayed logged in).
+#
+#  Emergency switch: set env FREELANCER_API_GUARD=off on Render to disable the
+#  allowlist without a redeploy (the disabled-user check stays on).
+# ══════════════════════════════════════════════════════════════════════════
+import os
+import re as _re
+from flask import session as _session
+
+_FL_ALLOW = [
+    # (methods, regex)
+    (('GET',),          r'^/api/auth/status/?$'),
+    (('GET',),          r'^/api/workspace/?$'),                           # mode + labels only (read at boot)
+    (('POST',),         r'^/api/auth/(login|logout)/?$'),
+    (('GET', 'POST'),   r'^/api/freelancer/[a-z0-9-]+/?$'),           # own dashboard / mandates / candidates / dup-check
+    (('GET', 'POST'),   r'^/api/freelancer/candidates/\d+(/[a-z0-9-]+)?/?$'),  # own candidate read-only views (Wave 3)
+    (('GET', 'POST'),   r'^/api/notifications(/[a-z-]+)?/?$'),
+    (('GET',),          r'^/api/extension/mandates/?$'),
+    (('POST',),         r'^/api/extension/push/?$'),
+    (('POST',),         r'^/api/extension/score-match/?$'),              # + assignment check below
+    (('POST',),         r'^/api/candidates/\d+/cv/?$'),                   # + own-candidate check below
+]
+_FL_ALLOW = [(m, _re.compile(p)) for m, p in _FL_ALLOW]
+_CV_PATH = _re.compile(r'^/api/candidates/(\d+)/cv/?$')
+
+
+def _fl_path_allowed(method, path):
+    for methods, rx in _FL_ALLOW:
+        if method in methods and rx.match(path):
+            return True
+    return False
+
+
+@bp.before_app_request
+def _freelancer_api_guard():
+    path = request.path or ''
+    if not path.startswith('/api/') or request.method == 'OPTIONS':
+        return None
+    uid = _session.get('user_id')
+    if not uid:
+        return None                       # not logged in: normal login_required handles it
+    try:
+        conn = get_db()
+        u = conn.execute('SELECT id, role, status, company_id FROM users WHERE id=?', (uid,)).fetchone()
+        conn.close()
+    except Exception as e:
+        print(f'[fl-guard] user lookup failed: {e}')
+        return None
+    if not u:
+        return None
+
+    # 1) Deactivated / rejected accounts lose their live session immediately.
+    if (u['status'] or 'approved') in ('disabled', 'rejected'):
+        _session.clear()
+        if _re.match(r'^/api/auth/(status|login)/?$', path):
+            return None                   # let status report "logged out" / login show its own error
+        return jsonify({'error': 'auth_required', 'message': 'Your account is deactivated.'}), 401
+
+    if u['role'] != FREELANCER_ROLE:
+        return None
+    if (os.environ.get('FREELANCER_API_GUARD', 'on') or 'on').strip().lower() == 'off':
+        return None
+
+    # 2) Allowlist
+    if not _fl_path_allowed(request.method, path):
+        print(f'[fl-guard] blocked freelancer uid={uid} {request.method} {path}')
+        return jsonify({'error': 'Not available for freelancer accounts'}), 403
+
+    # 3) Row-level checks for the two shared routes
+    try:
+        m = _CV_PATH.match(path)
+        if m:
+            conn = get_db()
+            c = conn.execute('SELECT sourced_by, owner_id FROM candidates WHERE id=?',
+                             (int(m.group(1)),)).fetchone()
+            conn.close()
+            if not c or int(c['sourced_by'] or 0) != int(uid) or c['owner_id'] != u['company_id']:
+                print(f'[fl-guard] blocked CV upload uid={uid} cand={m.group(1)}')
+                return jsonify({'error': 'You can only attach CVs to candidates you uploaded'}), 403
+        elif path.startswith('/api/extension/score-match'):
+            mid = (request.get_json(silent=True) or {}).get('mandate_id')
+            try:
+                mid = int(mid)
+            except Exception:
+                return jsonify({'error': 'Pick an assigned mandate'}), 403
+            conn = get_db()
+            ok = freelancer_can_access_mandate(conn, int(uid), mid, u['company_id'])
+            conn.close()
+            if not ok:
+                return jsonify({'error': 'This mandate is not assigned to you'}), 403
+    except Exception as e:
+        print(f'[fl-guard] row check failed: {e}')
+        return jsonify({'error': 'Access check failed'}), 403
+    return None
+
+
+def freelancer_can_access_mandate(conn, freelancer_user_id, mandate_id, company_id,
+                                  require_active=False):
+    """Is this mandate assigned to this freelancer?
+    require_active=True additionally needs the mandate itself to be 'active'
+    (used for uploads — no new CVs into hold/closed mandates)."""
     row = conn.execute(
-        'SELECT id FROM mandate_freelancers WHERE mandate_id=? AND freelancer_user_id=? '
-        'AND company_id=? AND is_active=1',
-        (mandate_id, freelancer_user_id, company_id)).fetchone()
-    return bool(row)
+        'SELECT mf.id, m.status FROM mandate_freelancers mf JOIN mandates m ON m.id=mf.mandate_id '
+        'WHERE mf.mandate_id=? AND mf.freelancer_user_id=? AND mf.company_id=? AND mf.is_active=1 '
+        'AND m.owner_id=?',
+        (mandate_id, freelancer_user_id, company_id, company_id)).fetchone()
+    if not row:
+        return False
+    if require_active and (row['status'] or 'active') != 'active':
+        return False
+    return True
 
 
 def _freelancer_stats(conn, company_id, freelancer_user_id):
