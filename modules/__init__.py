@@ -30,6 +30,7 @@ _MODULE_NAMES = [
     'freelancer',
     'scheduler',
     'orgmap',
+    'notifications',
 ]
 
 _MIGRATIONS = []
