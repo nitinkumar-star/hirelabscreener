@@ -222,6 +222,46 @@ def reactivate_freelancer(uid):
     return jsonify({'ok': True})
 
 
+@bp.route('/freelancers/<int:uid>/assign-options', methods=['GET'])
+@login_required
+def freelancer_assign_options(uid):
+    """One call for the Assign Mandates modal (replaces 1 + N calls).
+    Returns:
+      active           — every ACTIVE mandate of the company, each with an
+                         `assigned` flag for this freelancer
+      assigned_inactive — mandates still assigned to this freelancer whose
+                         status is no longer active (hold/closed/draft), so the
+                         admin can clean them up
+    """
+    guard = _require_admin()
+    if guard:
+        return guard
+    conn = get_db()
+    company_id = effective_company_id()
+    u = conn.execute('SELECT id FROM users WHERE id=? AND company_id=? AND role=?',
+                     (uid, company_id, FREELANCER_ROLE)).fetchone()
+    if not u:
+        conn.close()
+        return jsonify({'error': 'Freelancer not found'}), 404
+    assigned_ids = {r['mandate_id'] for r in conn.execute(
+        'SELECT mandate_id FROM mandate_freelancers WHERE freelancer_user_id=? '
+        'AND company_id=? AND is_active=1', (uid, company_id)).fetchall()}
+    rows = conn.execute(
+        "SELECT id, role, client, location, status, created_at FROM mandates "
+        "WHERE owner_id=? AND COALESCE(status,'')!='central' ORDER BY created_at DESC",
+        (company_id,)).fetchall()
+    conn.close()
+    active, inactive = [], []
+    for r in rows:
+        d = dict(r)
+        d['assigned'] = r['id'] in assigned_ids
+        if (r['status'] or 'active') == 'active':
+            active.append(d)
+        elif d['assigned']:
+            inactive.append(d)
+    return jsonify({'ok': True, 'active': active, 'assigned_inactive': inactive})
+
+
 @bp.route('/mandates/<int:mid>/freelancers', methods=['GET'])
 @login_required
 def list_mandate_freelancers(mid):
