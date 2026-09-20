@@ -1665,6 +1665,7 @@ body{font-size:14px !important; line-height:1.5}
     <div style="width:30px;height:30px;border-radius:8px;background:#0F6E56;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800">H</div>
     <div style="font-size:15px;font-weight:700;letter-spacing:-.01em">HireLab <span style="font-weight:400;color:#9BB0C5">Sourcing</span></div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:16px">
+      <span id="ntf-bell-slot" data-dark="1"></span>
       <span id="fl-username" style="font-size:13px;color:#C9D6E3"></span>
       <button onclick="flLogout()" style="background:rgba(255,255,255,.1);border:none;color:#fff;font-size:12.5px;padding:6px 14px;border-radius:7px;cursor:pointer">Logout</button>
     </div>
@@ -2036,6 +2037,7 @@ async function init(){
   document.getElementById('app').style.display = 'flex';
   initSidebarResize();
   renderUserBar();
+  ntfStart();
   await loadMandates();
   renderSettings();
   updateTasksBadge();
@@ -2167,68 +2169,86 @@ async function reactivateFreelancer(uid){
 }
 
 // ─── Assign Mandates to a Freelancer ───────────────────────────────────
+// Shows ACTIVE mandates only, with a search box. Assignment state comes from
+// ONE call (/freelancers/<uid>/assign-options) instead of 1 + N calls.
 var _assignFreelancerId=0;
+var _assignData={active:[], assigned_inactive:[]};
 async function openAssignMandates(uid, name){
   _assignFreelancerId=uid;
-  var inner='<div id="assign-body"><div class="loading" style="padding:20px"><div class="spinner"></div>Loading mandates...</div></div>';
+  var inner='<input id="assign-search" class="inp" placeholder="&#128269; Search role, client or location..." autocomplete="off" '
+    +'oninput="_renderAssignList()" style="width:100%;box-sizing:border-box;margin-bottom:10px;font-size:13px">'
+    +'<div id="assign-body"><div class="loading" style="padding:20px"><div class="spinner"></div>Loading mandates...</div></div>'
+    +'<div style="margin-top:8px;font-size:11.5px;color:#667085">Only active mandates are shown. Changes save automatically as you tick/untick.</div>';
   _waOpenModal('Assign Mandates — '+name, inner);
-  // Load all mandates + which are already assigned
-  var mr=await req('GET','/mandates');
-  var mandates=(mr&&Array.isArray(mr))?mr:[];
-  // get currently-assigned mandate ids for this freelancer
-  var assigned={};
-  for(var i=0;i<mandates.length;i++){
-    // check assignment via mandate freelancers endpoint would be N calls; instead use my-mandates style
-  }
-  // Simpler: fetch assignments per mandate is heavy. We'll fetch the freelancer's assigned list.
-  var far=await req('GET','/mandates'); // list all
+  var r=await req('GET','/freelancers/'+uid+'/assign-options');
   var body=document.getElementById('assign-body');
   if(!body) return;
-  if(!mandates.length){ body.innerHTML='<div style="color:#667085;padding:16px;font-size:12.5px">No mandates yet. Create a mandate first.</div>'; return; }
+  if(!r || !r.ok){ body.innerHTML='<div style="color:#D92D20;padding:16px;font-size:12.5px">'+esc((r&&r.error)||'Failed to load mandates')+'</div>'; return; }
+  _assignData={active:r.active||[], assigned_inactive:r.assigned_inactive||[]};
+  _renderAssignList();
+  var si=document.getElementById('assign-search'); if(si) si.focus();
+}
 
-  // We need assignment state — fetch each mandate's freelancers is expensive;
-  // instead call a helper: reuse /mandates/<id>/freelancers for the small set.
-  var html='<div style="max-height:60vh;overflow:auto">';
-  html+='<div style="font-size:12px;color:#667085;margin-bottom:12px">Tick the mandates this freelancer is allowed to source on:</div>';
-  for(var j=0;j<mandates.length;j++){
-    var m=mandates[j];
-    html+='<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #E4E7EC;border-radius:9px;margin-bottom:8px;cursor:pointer">'
-      +'<input type="checkbox" class="assign-cb" data-mid="'+m.id+'" onchange="_toggleAssign('+m.id+',this.checked)">'
-      +'<div style="flex:1"><div style="font-size:13px;font-weight:600;color:#101828">'+esc(m.role)+'</div>'
-      +'<div style="font-size:11.5px;color:#667085">'+esc(m.client||'')+(m.location?' &middot; '+esc(m.location):'')+'</div></div>'
-      +'<span id="assign-status-'+m.id+'" style="font-size:11px;color:#98A2B3"></span>'
-      +'</label>';
+function _assignRow(m, inactive){
+  return '<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid '+(m.assigned?'#A6E3C8':'#E4E7EC')+';background:'+(m.assigned?'#F3FBF7':'#fff')+';border-radius:9px;margin-bottom:8px;cursor:pointer">'
+    +'<input type="checkbox" class="assign-cb" data-mid="'+m.id+'"'+(m.assigned?' checked':'')+' onchange="_toggleAssign('+m.id+',this.checked)">'
+    +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#101828">'+esc(m.role)+'</div>'
+    +'<div style="font-size:11.5px;color:#667085">'+esc(m.client||'')+(m.location?' &middot; '+esc(m.location):'')+'</div></div>'
+    +(inactive?'<span style="font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:6px;background:#F2F4F7;color:#667085">'+esc(m.status||'')+'</span>':'')
+    +'<span id="assign-status-'+m.id+'" style="font-size:11px;color:#0F6E56;font-weight:600;min-width:58px;text-align:right">'+(m.assigned?'Assigned':'')+'</span>'
+    +'</label>';
+}
+
+function _renderAssignList(){
+  var body=document.getElementById('assign-body');
+  if(!body) return;
+  var q=((document.getElementById('assign-search')||{}).value||'').trim().toLowerCase();
+  var match=function(m){
+    if(!q) return true;
+    return ((m.role||'')+' '+(m.client||'')+' '+(m.location||'')).toLowerCase().indexOf(q)>=0;
+  };
+  var act=_assignData.active.filter(match);
+  // Assigned ones first, then the rest (server order = newest first)
+  act.sort(function(a,b){ return (b.assigned?1:0)-(a.assigned?1:0); });
+  var inact=_assignData.assigned_inactive.filter(match);
+  var nAssigned=_assignData.active.filter(function(m){return m.assigned;}).length;
+
+  var html='<div style="font-size:12px;color:#667085;margin-bottom:10px">'
+    +_assignData.active.length+' active mandate'+(_assignData.active.length!==1?'s':'')
+    +' &middot; <b style="color:#0F6E56">'+nAssigned+' assigned</b>'
+    +(q?' &middot; '+act.length+' match'+(act.length!==1?'es':''):'')+'</div>';
+  html+='<div style="max-height:52vh;overflow:auto">';
+  if(!_assignData.active.length){
+    html+='<div style="color:#667085;padding:16px;font-size:12.5px">No active mandates. Activate or create a mandate first.</div>';
+  } else if(!act.length){
+    html+='<div style="color:#667085;padding:16px;font-size:12.5px">No active mandate matches "'+esc(q)+'".</div>';
+  } else {
+    act.forEach(function(m){ html+=_assignRow(m,false); });
+  }
+  if(inact.length){
+    html+='<div style="font-size:11px;font-weight:700;color:#98A2B3;text-transform:uppercase;letter-spacing:.4px;margin:14px 0 8px">Assigned but not active (untick to remove)</div>';
+    inact.forEach(function(m){ html+=_assignRow(m,true); });
   }
   html+='</div>';
-  html+='<div style="margin-top:8px;font-size:11.5px;color:#667085">Changes save automatically as you tick/untick.</div>';
   body.innerHTML=html;
-
-  // Mark currently assigned ones by querying each mandate's freelancer list
-  for(var k=0;k<mandates.length;k++){
-    (function(mid){
-      req('GET','/mandates/'+mid+'/freelancers').then(function(fr){
-        if(fr && fr.ok){
-          var has=(fr.freelancers||[]).some(function(x){ return x.uid===_assignFreelancerId; });
-          var cb=document.querySelector('.assign-cb[data-mid="'+mid+'"]');
-          if(cb) cb.checked=has;
-          var st=document.getElementById('assign-status-'+mid);
-          if(st && has) st.textContent='Assigned';
-        }
-      });
-    })(mandates[k].id);
-  }
 }
 
 async function _toggleAssign(mid, checked){
-  var st=document.getElementById('assign-status-'+mid);
-  if(checked){
-    var r=await req('POST','/mandates/'+mid+'/freelancers',{freelancer_user_id:_assignFreelancerId});
-    if(r.ok){ if(st) st.textContent='Assigned'; toast('OK','Assigned'); }
-    else { toast('ERR', r.error||'Failed'); }
+  var r = checked
+    ? await req('POST','/mandates/'+mid+'/freelancers',{freelancer_user_id:_assignFreelancerId})
+    : await req('DELETE','/mandates/'+mid+'/freelancers/'+_assignFreelancerId);
+  if(r && r.ok){
+    // Keep local state in sync so search/re-render shows the right tick
+    _assignData.active.forEach(function(m){ if(m.id===mid) m.assigned=checked; });
+    if(!checked){
+      _assignData.assigned_inactive=_assignData.assigned_inactive.filter(function(m){ return m.id!==mid; });
+    }
+    toast('OK', checked?'Assigned':'Removed');
+    _renderAssignList();
   } else {
-    var r2=await req('DELETE','/mandates/'+mid+'/freelancers/'+_assignFreelancerId);
-    if(r2.ok){ if(st) st.textContent=''; toast('OK','Removed'); }
-    else { toast('ERR', r2.error||'Failed'); }
+    toast('ERR', (r&&r.error)||'Failed');
+    var cb=document.querySelector('.assign-cb[data-mid="'+mid+'"]');
+    if(cb) cb.checked=!checked;   // revert the tick — nothing was saved
   }
 }
 
@@ -2242,6 +2262,7 @@ async function bootFreelancerApp(){
   var u=S.currentUser||{};
   document.getElementById('fl-username').textContent=u.display_name||u.username||'';
   flShowTab('dash');
+  ntfStart();
 }
 
 function flLogout(){
@@ -2516,6 +2537,283 @@ async function flViewJD(mandateId){
 }
 
 
+
+// ═══════════════════════════════════════════════════════════════════════
+//  NOTIFICATIONS — strong pop-up + bell (recruiter, admin AND freelancer)
+//  Server: modules/notifications.py.  Polls every 20s (and on tab focus).
+//  A pop-up stays on screen until "Got it" / "Open" — it does not auto-hide,
+//  and comes back after a reload until acknowledged.
+// ═══════════════════════════════════════════════════════════════════════
+var _ntf = { timer:null, pending:[], unread:0, seen:{}, started:false, baseTitle:document.title, flash:null, panelOpen:false };
+
+function ntfStart(){
+  if (_ntf.started) { ntfPoll(); return; }
+  _ntf.started = true;
+  ntfRenderBell();
+  ntfPoll();
+  _ntf.timer = setInterval(ntfPoll, 20000);
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden) { ntfStopFlash(); ntfPoll(); }
+  });
+  // Browsers only allow sound after the user has interacted with the page once.
+  var unlock = function(){ try{ _ntfAudioCtx(); }catch(e){} document.removeEventListener('click', unlock, true); };
+  document.addEventListener('click', unlock, true);
+}
+
+async function ntfPoll(){
+  var r;
+  try { r = await req('GET','/notifications/poll'); } catch(e){ return; }
+  if (!r || !r.ok) return;
+  _ntf.pending = r.pending || [];
+  _ntf.unread = r.unread || 0;
+  var fresh = [];
+  _ntf.pending.forEach(function(n){
+    var key = n.id + '|' + (n.updated_at||'');
+    if (!_ntf.seen[key]) { _ntf.seen[key] = 1; fresh.push(n); }
+  });
+  ntfRenderBell();
+  ntfRenderPopups(fresh.length > 0);
+  if (fresh.length) {
+    ntfBeep();
+    if (document.hidden) { ntfStartFlash(); ntfDesktop(fresh[0], fresh.length); }
+  }
+}
+
+// ── Sound: two-tone chime via WebAudio (no audio file needed) ──
+var _ntfCtx = null;
+function _ntfAudioCtx(){
+  if (!_ntfCtx) { var AC = window.AudioContext || window.webkitAudioContext; if (AC) _ntfCtx = new AC(); }
+  if (_ntfCtx && _ntfCtx.state === 'suspended') _ntfCtx.resume();
+  return _ntfCtx;
+}
+function ntfBeep(){
+  try {
+    var ctx = _ntfAudioCtx(); if (!ctx) return;
+    [[880,0],[1175,0.18],[880,0.42],[1175,0.60]].forEach(function(p){
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = p[0];
+      var t = ctx.currentTime + p[1];
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.35, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.18);
+    });
+  } catch(e){}
+}
+
+// ── Tab title flash + desktop notification while the tab is in background ──
+function ntfStartFlash(){
+  if (_ntf.flash) return;
+  _ntf.baseTitle = document.title.replace(/^\(\d+\) \uD83D\uDD14 /,'');
+  var on = false;
+  _ntf.flash = setInterval(function(){
+    on = !on;
+    var n = _ntf.pending.length;
+    document.title = on ? ('(' + n + ') \uD83D\uDD14 New notification') : _ntf.baseTitle;
+  }, 1000);
+}
+function ntfStopFlash(){
+  if (_ntf.flash) { clearInterval(_ntf.flash); _ntf.flash = null; }
+  if (_ntf.baseTitle) document.title = _ntf.baseTitle;
+}
+function ntfDesktop(n, count){
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    var body = (n.body||'').split('\n').slice(0,3).join('\n') + (count > 1 ? ('\n+' + (count-1) + ' more') : '');
+    var dn = new Notification(n.title || 'HireLab', { body: body, tag: 'hl-ntf-' + n.id, requireInteraction: true });
+    dn.onclick = function(){ window.focus(); ntfOpen(n.id); dn.close(); };
+  } catch(e){}
+}
+async function ntfEnableDesktop(){
+  if (typeof Notification === 'undefined') { toast('ERR','This browser does not support desktop notifications'); return; }
+  var p = await Notification.requestPermission();
+  if (p === 'granted') { toast('OK','Desktop alerts on'); try{ localStorage.setItem('hl_notif_enabled','1'); }catch(e){} }
+  else toast('ERR','Permission not given — allow notifications for this site in browser settings');
+  ntfRenderPanel();
+}
+
+// ── Pop-up cards (top-right, sticky) ──
+function _ntfMeta(n){
+  if (n.kind === 'fl_upload') return { icon:'\uD83D\uDCE5', label:'New CV from freelancer', color:'#0F6E56', bg:'#ECFDF3' };
+  return { icon:'\uD83D\uDCCB', label:'Update on your candidate', color:'#2D6FB3', bg:'#EEF4FF' };
+}
+function _ntfBodyHtml(body, max){
+  var lines = (body||'').split('\n').filter(Boolean);
+  var shown = lines.slice(0, max||8);
+  var h = shown.map(function(l){
+    var i = l.indexOf(': ');
+    if (i > 0 && i < 28) return '<div style="margin-top:3px"><span style="color:#667085">'+esc(l.slice(0,i))+':</span> <span style="color:#101828;font-weight:500">'+esc(l.slice(i+2))+'</span></div>';
+    return '<div style="margin-top:3px;color:#101828">'+esc(l)+'</div>';
+  }).join('');
+  if (lines.length > shown.length) h += '<div style="margin-top:3px;color:#98A2B3">+' + (lines.length-shown.length) + ' more</div>';
+  return h;
+}
+function _ntfAgo(t){
+  if (!t) return '';
+  var d = new Date(t.length <= 19 ? t + '+05:30' : t);
+  var s = Math.max(0, Math.round((Date.now() - d.getTime())/1000));
+  if (isNaN(s)) return '';
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s/60) + ' min ago';
+  if (s < 86400) return Math.floor(s/3600) + ' hr ago';
+  return Math.floor(s/86400) + ' d ago';
+}
+
+function ntfRenderPopups(animate){
+  var host = document.getElementById('ntf-pop-host');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'ntf-pop-host';
+    host.style.cssText = 'position:fixed;top:60px;right:14px;z-index:10050;width:390px;max-width:calc(100vw - 28px);max-height:calc(100vh - 74px);overflow-y:auto;display:flex;flex-direction:column;gap:10px;pointer-events:none;padding:4px';
+    document.body.appendChild(host);
+    if (!document.getElementById('ntf-style')) {
+      var st = document.createElement('style'); st.id = 'ntf-style';
+      st.textContent = '@keyframes ntfIn{0%{transform:translateX(120%);opacity:0}70%{transform:translateX(-8px);opacity:1}100%{transform:translateX(0)}}'
+        + '@keyframes ntfPulse{0%,100%{box-shadow:0 12px 34px rgba(16,24,40,.22),0 0 0 0 rgba(15,110,86,.45)}50%{box-shadow:0 12px 34px rgba(16,24,40,.22),0 0 0 8px rgba(15,110,86,0)}}'
+        + '.ntf-card{pointer-events:auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 12px 34px rgba(16,24,40,.22)}'
+        + '.ntf-card.ntf-new{animation:ntfIn .45s ease-out, ntfPulse 1.6s ease-in-out 3}'
+        + '.ntf-btn{border:none;border-radius:8px;font-size:12px;font-weight:600;padding:7px 13px;cursor:pointer}';
+      document.head.appendChild(st);
+    }
+  }
+  var list = _ntf.pending;
+  if (!list.length) { host.innerHTML = ''; return; }
+  var show = list.slice(0, 3);
+  var h = '';
+  show.forEach(function(n, idx){
+    var m = _ntfMeta(n);
+    h += '<div class="ntf-card' + (animate && idx === 0 ? ' ntf-new' : '') + '" style="border-left:5px solid ' + m.color + '">'
+      + '<div style="background:' + m.bg + ';padding:9px 14px;display:flex;align-items:center;gap:8px">'
+      +   '<span style="font-size:16px">' + m.icon + '</span>'
+      +   '<span style="font-size:11.5px;font-weight:800;color:' + m.color + ';text-transform:uppercase;letter-spacing:.5px">' + m.label + '</span>'
+      +   '<span style="margin-left:auto;font-size:11px;color:#667085">' + _ntfAgo(n.updated_at || n.created_at) + '</span>'
+      + '</div>'
+      + '<div style="padding:11px 14px 4px">'
+      +   '<div style="font-size:13.5px;font-weight:700;color:#101828;line-height:1.35">' + esc(n.title) + '</div>'
+      +   '<div style="font-size:12.5px;line-height:1.45;margin-top:4px">' + _ntfBodyHtml(n.body, 6) + '</div>'
+      + '</div>'
+      + '<div style="padding:10px 14px 12px;display:flex;gap:8px;justify-content:flex-end">'
+      +   '<button class="ntf-btn" style="background:#F2F4F7;color:#344054" onclick="ntfAck([' + n.id + '])">Got it</button>'
+      +   (n.candidate_id ? '<button class="ntf-btn" style="background:' + m.color + ';color:#fff" onclick="ntfOpen(' + n.id + ')">Open candidate &#8594;</button>' : '')
+      + '</div></div>';
+  });
+  if (list.length > 3 || list.length > 1) {
+    h += '<div class="ntf-card" style="padding:9px 14px;display:flex;align-items:center;gap:10px;font-size:12px;color:#475467">'
+      + (list.length > 3 ? '<span><b>+' + (list.length - 3) + '</b> more</span>' : '<span>' + list.length + ' notifications</span>')
+      + '<button class="ntf-btn" style="margin-left:auto;background:#F2F4F7;color:#344054" onclick="ntfTogglePanel(true)">View all</button>'
+      + '<button class="ntf-btn" style="background:#101828;color:#fff" onclick="ntfAck(null,true)">Dismiss all</button>'
+      + '</div>';
+  }
+  host.innerHTML = h;
+}
+
+async function ntfAck(ids, all){
+  var body = all ? {all:true} : {ids:ids||[]};
+  _ntf.pending = all ? [] : _ntf.pending.filter(function(n){ return (ids||[]).indexOf(n.id) < 0; });
+  ntfRenderPopups(false);
+  if (!_ntf.pending.length) ntfStopFlash();
+  await req('POST','/notifications/ack', body);
+  ntfPoll();
+}
+
+function _ntfFind(id){
+  var n = null;
+  _ntf.pending.concat(_ntf.history||[]).forEach(function(x){ if (x.id === id) n = x; });
+  return n;
+}
+
+// Opens the candidate the notification is about. Recruiter/admin -> full profile.
+// Freelancer -> their read-only view.
+async function ntfOpen(id){
+  var n = _ntfFind(id);
+  ntfAck([id]);
+  ntfTogglePanel(false);
+  if (!n || !n.candidate_id) return;
+  var isFl = S.currentUser && S.currentUser.role === 'freelancer_sourcer';
+  if (isFl) {
+    if (typeof flOpenCandidate === 'function') flOpenCandidate(n.candidate_id, n.mandate_id);
+    else if (n.mandate_id && typeof flOpenPipeline === 'function') flOpenPipeline(n.mandate_id);
+    return;
+  }
+  if (typeof openProfileById === 'function') {
+    try { await openProfileById(n.candidate_id, n.mandate_id || null); }
+    catch(e){ toast('ERR','Could not open candidate'); }
+  }
+}
+
+// ── Bell + history panel ──
+function ntfRenderBell(){
+  var slot = document.getElementById('ntf-bell-slot');
+  if (!slot) return;
+  var dark = slot.getAttribute('data-dark') === '1';
+  var n = _ntf.unread || 0;
+  slot.innerHTML = '<button onclick="ntfTogglePanel()" title="Notifications" style="position:relative;background:' + (dark ? 'rgba(255,255,255,.1)' : 'transparent') + ';border:' + (dark ? 'none' : '1px solid var(--line,#E4E7EC)') + ';border-radius:8px;cursor:pointer;padding:4px 8px;font-size:15px;line-height:1;color:' + (dark ? '#fff' : 'inherit') + '">\uD83D\uDD14'
+    + (n ? '<span style="position:absolute;top:-6px;right:-6px;background:#D92D20;color:#fff;font-size:10px;font-weight:800;min-width:17px;height:17px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px;box-sizing:border-box">' + (n > 99 ? '99+' : n) + '</span>' : '')
+    + '</button>';
+}
+
+async function ntfTogglePanel(force){
+  var open = (typeof force === 'boolean') ? force : !_ntf.panelOpen;
+  _ntf.panelOpen = open;
+  var p = document.getElementById('ntf-panel');
+  var host = document.getElementById('ntf-pop-host');
+  if (host) host.style.display = open ? 'none' : 'flex';   // panel replaces pop-ups while open
+  if (!open) { if (p) p.remove(); return; }
+  if (!p) {
+    p = document.createElement('div');
+    p.id = 'ntf-panel';
+    p.style.cssText = 'position:fixed;top:52px;right:14px;z-index:10060;width:420px;max-width:calc(100vw - 28px);max-height:75vh;display:flex;flex-direction:column;background:#fff;border:1px solid #E4E7EC;border-radius:14px;box-shadow:0 16px 40px rgba(16,24,40,.18);overflow:hidden';
+    document.body.appendChild(p);
+  }
+  p.innerHTML = '<div class="loading" style="padding:20px"><div class="spinner"></div>Loading...</div>';
+  var r = await req('GET','/notifications');
+  _ntf.history = (r && r.notifications) || [];
+  ntfRenderPanel();
+}
+
+function ntfRenderPanel(){
+  var p = document.getElementById('ntf-panel');
+  if (!p) return;
+  var items = _ntf.history || [];
+  var canDesk = (typeof Notification !== 'undefined') && Notification.permission !== 'granted';
+  var h = '<div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid #F2F4F7">'
+    + '<div style="font-size:14px;font-weight:700;color:#101828">Notifications</div>'
+    + (items.some(function(x){ return !x.read_at; }) ? '<button class="ntf-btn" style="margin-left:auto;background:#F2F4F7;color:#344054;font-size:11px;padding:5px 10px" onclick="ntfReadAll()">Mark all read</button>' : '<span style="margin-left:auto"></span>')
+    + '<button onclick="ntfTogglePanel(false)" style="background:none;border:none;font-size:18px;color:#98A2B3;cursor:pointer;padding:0 2px">&times;</button>'
+    + '</div>';
+  if (canDesk) {
+    h += '<div style="padding:9px 16px;background:#FFFAEB;font-size:11.5px;color:#93370D;display:flex;align-items:center;gap:8px">'
+      + '<span>Get alerts even when this tab is in the background.</span>'
+      + '<button class="ntf-btn" style="margin-left:auto;background:#B54708;color:#fff;font-size:11px;padding:5px 10px" onclick="ntfEnableDesktop()">Enable</button></div>';
+  }
+  h += '<div style="overflow:auto;flex:1">';
+  if (!items.length) {
+    h += '<div style="padding:40px 20px;text-align:center;color:#98A2B3;font-size:13px">No notifications yet</div>';
+  }
+  items.forEach(function(n){
+    var m = _ntfMeta(n);
+    h += '<div onclick="ntfOpen(' + n.id + ')" style="padding:11px 16px;border-bottom:1px solid #F2F4F7;cursor:pointer;display:flex;gap:10px;background:' + (n.read_at ? '#fff' : '#F5F9FF') + '">'
+      + '<div style="font-size:17px;line-height:1.2">' + m.icon + '</div>'
+      + '<div style="flex:1;min-width:0">'
+      +   '<div style="font-size:12.5px;font-weight:' + (n.read_at ? '500' : '700') + ';color:#101828;line-height:1.35">' + esc(n.title) + '</div>'
+      +   '<div style="font-size:11.5px;line-height:1.4;margin-top:2px">' + _ntfBodyHtml(n.body, 3) + '</div>'
+      +   '<div style="font-size:10.5px;color:#98A2B3;margin-top:4px">' + _ntfAgo(n.updated_at || n.created_at) + '</div>'
+      + '</div>'
+      + (n.read_at ? '' : '<span style="width:8px;height:8px;border-radius:50%;background:#2D6FB3;margin-top:5px;flex-shrink:0"></span>')
+      + '</div>';
+  });
+  h += '</div>';
+  p.innerHTML = h;
+}
+
+async function ntfReadAll(){
+  await req('POST','/notifications/read-all', {});
+  _ntf.pending = [];
+  ntfRenderPopups(false); ntfStopFlash();
+  await ntfPoll();
+  ntfTogglePanel(true);
+}
+
 // ═══════════════════════════════════════════════════════════
 //  AUTH SCREENS (setup / login) + user bar
 // ═══════════════════════════════════════════════════════════
@@ -2703,6 +3001,7 @@ function renderUserBar() {
       + '<span style="font-size:11px;color:#A65A2E">&#128065; Viewing as <b>' + esc(S.viewingAs.name||'agency') + '</b></span>'
       + '<button class="btn btn-o" style="font-size:10px;padding:2px 8px" onclick="exitViewAs()">Exit to Admin</button></div>';
   }
+  h += '<span id="ntf-bell-slot"></span>';
   h += '<div style="display:flex;align-items:center;gap:8px">'
     + avatarHtml(name, 26)
     + '<div style="line-height:1.1"><div style="font-size:12px;font-weight:600;color:var(--ink)">' + esc(name) + '</div>'
@@ -2710,6 +3009,7 @@ function renderUserBar() {
     + '<button class="btn btn-o" style="font-size:10px;padding:3px 9px;margin-left:4px" onclick="doLogout()">Logout</button>'
     + '</div>';
   bar.innerHTML = h;
+  if (typeof ntfRenderBell === 'function') ntfRenderBell();
   // Mirror into the mockup-style sidebar footer
   var av = document.getElementById('sb-user-av');
   var nm = document.getElementById('sb-user-name');

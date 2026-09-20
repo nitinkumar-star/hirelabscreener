@@ -5684,6 +5684,13 @@ def extension_push():
     conn.commit(); conn.close()
     _touch_mandate_usage(mid)
     queue_embedding_job(cid)  # async: enqueue, background worker embeds (never blocks add)
+    # Freelancer upload -> pop-up notification to the mandate's recruiter + admins
+    if _is_freelancer_upload:
+        try:
+            from modules.notifications import notify_freelancer_upload
+            notify_freelancer_upload(cid)
+        except Exception as _ne:
+            print(f'[notifications] upload hook: {_ne}')
     resp = {'ok': True, 'action': 'added', 'candidate_id': cid, 'name': name}
     if other_mandates:
         resp['also_in'] = other_mandates
