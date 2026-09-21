@@ -32,6 +32,7 @@ _MODULE_NAMES = [
     'orgmap',
     'notifications',
     'pitch',
+    'storage_health',
 ]
 
 _MIGRATIONS = []
