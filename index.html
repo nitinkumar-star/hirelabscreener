@@ -6472,19 +6472,20 @@ async function cpGenPitch(cid){
   _renderPitch(cid); toast('OK','Pitch ready');
 }
 function _pitchPlain(p, ev){
-  var out=[];
-  var add=function(h,t){ if(t) out.push(h+'\n'+t); };
-  add('1. INTRODUCTION', p.intro);
-  add('2. LOCATION', p.location);
-  add('3. ABOUT THE CLIENT', p.client);
-  add('4. POSITION', p.title);
-  add('5. ROLE IN BRIEF', p.role);
-  if((p.questions||[]).length){
-    out.push('6. SKILL QUESTIONS\n'+p.questions.map(function(q,i){ return (i+1)+'. '+q.q+(q.good_answer?'\n   Good answer: '+q.good_answer:''); }).join('\n'));
+  if(p.script){
+    var out=[String(p.script).replace(/\(PAUSE\)/g,'[wait for answer]')];
+    var qs=p.exposure_questions||[];
+    if(qs.length) out.push('ANSWER CHECKLIST\n'+qs.map(function(q,i){ return (i+1)+'. '+(q.skill?q.skill+': ':'')+q.q+(q.note?'\n   Note down: '+q.note:''); }).join('\n'));
+    if(p.ctc_response) out.push('IF ASKED ABOUT CTC / BUDGET (never share a number)\n'+p.ctc_response);
+    return out.join('\n\n');
   }
-  add('IF ASKED ABOUT CTC / BUDGET (never share a number)', p.ctc_response);
-  add('CLOSING', p.closing);
-  return out.join('\n\n');
+  var out2=[];
+  var add=function(h,t){ if(t) out2.push(h+'\n'+t); };
+  add('1. INTRODUCTION', p.intro); add('2. LOCATION', p.location); add('3. ABOUT THE CLIENT', p.client);
+  add('4. POSITION', p.title); add('5. ROLE IN BRIEF', p.role);
+  if((p.questions||[]).length){ out2.push('6. SKILL QUESTIONS\n'+p.questions.map(function(q,i){ return (i+1)+'. '+q.q; }).join('\n')); }
+  add('IF ASKED ABOUT CTC / BUDGET (never share a number)', p.ctc_response); add('CLOSING', p.closing);
+  return out2.join('\n\n');
 }
 function cpCopyPitch(cid){
   var st=window._pitchState[cid]; if(!st||!st.data) return;
@@ -6561,37 +6562,51 @@ function _renderPitch(cid){
     +list('Matches','&#10003;','#0F6E56',ev.strengths)+list('Gaps','&#9888;','#B54708',ev.gaps)+list('Verify on call','?','#2D6FB3',ev.to_verify)
     +'</div><div style="font-size:10.5px;color:#98A2B3;margin-top:8px">For the recruiter only — do not read this out.</div></div>';
 
-  // Script card
-  var step=function(n,label,text){
-    if(!text) return '';
-    return '<div style="display:flex;gap:12px;padding:11px 0;border-top:1px solid #F2F4F7">'
-      +'<div style="width:24px;height:24px;border-radius:50%;background:#EEF4FF;color:#2D6FB3;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">'+n+'</div>'
-      +'<div style="flex:1"><div style="font-size:11px;font-weight:700;color:#667085;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">'+label+'</div>'
-      +'<div style="font-size:13.5px;color:#101828;line-height:1.6">'+esc(text)+'</div></div></div>';
-  };
-  h+='<div class="cp-card2" style="margin-bottom:12px"><div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">&#128222; Call script</div>'
-    +step(1,'Introduction',p.intro)+step(2,'Location &amp; comfort',p.location)+step(3,'About the client',p.client)
-    +step(4,'Position',p.title)+step(5,'Role in brief',p.role)+'</div>';
+  if(p.script){
+    // Paragraph script for junior callers — read top to bottom.
+    var pauseChip='<span style="display:inline-block;margin:0 4px;padding:1px 9px;border-radius:10px;background:#FFF4E5;color:#B54708;font-size:11px;font-weight:700;font-style:normal;white-space:nowrap">&#9208; '+(lang==='hinglish'?'Jawab suniye':'Wait for answer')+'</span>';
+    var paras=String(p.script).split(/\n\s*\n/).filter(function(x){return x.trim();});
+    h+='<div class="cp-card2" style="margin-bottom:12px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'
+      +'<div style="font-size:13px;font-weight:700;color:var(--navy)">&#128222; Call script</div>'
+      +'<div style="font-size:11px;color:#667085">Read it as it is. Stop at every '+pauseChip+' and let the candidate speak.</div></div>'
+      +paras.map(function(para){
+        return '<p style="font-size:14.5px;line-height:1.75;color:#101828;margin:0 0 14px">'+esc(para).replace(/\(PAUSE\)/g,pauseChip)+'</p>';
+      }).join('')+'</div>';
 
-  // Budget rule card
-  h+='<div class="cp-card2" style="margin-bottom:12px;background:#FEF3F2;border:1px solid #FECDCA">'
-    +'<div style="font-size:12px;font-weight:800;color:#B42318;margin-bottom:4px">&#128683; Never disclose CTC or budget</div>'
-    +'<div style="font-size:11.5px;color:#912018;margin-bottom:6px">If the candidate asks, say:</div>'
-    +'<div style="font-size:13.5px;color:#101828;line-height:1.6;font-style:italic">&ldquo;'+esc(p.ctc_response||'')+'&rdquo;</div></div>';
+    // Budget rule card
+    h+='<div class="cp-card2" style="margin-bottom:12px;background:#FEF3F2;border:1px solid #FECDCA">'
+      +'<div style="font-size:12px;font-weight:800;color:#B42318;margin-bottom:4px">&#128683; Never disclose CTC or budget</div>'
+      +'<div style="font-size:11.5px;color:#912018;margin-bottom:6px">If the candidate asks, say:</div>'
+      +'<div style="font-size:14px;color:#101828;line-height:1.65;font-style:italic">&ldquo;'+esc(p.ctc_response||'')+'&rdquo;</div></div>';
 
-  // Questions card
-  var qs=p.questions||[];
-  h+='<div class="cp-card2" style="margin-bottom:12px"><div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">&#10067; Skill questions ('+qs.length+')</div>'
-    +qs.map(function(q,i){
-      return '<div style="padding:11px 0;border-top:1px solid #F2F4F7">'
-        +'<div style="font-size:13.5px;color:#101828;font-weight:600;line-height:1.5">'+(i+1)+'. '+esc(q.q||'')+'</div>'
-        +(q.checks?'<div style="font-size:11.5px;color:#667085;margin-top:4px"><b>Checks:</b> '+esc(q.checks)+'</div>':'')
-        +(q.good_answer?'<div style="font-size:12px;color:#0F6E56;margin-top:3px;background:#F3FBF7;border-radius:6px;padding:6px 9px"><b>Good answer:</b> '+esc(q.good_answer)+'</div>':'')
-        +'</div>';
-    }).join('')+'</div>';
-  if(p.closing){
-    h+='<div class="cp-card2" style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#667085;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Closing</div>'
-      +'<div style="font-size:13.5px;color:#101828;line-height:1.6">'+esc(p.closing)+'</div></div>';
+    // Answer checklist (exposure only)
+    var eq=p.exposure_questions||[];
+    if(eq.length){
+      h+='<div class="cp-card2" style="margin-bottom:12px"><div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:2px">&#9989; Answer checklist</div>'
+        +'<div style="font-size:11.5px;color:#667085;margin-bottom:6px">Only note whether the candidate has worked on it — Yes / No, years and company. No need to judge the skill.</div>'
+        +eq.map(function(q,i){
+          return '<label style="display:flex;gap:10px;padding:10px 0;border-top:1px solid #F2F4F7;cursor:pointer">'
+            +'<input type="checkbox" style="margin-top:3px;flex-shrink:0">'
+            +'<div style="flex:1">'+(q.skill?'<span style="display:inline-block;font-size:10.5px;font-weight:700;color:#2D6FB3;background:#EEF4FF;border-radius:6px;padding:1px 7px;margin-bottom:3px">'+esc(q.skill)+'</span>':'')
+            +'<div style="font-size:13.5px;color:#101828;line-height:1.5">'+(i+1)+'. '+esc(q.q||'')+'</div>'
+            +(q.note?'<div style="font-size:11.5px;color:#667085;margin-top:2px">Note down: '+esc(q.note)+'</div>':'')
+            +'</div></label>';
+        }).join('')+'</div>';
+    }
+  } else {
+    // Pitch made before the paragraph format — still shown, with a nudge to refresh.
+    h+='<div style="background:#EEF4FF;border:1px solid #C7D7FE;border-radius:10px;padding:9px 14px;font-size:12px;color:#2D4A8A;margin-bottom:12px;display:flex;align-items:center;gap:10px">'
+      +'This pitch is in the old format. Re-generate to get the paragraph script with exposure questions.'
+      +'<button class="btn" style="margin-left:auto;background:#534AB7;color:#fff;border:none;font-size:11.5px;padding:5px 12px" onclick="cpGenPitch('+cid+')">Re-generate</button></div>';
+    var step=function(n,label,text){
+      if(!text) return '';
+      return '<div style="padding:9px 0;border-top:1px solid #F2F4F7"><div style="font-size:11px;font-weight:700;color:#667085;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">'+n+'. '+label+'</div>'
+        +'<div style="font-size:13.5px;color:#101828;line-height:1.6">'+esc(text)+'</div></div>';
+    };
+    h+='<div class="cp-card2" style="margin-bottom:12px">'+step(1,'Introduction',p.intro)+step(2,'Location',p.location)+step(3,'Client',p.client)
+      +step(4,'Position',p.title)+step(5,'Role',p.role)
+      +(p.questions||[]).map(function(q,i){ return step(6,'Question '+(i+1),q.q); }).join('')
+      +step(7,'If asked about CTC',p.ctc_response)+step(8,'Closing',p.closing)+'</div>';
   }
   h+='<div style="font-size:11px;color:#98A2B3;text-align:right">'+(lang==='hinglish'?'Hinglish':'English')+' &middot; generated by '+esc(d.by||'')+' &middot; '+esc((d.at||'').replace('T',' ').slice(0,16))+'</div>';
   box.innerHTML=h;
