@@ -48,27 +48,46 @@ JD_MAX = 6000
 # ══════════════════════════════════════════════════════════════════════════
 #  MIGRATION
 # ══════════════════════════════════════════════════════════════════════════
-@register_migration
-def migrate(conn):
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS candidate_pitches (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        owner_id INTEGER NOT NULL,           -- company (tenant)
-        candidate_id INTEGER NOT NULL,
-        mandate_id INTEGER NOT NULL,
-        lang TEXT DEFAULT 'en',
-        evaluation TEXT DEFAULT '',          -- JSON (step 1)
-        pitch TEXT DEFAULT '',               -- JSON (step 2)
-        model TEXT DEFAULT '',
-        created_by INTEGER DEFAULT 0,
-        created_by_name TEXT DEFAULT '',
-        created_at TEXT DEFAULT '',
-        fingerprint TEXT DEFAULT ''          -- hash of the inputs; differs => pitch is stale
-    )''')
+# Dedicated table name. The generic name "candidate_pitches" (used by the first
+# release of this module) can collide with a table an older ATS build left in a
+# production database with different columns — CREATE TABLE IF NOT EXISTS then
+# silently keeps the OLD shape and every save fails. A unique name cannot
+# collide. The old table is left untouched (additive only).
+PITCH_TABLE = 'hl_candidate_call_pitch'
+
+_PITCH_COLUMNS = [
+    ('owner_id', 'INTEGER DEFAULT 0'),
+    ('candidate_id', 'INTEGER DEFAULT 0'),
+    ('mandate_id', 'INTEGER DEFAULT 0'),
+    ('lang', "TEXT DEFAULT 'en'"),
+    ('evaluation', "TEXT DEFAULT ''"),
+    ('pitch', "TEXT DEFAULT ''"),
+    ('model', "TEXT DEFAULT ''"),
+    ('created_by', 'INTEGER DEFAULT 0'),
+    ('created_by_name', "TEXT DEFAULT ''"),
+    ('created_at', "TEXT DEFAULT ''"),
+    ('fingerprint', "TEXT DEFAULT ''"),
+]
+
+
+def _ensure_schema(conn):
+    """Create the table if missing and add any missing column. Idempotent,
+    additive, safe to call on every request path that writes."""
+    conn.execute(f'CREATE TABLE IF NOT EXISTS {PITCH_TABLE} (id INTEGER PRIMARY KEY AUTOINCREMENT, '
+                 + ', '.join(f'{n} {t}' for n, t in _PITCH_COLUMNS) + ')')
+    have = {r[1] for r in conn.execute(f'PRAGMA table_info({PITCH_TABLE})').fetchall()}
+    for n, t in _PITCH_COLUMNS:
+        if n not in have:
+            conn.execute(f'ALTER TABLE {PITCH_TABLE} ADD COLUMN {n} {t}')
     try:
-        c.execute('CREATE INDEX IF NOT EXISTS idx_cpitch_cand ON candidate_pitches(candidate_id, mandate_id, lang)')
+        conn.execute(f'CREATE INDEX IF NOT EXISTS idx_hlpitch_cand ON {PITCH_TABLE}(candidate_id, mandate_id, lang)')
     except Exception:
         pass
+
+
+@register_migration
+def migrate(conn):
+    _ensure_schema(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -110,6 +129,19 @@ def _clip(s, n):
 # ══════════════════════════════════════════════════════════════════════════
 #  INPUT BUILDERS
 # ══════════════════════════════════════════════════════════════════════════
+def _skills(v):
+    """must_have_skills is stored as a JSON list string — show it as plain text."""
+    if not v:
+        return ''
+    try:
+        x = json.loads(v) if isinstance(v, str) else v
+        if isinstance(x, list):
+            return ', '.join(str(i).strip() for i in x if str(i).strip())
+    except Exception:
+        pass
+    return str(v).strip()
+
+
 def _role_block(m):
     core = _core()
     jd = _strip_money(core.html_to_text(m['jd']) if m['jd'] else '')
@@ -125,8 +157,8 @@ def _role_block(m):
         f"Job location: {m['location'] or ''}",
         f"Work mode: {m['work_mode'] or ''}" if m['work_mode'] else '',
         f"Experience required: {exp}" if exp else '',
-        f"Must-have skills: {m['must_have_skills']}" if m['must_have_skills'] else '',
-        f"Good-to-have skills: {m['good_to_have_skills']}" if m['good_to_have_skills'] else '',
+        f"Must-have skills: {_skills(m['must_have_skills'])}" if _skills(m['must_have_skills']) else '',
+        f"Good-to-have skills: {_skills(m['good_to_have_skills'])}" if _skills(m['good_to_have_skills']) else '',
         '',
         'JOB DESCRIPTION:',
         _clip(jd, JD_MAX) or '(No JD text on file — use the title, client and skills above.)',
@@ -409,101 +441,172 @@ def _row_out(r, fp_now):
 
 # ══════════════════════════════════════════════════════════════════════════
 #  ROUTES
+#  Every failure answers JSON naming the STEP that failed — never Flask's HTML
+#  500 page — so a production problem can be read straight off the screen.
 # ══════════════════════════════════════════════════════════════════════════
+def _internal(step, e):
+    import traceback
+    traceback.print_exc()
+    print(f'[pitch] failed at step={step}: {type(e).__name__}: {e}')
+    return jsonify({'error': f'Internal error at step "{step}": {type(e).__name__}: {e}',
+                    'step': step}), 500
+
+
 @bp.route('/candidates/<int:cid>/pitch', methods=['GET'])
 @login_required
 def get_pitch(cid):
-    lang = request.args.get('lang', 'en')
-    lang = lang if lang in LANGS else 'en'
-    conn = get_db()
-    c, m = _load(conn, cid)
-    if not c:
-        conn.close()
-        return jsonify({'error': 'Candidate not found'}), 404
-    rows = conn.execute('SELECT * FROM candidate_pitches WHERE candidate_id=? AND mandate_id=? '
-                        'AND owner_id=? ORDER BY id DESC', (cid, c['mandate_id'], effective_company_id())).fetchall()
-    fp_now = _fingerprint(conn, c, m) if rows else ''
-    conn.close()
-    have = sorted({r['lang'] for r in rows})
-    for r in rows:
-        if r['lang'] == lang:
-            out = _row_out(r, fp_now)
-            if out:
-                return jsonify({'ok': True, 'cached': True, 'available': have, **out})
-    return jsonify({'ok': True, 'cached': False, 'available': have,
-                    'has_mandate': bool(m), 'has_jd': bool(m and (m['jd'] or '').strip())})
+    step = 'load'
+    try:
+        lang = request.args.get('lang', 'en')
+        lang = lang if lang in LANGS else 'en'
+        conn = get_db()
+        try:
+            c, m = _load(conn, cid)
+            if not c:
+                return jsonify({'error': 'Candidate not found'}), 404
+            step = 'read-saved'
+            _ensure_schema(conn)
+            rows = conn.execute(f'SELECT * FROM {PITCH_TABLE} WHERE candidate_id=? AND mandate_id=? '
+                                'AND owner_id=? ORDER BY id DESC',
+                                (cid, c['mandate_id'], effective_company_id())).fetchall()
+            step = 'fingerprint'
+            fp_now = _fingerprint(conn, c, m) if rows else ''
+            conn.commit()
+        finally:
+            conn.close()
+        have = sorted({r['lang'] for r in rows})
+        for r in rows:
+            if r['lang'] == lang:
+                out = _row_out(r, fp_now)
+                if out:
+                    return jsonify({'ok': True, 'cached': True, 'available': have, **out})
+        return jsonify({'ok': True, 'cached': False, 'available': have,
+                        'has_mandate': bool(m), 'has_jd': bool(m and (m['jd'] or '').strip())})
+    except Exception as e:
+        return _internal(step, e)
 
 
 @bp.route('/candidates/<int:cid>/pitch', methods=['POST'])
 @login_required
 def generate_pitch(cid):
-    core = _core()
-    d = request.json or {}
-    lang = d.get('lang', 'en')
-    lang = lang if lang in LANGS else 'en'
-    ds_key = core.get_setting('deepseek_api_key')
-    if not ds_key:
-        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
+    step = 'setup'
+    try:
+        core = _core()
+        d = request.get_json(silent=True) or {}
+        lang = d.get('lang', 'en')
+        lang = lang if lang in LANGS else 'en'
+        ds_key = core.get_setting('deepseek_api_key')
+        if not ds_key:
+            return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
 
+        step = 'load-candidate'
+        conn = get_db()
+        try:
+            c, m = _load(conn, cid)
+            if not c:
+                return jsonify({'error': 'Candidate not found'}), 404
+            if not m or (m['status'] or '') == 'central':
+                return jsonify({'error': 'This candidate is not on a job mandate. Move them to a mandate first — the pitch needs a JD.'}), 400
+            step = 'build-job-text'
+            role_txt = _role_block(m)
+            step = 'build-candidate-text'
+            cand_txt = _candidate_block(conn, c)
+            step = 'fingerprint'
+            fp = _fingerprint(conn, c, m)
+            mandate_id = c['mandate_id']
+        finally:
+            conn.close()
+
+        u = current_user() or {}
+        recruiter = (u.get('display_name') or u.get('username') or '').strip() or 'the recruiter'
+        agency = (core.get_setting('company_name', '') or u.get('company_name') or '').strip() or 'our agency'
+
+        try:
+            step = 'ai-evaluate'
+            ev, _ = _ask_json(ds_key, EVAL_PROMPT,
+                              'JOB\n' + role_txt + '\n\nCANDIDATE\n' + cand_txt,
+                              0.2, 1000, 'pitch-evaluate')
+            ev = _normalise_eval(ev)
+
+            step = 'ai-write-pitch'
+            pitch_user = (f"Recruiter name: {recruiter}\nAgency name: {agency}\n\n"
+                          f"JOB\n{role_txt}\n\nCANDIDATE\n{cand_txt}\n\n"
+                          f"EVALUATION (for you only — never read it out)\n{json.dumps(ev, ensure_ascii=False)}")
+            system = _pitch_prompt(lang)
+            pt, raw = _ask_json(ds_key, system, pitch_user, 0.6, 1600, 'pitch-write')
+            step = 'check-rules'
+            bad = _violations(pt)
+            if bad:
+                step = 'ai-fix-pitch'
+                pt2, _ = _ask_json(ds_key, system, pitch_user, 0.4, 1600, 'pitch-write-fix', extra_messages=[
+                    {'role': 'assistant', 'content': raw},
+                    {'role': 'user', 'content': 'Rewrite it. These rules were broken: ' + '; '.join(bad)
+                     + '. Remove every money figure and every flattering phrase. Same JSON shape.'}])
+                if isinstance(pt2, dict) and pt2.get('intro'):
+                    pt = pt2
+            step = 'scrub'
+            pt = _scrub(pt)
+            if not pt.get('intro') or not pt.get('questions'):
+                raise PitchError('AI returned an incomplete pitch. Please try again.')
+        except PitchError as e:
+            print(f'[pitch] step={step}: {e}')
+            return jsonify({'error': str(e), 'step': step}), e.code
+
+        step = 'save'
+        at = ts()
+        conn = get_db()
+        try:
+            _ensure_schema(conn)
+            conn.execute(f'INSERT INTO {PITCH_TABLE} (owner_id,candidate_id,mandate_id,lang,evaluation,pitch,'
+                         'model,created_by,created_by_name,created_at,fingerprint) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                         (effective_company_id(), cid, mandate_id, lang,
+                          json.dumps(ev, ensure_ascii=False), json.dumps(pt, ensure_ascii=False),
+                          MODEL, real_user_id() or 0, recruiter, at, fp))
+            # keep only the latest per (candidate, mandate, language)
+            conn.execute(f'DELETE FROM {PITCH_TABLE} WHERE candidate_id=? AND mandate_id=? AND lang=? '
+                         f'AND id NOT IN (SELECT MAX(id) FROM {PITCH_TABLE} WHERE candidate_id=? '
+                         'AND mandate_id=? AND lang=?)', (cid, mandate_id, lang, cid, mandate_id, lang))
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({'ok': True, 'cached': True, 'evaluation': ev, 'pitch': pt, 'lang': lang,
+                        'at': at, 'by': recruiter, 'stale': False})
+    except Exception as e:
+        return _internal(step, e)
+
+
+@bp.route('/pitch/diagnose', methods=['GET'])
+@login_required
+def pitch_diagnose():
+    """Admin-only health check: shows the live DB schema of the tables this
+    feature touches and dry-runs the input build for one candidate (?cid=),
+    WITHOUT calling the AI. Open in the browser while logged in as admin."""
+    from modules.shared import is_company_admin
+    if not is_company_admin():
+        return jsonify({'error': 'Admin only'}), 403
+    out = {'ok': True}
     conn = get_db()
     try:
-        c, m = _load(conn, cid)
-        if not c:
-            return jsonify({'error': 'Candidate not found'}), 404
-        if not m or (m['status'] or '') == 'central':
-            return jsonify({'error': 'This candidate is not on a job mandate. Move them to a mandate first — the pitch needs a JD.'}), 400
-        role_txt = _role_block(m)
-        cand_txt = _candidate_block(conn, c)
-        fp = _fingerprint(conn, c, m)
+        for t in ('candidate_pitches', PITCH_TABLE, 'notifications'):
+            cols = conn.execute(f'PRAGMA table_info({t})').fetchall()
+            out[f'table:{t}'] = [f"{r[1]} {r[2]}{' NOT NULL' if r[3] else ''}" for r in cols] or 'does not exist'
+        out['deepseek_key_set'] = bool(_core().get_setting('deepseek_api_key'))
+        cid = request.args.get('cid', type=int)
+        if cid:
+            try:
+                c, m = _load(conn, cid)
+                if not c:
+                    out['dry_run'] = 'candidate not found in this workspace'
+                else:
+                    rt = _role_block(m) if m else ''
+                    ct = _candidate_block(conn, c)
+                    out['dry_run'] = {'mandate_found': bool(m), 'job_text_chars': len(rt),
+                                      'candidate_text_chars': len(ct),
+                                      'fingerprint': _fingerprint(conn, c, m)[:12]}
+            except Exception as e:
+                import traceback
+                out['dry_run'] = f'FAILED: {type(e).__name__}: {e}'
+                out['trace'] = traceback.format_exc()[-1500:]
     finally:
         conn.close()
-
-    u = current_user() or {}
-    recruiter = (u.get('display_name') or u.get('username') or '').strip() or 'the recruiter'
-    agency = (core.get_setting('company_name', '') or u.get('company_name') or '').strip() or 'our agency'
-
-    try:
-        # STEP 1 — evaluate
-        ev, _ = _ask_json(ds_key, EVAL_PROMPT,
-                          'JOB\n' + role_txt + '\n\nCANDIDATE\n' + cand_txt,
-                          0.2, 1000, 'pitch-evaluate')
-        ev = _normalise_eval(ev)
-
-        # STEP 2 — pitch
-        pitch_user = (f"Recruiter name: {recruiter}\nAgency name: {agency}\n\n"
-                      f"JOB\n{role_txt}\n\nCANDIDATE\n{cand_txt}\n\n"
-                      f"EVALUATION (for you only — never read it out)\n{json.dumps(ev, ensure_ascii=False)}")
-        system = _pitch_prompt(lang)
-        pt, raw = _ask_json(ds_key, system, pitch_user, 0.6, 1600, 'pitch-write')
-        bad = _violations(pt)
-        if bad:
-            # one corrective retry, then hard-scrub whatever remains
-            pt2, _ = _ask_json(ds_key, system, pitch_user, 0.4, 1600, 'pitch-write-fix', extra_messages=[
-                {'role': 'assistant', 'content': raw},
-                {'role': 'user', 'content': 'Rewrite it. These rules were broken: ' + '; '.join(bad)
-                 + '. Remove every money figure and every flattering phrase. Same JSON shape.'}])
-            if isinstance(pt2, dict) and pt2.get('intro'):
-                pt = pt2
-        pt = _scrub(pt)
-        if not pt.get('intro') or not pt.get('questions'):
-            raise PitchError('AI returned an incomplete pitch. Please try again.')
-    except PitchError as e:
-        return jsonify({'error': str(e)}), e.code
-
-    at = ts()
-    conn = get_db()
-    try:
-        conn.execute('INSERT INTO candidate_pitches (owner_id,candidate_id,mandate_id,lang,evaluation,pitch,'
-                     'model,created_by,created_by_name,created_at,fingerprint) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                     (effective_company_id(), cid, c['mandate_id'], lang,
-                      json.dumps(ev, ensure_ascii=False), json.dumps(pt, ensure_ascii=False),
-                      MODEL, real_user_id() or 0, recruiter, at, fp))
-        # keep only the latest per (candidate, mandate, language)
-        conn.execute('DELETE FROM candidate_pitches WHERE candidate_id=? AND mandate_id=? AND lang=? '
-                     'AND id NOT IN (SELECT MAX(id) FROM candidate_pitches WHERE candidate_id=? '
-                     'AND mandate_id=? AND lang=?)', (cid, c['mandate_id'], lang, cid, c['mandate_id'], lang))
-        conn.commit()
-    finally:
-        conn.close()
-    return jsonify({'ok': True, 'cached': True, 'evaluation': ev, 'pitch': pt, 'lang': lang,
-                    'at': at, 'by': recruiter, 'stale': False})
+    return jsonify(out)
