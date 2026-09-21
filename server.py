@@ -2775,7 +2775,7 @@ def init_db():
         pass
 
     # Migrate: billing details on CRM clients (so invoices auto-fill, fill-once).
-    for col in ['gstin', 'bill_address', 'bill_state', 'bill_state_code']:
+    for col in ['gstin', 'bill_address', 'bill_state', 'bill_state_code', 'bill_name']:
         try:
             c.execute(f'ALTER TABLE crm_clients ADD COLUMN {col} TEXT DEFAULT ""')
         except sqlite3.OperationalError:
@@ -3959,6 +3959,13 @@ def init_db():
         c.execute('ALTER TABLE crm_clients ADD COLUMN is_internal INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
         pass
+    # Same ordering problem for the billing columns (invoice client picker):
+    # re-apply after modules/crm.py has created crm_clients.
+    for _bc in ['gstin', 'bill_address', 'bill_state', 'bill_state_code', 'bill_name']:
+        try:
+            c.execute(f"ALTER TABLE crm_clients ADD COLUMN {_bc} TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
 
     conn.commit(); conn.close()
 
@@ -11633,16 +11640,31 @@ def create_mandate():
     # Otherwise try to auto-match by normalised name so existing CRM clients link up.
     # Corporate never links to a CRM client: there is no external relationship
     # to record, and inventing one would make the tenant look like its own customer.
-    crm_client_id = 0 if corporate else int(d.get('crm_client_id') or 0)
-    if not corporate and not crm_client_id and d.get('client'):
+    # Agency mandates must belong to a CRM client, chosen from the dropdown and
+    # linked by ID — never by typed name. Linking by name broke as soon as a
+    # client was renamed (e.g. brand vs legal entity), which hid its SPOCs.
+    # The CRM name then becomes the mandate's client name, so spelling
+    # variants can't creep in. A typed name is still accepted if it matches a
+    # CRM client exactly (older screens / integrations).
+    crm_client_id = 0
+    client_val = ''
+    if not corporate:
         try:
-            crm_client_id = _match_crm_client_by_name(conn, effective_company_id(), d['client'])
-        except Exception:
+            crm_client_id = int(d.get('crm_client_id') or 0)
+        except (TypeError, ValueError):
             crm_client_id = 0
-    # `mandates.client` is NOT NULL DEFAULT '', so an empty string is a valid
-    # legacy-compatible value. Corporate stores '' rather than a placeholder
-    # name — nothing is invented, and no external client is created.
-    client_val = '' if corporate else d['client']
+        if not crm_client_id:
+            try:
+                crm_client_id = _match_crm_client_by_name(conn, effective_company_id(), d['client'])
+            except Exception:
+                crm_client_id = 0
+        _cl = _crm_client_row(conn, effective_company_id(), crm_client_id)
+        if not _cl:
+            conn.close()
+            return jsonify({'error': 'Select the client from the CRM list. If it is a new client, '
+                                     'an admin must add it in Clients (CRM) first.'}), 400
+        crm_client_id = _cl['id']
+        client_val = _cl['name']
     # Agency mandates come from a client and start immediately. A corporate
     # requisition waits for headcount sign-off, so it opens as 'pending'.
     _approval = 'pending' if workspace_mode() == 'corporate' else 'approved'
@@ -11706,6 +11728,15 @@ def _norm_client_name(name):
     return s
 
 
+def _crm_client_row(conn, company_id, crm_client_id):
+    """The tenant's active, external CRM client with this id, else None.
+    The one place that validates a client id supplied by the browser."""
+    if not crm_client_id:
+        return None
+    return conn.execute('SELECT id, name FROM crm_clients WHERE id=? AND company_id=? AND is_active=1 '
+                        'AND COALESCE(is_internal,0)=0', (crm_client_id, company_id)).fetchone()
+
+
 def _match_crm_client_by_name(conn, company_id, client_name):
     """Return crm_clients.id whose normalised name matches, else 0."""
     target = _norm_client_name(client_name)
@@ -11737,8 +11768,14 @@ def link_mandate_client(mid):
         if not cl:
             conn.close(); return jsonify({'error': 'CRM client not found'}), 404
     conn.execute('UPDATE mandates SET crm_client_id=? WHERE id=?', (crm_client_id, mid))
+    _name = ''
+    if crm_client_id:
+        _r = _crm_client_row(conn, effective_company_id(), crm_client_id)
+        if _r:
+            _name = _r['name']
+            conn.execute('UPDATE mandates SET client=? WHERE id=?', (_name, mid))
     conn.commit(); conn.close()
-    return jsonify({'ok': True, 'crm_client_id': crm_client_id})
+    return jsonify({'ok': True, 'crm_client_id': crm_client_id, 'client': _name})
 
 
 @app.route('/api/crm-link/auto-map', methods=['POST'])
@@ -12806,6 +12843,19 @@ def update_mandate(mid):
     # one. Preserving the stored value keeps this from blanking legacy data.
     _cur = conn.execute('SELECT client FROM mandates WHERE id=?', (mid,)).fetchone()
     _client_val = d.get('client') if ('client' in d and not _corp) else (_cur['client'] if _cur else '')
+    # Setup screen sends the CRM client picked from the dropdown: validate it
+    # belongs to this tenant, link by ID and take the CRM name.
+    _new_crm = None
+    if not _corp and 'crm_client_id' in d:
+        try:
+            _cid_in = int(d.get('crm_client_id') or 0)
+        except (TypeError, ValueError):
+            _cid_in = 0
+        if _cid_in:
+            _new_crm = _crm_client_row(conn, effective_company_id(), _cid_in)
+            if not _new_crm:
+                conn.close(); return jsonify({'error': 'CRM client not found'}), 400
+            _client_val = _new_crm['name']
 
     conn.execute('UPDATE mandates SET client=?,role=?,location=?,division=?,ctc_min=?,ctc_max=?,exp_min=?,exp_max=?,experience=?,jd=?,status=?,headcount=? WHERE id=?',
                  (_client_val, d.get('role',''), d.get('location',''), d.get('division',''),
@@ -12815,6 +12865,8 @@ def update_mandate(mid):
                   max(1, int(d.get('headcount') or 1)), mid))
     # Organisational links are updated only when the caller sends them, so an
     # Agency save can never null them out. Same-tenant validated above.
+    if _new_crm is not None:
+        conn.execute('UPDATE mandates SET crm_client_id=? WHERE id=?', (_new_crm['id'], mid))
     for _pf, _pv in _plan.items():
         conn.execute(f'UPDATE mandates SET {_pf}=? WHERE id=?', (_pv, mid))
     for _f in ('department_id', 'hiring_manager_id', 'hrbp_user_id', 'assigned_user_id'):
@@ -13945,9 +13997,9 @@ def create_invoice():
         cli_id = int(d.get('client_id', 0) or 0)
         if cli_id:
             try:
-                conn.execute('UPDATE crm_clients SET gstin=?, bill_address=?, bill_state=?, bill_state_code=? WHERE id=? AND company_id=?',
+                conn.execute('UPDATE crm_clients SET gstin=?, bill_address=?, bill_state=?, bill_state_code=?, bill_name=? WHERE id=? AND company_id=?',
                              (d.get('buyer_gstin', ''), d.get('buyer_address', ''), d.get('buyer_state', ''),
-                              d.get('buyer_state_code', ''), cli_id, oid))
+                              d.get('buyer_state_code', ''), (d.get('buyer_name', '') or '').strip(), cli_id, oid))
                 conn.commit()
             except Exception:
                 pass
@@ -16273,6 +16325,7 @@ def crm_clients_billing():
     try:
         rows = conn.execute(
             "SELECT id, name, gstin, "
+            "  CASE WHEN COALESCE(bill_name,'')!='' THEN bill_name ELSE name END AS bill_name, "
             "  CASE WHEN COALESCE(bill_address,'')!='' THEN bill_address ELSE COALESCE(address,'') END AS bill_address, "
             "  CASE WHEN COALESCE(bill_state,'')!='' THEN bill_state ELSE COALESCE(state,'') END AS bill_state, "
             "  COALESCE(bill_state_code,'') AS bill_state_code "

@@ -1272,7 +1272,7 @@ body{font-size:14px !important; line-height:1.5}
           <div class="mr-h">Mandate Detail</div>
           <div class="mr-hsub">The basics &mdash; client, role, and the job description.</div>
           <div class="g2">
-            <div class="fg-row" id="m-client-row"><label data-vocab-tpl="{client_field} *">Client Name *</label><input class="inp" id="m-client" data-vocab-ph="client_hint" placeholder="e.g. Legrand India"></div>
+            <div class="fg-row" id="m-client-row"><label data-vocab-tpl="{client_field} *">Client Name *</label><input class="inp" id="m-client" data-vocab-ph="client_hint" placeholder="e.g. Legrand India" autocomplete="off"><input type="hidden" id="m-client-id"></div>
             <div class="fg-row" id="m-dept-row" style="display:none"><label>Department *</label><select class="inp" id="m-department"><option value="">Loading…</option></select></div>
             <div class="fg-row"><label data-vocab-tpl="{role_field} *">Role / Position *</label><input class="inp" id="m-role" placeholder="e.g. Sr. Sales Manager"></div>
             <div class="fg-row"><label>Location</label><input class="inp" id="m-location" placeholder="e.g. Noida"></div>
@@ -3673,10 +3673,11 @@ function renderMandateSetup(el){
     }
     var _si=document.getElementById('ms-intent');
     if(_si) _si.value = m.search_intent || '';
+    if(wsMode()!=='corporate') clientPickerAttach('ms-client','ms-client-id');
   },0);
   el.innerHTML=approvalBarHtml(m)+orgSummaryHtml(m)+'<div class="card setup-card" data-sc="detail" style="max-width:580px"><div class="card-head"><span style="font-weight:500">'+esc(T('mandate','Mandate'))+' Details</span><button class="btn btn-g" onclick="saveMandateSetup()">Save</button></div><div class="card-body">'
     +'<div class="g2">'
-    +(wsMode()==='corporate' ? '' : field('ms-client',wfL().client,m.client||''))
+    +(wsMode()==='corporate' ? '' : field('ms-client',wfL().client,m.client||'')+'<input type="hidden" id="ms-client-id" value="'+(m.crm_client_id||'')+'">')
     +field('ms-role',T('role_field','Role'),m.role||'')
     +field('ms-loc','Location',m.location||'')+field('ms-div','Division',m.division||'')
     +numfield('ms-cmin','CTC Min (LPA)',m.ctc_min||'')+numfield('ms-cmax','CTC Max (LPA)',m.ctc_max||'')
@@ -4018,7 +4019,12 @@ async function loadSpocOptions(){
   if(!r.crm_linked){
     wrap.innerHTML='<div style="font-size:12px;color:#8a6d3b;background:#FCF6E6;border:1px solid #F0E2B8;border-radius:8px;padding:11px 13px;line-height:1.55">'
       +'&#9888; Yeh mandate abhi kisi CRM client se linked nahi hai (client naam "<b>'+esc(r.client||'')+'</b>" CRM se match nahi hua).<br>'
-      +'Pehle <b>CRM</b> mein is client ko banao aur uske andar SPOC contact add karo, phir yeh dropdown apne aap aa jayega.</div>';
+      +'Neeche se sahi CRM client chuno aur <b>Link</b> dabao — SPOC list turant aa jayegi.</div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px;align-items:flex-start">'
+      +'<div style="flex:1;position:relative"><input id="ms-link-client" class="inp" style="width:100%" placeholder="Type to search your CRM clients…" autocomplete="off">'
+      +'<input type="hidden" id="ms-link-client-id"></div>'
+      +'<button class="btn btn-g" onclick="linkMandateToCrm()">Link</button></div>';
+    clientPickerAttach('ms-link-client','ms-link-client-id');
     return;
   }
   if(!r.contacts || !r.contacts.length){
@@ -4035,6 +4041,18 @@ async function loadSpocOptions(){
     +'<select id="ms-spoc" class="inp" style="width:100%">'+opts+'</select></div>'
     +'<button class="btn btn-g" style="margin-top:8px" onclick="saveSpoc()">Save SPOC</button>'
     +'<div style="font-size:10.5px;color:var(--muted);margin-top:7px">Contact CRM se aata hai. Naya SPOC chahiye toh CRM &rarr; is client &rarr; Add Contact.</div>';
+}
+async function linkMandateToCrm(){
+  if(!S.activeMandate) return;
+  var id=await clientPickerResolve('ms-link-client','ms-link-client-id');
+  if(!id){ toast('&#9888;&#65039;','List se client select karein'); return; }
+  var r=await req('POST','/mandates/'+S.activeMandate.id+'/link-client',{crm_client_id:id});
+  if(r && r.ok){
+    toast('OK','Linked to '+(r.client||'CRM client'));
+    S.activeMandate.crm_client_id=id; if(r.client) S.activeMandate.client=r.client;
+    try{ await loadMandates(); }catch(e){}
+    loadSpocOptions();
+  } else toast('ERR',(r&&r.error)||'Link failed');
 }
 async function saveSpoc(){
   if(!S.activeMandate) return;
@@ -4480,7 +4498,12 @@ async function saveMandateSetup(){
   // server preserves whatever is stored rather than blanking it.
   var payload={role:v('ms-role'),location:v('ms-loc'),division:v('ms-div'),ctc_min:parseFloat(v('ms-cmin'))||0,ctc_max:parseFloat(v('ms-cmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),headcount:parseInt(v('ms-headcount'))||m.headcount||1,jd:vHtml('ms-jd'),status:m.status,must_have_skills:chipCommit('ms-must'),good_to_have_skills:chipCommit('ms-good'),boolean_query:(v('ms-bool')||'').trim(),search_intent:(v('ms-intent')||'').trim()};
   // Only sent in Corporate mode, so an Agency save can never null these out.
-  if(wsMode()!=='corporate') payload.client=v('ms-client');
+  if(wsMode()!=='corporate'){
+    var _mcid=await clientPickerResolve('ms-client','ms-client-id');
+    if(!_mcid){ toast('&#9888;&#65039;','Client ko CRM list se select karein. Naya client ho to admin pehle Clients (CRM) mein add kare.'); return; }
+    payload.crm_client_id=_mcid;
+    payload.client=v('ms-client');
+  }
   if(wsMode()==='corporate'){
     // Planning fields are sent as slugs; the server rejects anything outside
     // its controlled lists, so the dropdown is convenience, not validation.
@@ -5970,7 +5993,7 @@ function _invPickClient(){
   if(!cid) return;
   var cl=(window._invCrmClients||[]).find(function(x){return x.id===cid;}); if(!cl) return;
   var set=function(id,val){ var e=document.getElementById(id); if(e && val!=null) e.value=val; };
-  set('inv-bname',cl.name||'');
+  set('inv-bname',cl.bill_name||cl.name||'');
   set('inv-baddr',cl.bill_address||'');
   set('inv-bgstin',cl.gstin||'');
   set('inv-bstate',cl.bill_state||'');
@@ -8879,16 +8902,99 @@ async function saveMandate(){
   } else if(!client||!role){
     toast('&#9888;&#65039;','Client and Role required');return;
   }
+  var _crmId=0;
+  if(!corp){
+    _crmId=await clientPickerResolve('m-client','m-client-id');
+    if(!_crmId){ toast('&#9888;&#65039;','Client ko CRM list se select karein. Naya client ho to admin pehle Clients (CRM) mein add kare.'); return; }
+  }
   // Prevent double-click
   var btn=document.querySelector('#modal-mandate .btn-g');
   if(btn){if(btn.disabled)return; btn.disabled=true; btn.textContent='Creating...';}
   const emin=parseFloat(v('m-expmin'))||0, emax=parseFloat(v('m-expmax'))||0;
-  if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); return; }
-  var _body={client:corp?'':client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd'),must_have_skills:chipCommit('m-must'),good_to_have_skills:chipCommit('m-good'),boolean_query:(v('m-bool')||'').trim(),search_intent:(v('m-intent')||'').trim()};
+  if(emin&&emax&&emax<emin){ toast('&#9888;&#65039;','Experience Max cannot be less than Min'); if(btn){btn.disabled=false;btn.textContent='Create Mandate →';} return; }
+  var _body={crm_client_id:corp?0:_crmId,client:corp?'':client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd'),must_have_skills:chipCommit('m-must'),good_to_have_skills:chipCommit('m-good'),boolean_query:(v('m-bool')||'').trim(),search_intent:(v('m-intent')||'').trim()};
   if(corp) _body.department_id=dept;
   const r=await req('POST','/mandates',_body);
   if(r.ok){closeModal('modal-mandate');await loadMandates();await selectMandate(r.id);S.activeTab='Mandate Setup';renderTabs();renderContent();toast('✅',T('mandate','Mandate')+' created!');}
   else {toast('&#9888;&#65039;',r.error||'Create failed');if(btn){btn.disabled=false;btn.textContent='Create Mandate →';}}
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+//  CRM CLIENT PICKER — searchable dropdown used wherever a mandate's client
+//  is chosen. Links by CRM id (not by typed name), so a client can be renamed
+//  and spelling variants can't create "different" clients.
+// ═══════════════════════════════════════════════════════════════════════
+var _cpCache={at:0, list:[]};
+async function _cpClients(force){
+  if(!force && _cpCache.list.length && Date.now()-_cpCache.at<60000) return _cpCache.list;
+  try{ var r=await req('GET','/crm/clients-billing'); _cpCache={at:Date.now(), list:(r&&r.clients)||[]}; }catch(e){}
+  return _cpCache.list;
+}
+function _cpNorm(x){ return String(x||'').toLowerCase().replace(/[.,&\-\/()]/g,' ').replace(/\s+/g,' ').trim(); }
+function clientPickerAttach(inputId, hiddenId){
+  var inp=document.getElementById(inputId), hid=document.getElementById(hiddenId);
+  if(!inp || !hid || inp._cpBound) return;
+  inp._cpBound=true; inp.setAttribute('autocomplete','off');
+  var host=inp.parentNode; if(getComputedStyle(host).position==='static') host.style.position='relative';
+  var dd=document.createElement('div');
+  dd.className='cp-dd';
+  dd.style.cssText='display:none;position:absolute;left:0;right:0;top:100%;margin-top:3px;z-index:9900;background:#fff;border:1px solid #D0D5DD;border-radius:9px;box-shadow:0 10px 26px rgba(16,24,40,.14);max-height:260px;overflow:auto';
+  host.appendChild(dd);
+  var items=[], active=-1;
+  var mark=function(ok){ inp.style.borderColor = ok ? '#12B76A' : ''; };
+  if(hid.value) mark(true);
+  var render=async function(){
+    var list=await _cpClients(false), q=_cpNorm(inp.value);
+    items=list.filter(function(c){ return !q || _cpNorm(c.name).indexOf(q)>=0; }).slice(0,60);
+    active = items.length ? 0 : -1;
+    if(!items.length){
+      dd.innerHTML='<div style="padding:11px 13px;font-size:12px;color:#667085;line-height:1.5">'
+        +(list.length?'No CRM client matches "<b>'+esc(inp.value)+'</b>".':'No clients in CRM yet.')
+        +'<br>'+(_isCompanyAdmin()?'Add it first in <b>Clients (CRM)</b>, then select it here.':'Ask your admin to add it in <b>Clients (CRM)</b>.')+'</div>';
+    } else {
+      dd.innerHTML=items.map(function(c,i){
+        return '<div data-i="'+i+'" style="padding:9px 13px;font-size:13px;cursor:pointer;border-bottom:1px solid #F2F4F7;'+(i===active?'background:#F2F7FF':'')+'">'
+          +esc(c.name)+(c.bill_name && c.bill_name!==c.name?'<div style="font-size:11px;color:#98A2B3">Bills as: '+esc(c.bill_name)+'</div>':'')+'</div>';
+      }).join('');
+    }
+    dd.style.display='block';
+  };
+  var pick=function(i){
+    var c=items[i]; if(!c) return;
+    inp.value=c.name; hid.value=c.id; mark(true); dd.style.display='none';
+    inp.dispatchEvent(new Event('change'));
+  };
+  inp.addEventListener('focus', render);
+  inp.addEventListener('input', function(){ hid.value=''; mark(false); render(); });
+  inp.addEventListener('keydown', function(e){
+    if(dd.style.display!=='block') return;
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault(); if(!items.length) return;
+      active=(active+(e.key==='ArrowDown'?1:-1)+items.length)%items.length;
+      Array.prototype.forEach.call(dd.children,function(el,i){ el.style.background=(i===active?'#F2F7FF':''); });
+      if(dd.children[active]) dd.children[active].scrollIntoView({block:'nearest'});
+    } else if(e.key==='Enter'){ if(active>=0){ e.preventDefault(); pick(active); } }
+    else if(e.key==='Escape'){ dd.style.display='none'; }
+  });
+  dd.addEventListener('mousedown', function(e){
+    var el=e.target.closest('[data-i]'); if(!el) return;
+    e.preventDefault(); pick(parseInt(el.getAttribute('data-i')));
+  });
+  inp.addEventListener('blur', function(){ setTimeout(function(){ dd.style.display='none'; }, 150); });
+}
+// Returns the selected CRM client id. If the user typed a name without picking
+// but it matches exactly one CRM client, that client is taken (and shown).
+async function clientPickerResolve(inputId, hiddenId){
+  var inp=document.getElementById(inputId), hid=document.getElementById(hiddenId);
+  if(!inp || !hid) return 0;
+  var id=parseInt(hid.value)||0;
+  if(id) return id;
+  var q=_cpNorm(inp.value); if(!q) return 0;
+  var list=await _cpClients(true);
+  var hits=list.filter(function(c){ return _cpNorm(c.name)===q; });
+  if(hits.length===1){ inp.value=hits[0].name; hid.value=hits[0].id; inp.style.borderColor='#12B76A'; return hits[0].id; }
+  return 0;
 }
 
 // ── MANDATE STATUS ─────────────────────────────────────────────────────────
@@ -10129,7 +10235,9 @@ function openModal(id){
       var cl=document.querySelector('#modal-mandate label'); // first label = client
       var ci=document.getElementById('m-client');
       if(cl)cl.textContent=L.client+' *';
-      if(ci)ci.placeholder=L.clientPlaceholder;
+      if(ci)ci.placeholder='Type to search your CRM clients…';
+      if(ci){ ci.value=''; var _hid=document.getElementById('m-client-id'); if(_hid) _hid.value=''; ci.style.borderColor=''; }
+      clientPickerAttach('m-client','m-client-id');
     } else {
       loadNewReqDepartments();
     }
@@ -15151,6 +15259,8 @@ function closeCrm(){
 }
 
 async function renderCrm(){
+  // Only admins add clients — hide the add buttons for everyone else.
+  if(!_isCompanyAdmin()) setTimeout(function(){ document.querySelectorAll('[onclick="openClientForm()"]').forEach(function(b){ b.style.display='none'; }); }, 0);
   var body=document.getElementById('crm-body');
   if(!body) return;
   body.innerHTML='<div class="loading"><div class="spinner"></div>Loading clients...</div>';
@@ -15297,7 +15407,9 @@ function _crmSetSort(v){ var p=v.split(':'); _crmState.sort=p[0]; _crmState.dir=
 function _crmPage(p){ _crmState.page=p; renderCrm(); }
 
 // ─── Client Add/Edit form ──────────────────────────────────────────────
+function _isCompanyAdmin(){ return !!(S.currentUser && (S.currentUser.role==='admin' || S.currentUser.is_company_admin)); }
 async function openClientForm(clientId){
+  if(!clientId && !_isCompanyAdmin()){ toast('&#9888;&#65039;','Naya client sirf admin add kar sakta hai. Apne admin se CRM mein add karwayein.'); return; }
   var client={};
   if(clientId){
     var r=await req('GET','/crm/clients/'+clientId);
@@ -15309,7 +15421,7 @@ async function openClientForm(clientId){
   }).join('');
 
   var inner='<div style="display:flex;flex-direction:column;gap:11px">'
-    +'<div><label class="la-lbl">Company Name *</label><input id="cf-name" class="inp" style="width:100%" value="'+esc(client.name||'')+'" placeholder="e.g. Infosys Ltd"></div>'
+    +'<div><label class="la-lbl">Company / Brand Name * <span style="font-weight:400;color:#98A2B3">— shown in mandates &amp; pitches</span></label><input id="cf-name" class="inp" style="width:100%" value="'+esc(client.name||'')+'" placeholder="e.g. Lauritz &amp; Knudsen"></div>'
     +'<div class="g2" style="gap:10px">'
     +'<div><label class="la-lbl">Industry</label><input id="cf-industry" class="inp" style="width:100%" value="'+esc(client.industry||'')+'" placeholder="IT / Manufacturing"></div>'
     +'<div><label class="la-lbl">Status</label><select id="cf-status" class="inp" style="width:100%">'+statusOpts+'</select></div>'
@@ -15322,6 +15434,7 @@ async function openClientForm(clientId){
     +'<div><label class="la-lbl">Address (office / site)</label><input id="cf-address" class="inp" style="width:100%" value="'+esc(client.address||'')+'"></div>'
     +'<div style="border:1px solid #E4E7EC;border-radius:8px;padding:10px 11px;background:#FAFAFC">'
       +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:8px">&#128176; Billing &amp; GST <span style="font-weight:500;color:#888">— invoice mein yahi se auto-fill hoga (ek baar bharo)</span></div>'
+      +'<div style="margin-bottom:8px"><label class="la-lbl">Billing / Legal Entity Name <span style="font-weight:400;color:#98A2B3">— printed on invoices (blank = same as brand name)</span></label><input id="cf-bill-name" class="inp" style="width:100%" value="'+esc(client.bill_name||'')+'" placeholder="e.g. Schneider Electric India Pvt Ltd"></div>'
       +'<div><label class="la-lbl">GSTIN / UIN</label><input id="cf-gstin" class="inp" style="width:100%" value="'+esc(client.gstin||'')+'" placeholder="e.g. 06AABCU9603R1ZM"></div>'
       +'<div style="margin-top:8px"><label class="la-lbl">Billing Address (bill-to)</label><input id="cf-bill-address" class="inp" style="width:100%" value="'+esc(client.bill_address||client.address||'')+'" placeholder="GST bill-to address"></div>'
       +'<div class="g2" style="gap:10px;margin-top:8px">'
@@ -15351,6 +15464,7 @@ async function saveClient(clientId){
     bill_address:document.getElementById('cf-bill-address').value.trim(),
     bill_state:document.getElementById('cf-bill-state').value.trim(),
     bill_state_code:document.getElementById('cf-bill-code').value.trim(),
+    bill_name:document.getElementById('cf-bill-name').value.trim(),
     notes:document.getElementById('cf-notes').value.trim()
   };
   if(!payload.name){ toast('ERR','Company name is required'); return; }
