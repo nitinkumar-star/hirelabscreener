@@ -862,7 +862,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J29</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J30</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -15352,7 +15352,9 @@ async function renderCrm(){
       +'<td style="padding:12px" onclick="openClientDetail('+c.id+')">'
       +'<div style="display:flex;align-items:center;gap:10px;cursor:pointer">'
       +'<div style="width:32px;height:32px;border-radius:8px;background:'+sc.bg+';display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:'+sc.fg+';flex-shrink:0">'+esc((c.name||'?').charAt(0).toUpperCase())+'</div>'
-      +'<span style="font-size:13px;font-weight:600;color:#2D6FB3">'+esc(c.name)+'</span></div></td>'
+      +'<div><span style="font-size:13px;font-weight:600;color:#2D6FB3">'+esc(c.name)+'</span>'
+      +(c.bill_name && c.bill_name!==c.name?'<div style="font-size:11px;color:#98A2B3;margin-top:1px">Legal: '+esc(c.bill_name)+'</div>':'')
+      +'</div></div></td>'
       // industry
       +'<td style="padding:12px;color:#475467">'+(c.industry?esc(c.industry):'<span style="color:#D0D5DD">—</span>')+'</td>'
       // city
@@ -15421,7 +15423,10 @@ async function openClientForm(clientId){
   }).join('');
 
   var inner='<div style="display:flex;flex-direction:column;gap:11px">'
-    +'<div><label class="la-lbl">Company / Brand Name * <span style="font-weight:400;color:#98A2B3">— shown in mandates &amp; pitches</span></label><input id="cf-name" class="inp" style="width:100%" value="'+esc(client.name||'')+'" placeholder="e.g. Lauritz &amp; Knudsen"></div>'
+    +'<div class="g2" style="gap:10px">'
+      +'<div><label class="la-lbl">Brand Name * <span style="font-weight:400;color:#98A2B3">— market name, shown in mandates, pitch, CRM</span></label><input id="cf-name" class="inp" style="width:100%" value="'+esc(client.name||'')+'" placeholder="e.g. Lauritz &amp; Knudsen"></div>'
+      +'<div><label class="la-lbl">Legal Entity Name <span style="font-weight:400;color:#98A2B3">— printed on invoices (blank = same as brand)</span></label><input id="cf-bill-name" class="inp" style="width:100%" value="'+esc(client.bill_name||'')+'" placeholder="e.g. Schneider Electric India Pvt Ltd"></div>'
+    +'</div>'
     +'<div class="g2" style="gap:10px">'
     +'<div><label class="la-lbl">Industry</label><input id="cf-industry" class="inp" style="width:100%" value="'+esc(client.industry||'')+'" placeholder="IT / Manufacturing"></div>'
     +'<div><label class="la-lbl">Status</label><select id="cf-status" class="inp" style="width:100%">'+statusOpts+'</select></div>'
@@ -15434,7 +15439,6 @@ async function openClientForm(clientId){
     +'<div><label class="la-lbl">Address (office / site)</label><input id="cf-address" class="inp" style="width:100%" value="'+esc(client.address||'')+'"></div>'
     +'<div style="border:1px solid #E4E7EC;border-radius:8px;padding:10px 11px;background:#FAFAFC">'
       +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:8px">&#128176; Billing &amp; GST <span style="font-weight:500;color:#888">— invoice mein yahi se auto-fill hoga (ek baar bharo)</span></div>'
-      +'<div style="margin-bottom:8px"><label class="la-lbl">Billing / Legal Entity Name <span style="font-weight:400;color:#98A2B3">— printed on invoices (blank = same as brand name)</span></label><input id="cf-bill-name" class="inp" style="width:100%" value="'+esc(client.bill_name||'')+'" placeholder="e.g. Schneider Electric India Pvt Ltd"></div>'
       +'<div><label class="la-lbl">GSTIN / UIN</label><input id="cf-gstin" class="inp" style="width:100%" value="'+esc(client.gstin||'')+'" placeholder="e.g. 06AABCU9603R1ZM"></div>'
       +'<div style="margin-top:8px"><label class="la-lbl">Billing Address (bill-to)</label><input id="cf-bill-address" class="inp" style="width:100%" value="'+esc(client.bill_address||client.address||'')+'" placeholder="GST bill-to address"></div>'
       +'<div class="g2" style="gap:10px;margin-top:8px">'
@@ -15521,6 +15525,7 @@ async function _renderClientDetail(clientId){
     +'<div style="width:48px;height:48px;border-radius:12px;background:'+sc.bg+';display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:'+sc.fg+';flex-shrink:0">'+esc((c.name||'?').charAt(0).toUpperCase())+'</div>'
     +'<div style="flex:1">'
     +'<div style="font-size:20px;font-weight:700;color:#101828;letter-spacing:-.02em">'+esc(c.name)+'</div>'
+    +(c.bill_name && c.bill_name!==c.name?'<div style="font-size:12px;color:#475467;margin-top:2px">&#127970; Legal entity (invoices): <b>'+esc(c.bill_name)+'</b></div>':'')
     +'<div style="font-size:12.5px;color:#667085;margin-top:2px">'
     +(c.industry?esc(c.industry):'No industry')+(c.city?' &middot; '+esc(c.city):'')
     +(c.website?' &middot; <a href="'+esc(c.website)+'" target="_blank" style="color:#2D6FB3;text-decoration:none">Website &#8599;</a>':'')
