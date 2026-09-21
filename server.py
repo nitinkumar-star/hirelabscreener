@@ -4006,22 +4006,90 @@ def log_candidate_event(cid, event_type, detail=''):
         print(f'log_candidate_event warning: {e}')
 
 
+# Daily backups live on the SAME disk as the database. The old version kept 7
+# full copies (8x the DB on a 1 GB disk) and copied blindly, so as the DB grew
+# it filled the disk and every SQLite write then failed with "database or disk
+# is full". This version:
+#   * keeps BACKUP_KEEP copies (default 3; set env BACKUP_KEEP to change),
+#   * prunes BEFORE copying, so old copies make room for the new one,
+#   * refuses to copy unless the disk keeps a safety margin free afterwards,
+#   * uses SQLite's online backup API (a consistent snapshot even in WAL mode;
+#     a raw file copy of a live WAL database can miss recent writes),
+#   * writes to <name>.partial and renames at the end, so an interrupted copy
+#     never leaves a half file eating space or posing as a real backup.
+# Render also snapshots the disk daily, so 3 local copies are enough.
+_BACKUP_STATUS = {}
+
+
+def _backup_keep():
+    try:
+        return max(1, int(os.environ.get('BACKUP_KEEP', '3') or 3))
+    except Exception:
+        return 3
+
+
 def daily_backup():
     """Snapshot the DB once per day. NEVER snapshot an empty DB over an existing
     good backup, and refresh today's backup if the live DB now has more users
     than the stored snapshot (so a startup-time empty snapshot can't 'stick')."""
     if not os.path.exists(DB_PATH):
         return
+    keep = _backup_keep()
+    # Leftovers of interrupted copies are never valid backups.
+    for p in Path(BAK_DIR).glob('*.partial'):
+        try:
+            p.unlink()
+        except Exception:
+            pass
     live_users = _db_user_count(DB_PATH)
     if live_users == 0:
         return  # Never back up an empty DB — it could clobber a good backup.
     bak = os.path.join(BAK_DIR, f'hirelab_{datetime.date.today()}.db')
+    # Prune older days first (today's file is kept and refreshed below).
+    older = [p for p in sorted(Path(BAK_DIR).glob('hirelab_*.db'), reverse=True)
+             if os.path.abspath(str(p)) != os.path.abspath(bak)]
+    for old in older[max(0, keep - 1):]:
+        try:
+            old.unlink()
+        except Exception:
+            pass
     existing_users = _db_user_count(bak) if os.path.exists(bak) else -1
-    if (not os.path.exists(bak)) or live_users >= existing_users:
-        shutil.copy2(DB_PATH, bak)
+    if os.path.exists(bak) and live_users < existing_users:
+        return
+    try:
+        need = os.path.getsize(DB_PATH)
+        try:
+            need += os.path.getsize(DB_PATH + '-wal')
+        except Exception:
+            pass
+        du = shutil.disk_usage(BAK_DIR)
+        # keep ~10% of the disk free for normal writes: at least 100 MB, at most 1 GB
+        margin = max(100 * 1024 * 1024, min(int(du.total * 0.10), 1024 * 1024 * 1024))
+        if du.free - need < margin:
+            msg = (f'SKIPPED {datetime.date.today()} — not enough free disk '
+                   f'(free {du.free // (1024*1024)} MB, backup needs {need // (1024*1024)} MB '
+                   f'+ {margin // (1024*1024)} MB safety margin). Increase the Render disk or open /admin/storage.')
+            _BACKUP_STATUS['last'] = msg
+            print(f'[BACKUP] {msg}')
+            return
+        tmp = bak + '.partial'
+        src = sqlite3.connect(DB_PATH, timeout=30)
+        dst = sqlite3.connect(tmp)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+        os.replace(tmp, bak)
+        _BACKUP_STATUS['last'] = f'OK {os.path.basename(bak)} ({live_users} users, {need // (1024*1024)} MB)'
         print(f'[BACKUP] {bak} ({live_users} users)')
-    for old in sorted(Path(BAK_DIR).glob('hirelab_*.db'))[:-7]:
-        old.unlink()
+    except Exception as e:
+        _BACKUP_STATUS['last'] = f'FAILED {datetime.date.today()}: {type(e).__name__}: {e}'
+        print(f'[BACKUP] failed: {e}')
+        try:
+            os.remove(bak + '.partial')
+        except Exception:
+            pass
 
 
 def _db_user_count(path):
@@ -22570,7 +22638,12 @@ try:
     # 3) take a fresh backup of the (now-healthy) DB
     _PERSISTENCE = check_storage_persistence()
     auto_restore_if_empty()
-    daily_backup()
+    # Own try: a failed backup (e.g. disk full) must never stop the background
+    # workers below from starting — previously it silently skipped all of them.
+    try:
+        daily_backup()
+    except Exception as _bk_err:
+        print(f'[BACKUP] startup backup skipped: {_bk_err}')
     # Start the reminder push-notification scheduler (background thread)
     try:
         _start_reminder_scheduler()
