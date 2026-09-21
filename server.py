@@ -7038,7 +7038,7 @@ You are an experienced agency recruiter writing a PHONE CALL PITCH SCRIPT that a
 recruiter reads out (naturally, not robotically) when cold-calling a candidate
 about a job. Write it in the flowing, spoken, first-person style of the flow below.
 
-You will receive the role details (title, client company, location, CTC band), a
+You will receive the role details (title, client company, location), a
 job description, and the recruiter's name and agency name for the introduction.
 
 # HOW TO WRITE IT
@@ -7053,9 +7053,9 @@ Follow this exact flow and tone (spoken, warm, professional). Keep
    well-known, publicly-true facts about recognisable companies; for lesser-known
    clients keep it neutral (e.g. "a well-regarded company in the <sector> space").
    NEVER invent ownership, funding, parent companies or awards.
-4. Why this candidate: "I came across your profile on Naukri, and it looks like
-   you have strong experience in <the 1-2 most relevant skills from the JD>,
-   which is why I wanted to connect with you."
+4. Why the call: one plain line that you are reaching out to people with
+   experience in <the 1-2 most relevant skills from the JD>. NO flattery: never say
+   the profile is impressive/strong, never say "I came across your profile".
 5. Role basics: mention the LOCATION, the experience range they want (from the JD
    or role seniority), and the core work plus the key technologies/skills from
    the JD.
@@ -7065,6 +7065,11 @@ Follow this exact flow and tone (spoken, warm, professional). Keep
 7. Close with discovery: "I'd love to understand your current role, the
    technologies/tools you're working on, your current CTC, expected CTC, and the
    kind of exposure you're looking for in your next opportunity."
+
+# NEVER DISCLOSE BUDGET
+- Never state or hint at this role's salary, CTC, budget or package — no numbers
+  at all. If the candidate asks, the recruiter says the client decides based on
+  the candidate's current package, experience and interview performance.
 
 # RULES
 - Plain spoken text only. NO headings, NO bullets, NO markdown symbols, NO notes
@@ -7078,10 +7083,15 @@ Follow this exact flow and tone (spoken, warm, professional). Keep
 def _recruiter_pitch_input(m, recruiter_name='', company_name=''):
     """Assemble the role details + JD + intro info fed to the pitch model."""
     jd_text = html_to_text(m['jd']) if m['jd'] else ''
+    # Budget must never reach the model (so it can never leak into the script).
+    try:
+        from modules.pitch import _strip_money
+        jd_text = _strip_money(jd_text)
+    except Exception:
+        pass
     return ("Role / Job Title: " + str(m['role'] or '') + "\n"
             "Client company: " + str(m['client'] or '') + "\n"
             "Location: " + str(m['location'] or '') + "\n"
-            "CTC band: " + str(m['ctc_min'] or '') + "-" + str(m['ctc_max'] or '') + " LPA\n"
             "Recruiter name (for the intro): " + (recruiter_name or 'the recruiter') + "\n"
             "Agency name (for the intro): " + (company_name or '') + "\n\n"
             "JOB DESCRIPTION:\n" + (jd_text.strip() if jd_text.strip()

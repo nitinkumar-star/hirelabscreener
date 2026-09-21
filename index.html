@@ -6380,11 +6380,13 @@ function renderProfileDetail(c){
 
   // Reminder popup hidden holder is not needed; reminders are inline.
   // Tab bar
-  var tabs=[['overview','Overview'],['ai','&#10024; AI Analysis'],['billing','&#128176; Placement &amp; Billing'],['resume','Resume'],['comms','Communications'],['call','Call Analysis']];
+  var tabs=[['overview','Overview'],['pitch','&#127919; Pitch'],['ai','&#10024; AI Analysis'],['billing','&#128176; Placement &amp; Billing'],['resume','Resume'],['comms','Communications'],['call','Call Analysis']];
   html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
   html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+historyCard+'</div><div>'+keyFacts+reminders+workCard+_cpOrgShell(c.id)+_cpInterviewShell(c.id)+'</div></div></div>';
+  // Pitch (candidate + position specific call script)
+  html+='<div class="cp-pane" id="cp-pane-pitch" style="display:none"><div id="cp-pitch-'+c.id+'"></div></div>';
   // AI Analysis (capability-first hiring-manager evaluation)
   html+='<div class="cp-pane" id="cp-pane-ai" style="display:none"><div id="cp-ai-'+c.id+'"></div></div>';
   // Placement & Billing (closes the lifecycle: Joined -> Invoiced -> Paid)
@@ -6419,7 +6421,7 @@ function renderProfileDetail(c){
 }
 
 function cpTab(name){
-  ['overview','ai','billing','resume','comms','call'].forEach(function(t){
+  ['overview','pitch','ai','billing','resume','comms','call'].forEach(function(t){
     var p=document.getElementById('cp-pane-'+t); if(p) p.style.display=(t===name)?'block':'none';
     var b=document.getElementById('cp-tab-'+t); if(b) b.classList.toggle('active', t===name);
   });
@@ -6429,7 +6431,170 @@ function cpTab(name){
   else { stopWaPoll(); }
   if(name==='overview'){ try{ cpLoadHistory(cid); }catch(e){} }
   if(name==='ai'){ cpLoadDeepAnalysis(cid); }
+  if(name==='pitch'){ cpLoadPitch(cid); }
   if(name==='billing'){ try{ cpLoadBilling(cid); }catch(e){} }
+}
+
+
+// ── Pitch tab: candidate + position specific call script (DeepSeek) ─────────
+// Server: modules/pitch.py. Step 1 evaluates candidate vs JD, step 2 writes the
+// script in the fixed 7-step flow. Budget is never sent to / shown by the model.
+window._pitchState = window._pitchState || {};   // cid -> {lang, data, running, err}
+function _pitchLang(){
+  try{ var l=localStorage.getItem('hl_pitch_lang'); if(l==='en'||l==='hinglish') return l; }catch(e){}
+  return 'en';
+}
+async function cpLoadPitch(cid, lang){
+  var st = window._pitchState[cid] = window._pitchState[cid] || {};
+  st.lang = lang || st.lang || _pitchLang();
+  if(st.running) { _renderPitch(cid); return; }
+  var box=document.getElementById('cp-pitch-'+cid); if(!box) return;
+  box.innerHTML='<div class="cp-card2"><div class="loading" style="padding:20px"><div class="spinner"></div>Loading…</div></div>';
+  var r = await req('GET','/candidates/'+cid+'/pitch?lang='+st.lang);
+  st.err = (r && r.error) ? r.error : '';
+  st.data = (r && r.cached) ? r : null;
+  st.meta = r || {};
+  _renderPitch(cid);
+}
+function cpPitchSetLang(cid, lang){
+  try{ localStorage.setItem('hl_pitch_lang', lang); }catch(e){}
+  cpLoadPitch(cid, lang);
+}
+async function cpGenPitch(cid){
+  var st = window._pitchState[cid] = window._pitchState[cid] || {lang:_pitchLang()};
+  if(st.running) return;
+  st.running = true; st.err=''; _renderPitch(cid);
+  var r = await req('POST','/candidates/'+cid+'/pitch',{lang:st.lang});
+  st.running = false;
+  if(!r || r.error || !r.ok){ st.err=(r&&r.error)||'Pitch generation failed'; _renderPitch(cid); toast('ERR','Pitch failed'); return; }
+  st.data = r; st.meta = st.meta||{};
+  st.meta.available = (st.meta.available||[]).concat([st.lang]);
+  _renderPitch(cid); toast('OK','Pitch ready');
+}
+function _pitchPlain(p, ev){
+  var out=[];
+  var add=function(h,t){ if(t) out.push(h+'\n'+t); };
+  add('1. INTRODUCTION', p.intro);
+  add('2. LOCATION', p.location);
+  add('3. ABOUT THE CLIENT', p.client);
+  add('4. POSITION', p.title);
+  add('5. ROLE IN BRIEF', p.role);
+  if((p.questions||[]).length){
+    out.push('6. SKILL QUESTIONS\n'+p.questions.map(function(q,i){ return (i+1)+'. '+q.q+(q.good_answer?'\n   Good answer: '+q.good_answer:''); }).join('\n'));
+  }
+  add('IF ASKED ABOUT CTC / BUDGET (never share a number)', p.ctc_response);
+  add('CLOSING', p.closing);
+  return out.join('\n\n');
+}
+function cpCopyPitch(cid){
+  var st=window._pitchState[cid]; if(!st||!st.data) return;
+  var t=_pitchPlain(st.data.pitch||{}, st.data.evaluation||{});
+  var done=function(){ toast('OK','Pitch copied'); };
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done,function(){ _fallbackCopy(t); done(); }); }
+  else { _fallbackCopy(t); done(); }
+}
+function _fallbackCopy(t){ var ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(e){} ta.remove(); }
+
+function _renderPitch(cid){
+  var box=document.getElementById('cp-pitch-'+cid); if(!box) return;
+  var st=window._pitchState[cid]||{}; var lang=st.lang||'en'; var d=st.data; var meta=st.meta||{};
+  var avail=meta.available||[];
+  var langBtn=function(v,l){
+    var on=(lang===v);
+    return '<button onclick="cpPitchSetLang('+cid+',\''+v+'\')" '+(st.running?'disabled ':'')
+      +'style="border:none;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;border-radius:7px;'
+      +(on?'background:#fff;color:#101828;box-shadow:0 1px 2px rgba(16,24,40,.12)':'background:transparent;color:#667085')+'">'
+      +l+(avail.indexOf(v)>=0&&!on?' &#10003;':'')+'</button>';
+  };
+  var gen = '<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12.5px;padding:7px 16px" onclick="cpGenPitch('+cid+')"'+(st.running?' disabled':'')+'>'
+    +(st.running?'&#8987; Working…':(d?'&#8635; Re-generate':'&#10024; Generate Pitch'))+'</button>';
+  var copy = (d&&!st.running)?'<button class="btn btn-o" style="font-size:12.5px;padding:7px 14px" onclick="cpCopyPitch('+cid+')">&#128203; Copy script</button>':'';
+  var h='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
+    +'<div style="flex:1;min-width:200px"><div style="font-size:15px;font-weight:700;color:var(--navy)">&#127919; Call Pitch</div>'
+    +'<div style="font-size:11.5px;color:var(--muted);margin-top:2px">Built for this candidate and this position — evaluated against the JD first.</div></div>'
+    +'<div style="display:flex;background:#F2F4F7;border-radius:9px;padding:3px">'+langBtn('en','English')+langBtn('hinglish','Hinglish')+'</div>'
+    +copy+gen+'</div>';
+
+  if(st.err){
+    h+='<div class="cp-card2" style="border-left:4px solid #D92D20"><div style="font-size:12.5px;font-weight:700;color:#B42318;margin-bottom:4px">&#9888; Could not generate the pitch</div>'
+      +'<div style="font-size:12.5px;color:#475467">'+esc(st.err)+'</div></div>';
+  }
+  if(st.running){
+    h+='<div class="cp-card2"><div class="loading" style="padding:28px"><div class="spinner"></div>Evaluating the profile against the JD, then writing the pitch… (~20–40s)</div></div>';
+    box.innerHTML=h; return;
+  }
+  if(!d){
+    if(!st.err){
+      var noJd = meta.has_mandate===false ? 'This candidate is not on a job mandate yet — move them to a mandate first.'
+        : (meta.has_jd===false ? 'Tip: this mandate has no JD text — the pitch will be thinner. Add the JD in Mandate Setup for best results.' : '');
+      h+='<div class="cp-card2" style="text-align:center;padding:30px 20px">'
+        +'<div style="font-size:30px;margin-bottom:6px">&#127919;</div>'
+        +'<div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:4px">No '+(lang==='hinglish'?'Hinglish':'English')+' pitch for this candidate yet</div>'
+        +'<div style="font-size:12.5px;color:var(--muted);max-width:460px;margin:0 auto 14px">The AI first checks this profile against the JD (match score, gaps, claims to verify), then writes a natural call script with skill questions that test exactly those points.</div>'
+        +(noJd?'<div style="font-size:12px;color:#B54708;margin-bottom:12px">'+esc(noJd)+'</div>':'')
+        +gen+'</div>';
+    }
+    box.innerHTML=h; return;
+  }
+
+  var ev=d.evaluation||{}, p=d.pitch||{};
+  if(d.stale){
+    h+='<div style="background:#FFFAEB;border:1px solid #FEDF89;border-radius:10px;padding:9px 14px;font-size:12px;color:#93370D;margin-bottom:12px;display:flex;align-items:center;gap:10px">'
+      +'&#9888; The profile, CV or JD changed after this pitch was made.<button class="btn" style="margin-left:auto;background:#B54708;color:#fff;border:none;font-size:11.5px;padding:5px 12px" onclick="cpGenPitch('+cid+')">Re-generate</button></div>';
+  }
+  // Evaluation card
+  var sc=ev.match_score||0, col=sc>=75?'#0F6E56':(sc>=50?'#B54708':'#B42318'), bg=sc>=75?'#ECFDF3':(sc>=50?'#FFFAEB':'#FEF3F2');
+  var list=function(title,icon,color,items){
+    if(!items||!items.length) return '';
+    return '<div style="flex:1;min-width:220px"><div style="font-size:11px;font-weight:700;color:'+color+';text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">'+icon+' '+title+'</div>'
+      +items.map(function(x){ return '<div style="font-size:12.5px;color:#344054;line-height:1.45;margin-bottom:5px;padding-left:10px;border-left:2px solid '+color+'33">'+esc(x)+'</div>'; }).join('')+'</div>';
+  };
+  h+='<div class="cp-card2" style="margin-bottom:12px">'
+    +'<div style="display:flex;align-items:center;gap:14px;margin-bottom:12px">'
+    +'<div style="width:62px;height:62px;border-radius:50%;background:'+bg+';border:3px solid '+col+';display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+    +'<span style="font-size:19px;font-weight:800;color:'+col+'">'+sc+'</span></div>'
+    +'<div style="flex:1"><div style="font-size:14px;font-weight:700;color:'+col+'">'+esc(ev.verdict||'')+'</div>'
+    +'<div style="font-size:12.5px;color:#475467;margin-top:2px;line-height:1.45">'+esc(ev.summary||'')+'</div>'
+    +(ev.location_fit?'<div style="font-size:11.5px;color:#667085;margin-top:4px">&#128205; '+esc(ev.location_fit)+'</div>':'')
+    +'</div></div>'
+    +'<div style="display:flex;gap:16px;flex-wrap:wrap">'
+    +list('Matches','&#10003;','#0F6E56',ev.strengths)+list('Gaps','&#9888;','#B54708',ev.gaps)+list('Verify on call','?','#2D6FB3',ev.to_verify)
+    +'</div><div style="font-size:10.5px;color:#98A2B3;margin-top:8px">For the recruiter only — do not read this out.</div></div>';
+
+  // Script card
+  var step=function(n,label,text){
+    if(!text) return '';
+    return '<div style="display:flex;gap:12px;padding:11px 0;border-top:1px solid #F2F4F7">'
+      +'<div style="width:24px;height:24px;border-radius:50%;background:#EEF4FF;color:#2D6FB3;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">'+n+'</div>'
+      +'<div style="flex:1"><div style="font-size:11px;font-weight:700;color:#667085;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">'+label+'</div>'
+      +'<div style="font-size:13.5px;color:#101828;line-height:1.6">'+esc(text)+'</div></div></div>';
+  };
+  h+='<div class="cp-card2" style="margin-bottom:12px"><div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">&#128222; Call script</div>'
+    +step(1,'Introduction',p.intro)+step(2,'Location &amp; comfort',p.location)+step(3,'About the client',p.client)
+    +step(4,'Position',p.title)+step(5,'Role in brief',p.role)+'</div>';
+
+  // Budget rule card
+  h+='<div class="cp-card2" style="margin-bottom:12px;background:#FEF3F2;border:1px solid #FECDCA">'
+    +'<div style="font-size:12px;font-weight:800;color:#B42318;margin-bottom:4px">&#128683; Never disclose CTC or budget</div>'
+    +'<div style="font-size:11.5px;color:#912018;margin-bottom:6px">If the candidate asks, say:</div>'
+    +'<div style="font-size:13.5px;color:#101828;line-height:1.6;font-style:italic">&ldquo;'+esc(p.ctc_response||'')+'&rdquo;</div></div>';
+
+  // Questions card
+  var qs=p.questions||[];
+  h+='<div class="cp-card2" style="margin-bottom:12px"><div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">&#10067; Skill questions ('+qs.length+')</div>'
+    +qs.map(function(q,i){
+      return '<div style="padding:11px 0;border-top:1px solid #F2F4F7">'
+        +'<div style="font-size:13.5px;color:#101828;font-weight:600;line-height:1.5">'+(i+1)+'. '+esc(q.q||'')+'</div>'
+        +(q.checks?'<div style="font-size:11.5px;color:#667085;margin-top:4px"><b>Checks:</b> '+esc(q.checks)+'</div>':'')
+        +(q.good_answer?'<div style="font-size:12px;color:#0F6E56;margin-top:3px;background:#F3FBF7;border-radius:6px;padding:6px 9px"><b>Good answer:</b> '+esc(q.good_answer)+'</div>':'')
+        +'</div>';
+    }).join('')+'</div>';
+  if(p.closing){
+    h+='<div class="cp-card2" style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#667085;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Closing</div>'
+      +'<div style="font-size:13.5px;color:#101828;line-height:1.6">'+esc(p.closing)+'</div></div>';
+  }
+  h+='<div style="font-size:11px;color:#98A2B3;text-align:right">'+(lang==='hinglish'?'Hinglish':'English')+' &middot; generated by '+esc(d.by||'')+' &middot; '+esc((d.at||'').replace('T',' ').slice(0,16))+'</div>';
+  box.innerHTML=h;
 }
 
 // ── AI Analysis tab: deep capability-first hiring evaluation ────────────────
