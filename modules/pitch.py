@@ -227,61 +227,78 @@ RULES
 - Never mention salary, CTC or budget."""
 
 
+PAUSE = '(PAUSE)'   # marker the model puts wherever the caller must stop and listen
+
+
 def _pitch_prompt(lang):
     if lang == 'hinglish':
         lang_rule = ("LANGUAGE: Hinglish — the natural Hindi-English mix Indian recruiters speak on calls, "
-                     "written in ROMAN script only (no Devanagari). Keep technical terms, the job title and "
-                     "skill names in English. Example tone: \"Aapka current location kya hai, aur Pune "
-                     "shift hone mein aap comfortable rahenge?\"")
+                     "written in ROMAN script only (no Devanagari). Keep technical terms, the job title, "
+                     "product and skill names in English. Example tone: \"Aapka current location kya hai, "
+                     "aur Pune shift hone mein aap comfortable rahenge?\"")
     else:
         lang_rule = ("LANGUAGE: Simple, natural spoken Indian English — short sentences, polite, "
                      "conversational. Not formal written English.")
-    return f"""You write the PHONE CALL SCRIPT an Indian agency recruiter reads when calling a candidate
-about one job. It must sound like a real person talking — warm, direct, unhurried — never like a
-sales brochure or a robot.
+    return f"""You write the PHONE CALL SCRIPT that a VERY JUNIOR Indian recruiter reads out, word for
+word, when calling a candidate about one job. The caller has no technical knowledge, so the script
+must be complete, easy to read aloud, and must sound like a real person talking — warm, direct,
+unhurried — never like a brochure or a robot.
 
 {lang_rule}
 
 You receive: the recruiter and agency names, the job details, the candidate's profile, and a
-screening EVALUATION of this candidate against the job (strengths, gaps, claims to verify).
+screening EVALUATION of this candidate (strengths, gaps, claims to verify).
 
-FOLLOW THIS FLOW EXACTLY (each step short — 1 to 3 spoken sentences):
-1. intro     — Greet the candidate by first name, introduce the recruiter by name and the agency,
-               ask if it is a good time for a few minutes.
-2. location  — Say the role is based in <job location> (and work mode if known) and ASK the
-               candidate about their comfort with that location / relocation / commute. If the
-               evaluation says they are elsewhere, ask about relocation naturally.
-3. client    — Describe the client company in ONE or TWO short lines. Use only well-known, true facts
-               for recognisable companies; for anything you are not sure about, stay neutral
-               (e.g. "an established company in the solar EPC space"). Never invent size, funding,
-               awards or parent companies.
-4. title     — State the position title clearly.
-5. role      — The role in brief: 2-3 lines on what the person will actually own and work on,
-               taken from the JD. No hype.
-6. questions — 4 to 6 skill questions the recruiter asks to judge fit. Build them from the
-               evaluation: probe every important GAP and every claim TO VERIFY, plus the must-have
-               skills. Questions must be specific and answerable on a phone call (projects, tools,
-               scale, responsibilities, numbers), not "tell me about yourself". For each question
-               also write what a GOOD answer sounds like, so a junior recruiter can judge it.
+WRITE "script" AS FLOWING PARAGRAPHS (plain text, paragraphs separated by a blank line, no headings,
+no bullets, no numbering), in exactly this order:
+
+Paragraph 1 — Introduction: greet the candidate by first name, introduce the recruiter by name and
+  the agency, ask if it is a good time to talk for a few minutes. Then write {PAUSE}.
+Paragraph 2 — Location: say where the job is based (and the work mode if known), then ASK about
+  their comfort with that location / relocation / commute. If the evaluation shows they live
+  elsewhere, ask about relocation naturally. Then write {PAUSE}.
+Paragraph 3 — Client: describe the client company in one or two short lines. Use only well-known,
+  true facts for recognisable companies; if unsure, stay neutral (e.g. "an established company in
+  the solar EPC space"). Never invent size, funding, awards or parent companies.
+Paragraph 4 — Position and role (THE MOST IMPORTANT PART — make it DETAILED): state the position
+  title clearly, then explain the role in 6 to 9 spoken sentences so the candidate gets a real
+  picture: what they will own, the day-to-day work, the products / systems / domain, who they will
+  deal with (customers, dealers, site teams, OEMs — whatever the JD says), territory or sites and
+  travel if mentioned, the team or reporting line if mentioned, and what success looks like in the
+  role. Use ONLY what the JD and role details say — never invent facts; if the JD is thin, say less
+  rather than make things up. End by asking if the role sounds interesting to them, then {PAUSE}.
+Paragraph 5 — Exposure questions: one short line to transition ("I have a few quick questions
+  about your experience"), then ask the exposure questions ONE BY ONE inside the paragraph, each
+  followed by {PAUSE}.
+Paragraph 6 — Closing: thank them and give the next step (e.g. ask for the updated CV on WhatsApp
+  / email and the best time for a detailed discussion).
+
+EXPOSURE QUESTIONS (5 to 7) — the caller CANNOT judge skill level, so the questions only find out
+WHETHER the candidate has exposure to each important skill, and roughly how much:
+- Form: "Have you worked on / handled <skill or area>? If yes, for about how many years, and in
+  which company?" (or the natural Hinglish equivalent).
+- Cover every must-have skill, plus every important GAP and every claim TO VERIFY from the
+  evaluation. One skill per question.
+- NEVER ask "how would you…", "explain…", "what is the difference…", scenario, technical or
+  test-style questions. No follow-up drilling. Keep each question to one simple sentence.
+Also return the same questions in "exposure_questions" so the caller can tick answers on screen.
 
 HARD RULES
 - NEVER state or hint at CTC, salary, budget, package or any money figure — you do not know it and
-  must not guess. Instead write "ctc_response": the diplomatic line the recruiter uses IF the
-  candidate asks about budget (e.g. the client decides based on the candidate's current package,
-  experience and interview performance; first understand their current and expected, then discuss).
-  It must contain NO number.
-- NO flattery. Do not say the profile is impressive/great/strong, do not say "I came across your
-  profile", no "perfect fit", no "exciting/amazing opportunity". Just be clear and respectful.
-- Do not tell the candidate their score, gaps or weaknesses.
-- Use the candidate's real first name. Do not use placeholders except the recruiter/agency names
-  given to you.
+  must not guess. Instead write "ctc_response": the diplomatic line the caller uses IF the
+  candidate asks about budget (the client decides based on the candidate's current package,
+  experience and interviews; first understand their current and expected). It must contain NO number.
+- NO flattery: do not call the profile impressive/great/strong, do not say "I came across your
+  profile", no "perfect fit", no "exciting/amazing opportunity". Be clear and respectful.
+- Never tell the candidate their score, gaps or weaknesses.
+- Use the candidate's real first name. No placeholders except the recruiter/agency names given.
 
 Return ONLY a JSON object, no prose:
 {{
-  "intro": "...", "location": "...", "client": "...", "title": "...", "role": "...",
-  "questions": [{{"q": "...", "checks": "<which gap/claim/skill this tests>", "good_answer": "..."}}],
-  "ctc_response": "...",
-  "closing": "<one line to close: next step, e.g. ask for updated CV / best time for a detailed discussion>"
+  "script": "<paragraph 1>\\n\\n<paragraph 2>\\n\\n...\\n\\n<paragraph 6>",
+  "exposure_questions": [{{"skill": "<short skill name>", "q": "<the exact question>",
+                          "note": "<what the caller writes down, e.g. Yes/No + years + company>"}}],
+  "ctc_response": "..."
 }}"""
 
 
@@ -336,14 +353,16 @@ def _ask_json(ds_key, system, user, temperature, max_tokens, endpoint, extra_mes
 # ══════════════════════════════════════════════════════════════════════════
 #  VALIDATION of the finished pitch
 # ══════════════════════════════════════════════════════════════════════════
-_TEXT_KEYS = ('intro', 'location', 'client', 'title', 'role', 'ctc_response', 'closing')
+# Question openers that test ability instead of asking about exposure.
+_TEST_Q = re.compile(r'\b(how would you|how do you|how will you|explain|describe how|what is the difference|'
+                     r'what are the steps|walk me through|kaise karenge|kaise karte|samjhaiye|difference kya)\b', re.I)
 
 
 def _all_texts(p):
-    out = [(k, str(p.get(k) or '')) for k in _TEXT_KEYS]
-    for i, q in enumerate(p.get('questions') or []):
+    out = [('script', str(p.get('script') or '')), ('ctc_response', str(p.get('ctc_response') or ''))]
+    for i, q in enumerate(p.get('exposure_questions') or []):
         if isinstance(q, dict):
-            out.append((f'q{i}', str(q.get('q') or '')))
+            out.append((f'question {i + 1}', str(q.get('q') or '')))
     return out
 
 
@@ -354,28 +373,48 @@ def _violations(p):
             bad.append(f'"{k}" contains a money figure')
         if _FLATTERY.search(t):
             bad.append(f'"{k}" contains flattery ("{_FLATTERY.search(t).group(0)}")')
+    script = str(p.get('script') or '')
+    paras = [x for x in re.split(r'\n\s*\n', script) if x.strip()]
+    if len(paras) < 5:
+        bad.append(f'"script" must be 6 paragraphs separated by blank lines (got {len(paras)})')
+    for i, q in enumerate(p.get('exposure_questions') or []):
+        if isinstance(q, dict) and _TEST_Q.search(str(q.get('q') or '')):
+            bad.append(f'question {i + 1} tests ability ("{_TEST_Q.search(str(q.get("q"))).group(0)}") — ask only about exposure')
+    if len(p.get('exposure_questions') or []) < 4:
+        bad.append('"exposure_questions" needs 5 to 7 questions')
     return bad
 
 
+def _clean_text(t):
+    """Drop any sentence carrying money / flattery, keep paragraph breaks."""
+    paras = re.split(r'\n\s*\n', str(t or ''))
+    keep = []
+    for para in paras:
+        parts = re.split(r'(?<=[.!?])\s+', para.strip())
+        para2 = ' '.join(x for x in parts if not _MONEY_FIGURE.search(x) and not _FLATTERY.search(x)).strip()
+        if para2:
+            keep.append(para2)
+    return '\n\n'.join(keep)
+
+
 def _scrub(p):
-    """Last line of defence: drop any sentence still carrying money / flattery."""
-    def clean(t):
-        parts = re.split(r'(?<=[.!?])\s+', str(t or ''))
-        return ' '.join(s for s in parts if not _MONEY_FIGURE.search(s) and not _FLATTERY.search(s)).strip()
-    for k in _TEXT_KEYS:
-        if k in p:
-            p[k] = clean(p[k])
+    """Last line of defence after the corrective retry."""
+    p['script'] = _clean_text(p.get('script'))
     qs = []
-    for q in p.get('questions') or []:
-        if isinstance(q, dict) and clean(q.get('q')):
-            q['q'] = clean(q.get('q'))
-            qs.append(q)
-    p['questions'] = qs
-    if not p.get('ctc_response'):
+    for q in p.get('exposure_questions') or []:
+        if isinstance(q, dict):
+            qq = _clean_text(q.get('q'))
+            if qq:
+                qs.append({'skill': str(q.get('skill') or '').strip()[:60], 'q': qq,
+                           'note': str(q.get('note') or '').strip()})
+    p['exposure_questions'] = qs
+    p['ctc_response'] = _clean_text(p.get('ctc_response'))
+    if not p['ctc_response']:
         p['ctc_response'] = ('The final number is decided by the client based on your current package, '
                              'experience and how the interviews go. Could you share your current and '
                              'expected so I can position your profile correctly?')
-    return p
+    p['format'] = 2
+    return {k: p[k] for k in ('script', 'exposure_questions', 'ctc_response', 'format')}
 
 
 def _normalise_eval(e):
@@ -533,20 +572,20 @@ def generate_pitch(cid):
                           f"JOB\n{role_txt}\n\nCANDIDATE\n{cand_txt}\n\n"
                           f"EVALUATION (for you only — never read it out)\n{json.dumps(ev, ensure_ascii=False)}")
             system = _pitch_prompt(lang)
-            pt, raw = _ask_json(ds_key, system, pitch_user, 0.6, 1600, 'pitch-write')
+            pt, raw = _ask_json(ds_key, system, pitch_user, 0.6, 2600, 'pitch-write')
             step = 'check-rules'
             bad = _violations(pt)
             if bad:
                 step = 'ai-fix-pitch'
-                pt2, _ = _ask_json(ds_key, system, pitch_user, 0.4, 1600, 'pitch-write-fix', extra_messages=[
+                pt2, _ = _ask_json(ds_key, system, pitch_user, 0.4, 2600, 'pitch-write-fix', extra_messages=[
                     {'role': 'assistant', 'content': raw},
                     {'role': 'user', 'content': 'Rewrite it. These rules were broken: ' + '; '.join(bad)
-                     + '. Remove every money figure and every flattering phrase. Same JSON shape.'}])
-                if isinstance(pt2, dict) and pt2.get('intro'):
+                     + '. Fix all of them. Same JSON shape.'}])
+                if isinstance(pt2, dict) and pt2.get('script'):
                     pt = pt2
             step = 'scrub'
             pt = _scrub(pt)
-            if not pt.get('intro') or not pt.get('questions'):
+            if len(pt.get('script') or '') < 300 or not pt.get('exposure_questions'):
                 raise PitchError('AI returned an incomplete pitch. Please try again.')
         except PitchError as e:
             print(f'[pitch] step={step}: {e}')
