@@ -437,6 +437,12 @@ class ClientService:
         if not fields:
             return
         ClientRepo.update(conn, cid, fields, actor, now)
+        # The CRM client is the single source of truth for the brand name:
+        # mandates linked to it (by id) take the new name, so a rename shows
+        # everywhere instead of leaving old names on existing mandates.
+        if 'name' in fields and fields['name'] != before.get('name'):
+            conn.execute('UPDATE mandates SET client=? WHERE crm_client_id=? AND owner_id=?',
+                         (fields['name'], cid, company_id))
         conn.commit()
         after = dict(before); after.update(fields)
         changes = record_changes('client', cid, before, after,
