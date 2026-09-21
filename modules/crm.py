@@ -334,7 +334,8 @@ class DuplicateError(ValidationError):
 
 
 AUDIT_CLIENT_FIELDS = ['name', 'industry', 'website', 'city', 'state', 'country',
-                       'gstin', 'address', 'status', 'owner_user_id', 'notes']
+                       'gstin', 'address', 'status', 'owner_user_id', 'notes', 'bill_name',
+                       'bill_address', 'bill_state', 'bill_state_code']
 AUDIT_CONTACT_FIELDS = ['name', 'designation', 'email', 'phone', 'is_primary',
                         'is_decision_maker', 'linkedin', 'notes']
 
@@ -385,6 +386,12 @@ class ClientService:
             'name_key': name_key, 'actor': actor, 'now': now,
         }
         cid = ClientRepo.insert(conn, data)
+        # Billing fields live in columns added after the original INSERT shape.
+        _bill = {k: (payload.get(k) or '').strip() for k in
+                 ('bill_name', 'bill_address', 'bill_state', 'bill_state_code') if (payload.get(k) or '').strip()}
+        if _bill:
+            conn.execute('UPDATE crm_clients SET ' + ', '.join(f'{k}=?' for k in _bill) + ' WHERE id=?',
+                         list(_bill.values()) + [cid])
         conn.commit()
         log_activity('client.created', f'Created client "{name}"',
                      entity_type='client', entity_id=cid,
@@ -412,7 +419,9 @@ class ClientService:
                 raise DuplicateError(f'Another client named "{dup["name"]}" already exists.', dup['id'])
             fields['name'] = name
             fields['name_key'] = name_key
-        for f in ['industry', 'website', 'city', 'state', 'country', 'address', 'notes']:
+        # bill_* were sent by the CRM form but never saved before (silently dropped).
+        for f in ['industry', 'website', 'city', 'state', 'country', 'address', 'notes',
+                  'bill_name', 'bill_address', 'bill_state', 'bill_state_code']:
             if f in payload:
                 fields[f] = (payload.get(f) or '').strip()
         if 'gstin' in payload:
@@ -624,6 +633,10 @@ def list_clients():
 @bp.route('/clients', methods=['POST'])
 @login_required
 def create_client():
+    # Only the owner / company admins add clients, so recruiters pick from one
+    # clean list when creating mandates (no spelling duplicates).
+    if not is_company_admin():
+        return jsonify({'error': f'Only an admin can add a new {_CL().lower()}. Ask your admin to add it in CRM.'}), 403
     conn = get_db()
     try:
         cid = ClientService.create(conn, request.json or {})
