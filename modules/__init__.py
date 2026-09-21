@@ -31,6 +31,7 @@ _MODULE_NAMES = [
     'scheduler',
     'orgmap',
     'notifications',
+    'pitch',
 ]
 
 _MIGRATIONS = []

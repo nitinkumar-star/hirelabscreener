@@ -207,7 +207,7 @@ _CAND_PATH = re.compile(r'^/api/candidates/(\d+)(?:/([a-z0-9-]+))?/?$')
 _WA_SUGG_PATH = re.compile(r'^/api/wa-suggestions/(\d+)/approve/?$')
 
 # Routes that never notify: AI drafts/previews and commercial data.
-_SKIP_SUFFIX = {'ai-compose', 'deep-analysis', 'wa-draft', 'email-agent', 'billing', 'journey'}
+_SKIP_SUFFIX = {'ai-compose', 'deep-analysis', 'wa-draft', 'email-agent', 'billing', 'journey', 'pitch'}
 
 # Action label for routes whose effect is not visible in the candidate row.
 _ROUTE_LABEL = {
