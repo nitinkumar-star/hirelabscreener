@@ -862,7 +862,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J31</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J32</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -4232,7 +4232,7 @@ function buildJDEditor(id, value) {
       toolbarHtml += '<button type="button" class="jd-tb-btn" data-cmd="' + b.cmd + '" title="' + b.title + '">' + b.icon + '</button>';
     }
   });
-  toolbarHtml += '<span class="jd-sep"></span><button type="button" class="jd-tb-btn" style="width:auto;padding:0 10px;background:#534AB7;color:#fff;font-weight:600" title="AI se JD likhwao" onclick="generateJDForEditor(\'' + id + '\')">&#10024; AI Write JD</button>';
+  toolbarHtml += '<span class="jd-sep"></span><button type="button" class="jd-tb-btn" style="width:auto;padding:0 10px;background:#534AB7;color:#fff;font-weight:600" title="AI se JD likhwao" onclick="generateJDForEditor(\'' + id + '\')">&#10024; AI Write JD</button>' + '<button type="button" id="jd-undo-' + id + '" class="jd-tb-btn" style="width:auto;padding:0 10px;display:none" title="AI se pehle wali JD wapas lao" onclick="undoAIJD(\'' + id + '\')">&#8630; Undo AI</button>';
   toolbarHtml += '<button type="button" class="jd-tb-btn" style="width:auto;padding:0 10px;margin-left:4px" title="JD ko AI se chhota karo (optional)" onclick="shortenJDNow(\'' + id + '\')">&#9986; Shorten</button>';
   toolbarHtml += '</div>';
 
@@ -4249,24 +4249,47 @@ function buildJDEditor(id, value) {
     + '<div class="jd-editor" id="' + id + '" contenteditable="true" data-placeholder="Paste or type the job description...">' + initialHtml + '</div>';
 }
 
+window._jdUndo = window._jdUndo || {};
 async function generateJDForEditor(targetId){
   var ed=document.getElementById(targetId); if(!ed) return;
   var g=function(ids){ for(var i=0;i<ids.length;i++){ var e=document.getElementById(ids[i]); if(e&&(e.value||'').trim()) return e.value.trim(); } return ''; };
   var role=g(['ms-role','m-role']);
   if(!role){ toast('Role chahiye','Pehle Role field bharo, phir AI Write JD'); return; }
-  var notes=prompt('Koi extra detail JD ke liye? (optional — jaise specific skills, shift, projects)\n\nBlank chhod sakte ho.','')||'';
+  // If a JD is already in the editor (e.g. pasted from the client), the AI
+  // REWRITES that JD — keeping every responsibility, tool and requirement —
+  // instead of inventing a new one from the title.
+  var existing=(ed.innerText||ed.textContent||'').trim();
+  var rewrite=existing.length>=200;
+  var notes='';
+  if(rewrite){
+    if(!confirm('Editor mein jo JD hai, AI usi ko professional format mein rewrite karega.\n\nSaari responsibilities, technologies, skills aur KPIs wahi rahengi — AI kuch naya add nahi karega.\nPasand na aaye to "Undo AI" se original wapas aa jayegi.\n\nContinue?')) return;
+  } else {
+    notes=prompt('Koi extra detail JD ke liye? (optional — jaise specific skills, shift, projects)\n\nBlank chhod sakte ho.','')||'';
+  }
   var payload={ role:role, client:g(['ms-client','m-client']), location:g(['ms-loc','m-location']),
     experience:(g(['ms-expmin'])||g(['m-expmin']))?expRangeText(g(['ms-expmin','m-expmin']),g(['ms-expmax','m-expmax'])):'',
-    ctc_min:g(['ms-cmin','m-ctcmin']), ctc_max:g(['ms-cmax','m-ctcmax']),
-    division:g(['ms-div','m-division']), notes:notes };
+    division:g(['ms-div','m-division']), notes:notes, source_jd: rewrite?existing:'' };
   var prev=ed.innerHTML;
-  ed.innerHTML='<p style="color:#888">&#10024; AI JD likh raha hai… (~15-30s)</p>';
+  ed.innerHTML='<p style="color:#888">&#10024; '+(rewrite?'AI aapki JD ko format kar raha hai… (~20-45s)':'AI JD likh raha hai… (~15-30s)')+'</p>';
   var r;
   try{ r=await req('POST','/generate-jd',payload); }
   catch(e){ ed.innerHTML=prev; toast('Error','JD generate fail'); return; }
   if(!r||r.error||!r.html){ ed.innerHTML=prev; toast('Error',esc((r&&r.error)||'No JD returned')); return; }
+  window._jdUndo[targetId]=prev;
   ed.innerHTML=r.html;
-  toast('OK','JD ready — edit karke Save karo');
+  var ub=document.getElementById('jd-undo-'+targetId); if(ub) ub.style.display='';
+  if(r.missing_terms && r.missing_terms.length){
+    toast('&#9888;&#65039;','AI ne ye terms chhod diye: '+esc(r.missing_terms.slice(0,8).join(', '))+(r.missing_terms.length>8?'…':'')+' — check karke add karo ya Undo AI');
+  } else {
+    toast('OK', rewrite?'JD formatted — original ka saara content rakha gaya. Review karke Save karo':'JD ready — edit karke Save karo');
+  }
+}
+function undoAIJD(targetId){
+  var ed=document.getElementById(targetId); var prev=window._jdUndo[targetId];
+  if(!ed || prev==null) return;
+  ed.innerHTML=prev; delete window._jdUndo[targetId];
+  var ub=document.getElementById('jd-undo-'+targetId); if(ub) ub.style.display='none';
+  toast('OK','Original JD wapas aa gayi');
 }
 
 // Shortening is now opt-in only. Pasting or generating a JD never shrinks it;

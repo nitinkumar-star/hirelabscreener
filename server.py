@@ -16148,6 +16148,72 @@ CONTENT RULES — write a FULL-LENGTH, detailed JD. Depth is wanted; do not summ
 - Indian context (notice-period norms, regional markets). Professional English, no emojis."""
 
 
+JD_REWRITE_PROMPT = """You restructure an EXISTING job description (given below as ORIGINAL JD) into a clean,
+professional house format. You are an editor, not an author. FAITHFULNESS IS THE FIRST RULE.
+
+KEEP EVERYTHING — nothing from the original may be dropped, generalised or replaced:
+- every responsibility / accountability, every scope and ownership item,
+- every technology, platform, tool, standard and certification, written EXACTLY as in the
+  original (e.g. AWS, Azure, MongoDB Atlas, Terraform, CloudFormation, Kubernetes, CKA, CISSP),
+- every requirement on education, years of experience and competencies,
+- every KPI, success measure, stakeholder and reporting line.
+A long original must give a long JD. Several short items may be merged into one bullet ONLY if
+every item still appears by name.
+
+ADD NOTHING: no new responsibilities, tools, benefits, perks, reporting lines or company facts
+that are not in the original. Do not change the nature, seniority or domain of the role.
+
+OUTPUT FORMAT — strict:
+- Output ONLY clean HTML using ONLY <h3>, <p>, <ul>, <li>, <strong>. No markdown, no code fences,
+  no wrapper tags, no style/class attributes.
+- Sections, in this order (use these exact headings):
+  <h3>Job Snapshot</h3> — <ul> with Role, Company, Location, Experience (and Function / Grade /
+    Employment Type if the original has them). Only fields present in the original or supplied.
+  <h3>About the Role</h3> — one <p> built from the original's role purpose and context.
+  <h3>Key Responsibilities</h3> — <ul>, one bullet per accountability / responsibility; keep the
+    detail of each (start with the theme in <strong> if the original groups them).
+  <h3>Scope &amp; Ownership</h3> — only if the original lists platforms, portfolio or scope.
+  <h3>Required Skills &amp; Experience</h3> — <ul> with technical and leadership competencies.
+  <h3>Qualifications</h3> — <ul> education, experience and certifications.
+  <h3>Key Performance Indicators</h3> — only if the original has KPIs / success measures
+    (include first-12-months goals here).
+  <h3>Stakeholders</h3> — only if the original lists them.
+  <h3>What We Offer</h3> — ONLY if the original says what the company offers; otherwise leave
+    this section out completely.
+- COMPANY NAME: use the supplied Client / Company name as the company. Keep any other company
+  named inside the original (e.g. a parent group's security standards) exactly as written.
+- NEVER mention CTC, salary, package, LPA, compensation or any pay figure.
+- Professional English, no emojis."""
+
+
+def _jd_key_terms(text):
+    """Distinctive terms a faithful rewrite must keep: acronyms and mixed-case
+    technical names (AWS, MongoDB, FinOps, DevSecOps, CI/CD, IaC, CKA...)."""
+    terms = set()
+    raw = []
+    for t in re.findall(r'[A-Za-z][A-Za-z0-9+#./-]*', text or ''):
+        t = t.strip('./-')
+        # "CI/CD", "RPO/RTO" stay whole; "IAM/Zero" is two words -> check parts
+        if '/' in t and not all(p.isupper() for p in t.split('/') if p):
+            raw.extend(x for x in t.split('/') if x)
+        else:
+            raw.append(t)
+    for t in raw:
+        if len(t) < 2 or len(t) > 30:
+            continue
+        caps = sum(1 for ch in t if ch.isupper())
+        if caps >= 2 or (caps >= 1 and any(ch.isdigit() for ch in t)):
+            if t.upper() in ('II', 'III', 'IV', 'I', 'OR', 'AND', 'THE', 'IN', 'OF', 'TO'):
+                continue
+            terms.add(t)
+    return terms
+
+
+def _jd_missing_terms(source_text, html):
+    out = re.sub(r'<[^>]+>', ' ', html or '').lower()
+    return sorted(t for t in _jd_key_terms(source_text) if t.lower() not in out)
+
+
 # ── JD post-processing ─────────────────────────────────────────────────────
 # DeepSeek is asked for clean HTML, but LLM output drifts: sometimes markdown,
 # sometimes <h2>/<b>/styled <div> soup. Rather than hoping the prompt holds, we
@@ -16250,9 +16316,22 @@ def normalize_jd_html(raw):
     return s.strip()
 
 
+# Whole-word match. The old substring check also deleted legitimate lines —
+# "budget" matched "budgeting" (e.g. a FinOps "cost visibility, budgeting"
+# responsibility) and "package" matched "software package".
+_JD_MONEY_STRONG_RE = re.compile(
+    r'\b(ctc|salary|salaries|compensation|lpa|lakhs?|lacs?|stipend|remuneration|pay\s*range|'
+    r'pay\s*scale|per\s+annum|in-hand|in\s+hand|take[\s-]home|emoluments?)\b|₹|\brs\.?\s*\d|\binr\s*\d', re.I)
+# "budget" / "package" are ordinary words in many JDs; they only count as pay
+# talk when used about this role's pay.
+_JD_MONEY_SOFT_RE = re.compile(
+    r'\b(budget|package)\b\s*(is|:|-|=|up\s*to|upto|range|will|would|can|for\s+(this|the)\s+'
+    r'(role|position|candidate|opening))|\b(budget|package)\b[^.;]{0,25}\d', re.I)
+
+
 def _jd_mentions_money(text):
-    t = (text or '').lower()
-    return any(k in t for k in _JD_CTC_KEYWORDS)
+    t = text or ''
+    return bool(_JD_MONEY_STRONG_RE.search(t) or _JD_MONEY_SOFT_RE.search(t))
 
 
 def strip_ctc_from_jd_html(html):
@@ -16366,13 +16445,26 @@ def generate_jd():
     # that gets shared with candidates.
     if d.get('division'): parts.append(f"Division/Department: {d['division']}")
     if d.get('notes'): parts.append(f"Extra instructions from recruiter: {d['notes']}")
-    user_msg = "Write the Job Description for:\n" + "\n".join(parts)
+    # REWRITE mode: the editor already holds a JD (pasted from the client).
+    # Previously it was never sent, so the model wrote a brand-new generic JD
+    # from the title alone and the client's actual role was lost.
+    source = (d.get('source_jd') or '').strip()[:15000]
+    rewrite = len(source) >= 200
+    if rewrite:
+        system_prompt = JD_REWRITE_PROMPT
+        user_msg = ("Supplied details (use for the Job Snapshot where the original is silent):\n"
+                    + "\n".join(parts) + "\n\nORIGINAL JD:\n" + source)
+        temperature = 0.2
+    else:
+        system_prompt = JD_WRITER_PROMPT
+        user_msg = "Write the Job Description for:\n" + "\n".join(parts)
+        temperature = 0.6
     try:
         rr = call_deepseek(ds_key,
-            {'model': 'deepseek-chat', 'temperature': 0.6, 'max_tokens': 4000,
-             'messages': [{'role': 'system', 'content': JD_WRITER_PROMPT},
+            {'model': 'deepseek-chat', 'temperature': temperature, 'max_tokens': 6000,
+             'messages': [{'role': 'system', 'content': system_prompt},
                           {'role': 'user', 'content': user_msg}]},
-            timeout=150, endpoint='jd-writer')
+            timeout=150, endpoint='jd-rewriter' if rewrite else 'jd-writer')
     except TokenCapError:
         return jsonify({'error': 'Monthly AI token cap reached.'}), 429
     except Exception as e:
@@ -16390,7 +16482,33 @@ def generate_jd():
     html = strip_ctc_from_jd_html(normalize_jd_html(html))
     if not html:
         return jsonify({'error': 'AI returned an empty JD. Try again.'}), 502
-    return jsonify({'ok': True, 'html': html})
+    missing = []
+    if rewrite:
+        # Verify the rewrite kept the original's distinctive terms; if not,
+        # one corrective pass naming exactly what was dropped.
+        missing = _jd_missing_terms(source, html)
+        if missing:
+            try:
+                rr2 = call_deepseek(ds_key,
+                    {'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 6000,
+                     'messages': [{'role': 'system', 'content': system_prompt},
+                                  {'role': 'user', 'content': user_msg},
+                                  {'role': 'assistant', 'content': html},
+                                  {'role': 'user', 'content': 'You dropped these terms from the original: '
+                                   + ', '.join(missing) + '. Rewrite the full JD again keeping EVERY item of the '
+                                   'original, including these, word for word. Same HTML format.'}]},
+                    timeout=150, endpoint='jd-rewriter-fix')
+                if rr2.status_code == 200:
+                    html2 = strip_ctc_from_jd_html(normalize_jd_html(
+                        rr2.json()['choices'][0]['message']['content'].strip()))
+                    if html2:
+                        missing2 = _jd_missing_terms(source, html2)
+                        if len(missing2) < len(missing):
+                            html, missing = html2, missing2
+            except Exception as e:
+                print(f'[jd-rewrite] fix pass failed: {e}')
+    return jsonify({'ok': True, 'html': html, 'mode': 'rewrite' if rewrite else 'write',
+                    'missing_terms': missing})
 
 
 @app.route('/api/mandates/<int:mid>/email-templates', methods=['GET'])
