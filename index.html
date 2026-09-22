@@ -862,7 +862,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J30</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J31</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -4049,9 +4049,11 @@ async function linkMandateToCrm(){
   var r=await req('POST','/mandates/'+S.activeMandate.id+'/link-client',{crm_client_id:id});
   if(r && r.ok){
     toast('OK','Linked to '+(r.client||'CRM client'));
-    S.activeMandate.crm_client_id=id; if(r.client) S.activeMandate.client=r.client;
-    try{ await loadMandates(); }catch(e){}
-    loadSpocOptions();
+    // Reload the mandate so the header, sidebar and every tab show the CRM
+    // (brand) name, then come back to the Manage tab where the SPOC list is.
+    var _mid=S.activeMandate.id;
+    try{ await loadMandates(); await selectMandate(_mid); }catch(e){}
+    setTimeout(function(){ var b=document.querySelector('button[data-st="manage"]'); if(b) switchSetupTab(b); }, 50);
   } else toast('ERR',(r&&r.error)||'Link failed');
 }
 async function saveSpoc(){
@@ -8932,21 +8934,38 @@ async function _cpClients(force){
   return _cpCache.list;
 }
 function _cpNorm(x){ return String(x||'').toLowerCase().replace(/[.,&\-\/()]/g,' ').replace(/\s+/g,' ').trim(); }
+function _cpMatch(c, q){
+  // Search the brand name AND the legal / billing name, so typing either
+  // ("Lauritz" or "Schneider") finds the same client.
+  return !q || _cpNorm(c.name).indexOf(q)>=0 || _cpNorm(c.bill_name).indexOf(q)>=0;
+}
 function clientPickerAttach(inputId, hiddenId){
   var inp=document.getElementById(inputId), hid=document.getElementById(hiddenId);
   if(!inp || !hid || inp._cpBound) return;
   inp._cpBound=true; inp.setAttribute('autocomplete','off');
-  var host=inp.parentNode; if(getComputedStyle(host).position==='static') host.style.position='relative';
+  // The list is attached to <body> with position:fixed and placed under the
+  // input, so cards / modals with overflow:hidden can never clip it.
   var dd=document.createElement('div');
   dd.className='cp-dd';
-  dd.style.cssText='display:none;position:absolute;left:0;right:0;top:100%;margin-top:3px;z-index:9900;background:#fff;border:1px solid #D0D5DD;border-radius:9px;box-shadow:0 10px 26px rgba(16,24,40,.14);max-height:260px;overflow:auto';
-  host.appendChild(dd);
+  dd.style.cssText='display:none;position:fixed;z-index:10030;background:#fff;border:1px solid #D0D5DD;border-radius:9px;box-shadow:0 12px 30px rgba(16,24,40,.18);max-height:280px;overflow:auto';
+  document.body.appendChild(dd);
   var items=[], active=-1;
   var mark=function(ok){ inp.style.borderColor = ok ? '#12B76A' : ''; };
   if(hid.value) mark(true);
+  var place=function(){
+    if(!document.body.contains(inp)){ dd.remove(); window.removeEventListener('scroll', onMove, true); window.removeEventListener('resize', onMove); return; }
+    var r=inp.getBoundingClientRect();
+    var below=window.innerHeight-r.bottom, h=Math.min(280, dd.scrollHeight||280);
+    dd.style.left=r.left+'px'; dd.style.width=r.width+'px';
+    if(below<h+12 && r.top>below){ dd.style.top=''; dd.style.bottom=(window.innerHeight-r.top+4)+'px'; }
+    else { dd.style.bottom=''; dd.style.top=(r.bottom+4)+'px'; }
+  };
+  var onMove=function(){ if(dd.style.display==='block') place(); };
+  window.addEventListener('scroll', onMove, true);
+  window.addEventListener('resize', onMove);
   var render=async function(){
     var list=await _cpClients(false), q=_cpNorm(inp.value);
-    items=list.filter(function(c){ return !q || _cpNorm(c.name).indexOf(q)>=0; }).slice(0,60);
+    items=list.filter(function(c){ return _cpMatch(c,q); }).slice(0,60);
     active = items.length ? 0 : -1;
     if(!items.length){
       dd.innerHTML='<div style="padding:11px 13px;font-size:12px;color:#667085;line-height:1.5">'
@@ -8954,11 +8973,13 @@ function clientPickerAttach(inputId, hiddenId){
         +'<br>'+(_isCompanyAdmin()?'Add it first in <b>Clients (CRM)</b>, then select it here.':'Ask your admin to add it in <b>Clients (CRM)</b>.')+'</div>';
     } else {
       dd.innerHTML=items.map(function(c,i){
-        return '<div data-i="'+i+'" style="padding:9px 13px;font-size:13px;cursor:pointer;border-bottom:1px solid #F2F4F7;'+(i===active?'background:#F2F7FF':'')+'">'
-          +esc(c.name)+(c.bill_name && c.bill_name!==c.name?'<div style="font-size:11px;color:#98A2B3">Bills as: '+esc(c.bill_name)+'</div>':'')+'</div>';
+        return '<div data-i="'+i+'" style="padding:9px 13px;font-size:13px;cursor:pointer;border-bottom:1px solid #F2F4F7;color:#101828;'+(i===active?'background:#F2F7FF':'')+'">'
+          +'<div style="font-weight:600">'+esc(c.name)+'</div>'
+          +(c.bill_name && c.bill_name!==c.name?'<div style="font-size:11px;color:#667085;margin-top:1px">Legal: '+esc(c.bill_name)+'</div>':'')+'</div>';
       }).join('');
     }
     dd.style.display='block';
+    place();
   };
   var pick=function(i){
     var c=items[i]; if(!c) return;
@@ -8993,6 +9014,7 @@ async function clientPickerResolve(inputId, hiddenId){
   var q=_cpNorm(inp.value); if(!q) return 0;
   var list=await _cpClients(true);
   var hits=list.filter(function(c){ return _cpNorm(c.name)===q; });
+  if(!hits.length) hits=list.filter(function(c){ return _cpNorm(c.bill_name)===q; });
   if(hits.length===1){ inp.value=hits[0].name; hid.value=hits[0].id; inp.style.borderColor='#12B76A'; return hits[0].id; }
   return 0;
 }
