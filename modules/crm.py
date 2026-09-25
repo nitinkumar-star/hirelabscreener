@@ -40,6 +40,29 @@ def migrate(conn):
     created_by / updated_by / created_at / updated_at / is_active (soft delete)."""
     c = conn.cursor()
 
+    # A client often has several GST registrations (one per state / branch).
+    # Each carries its own bill-to address and state code, which is what decides
+    # IGST vs CGST+SGST on the invoice.
+    c.execute('''CREATE TABLE IF NOT EXISTS crm_client_gstins (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        client_id INTEGER NOT NULL,
+        label TEXT DEFAULT '',
+        gstin TEXT DEFAULT '',
+        bill_name TEXT DEFAULT '',
+        bill_address TEXT DEFAULT '',
+        bill_state TEXT DEFAULT '',
+        bill_state_code TEXT DEFAULT '',
+        is_default INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT ''
+    )''')
+    try:
+        c.execute('CREATE INDEX IF NOT EXISTS idx_gstin_client ON crm_client_gstins(client_id, is_active)')
+    except Exception:
+        pass
+
     c.execute('''CREATE TABLE IF NOT EXISTS crm_clients (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         company_id INTEGER NOT NULL,              -- tenant
@@ -61,6 +84,8 @@ def migrate(conn):
         created_at TEXT DEFAULT '',
         updated_at TEXT DEFAULT ''
     )''')
+
+    seed_gstins(conn)
 
     c.execute('''CREATE TABLE IF NOT EXISTS crm_contacts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -333,6 +358,25 @@ class DuplicateError(ValidationError):
         self.existing_id = existing_id
 
 
+def seed_gstins(conn):
+    """Move each client's existing single GSTIN into the new multi-GST table
+    (once). Nothing is deleted: crm_clients.gstin stays as the default mirror."""
+    try:
+        rows = conn.execute(
+            "SELECT id, company_id, gstin, bill_name, bill_address, bill_state, bill_state_code "
+            "FROM crm_clients WHERE COALESCE(gstin,'')!='' AND id NOT IN "
+            '(SELECT client_id FROM crm_client_gstins)').fetchall()
+        for r in rows:
+            conn.execute(
+                'INSERT INTO crm_client_gstins (company_id,client_id,label,gstin,bill_name,bill_address,'
+                "bill_state,bill_state_code,is_default,is_active,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,1,1,?,?)",
+                (r['company_id'], r['id'], r['bill_state'] or 'Primary', r['gstin'], r['bill_name'] or '',
+                 r['bill_address'] or '', r['bill_state'] or '', r['bill_state_code'] or '', ts(), ts()))
+    except Exception as e:
+        print(f'[crm] GSTIN seed skipped: {e}')
+
+
 AUDIT_CLIENT_FIELDS = ['name', 'industry', 'website', 'city', 'state', 'country',
                        'gstin', 'address', 'status', 'owner_user_id', 'notes', 'bill_name',
                        'bill_address', 'bill_state', 'bill_state_code']
@@ -386,6 +430,8 @@ class ClientService:
             'name_key': name_key, 'actor': actor, 'now': now,
         }
         cid = ClientRepo.insert(conn, data)
+        if isinstance(payload.get('gstins'), list):
+            save_gstins(conn, data['company_id'], cid, payload['gstins'])
         # Billing fields live in columns added after the original INSERT shape.
         _bill = {k: (payload.get(k) or '').strip() for k in
                  ('bill_name', 'bill_address', 'bill_state', 'bill_state_code') if (payload.get(k) or '').strip()}
@@ -588,6 +634,119 @@ class ContactService:
 # ══════════════════════════════════════════════════════════════════════════
 def _err(e):
     return jsonify({'error': e.message, **({'existing_id': e.existing_id} if isinstance(e, DuplicateError) else {})}), e.code
+
+
+# ── GST registrations (multi-GSTIN per client) ─────────────────────────────
+GSTIN_FIELDS = ('label', 'gstin', 'bill_name', 'bill_address', 'bill_state', 'bill_state_code')
+
+
+def gstins_for(conn, company_id, client_id):
+    return [dict(r) for r in conn.execute(
+        'SELECT * FROM crm_client_gstins WHERE client_id=? AND company_id=? AND is_active=1 '
+        'ORDER BY is_default DESC, id', (client_id, company_id)).fetchall()]
+
+
+def save_gstins(conn, company_id, client_id, rows):
+    """Replace the client's GST registrations with `rows` (list of dicts).
+    Rows are soft-deleted, never dropped, so an invoice's history stays sane.
+    The default row is mirrored back onto crm_clients so older screens and
+    reports that read a single GSTIN keep working."""
+    now = ts()
+    keep = []
+    default_row = None
+    usable = [r for r in (rows or [])
+              if (r.get('gstin') or '').strip() or (r.get('label') or '').strip()]
+    # Exactly ONE default: the row marked default, else the first row.
+    default_i = next((i for i, r in enumerate(usable) if r.get('is_default')), 0 if usable else -1)
+    for i, r in enumerate(usable):
+        data = {f: (r.get(f) or '').strip() for f in GSTIN_FIELDS}
+        is_def = 1 if i == default_i else 0
+        if is_def:
+            default_row = data
+        rid = r.get('id')
+        exist = conn.execute('SELECT id FROM crm_client_gstins WHERE id=? AND client_id=? AND company_id=?',
+                             (rid, client_id, company_id)).fetchone() if rid else None
+        if exist:
+            conn.execute('UPDATE crm_client_gstins SET ' + ', '.join(f'{f}=?' for f in GSTIN_FIELDS)
+                         + ', is_default=?, is_active=1, updated_at=? WHERE id=?',
+                         [data[f] for f in GSTIN_FIELDS] + [is_def, now, exist['id']])
+            keep.append(exist['id'])
+        else:
+            conn.execute('INSERT INTO crm_client_gstins (company_id,client_id,' + ','.join(GSTIN_FIELDS)
+                         + ',is_default,is_active,created_at,updated_at) VALUES (?,?,'
+                         + ','.join('?' * len(GSTIN_FIELDS)) + ',?,1,?,?)',
+                         [company_id, client_id] + [data[f] for f in GSTIN_FIELDS] + [is_def, now, now])
+            keep.append(conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id'])
+    q = 'UPDATE crm_client_gstins SET is_active=0, updated_at=? WHERE client_id=? AND company_id=? AND is_active=1'
+    params = [now, client_id, company_id]
+    if keep:
+        q += ' AND id NOT IN (' + ','.join('?' * len(keep)) + ')'
+        params += keep
+    conn.execute(q, params)
+    if default_row:
+        conn.execute('UPDATE crm_clients SET gstin=?, bill_address=?, bill_state=?, bill_state_code=? '
+                     'WHERE id=? AND company_id=?',
+                     (default_row['gstin'], default_row['bill_address'], default_row['bill_state'],
+                      default_row['bill_state_code'], client_id, company_id))
+
+
+def upsert_gstin(conn, company_id, client_id, gstin, **fields):
+    """Remember a GSTIN typed straight on an invoice (fill-once), so the next
+    invoice for that branch is pre-filled."""
+    gstin = (gstin or '').strip()
+    if not client_id or not gstin:
+        return
+    now = ts()
+    row = conn.execute('SELECT id FROM crm_client_gstins WHERE client_id=? AND company_id=? AND gstin=?',
+                       (client_id, company_id, gstin)).fetchone()
+    data = {f: (fields.get(f) or '').strip() for f in GSTIN_FIELDS}
+    data['gstin'] = gstin
+    if not data['label']:
+        data['label'] = data['bill_state'] or gstin[:2]
+    if row:
+        sets, vals = [], []
+        for f in GSTIN_FIELDS:
+            if data[f]:
+                sets.append(f'{f}=?'); vals.append(data[f])
+        if sets:
+            conn.execute('UPDATE crm_client_gstins SET ' + ', '.join(sets) + ', is_active=1, updated_at=? WHERE id=?',
+                         vals + [now, row['id']])
+    else:
+        has_any = conn.execute('SELECT COUNT(*) n FROM crm_client_gstins WHERE client_id=? AND company_id=? '
+                               'AND is_active=1', (client_id, company_id)).fetchone()['n']
+        conn.execute('INSERT INTO crm_client_gstins (company_id,client_id,' + ','.join(GSTIN_FIELDS)
+                     + ',is_default,is_active,created_at,updated_at) VALUES (?,?,'
+                     + ','.join('?' * len(GSTIN_FIELDS)) + ',?,1,?,?)',
+                     [company_id, client_id] + [data[f] for f in GSTIN_FIELDS] + [0 if has_any else 1, now, now])
+
+
+@bp.route('/clients/<int:cid>/gstins', methods=['GET'])
+@login_required
+def list_gstins(cid):
+    conn = get_db()
+    try:
+        out = gstins_for(conn, effective_company_id(), cid)
+    finally:
+        conn.close()
+    return jsonify({'ok': True, 'gstins': out})
+
+
+@bp.route('/clients/<int:cid>/gstins', methods=['POST'])
+@login_required
+def save_client_gstins(cid):
+    d = request.json or {}
+    conn = get_db()
+    try:
+        company_id = effective_company_id()
+        if not conn.execute('SELECT id FROM crm_clients WHERE id=? AND company_id=?',
+                            (cid, company_id)).fetchone():
+            return jsonify({'error': 'Client not found'}), 404
+        save_gstins(conn, company_id, cid, d.get('gstins') or [])
+        conn.commit()
+        out = gstins_for(conn, company_id, cid)
+    finally:
+        conn.close()
+    return jsonify({'ok': True, 'gstins': out})
 
 
 @bp.route('/clients', methods=['GET'])
