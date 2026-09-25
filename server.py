@@ -14000,6 +14000,17 @@ def create_invoice():
                 conn.execute('UPDATE crm_clients SET gstin=?, bill_address=?, bill_state=?, bill_state_code=?, bill_name=? WHERE id=? AND company_id=?',
                              (d.get('buyer_gstin', ''), d.get('buyer_address', ''), d.get('buyer_state', ''),
                               d.get('buyer_state_code', ''), (d.get('buyer_name', '') or '').strip(), cli_id, oid))
+                # Remember this GST registration (branch) too, so the next
+                # invoice for the same GSTIN is pre-filled instead of retyped.
+                try:
+                    from modules.crm import upsert_gstin
+                    upsert_gstin(conn, oid, cli_id, d.get('buyer_gstin', ''),
+                                 bill_name=(d.get('buyer_name', '') or '').strip(),
+                                 bill_address=d.get('buyer_address', ''),
+                                 bill_state=d.get('buyer_state', ''),
+                                 bill_state_code=d.get('buyer_state_code', ''))
+                except Exception as _ge:
+                    print(f'[invoice] gstin remember skipped: {_ge}')
                 conn.commit()
             except Exception:
                 pass
@@ -16413,8 +16424,24 @@ def crm_clients_billing():
     except Exception:
         conn.close()
         return jsonify({'ok': True, 'clients': []})
+    # Each client can hold several GST registrations (one per state / branch);
+    # the invoice form shows them in a second dropdown.
+    gmap = {}
+    try:
+        for g in conn.execute(
+                'SELECT client_id, id, label, gstin, bill_name, bill_address, bill_state, bill_state_code, '
+                'is_default FROM crm_client_gstins WHERE company_id=? AND is_active=1 '
+                'ORDER BY is_default DESC, id', (effective_company_id(),)).fetchall():
+            gmap.setdefault(g['client_id'], []).append(dict(g))
+    except Exception:
+        gmap = {}
     conn.close()
-    return jsonify({'ok': True, 'clients': [dict(r) for r in rows]})
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['gstins'] = gmap.get(r['id'], [])
+        out.append(d)
+    return jsonify({'ok': True, 'clients': out})
 
 
 @app.route('/api/generate-jd', methods=['POST'])

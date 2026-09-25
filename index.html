@@ -862,7 +862,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J32</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J34</div></div>
   </div>
 
   <div style="padding:6px 0 2px">
@@ -5969,8 +5969,12 @@ async function openInvoiceForm(id){
     +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin:12px 0 6px">Client (Buyer / Bill to)</div>'
     +'<div style="margin-bottom:8px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">&#128193; Pick from CRM (auto-fills details)</label>'
       +'<select id="inv-crmpick" class="inp" style="width:100%" onchange="_invPickClient()"><option value="">— Select client from CRM —</option>'
-      +crmClients.map(function(cl){return '<option value="'+cl.id+'">'+esc(cl.name)+(cl.gstin?(' &middot; '+esc(cl.gstin)):' (no GSTIN yet)')+'</option>';}).join('')
-      +'</select><div style="font-size:10px;color:#aaa;margin-top:3px">CRM mein client select karo \u2014 details bhar jaayengi. Pehli baar edit karoge toh CRM mein save ho jaayengi (dobara nahi bharni padegi).</div></div>'
+      +crmClients.map(function(cl){return '<option value="'+cl.id+'"'+(cl.id===(window._invClientId||0)?' selected':'')+'>'+esc(cl.name)+((cl.gstins&&cl.gstins.length>1)?(' &middot; '+cl.gstins.length+' GST'):(cl.gstin?(' &middot; '+esc(cl.gstin)):' (no GSTIN yet)'))+'</option>';}).join('')
+      +'</select></div>'
+    +'<div id="inv-gstwrap" style="margin-bottom:8px;display:none"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">&#129534; GST registration / branch</label>'
+      +'<select id="inv-gstpick" class="inp" style="width:100%" onchange="_invPickGstin()"></select>'
+      +'<div style="font-size:10px;color:#aaa;margin-top:3px">Is client ke multiple GST hain \u2014 jis branch par invoice banani hai wo chuno. Address aur State Code apne aap bhar jaayenge.</div></div>'
+    +'<div style="margin-bottom:8px"><div style="font-size:10px;color:#aaa;margin-top:3px">CRM mein client select karo \u2014 details bhar jaayengi. Pehli baar edit karoge toh CRM mein save ho jaayengi (dobara nahi bharni padegi).</div></div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
       +_invF('inv-bname','Client Name',inv.buyer_name,'',true)
       +_invF('inv-baddr','Address',inv.buyer_address,'',true)
@@ -6000,7 +6004,36 @@ async function openInvoiceForm(id){
       +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="saveInvoice('+(id||0)+')">Save</button></div></div>';
   document.body.appendChild(bg);
   ['inv-qty','inv-rate','inv-amount','inv-gst','inv-bcode'].forEach(function(k){ var e=document.getElementById(k); if(e) e.addEventListener('input',_invCalc); });
+  // Editing an invoice (or one prefilled from a candidate): the client is
+  // already known, so show its GST list and highlight the GSTIN in use.
+  if(window._invClientId) _invFillGstList(inv.buyer_gstin||'');
   _invCalc();
+}
+
+// Fills the GST / branch dropdown for the selected client.
+// selectGstin = keep this GSTIN chosen (edit mode); '' = use the default.
+function _invFillGstList(selectGstin){
+  var wrap=document.getElementById('inv-gstwrap'), gsel=document.getElementById('inv-gstpick');
+  var cl=(window._invCrmClients||[]).find(function(x){return x.id===(window._invClientId||0);});
+  var gs=(cl&&cl.gstins)||[];
+  window._invGstins=gs;
+  if(!wrap||!gsel) return gs;
+  if(gs.length<2){ wrap.style.display='none'; return gs; }
+  gsel.innerHTML=gs.map(function(g,i){
+    return '<option value="'+i+'">'+esc(g.label||g.bill_state||('GST '+(i+1)))+' &middot; '+esc(g.gstin||'no GSTIN')+'</option>';
+  }).join('');
+  var idx=0;
+  if(selectGstin){
+    var f=gs.findIndex(function(g){ return (g.gstin||'').toUpperCase()===String(selectGstin).toUpperCase(); });
+    if(f>=0) idx=f;
+    else { // GSTIN typed on this invoice isn't in CRM yet — keep it visible
+      gsel.innerHTML+='<option value="-1">'+esc(selectGstin)+' (not saved in CRM)</option>';
+      idx=-1;
+    }
+  }
+  gsel.value=String(idx);
+  wrap.style.display='';
+  return gs;
 }
 async function _invSetDocType(dt){
   window._invNewDocType=dt;
@@ -6012,19 +6045,37 @@ async function _invSetDocType(dt){
   }
   try{ var nn=await req('GET','/invoices/next-number?doc_type='+dt); var e=document.getElementById('inv-no'); if(e&&nn&&nn.invoice_no) e.value=nn.invoice_no; }catch(e){}
 }
+function _invSetBuyer(vals){
+  var set=function(id,val){ var e=document.getElementById(id); if(e && val!=null) e.value=val; };
+  set('inv-bname',vals.name||''); set('inv-baddr',vals.address||''); set('inv-bgstin',vals.gstin||'');
+  set('inv-bstate',vals.state||''); set('inv-bcode',vals.code||'');
+  if(vals.state) set('inv-pos',vals.state);
+  try{ _invCalc(); }catch(e){}
+}
 function _invPickClient(){
   var sel=document.getElementById('inv-crmpick'); if(!sel) return;
   var cid=parseInt(sel.value)||0; window._invClientId=cid;
-  if(!cid) return;
+  var wrap=document.getElementById('inv-gstwrap'), gsel=document.getElementById('inv-gstpick');
+  if(!cid){ if(wrap) wrap.style.display='none'; return; }
   var cl=(window._invCrmClients||[]).find(function(x){return x.id===cid;}); if(!cl) return;
-  var set=function(id,val){ var e=document.getElementById(id); if(e && val!=null) e.value=val; };
-  set('inv-bname',cl.bill_name||cl.name||'');
-  set('inv-baddr',cl.bill_address||'');
-  set('inv-bgstin',cl.gstin||'');
-  set('inv-bstate',cl.bill_state||'');
-  set('inv-bcode',cl.bill_state_code||'');
-  if(cl.bill_state) set('inv-pos',cl.bill_state);
-  try{ _invCalc(); }catch(e){}
+  var gs=_invFillGstList('');   // default GST pre-selected
+  if(gs.length){
+    var g=gs[0];
+    _invSetBuyer({name:g.bill_name||cl.bill_name||cl.name, address:g.bill_address||cl.bill_address,
+                  gstin:g.gstin, state:g.bill_state||cl.bill_state, code:g.bill_state_code||cl.bill_state_code});
+  } else {
+    _invSetBuyer({name:cl.bill_name||cl.name, address:cl.bill_address, gstin:cl.gstin,
+                  state:cl.bill_state, code:cl.bill_state_code});
+  }
+}
+function _invPickGstin(){
+  var gsel=document.getElementById('inv-gstpick'); if(!gsel) return;
+  var i=parseInt(gsel.value);
+  if(i<0) return;   // the invoice's own GSTIN, not from CRM — leave fields as they are
+  var g=(window._invGstins||[])[i||0]; if(!g) return;
+  var cl=(window._invCrmClients||[]).find(function(x){return x.id===window._invClientId;})||{};
+  _invSetBuyer({name:g.bill_name||cl.bill_name||cl.name, address:g.bill_address, gstin:g.gstin,
+                state:g.bill_state, code:g.bill_state_code});
 }
 function _invCalc(){
   var qty=parseFloat((document.getElementById('inv-qty')||{}).value)||0;
@@ -15483,14 +15534,10 @@ async function openClientForm(clientId){
     +'<div><label class="la-lbl">Website</label><input id="cf-website" class="inp" style="width:100%" value="'+esc(client.website||'')+'" placeholder="https://"></div>'
     +'<div><label class="la-lbl">Address (office / site)</label><input id="cf-address" class="inp" style="width:100%" value="'+esc(client.address||'')+'"></div>'
     +'<div style="border:1px solid #E4E7EC;border-radius:8px;padding:10px 11px;background:#FAFAFC">'
-      +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:8px">&#128176; Billing &amp; GST <span style="font-weight:500;color:#888">— invoice mein yahi se auto-fill hoga (ek baar bharo)</span></div>'
-      +'<div><label class="la-lbl">GSTIN / UIN</label><input id="cf-gstin" class="inp" style="width:100%" value="'+esc(client.gstin||'')+'" placeholder="e.g. 06AABCU9603R1ZM"></div>'
-      +'<div style="margin-top:8px"><label class="la-lbl">Billing Address (bill-to)</label><input id="cf-bill-address" class="inp" style="width:100%" value="'+esc(client.bill_address||client.address||'')+'" placeholder="GST bill-to address"></div>'
-      +'<div class="g2" style="gap:10px;margin-top:8px">'
-        +'<div><label class="la-lbl">State</label><input id="cf-bill-state" class="inp" style="width:100%" value="'+esc(client.bill_state||client.state||'')+'" placeholder="Haryana"></div>'
-        +'<div><label class="la-lbl">State Code <span style="color:#C0392B">*</span></label><input id="cf-bill-code" class="inp" style="width:100%" value="'+esc(client.bill_state_code||'')+'" placeholder="06"></div>'
-      +'</div>'
-      +'<div style="font-size:10px;color:#98A2B3;margin-top:5px">State Code zaroori hai — yehi decide karta hai invoice mein IGST lage ya CGST+SGST. (Haryana=06, UP=09, Delhi=07, Maharashtra=27)</div>'
+      +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:8px">&#128176; GST Registrations <span style="font-weight:500;color:#888">— ek client ke multiple GST (state / branch) ho sakte hain</span></div>'
+      +'<div id="cf-gst-rows"></div>'
+      +'<button type="button" class="btn btn-o" style="font-size:11px;margin-top:8px" onclick="cfAddGstRow()">+ Add GST registration</button>'
+      +'<div style="font-size:10px;color:#98A2B3;margin-top:7px">State Code zaroori hai — yehi decide karta hai invoice mein IGST lage ya CGST+SGST. (Haryana=06, UP=09, Delhi=07, Maharashtra=27)</div>'
     +'</div>'
     +'<div><label class="la-lbl">Notes</label><textarea id="cf-notes" class="inp" rows="2" style="width:100%">'+esc(client.notes||'')+'</textarea></div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
@@ -15498,6 +15545,53 @@ async function openClientForm(clientId){
     +'<button class="btn" onclick="saveClient('+(clientId||'null')+')" style="background:#2D6FB3;color:#fff;border:none;font-size:11px">'+(isEdit?'Save Changes':'Add '+esc(T('client','Client')))+'</button>'
     +'</div></div>';
   _waOpenModal(isEdit?('Edit '+T('client','Client')):('Add New '+T('client','Client')), inner);
+  cfLoadGstRows(clientId, client);
+}
+
+// ── GST registrations editor (multi-GSTIN per client) ─────────────────────
+window._cfGst=[];
+async function cfLoadGstRows(clientId, client){
+  var rows=[];
+  if(clientId){
+    try{ var r=await req('GET','/crm/clients/'+clientId+'/gstins'); rows=(r&&r.gstins)||[]; }catch(e){}
+  }
+  if(!rows.length && client && (client.gstin||client.bill_address||client.bill_state_code)){
+    rows=[{label:client.bill_state||'Primary', gstin:client.gstin||'', bill_name:client.bill_name||'',
+           bill_address:client.bill_address||client.address||'', bill_state:client.bill_state||client.state||'',
+           bill_state_code:client.bill_state_code||'', is_default:1}];
+  }
+  if(!rows.length) rows=[{label:'',gstin:'',bill_name:'',bill_address:'',bill_state:'',bill_state_code:'',is_default:1}];
+  window._cfGst=rows;
+  cfRenderGstRows();
+}
+function cfAddGstRow(){ cfCollectGstRows(); window._cfGst.push({label:'',gstin:'',bill_name:'',bill_address:'',bill_state:'',bill_state_code:'',is_default:window._cfGst.length?0:1}); cfRenderGstRows(); }
+function cfRemoveGstRow(i){ cfCollectGstRows(); window._cfGst.splice(i,1); if(!window._cfGst.some(function(g){return g.is_default;}) && window._cfGst.length) window._cfGst[0].is_default=1; cfRenderGstRows(); }
+function cfSetDefaultGst(i){ cfCollectGstRows(); window._cfGst.forEach(function(g,j){ g.is_default = (j===i)?1:0; }); cfRenderGstRows(); }
+function cfCollectGstRows(){
+  (window._cfGst||[]).forEach(function(g,i){
+    var v=function(f){ var e=document.getElementById('cf-gst-'+f+'-'+i); return e?e.value.trim():(g[f]||''); };
+    g.label=v('label'); g.gstin=v('gstin'); g.bill_name=v('bname');
+    g.bill_address=v('addr'); g.bill_state=v('state'); g.bill_state_code=v('code');
+  });
+  return window._cfGst;
+}
+function cfRenderGstRows(){
+  var box=document.getElementById('cf-gst-rows'); if(!box) return;
+  box.innerHTML=(window._cfGst||[]).map(function(g,i){
+    var F=function(f,lbl,val,ph,span){ return '<div style="'+(span?'grid-column:span 2;':'')+'"><label class="la-lbl">'+lbl+'</label>'
+      +'<input id="cf-gst-'+f+'-'+i+'" class="inp" style="width:100%" value="'+esc(val||'')+'" placeholder="'+(ph||'')+'"></div>'; };
+    return '<div style="border:1px solid '+(g.is_default?'#A6E3C8':'#E4E7EC')+';background:'+(g.is_default?'#F3FBF7':'#fff')+';border-radius:8px;padding:10px;margin-bottom:8px">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+        +'<label style="font-size:11px;font-weight:600;color:#344054;display:flex;align-items:center;gap:5px;cursor:pointer">'
+        +'<input type="radio" name="cf-gst-def" '+(g.is_default?'checked':'')+' onchange="cfSetDefaultGst('+i+')"> Default for invoices</label>'
+        +'<button type="button" onclick="cfRemoveGstRow('+i+')" style="margin-left:auto;border:none;background:transparent;color:#B42318;font-size:11px;cursor:pointer">Remove</button>'
+      +'</div>'
+      +'<div class="g2" style="gap:8px">'+F('label','Label (branch / state)',g.label,'e.g. Mumbai – Maharashtra')+F('gstin','GSTIN / UIN',g.gstin,'27AABCU9603R1ZM')+'</div>'
+      +'<div style="margin-top:8px">'+F('bname','Billing name for this GST (optional)',g.bill_name,'blank = client ka legal name')+'</div>'
+      +'<div style="margin-top:8px">'+F('addr','Billing Address (bill-to)',g.bill_address,'GST bill-to address')+'</div>'
+      +'<div class="g2" style="gap:8px;margin-top:8px">'+F('state','State',g.bill_state,'Maharashtra')+F('code','State Code *',g.bill_state_code,'27')+'</div>'
+      +'</div>';
+  }).join('');
 }
 
 async function saveClient(clientId){
@@ -15508,19 +15602,24 @@ async function saveClient(clientId){
     city:document.getElementById('cf-city').value.trim(),
     state:document.getElementById('cf-state').value.trim(),
     website:document.getElementById('cf-website').value.trim(),
-    gstin:document.getElementById('cf-gstin').value.trim(),
     address:document.getElementById('cf-address').value.trim(),
-    bill_address:document.getElementById('cf-bill-address').value.trim(),
-    bill_state:document.getElementById('cf-bill-state').value.trim(),
-    bill_state_code:document.getElementById('cf-bill-code').value.trim(),
     bill_name:document.getElementById('cf-bill-name').value.trim(),
     notes:document.getElementById('cf-notes').value.trim()
   };
   if(!payload.name){ toast('ERR','Company name is required'); return; }
+  var gst=(cfCollectGstRows()||[]).filter(function(g){ return g.gstin || g.label || g.bill_address; });
+  var def=gst.filter(function(g){ return g.is_default; })[0] || gst[0];
+  if(def){   // keep the single-GSTIN fields in step for older screens / reports
+    payload.gstin=def.gstin||''; payload.bill_address=def.bill_address||'';
+    payload.bill_state=def.bill_state||''; payload.bill_state_code=def.bill_state_code||'';
+  }
+  payload.gstins=gst;
   var r=clientId
     ? await req('PUT','/crm/clients/'+clientId,payload)
     : await req('POST','/crm/clients',payload);
   if(r.ok){
+    var newId=clientId || (r.client && r.client.id);
+    if(newId) { try{ await req('POST','/crm/clients/'+newId+'/gstins',{gstins:gst}); }catch(e){} }
     toast('OK', clientId?'Client updated':'Client added');
     _crmMeta.statuses=[]; // force meta reload
     _waCloseModal();
