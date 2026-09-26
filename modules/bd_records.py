@@ -1834,3 +1834,144 @@ def delete_view(vid):
         return _err(e)
     finally:
         conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  RECORD PANEL — timeline + calendar  (Wave 3, read-only, additive)
+# ══════════════════════════════════════════════════════════════════════════
+def _meta(s):
+    try:
+        d = json.loads(s or '{}')
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _panel_anchor(conn, obj, rid, company_id):
+    """Tenant-checked record -> (record dict, client_id). None if not visible."""
+    rec = get_record(conn, obj, rid, company_id)
+    if not rec:
+        return None, 0
+    client_id = rid if obj == 'companies' else int(rec.get('client_id') or 0)
+    return rec, client_id
+
+
+def _activity_ids(conn, company_id, col, val):
+    return {r['id'] for r in conn.execute(
+        f'SELECT id FROM crm_activities WHERE company_id=? AND {col}=?', (company_id, val))}
+
+
+def record_timeline(conn, obj, rid, company_id=None, limit=200):
+    """Everything that happened to a record, newest first. Built from the
+    universal activity_log (all CRM/BD writes land there under the company),
+    narrowed to the person / deal / activity when the record is not a company."""
+    _obj(obj)
+    company_id = company_id if company_id is not None else effective_company_id()
+    rec, client_id = _panel_anchor(conn, obj, rid, company_id)
+    if not rec:
+        raise RecordError('Not found.', 404)
+    rows = conn.execute(
+        "SELECT id, user_id, username, actor_name, actor_type, action, detail, meta, created_at, "
+        + _user_label('activity_log.user_id') + " AS user_display FROM activity_log "
+        "WHERE company_id=? AND entity_type='client' AND entity_id=? ORDER BY id DESC LIMIT 2000",
+        (company_id, client_id)).fetchall()
+
+    if obj == 'people':
+        acts = _activity_ids(conn, company_id, 'contact_id', rid)
+        keep = lambda m: m.get('contact_id') == rid or m.get('activity_id') in acts
+    elif obj == 'opportunities':
+        acts = _activity_ids(conn, company_id, 'opportunity_id', rid)
+        keep = lambda m: m.get('opportunity_id') == rid or m.get('activity_id') in acts
+    elif obj in ('tasks', 'notes'):
+        keep = lambda m: m.get('activity_id') == rid
+    else:
+        keep = lambda m: True
+
+    out = []
+    for r in rows:
+        m = _meta(r['meta'])
+        if not keep(m):
+            continue
+        changes = m.get('changes') if isinstance(m.get('changes'), list) else []
+        out.append({
+            'id': r['id'], 'action': r['action'] or '', 'detail': r['detail'] or '',
+            # a person's display name for user actions; the recorded actor otherwise (system, client…)
+            'actor': (r['user_display'] if (r['user_id'] and (r['actor_type'] or 'user') == 'user' and r['user_display'])
+                      else (r['actor_name'] or r['username'] or '')),
+            'user_id': r['user_id'] or 0,
+            'created_at': r['created_at'] or '',
+            'changes': [str(c) for c in changes][:20],
+            'from': m.get('from'), 'to': m.get('to'), 'type': m.get('type'),
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+def record_calendar(conn, obj, rid, company_id=None):
+    """Meetings and calls for a record: scheduler bookings auto-linked to the
+    company / contact, plus BD meetings & calls that carry a date."""
+    _obj(obj)
+    if obj in ('tasks', 'notes'):
+        raise RecordError('Calendar is available for companies, people and opportunities.')
+    company_id = company_id if company_id is not None else effective_company_id()
+    rec, client_id = _panel_anchor(conn, obj, rid, company_id)
+    if not rec:
+        raise RecordError('Not found.', 404)
+    items = []
+
+    col = {'companies': 'client_id', 'people': 'contact_id', 'opportunities': 'opportunity_id'}[obj]
+    for r in conn.execute(
+            f"SELECT a.id, a.activity_type, a.subject, a.due_at, a.status, a.owner_user_id, "
+            f"{_user_label('a.owner_user_id')} AS owner_name "
+            f"FROM crm_activities a WHERE a.company_id=? AND a.{col}=? AND a.is_active=1 "
+            f"AND a.activity_type IN ('meeting','call') AND COALESCE(a.due_at,'')!=''",
+            (company_id, rid)):
+        items.append({'source': 'bd', 'id': r['id'], 'kind': r['activity_type'],
+                      'title': r['subject'] or r['activity_type'].title(),
+                      'start_at': r['due_at'], 'end_at': '', 'status': r['status'] or '',
+                      'owner': r['owner_name'] or '', 'mode': '', 'location': ''})
+
+    if obj in ('companies', 'people'):
+        mcol = 'crm_client_id' if obj == 'companies' else 'crm_contact_id'
+        try:
+            for r in conn.execute(
+                    f"SELECT m.id, m.guest_name, m.purpose, m.start_at, m.end_at, m.mode, m.location, m.status, "
+                    f"{_user_label('m.host_user_id')} AS host_name "
+                    f"FROM meetings m WHERE m.company_id=? AND m.{mcol}=?", (company_id, rid)):
+                items.append({'source': 'scheduler', 'id': r['id'], 'kind': 'meeting',
+                              'title': r['purpose'] or ('Meeting with ' + (r['guest_name'] or 'guest')),
+                              'start_at': r['start_at'] or '', 'end_at': r['end_at'] or '',
+                              'status': r['status'] or '', 'owner': r['host_name'] or '',
+                              'mode': r['mode'] or '', 'location': r['location'] or ''})
+        except Exception:
+            pass   # scheduler module not installed on this database
+
+    now = _now_iso()[:16]
+    upcoming = sorted([i for i in items if (i['start_at'] or '')[:16] >= now], key=lambda i: i['start_at'])
+    past = sorted([i for i in items if (i['start_at'] or '')[:16] < now], key=lambda i: i['start_at'], reverse=True)
+    return {'upcoming': upcoming, 'past': past[:100]}
+
+
+@bp.route('/records/<obj>/<int:rid>/timeline', methods=['GET'])
+@login_required
+def record_timeline_api(obj, rid):
+    conn = get_db()
+    try:
+        return jsonify({'ok': True, 'items': record_timeline(conn, obj, rid)})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
+
+
+@bp.route('/records/<obj>/<int:rid>/calendar', methods=['GET'])
+@login_required
+def record_calendar_api(obj, rid):
+    conn = get_db()
+    try:
+        return jsonify({'ok': True, **record_calendar(conn, obj, rid)})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
