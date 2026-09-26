@@ -25,6 +25,7 @@ from importlib import import_module
 _MODULE_NAMES = [
     'crm',
     'bd',
+    'bd_records',
     'xp',
     'wa_agent',
     'freelancer',
