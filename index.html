@@ -9000,7 +9000,8 @@ async function saveMandate(){
   var _body={crm_client_id:corp?0:_crmId,client:corp?'':client,role,location:v('m-location'),division:v('m-division'),ctc_min:parseFloat(v('m-ctcmin'))||0,ctc_max:parseFloat(v('m-ctcmax'))||0,exp_min:emin,exp_max:emax,experience:expRangeText(emin,emax),jd:v('m-jd'),must_have_skills:chipCommit('m-must'),good_to_have_skills:chipCommit('m-good'),boolean_query:(v('m-bool')||'').trim(),search_intent:(v('m-intent')||'').trim()};
   if(corp) _body.department_id=dept;
   const r=await req('POST','/mandates',_body);
-  if(r.ok){closeModal('modal-mandate');await loadMandates();await selectMandate(r.id);S.activeTab='Mandate Setup';renderTabs();renderContent();toast('✅',T('mandate','Mandate')+' created!');}
+  if(r.ok){if(window._bdwOppForMandate && typeof bdwLinkJobToDeal==='function'){ try{ await bdwLinkJobToDeal(r.id); }catch(e){} }
+    closeModal('modal-mandate');await loadMandates();await selectMandate(r.id);S.activeTab='Mandate Setup';renderTabs();renderContent();toast('✅',T('mandate','Mandate')+' created!');}
   else {toast('&#9888;&#65039;',r.error||'Create failed');if(btn){btn.disabled=false;btn.textContent='Create Mandate →';}}
 }
 
@@ -10327,6 +10328,7 @@ function vocabFill(tpl){
 
 function openModal(id){
   if(id==='modal-mandate'){
+    window._bdwOppForMandate=null;   // BD: only a "Create job" from a deal sets this (after opening)
     var L=wfL();
     var t=document.getElementById('mandate-modal-title'); if(t)t.textContent=L.newMandate;
     var corp = wsMode()==='corporate';
@@ -17604,6 +17606,30 @@ table.bdw-t{border-collapse:separate;border-spacing:0;table-layout:fixed;font-si
 .bdw-em .bdy{font-size:12.5px;color:#475467;margin-top:6px;white-space:pre-wrap;display:none}
 .bdw-em.open .bdy{display:block}
 @media (max-width:768px){ #bdw-panel{width:100%} .bdw-fl{width:110px} }
+/* ═══ BD Workspace (Wave 4) — Kanban board ═══ */
+.bdw-seg{display:inline-flex;border:0.5px solid #D0D5DD;border-radius:7px;overflow:hidden}
+.bdw-seg button{border:none;background:#fff;font:inherit;font-size:12px;color:#475467;padding:5px 9px;cursor:pointer;white-space:nowrap}
+.bdw-seg button+button{border-left:0.5px solid #D0D5DD}
+.bdw-seg button.on{background:#EEF0FF;color:#3538CD;font-weight:600}
+.bdw-kb{display:flex;gap:12px;padding:12px 14px;align-items:flex-start;min-height:100%;box-sizing:border-box}
+.bdw-kcol{width:272px;flex-shrink:0;background:#F9FAFB;border-radius:10px;display:flex;flex-direction:column;max-height:calc(100% - 4px);border:1px solid transparent}
+.bdw-kcol.over{border-color:#3E63DD;background:#F5F7FF}
+.bdw-kh{display:flex;align-items:center;gap:6px;padding:9px 10px 6px}
+.bdw-kh .c{color:#98A2B3;font-size:12px}
+.bdw-kh .s{margin-left:auto;font-size:11.5px;color:#667085;font-weight:600}
+.bdw-kh .p{border:none;background:transparent;color:#98A2B3;cursor:pointer;font-size:15px;line-height:1;padding:1px 5px;border-radius:5px}
+.bdw-kh .p:hover{background:#EAECF0;color:#344054}
+.bdw-kl{padding:2px 8px 8px;overflow-y:auto;display:flex;flex-direction:column;gap:7px;min-height:40px}
+.bdw-kc{background:#fff;border:0.5px solid #EAECF0;border-radius:9px;padding:9px 10px;cursor:pointer;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.bdw-kc:hover{border-color:#D0D5DD;box-shadow:0 2px 6px rgba(16,24,40,.08)}
+.bdw-kc.pnl{border-color:#3E63DD;box-shadow:0 0 0 1px #3E63DD}
+.bdw-kc.drag{opacity:.45}
+.bdw-kc .kt{font-size:13px;font-weight:600;color:#101828;margin-bottom:5px;word-break:break-word}
+.bdw-kc .kf{font-size:12px;color:#475467;margin-top:4px;display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.bdw-kc .kf .kl{color:#98A2B3;font-size:11px;width:72px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis}
+.bdw-kmore{border:none;background:transparent;color:#3E63DD;font:inherit;font-size:12px;cursor:pointer;padding:6px}
+.bdw-kempty{font-size:12px;color:#D0D5DD;text-align:center;padding:14px 0}
+.bdw-won{background:#ECFDF3;border:0.5px solid #ABEFC6;border-radius:10px;padding:10px 12px;margin-top:12px;display:flex;align-items:center;gap:10px;font-size:12.5px;color:#067647}
 </style>
 
 <script id="bdw-script">
@@ -17634,7 +17660,7 @@ var _BDW_OPS = {contains:'contains', not_contains:"doesn't contain", eq:'is', ne
   is_empty:'is empty', is_not_empty:'is not empty', gt:'>', gte:'\u2265', lt:'<', lte:'\u2264', between:'is between',
   is:'is', before:'is before', after:'is after', on_or_before:'is on or before', on_or_after:'is on or after',
   is_today:'is today', is_past:'is in the past', is_future:'is in the future', in_last_days:'in last N days',
-  in_next_days:'in next N days', 'in':'is', not_in:'is not', is_true:'is yes', is_false:'is no', is_me:'is me',
+  in_next_days:'in next N days', not_in_last_days:'no date in last N days', 'in':'is', not_in:'is not', is_true:'is yes', is_false:'is no', is_me:'is me',
   label_contains:'contains'};
 var _BDW_NOVAL = {is_empty:1,is_not_empty:1,is_today:1,is_past:1,is_future:1,is_true:1,is_false:1,is_me:1};
 var _BDW_CALC = {sum:'Sum', avg:'Average', min:'Min', max:'Max', count_empty:'Empty', count_not_empty:'Not empty',
@@ -17778,7 +17804,7 @@ function _bdwWire(){
   g.addEventListener('scroll', function(e){
     var el=e.target; if(!el.classList||!el.classList.contains('bdw-scroll')) return;
     if(el.scrollTop+el.clientHeight > el.scrollHeight-160){
-      var st=_bdwSt(); if(st && !st.loading && st.page<st.pages){ st.page++; _bdwFetch(false); }
+      var st=_bdwSt(); if(st && st.cfg.view_type!=='kanban' && !st.loading && st.page<st.pages){ st.page++; _bdwFetch(false); }
     }
     if(p.style.display==='block' && BDW.popCtx && BDW.popCtx.inGrid) _bdwPopFollow(el);
   }, true);
@@ -17833,7 +17859,7 @@ async function bdwOpenObject(obj){
     st=BDW.st[obj]={view:null, cfg:null, base:'', q:'', records:[], total:0, page:1, pages:0, calc:{}, sel:{}, loading:false, views:[]};
     await _bdwLoadViews(obj);
     if(BDW.obj!==obj) return;
-    var def=st.views.filter(function(v){ return v.is_default && v.is_mine; })[0] || null;
+    var def=st.views.filter(function(v){ return v.id===st.defaultViewId; })[0] || null;
     _bdwApplyView(def);
   }
   _bdwRenderFrame();
@@ -17843,6 +17869,7 @@ async function bdwOpenObject(obj){
 async function _bdwLoadViews(obj){
   var r=await req('GET','/bd/views?object='+obj);
   BDW.st[obj].views = (r && r.ok) ? r.views : [];
+  BDW.st[obj].defaultViewId = (r && r.ok) ? (r.default_view_id||0) : 0;
 }
 
 // ── view config ───────────────────────────────────────────────────────────
@@ -17864,10 +17891,18 @@ function _bdwNormCfg(c){
   f={logic:(f.logic==='or'?'or':'and'), conditions:(f.conditions||[])};
   var calc=c.calc||{};
   if(Array.isArray(calc)){ var d={}; calc.forEach(function(x){ if(x&&x.field) d[x.field]=x.fn; }); calc=d; }
-  return {columns:cols, filter:f, sort:(c.sort||[]).slice(0,3), calc:calc};
+  var vt=(c.view_type==='kanban' && _bdwKanbanFields().length) ? 'kanban' : 'table';
+  var kf=c.kanban_field; if(vt==='kanban' && (!kf || !o._by[kf] || o._by[kf].type!=='select')) kf=_bdwKanbanFields()[0];
+  return {columns:cols, filter:f, sort:(c.sort||[]).slice(0,3), calc:calc, view_type:vt, kanban_field:(vt==='kanban'?kf:null)};
+}
+// select fields a board can be grouped by (stage first for deals)
+function _bdwKanbanFields(){
+  var o=_bdwO(); var ks=o.fields.filter(function(f){ return f.type==='select' && f.editable; }).map(function(f){ return f.key; });
+  ks.sort(function(a,b){ return (a==='stage'?-1:0)-(b==='stage'?-1:0); });
+  return ks;
 }
 function _bdwCfgKey(cfg){
-  return JSON.stringify({c:cfg.columns, f:cfg.filter.conditions.length?cfg.filter:null, s:cfg.sort, k:cfg.calc});
+  return JSON.stringify({c:cfg.columns, f:cfg.filter.conditions.length?cfg.filter:null, s:cfg.sort, k:cfg.calc, v:cfg.view_type, g:cfg.kanban_field||null});
 }
 function _bdwDirty(){ var st=_bdwSt(); return _bdwCfgKey(st.cfg)!==st.base; }
 function _bdwApplyView(v){
@@ -17876,19 +17911,23 @@ function _bdwApplyView(v){
   if(!st.cfg.sort.length && !v) st.cfg.sort=_bdwJ(o.default_view.sort||[]);
   st.base=_bdwCfgKey(st.cfg); st.q=(v&&v.config&&v.config.q)||''; st.sel={}; st.page=1;
   st.defSort = v ? null : JSON.stringify(st.cfg.sort);
+  st.kb=null;
 }
 // The built-in "All" view's default order is not a user choice, so it is not shown as a chip.
 function _bdwSortsShown(){ var st=_bdwSt(); return st.cfg.sort.length && (st.view || JSON.stringify(st.cfg.sort)!==st.defSort); }
 function _bdwCfgOut(){
   var st=_bdwSt();
-  return {view_type:'table', columns:st.cfg.columns,
+  var out={view_type:st.cfg.view_type||'table', columns:st.cfg.columns,
           filter:st.cfg.filter.conditions.length?st.cfg.filter:null, sort:st.cfg.sort, calc:st.cfg.calc};
+  if(out.view_type==='kanban') out.kanban_field=st.cfg.kanban_field;
+  return out;
 }
 function _bdwVisCols(){ return _bdwSt().cfg.columns.filter(function(c){ return c.visible; }); }
 
 // ── data ──────────────────────────────────────────────────────────────────
 async function _bdwFetch(reset){
   var st=_bdwSt(), obj=BDW.obj; if(!st) return;
+  if(st.cfg.view_type==='kanban') return _bdwFetchKanban();
   if(reset){ st.page=1; }
   var token=++BDW.seq; st.loading=true;
   if(reset && !st.records.length){ var sc=document.getElementById('bdw-scroll'); if(sc) sc.innerHTML='<div class="bdw-state"><div class="spinner" style="margin:0 auto 10px"></div>Loading\u2026</div>'; }
@@ -17909,7 +17948,7 @@ async function _bdwFetch(reset){
   _bdwRenderCount(); _bdwRenderBar(); _bdwRenderBulk(); _bdwRenderTable(reset);
 }
 async function _bdwRefreshCalc(){
-  var st=_bdwSt(), obj=BDW.obj; if(!Object.keys(st.cfg.calc).length) return;
+  var st=_bdwSt(), obj=BDW.obj; if(st.cfg.view_type==='kanban' || !Object.keys(st.cfg.calc).length) return;
   var r=await req('POST','/bd/records/'+obj+'/query',{q:st.q, filter:st.cfg.filter.conditions.length?st.cfg.filter:null,
      calc:st.cfg.calc, page:1, per_page:1});
   if(r && r.ok && obj===BDW.obj){ st.calc=r.calc||{}; st.total=r.total; _bdwRenderFoot(); _bdwRenderCount(); }
@@ -17920,17 +17959,19 @@ function _bdwRenderFrame(){
   var o=_bdwO(), st=_bdwSt();
   var vname = st.view ? st.view.name : 'All '+o.label;
   var h='<div class="bdw-top">'
-    +'<button class="bdw-tb bdw-viewbtn" data-a="views">&#9638; <span>'+esc(vname)+'</span> <span class="bdw-cnt" id="bdw-count"></span> &#9662;</button>'
+    +'<button class="bdw-tb bdw-viewbtn" data-a="views">'+(st.cfg.view_type==='kanban'?'&#9636;':'&#9638;')+' <span>'+esc(vname)+'</span> <span class="bdw-cnt" id="bdw-count"></span> &#9662;</button>'
     +'<div style="flex:1"></div>'
     +'<input class="bdw-search" placeholder="Search '+esc(o.label.toLowerCase())+'\u2026" value="'+esc(st.q)+'">'
     +'<button class="bdw-tb" data-a="filter" id="bdw-tb-filter">Filter</button>'
     +'<button class="bdw-tb" data-a="sort" id="bdw-tb-sort">Sort</button>'
     +'<button class="bdw-tb" data-a="options">Options</button>'
+    +(_bdwKanbanFields().length?'<span class="bdw-seg"><button class="'+(st.cfg.view_type!=='kanban'?'on':'')+'" data-a="vt" data-v="table" title="Table">&#9638; Table</button><button class="'+(st.cfg.view_type==='kanban'?'on':'')+'" data-a="vt" data-v="kanban" title="Kanban board">&#9636; Kanban</button></span>':'')
     +'<button class="bdw-new" data-a="new">+ New</button>'
     +'</div><div id="bdw-bar"></div><div id="bdw-bulk"></div><div class="bdw-scroll" id="bdw-scroll"></div>';
   document.getElementById('bdw-grid').innerHTML=h;
   _bdwRenderCount(); _bdwRenderBar(); _bdwRenderBulk();
-  if(st.records.length) _bdwRenderTable(true);
+  if(st.cfg.view_type==='kanban'){ if(st.kb) _bdwRenderKanban(); }
+  else if(st.records.length) _bdwRenderTable(true);
 }
 function _bdwRenderCount(){
   var el=document.getElementById('bdw-count'); if(el) el.textContent='\u00B7 '+(_bdwSt().total||0);
@@ -17945,12 +17986,12 @@ function _bdwCondText(c){
     if(f.type==='select'){ txt=(Array.isArray(v)?v:[v]).map(function(x){ var o=(f.options||[]).filter(function(y){return y.value===x;})[0]; return o?o.label:(x||'(empty)'); }).join(', '); }
     else if(f.type==='user'){ txt=(Array.isArray(v)?v:[v]).map(function(x){ return _bdwMember(+x)||('#'+x); }).join(', '); }
     else if(c.op==='between'){ txt=(v||[]).map(function(x){ return f.type==='date'||f.type==='datetime'?_bdwDate(x):x; }).join(' \u2013 '); }
-    else if(c.op==='in_last_days'||c.op==='in_next_days'){ txt=v+' days'; }
+    else if(c.op==='in_last_days'||c.op==='in_next_days'||c.op==='not_in_last_days'){ txt=v+' days'; }
     else if(_bdwFam(f.type)==='date'){ txt=_bdwDate(v); }
     else txt=String(v==null?'':v);
   }
   var op=_BDW_OPS[c.op]||c.op;
-  if(c.op==='in_last_days') op='in last'; if(c.op==='in_next_days') op='in next';
+  if(c.op==='in_last_days') op='in last'; if(c.op==='in_next_days') op='in next'; if(c.op==='not_in_last_days') op='nothing in last';
   return '<b>'+esc(f.label)+'</b> '+esc(op)+(txt?' '+esc(txt):'');
 }
 function _bdwRenderBar(){
@@ -17980,7 +18021,7 @@ function _bdwRenderBar(){
 }
 function _bdwRenderBulk(){
   var el=document.getElementById('bdw-bulk'); if(!el) return;
-  var n=Object.keys(_bdwSt().sel).length;
+  var n=_bdwSt().cfg.view_type==='kanban' ? 0 : Object.keys(_bdwSt().sel).length;
   if(!n){ el.innerHTML=''; el.className=''; return; }
   el.className='bdw-bulk';
   el.innerHTML='<b>'+n+' selected</b><button class="bdw-lnk" data-a="bulkdel" style="color:#D92D20">Delete</button><button class="bdw-lnk" data-a="bulkclear">Clear selection</button>';
@@ -18071,6 +18112,14 @@ function _bdwGridClick(e){
       case 'sx': st.cfg.sort.splice(i,1); return _bdwFetch(true);
       case 'options': return _bdwOptionsPop(a);
       case 'new': return bdwNewModal();
+      case 'vt': {
+        var nv=a.getAttribute('data-v'); if(nv===st.cfg.view_type) return;
+        st.cfg.view_type=nv; st.cfg.kanban_field = nv==='kanban' ? (st.cfg.kanban_field||_bdwKanbanFields()[0]) : null;
+        st.sel={}; st.kb=null; _bdwRenderFrame(); return _bdwFetch(true);
+      }
+      case 'kbnew': { var pre={}; pre[st.cfg.kanban_field]=a.getAttribute('data-v'); return bdwNewModal(BDW.obj, pre); }
+      case 'kbmore': return _bdwKbMore(a.getAttribute('data-v'));
+      case 'kbopen': return bdwPanelOpen(BDW.obj, +a.getAttribute('data-id'));
       case 'colmenu': return _bdwColMenu(a, a.getAttribute('data-f'));
       case 'calc': return _bdwCalcPop(a, a.getAttribute('data-f'));
       case 'vreset': _bdwApplyView(st.view); _bdwRenderFrame(); return _bdwFetch(true);
@@ -18262,6 +18311,7 @@ function _bdwPopChange(e){
   var ctx=BDW.popCtx; if(!ctx) return;
   if(e.target.id==='bdw-fop'){ ctx.op=e.target.value; _bdwFilterValueUI(); }
   if(e.target.getAttribute('data-p')==='colvis'){ _bdwToggleCol(+e.target.getAttribute('data-i')); }
+  if(e.target.id==='bdw-kbf'){ _bdwSt().cfg.kanban_field=e.target.value; bdwPopClose(); _bdwRenderBar(); _bdwFetch(true); }
 }
 function _bdwPopKey(e){
   var ctx=BDW.popCtx; if(!ctx) return;
@@ -18348,8 +18398,8 @@ function _bdwFilterValueUI(){
     h='<div style="max-height:200px;overflow:auto">'+opts.map(function(o){
       return '<label class="ck"><input type="checkbox" class="bdw-fck" value="'+esc(o.v)+'"'+(chosen.indexOf(String(o.v))>=0?' checked':'')+'>'+esc(o.l)+'</label>';
     }).join('')+'</div>';
-  } else if(op==='in_last_days'||op==='in_next_days'){
-    h=inp('bdw-fv','number',v==null?7:v,'Days');
+  } else if(op==='in_last_days'||op==='in_next_days'||op==='not_in_last_days'){
+    h=inp('bdw-fv','number',v==null?(op==='not_in_last_days'?30:7):v,'Days');
   } else if(op==='between'){
     var a=(Array.isArray(v)?v:[])[0], b=(Array.isArray(v)?v:[])[1], ty=fam==='date'?'date':'number';
     h=inp('bdw-fv',ty,a,'From')+inp('bdw-fv2',ty,b,'To');
@@ -18378,7 +18428,7 @@ function _bdwFilterApply(){
     } else {
       val=document.getElementById('bdw-fv').value;
       if(String(val).trim()===''){ _bdwToast('Enter a value'); return; }
-      if(fam==='number'||op==='in_last_days'||op==='in_next_days') val=Number(val);
+      if(fam==='number'||op==='in_last_days'||op==='in_next_days'||op==='not_in_last_days') val=Number(val);
     }
   }
   var cond={field:ctx.field, op:op}; if(val!==null) cond.value=val;
@@ -18424,7 +18474,13 @@ function _bdwOptionsPop(anchor){
 function _bdwOptionsRender(){
   var el=document.getElementById('bdw-opt'); if(!el) return;
   var cols=_bdwOptionsOrder(), o=_bdwO();
-  el.innerHTML='<div class="bdw-ph">Fields</div>'+cols.map(function(c,i){
+  var st0=_bdwSt(), grp='';
+  if(st0.cfg.view_type==='kanban'){
+    grp='<div class="bdw-ph">Group board by</div><div class="bdw-pbody" style="padding-top:0"><select id="bdw-kbf">'
+      +_bdwKanbanFields().map(function(k){ return '<option value="'+k+'"'+(k===st0.cfg.kanban_field?' selected':'')+'>'+esc(o._by[k].label)+'</option>'; }).join('')
+      +'</select></div><div class="bdw-psep"></div>';
+  }
+  el.innerHTML=grp+'<div class="bdw-ph">'+(st0.cfg.view_type==='kanban'?'Fields on cards':'Fields')+'</div>'+cols.map(function(c,i){
     var f=o._by[c.field], lock=(c.field===o.title_field);
     return '<div class="bdw-pi" style="cursor:default"><label style="display:flex;align-items:center;gap:8px;flex:1;cursor:'+(lock?'default':'pointer')+'">'
       +'<input type="checkbox" data-p="colvis" data-i="'+i+'"'+(c.visible?' checked':'')+(lock?' disabled':'')+'>'+esc(f.label)+'</label>'
@@ -18440,13 +18496,14 @@ function _bdwToggleCol(i){
     var last=-1; st.cfg.columns.forEach(function(x,j){ if(x.visible) last=j; });
     st.cfg.columns.splice(last+1,0,c);
   }
-  _bdwOptionsRender(); _bdwRenderBar(); _bdwRenderTable(false);
+  _bdwOptionsRender(); _bdwRenderBar(); _bdwRedraw();
 }
+function _bdwRedraw(){ var st=_bdwSt(); if(st.cfg.view_type==='kanban') _bdwRenderKanban(); else _bdwRenderTable(false); }
 function _bdwMoveCol(i, d){
   var cols=_bdwSt().cfg.columns, j=i+d;
   if(j<1 || j>=cols.length || !cols[j].visible) return;
   var t=cols[i]; cols[i]=cols[j]; cols[j]=t;
-  _bdwOptionsRender(); _bdwRenderBar(); _bdwRenderTable(false);
+  _bdwOptionsRender(); _bdwRenderBar(); _bdwRedraw();
 }
 function _bdwCalcPop(anchor, key){
   var f=_bdwF(key), st=_bdwSt();
@@ -18467,12 +18524,16 @@ function _bdwViewsPop(anchor, focusSave){
 function _bdwViewsRender(){
   var el=document.getElementById('bdw-vw'); if(!el) return;
   var st=_bdwSt(), o=_bdwO(), admin=BDW.meta.is_admin;
-  var h='<div class="bdw-ph">Views</div><button class="bdw-pi'+(!st.view?' on':'')+'" data-p="vsel" data-i="-1">&#9638;&nbsp; All '+esc(o.label)+'</button>';
+  var dv=st.defaultViewId||0;
+  function star(i, isDef){ return '<button class="bdw-ico'+(isDef?' on':'')+'" data-p="vdef" data-i="'+i+'" title="'+(isDef?'Opens first for you':'Open this view first')+'">'+(isDef?'&#9733;':'&#9734;')+'</button>'; }
+  function vic(v){ return (v && v.config && v.config.view_type==='kanban') ? '&#9636;' : '&#9638;'; }
+  var h='<div class="bdw-ph">Views</div><div class="bdw-pi'+(!st.view?' on':'')+'" style="padding:4px 6px 4px 12px"><span data-p="vsel" data-i="-1" style="flex:1;cursor:pointer;padding:3px 0">&#9638;&nbsp; All '+esc(o.label)+'</span>'+star(-1, !dv)+'</div>';
   st.views.forEach(function(v,i){
     var canEdit=v.is_mine || (v.visibility==='team' && admin);
-    h+='<div class="bdw-pi'+(st.view&&st.view.id===v.id?' on':'')+'" style="padding:4px 6px 4px 12px"><span data-p="vsel" data-i="'+i+'" style="flex:1;cursor:pointer;padding:3px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">&#9638;&nbsp; '+esc(v.name)
-      +(v.visibility==='team'?' <span class="bdw-pill" style="background:#F2F4F7;color:#475467;font-size:10.5px;padding:1px 6px">Team</span>':'')+'</span>'
-      +(v.is_mine?'<button class="bdw-ico'+(v.is_default?' on':'')+'" data-p="vdef" data-i="'+i+'" title="'+(v.is_default?'Default view':'Make default')+'">'+(v.is_default?'&#9733;':'&#9734;')+'</button>':'')
+    var badge = v.is_system ? 'Built-in' : (v.visibility==='team' ? 'Team' : '');
+    h+='<div class="bdw-pi'+(st.view&&st.view.id===v.id?' on':'')+'" style="padding:4px 6px 4px 12px"><span data-p="vsel" data-i="'+i+'" style="flex:1;cursor:pointer;padding:3px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+vic(v)+'&nbsp; '+esc(v.name)
+      +(badge?' <span class="bdw-pill" style="background:#F2F4F7;color:#475467;font-size:10.5px;padding:1px 6px">'+badge+'</span>':'')+'</span>'
+      +star(i, dv===v.id)
       +(canEdit?'<button class="bdw-ico" data-p="vdel" data-i="'+i+'" title="Delete view">&#128465;</button>':'')+'</div>';
   });
   h+='<div class="bdw-psep"></div><div class="bdw-pbody"><div style="font-size:12px;color:#667085;font-weight:600">Save current layout as a view</div>'
@@ -18487,12 +18548,12 @@ function _bdwSelectView(i){
   _bdwRenderFrame(); _bdwFetch(true);
 }
 async function _bdwToggleDefault(i){
-  var st=_bdwSt(), v=st.views[i], obj=BDW.obj;
-  var r=await req('PUT','/bd/views/'+v.id,{is_default:!v.is_default});
-  if(!r || r.error){ _bdwToast((r&&r.error)||'Could not update view'); return; }
-  await _bdwLoadViews(obj); if(obj!==BDW.obj) return;
-  if(st.view){ st.view=st.views.filter(function(x){return x.id===st.view.id;})[0]||null; }
-  _bdwViewsRender();
+  var st=_bdwSt(), obj=BDW.obj, vid = i<0 ? 0 : st.views[i].id;
+  if(vid && st.defaultViewId===vid) vid=0;            // un-star -> back to "All"
+  var r=await req('POST','/bd/views/default',{object:obj, view_id:vid});
+  if(!r || r.error){ _bdwToast((r&&r.error)||'Could not set default view'); return; }
+  if(obj!==BDW.obj) return;
+  st.defaultViewId=r.default_view_id||0; _bdwViewsRender();
 }
 async function _bdwDeleteView(i){
   var st=_bdwSt(), v=st.views[i], obj=BDW.obj;
@@ -18710,8 +18771,9 @@ function bdwPanelClose(silent){
   if(!silent && was && BDW.page && BDW.page!=='home'){ try{ history.replaceState(null,'','#bd/'+BDW.page); }catch(e){} }
 }
 function _bdwMarkRow(){
-  document.querySelectorAll('#bdw-table tr.pnl').forEach(function(t){ t.classList.remove('pnl'); });
+  document.querySelectorAll('#bdw-table tr.pnl, .bdw-kc.pnl').forEach(function(t){ t.classList.remove('pnl'); });
   var P=BDW.pnl; if(!P || P.obj!==BDW.obj) return;
+  var kc=document.querySelector('.bdw-kc[data-id="'+P.id+'"]'); if(kc) kc.classList.add('pnl');
   var tr=document.querySelector('#bdw-table tr[data-rid="'+P.id+'"]'); if(tr) tr.classList.add('pnl');
 }
 async function _bdwPnlBack(){
@@ -18754,12 +18816,17 @@ function _bdwFieldVal(f, rec){
   var v=rec[f.key];
   if(f.type==='long_text') return v? '<div class="lt">'+esc(v)+'</div>' : '';
   var html=_bdwCell(f, rec, false);
+  if(f.key==='mandate_id' && v) html+='<button class="bdw-go" data-pa="job" data-id="'+(+v)+'" title="Open job">Open job &#8599;</button>';
   if(f.type==='relation' && v && f.target && BDW.meta.objects[f.target])
     html+='<button class="bdw-go" data-pa="goto" data-o="'+f.target+'" data-id="'+(+v)+'" title="Open">&#8599;</button>';
   return html;
 }
 function _bdwTabHome(b, seq){
   var P=BDW.pnl, o=BDW.meta.objects[P.obj], rec=P.rec, h='';
+  if(P.obj==='opportunities' && rec.stage==='won' && !rec.mandate_id){
+    h+='<div class="bdw-won"><span style="font-size:16px">&#127881;</span><div style="flex:1">Agreement signed. Open the job for <b>'+esc(rec.client_id_label||'this company')+'</b> so sourcing can start.</div>'
+      +'<button class="bdw-pbtn" data-pa="mkjob">Create job</button></div>';
+  }
   _BDW_GROUPS[P.obj].forEach(function(g){
     h+='<div class="bdw-sec"><div class="bdw-sech">'+esc(g[0])+'</div>';
     g[1].forEach(function(k){
@@ -18882,7 +18949,10 @@ function _bdwPnlSync(rec){
   var st=BDW.st[P.obj];
   if(st && st.records){
     st.records=st.records.map(function(x){ return x.id===rec.id ? rec : x; });
-    if(BDW.obj===P.obj){ _bdwRerenderRow(rec.id); _bdwMarkRow(); _bdwRefreshCalc(); }
+    if(BDW.obj===P.obj){
+      if(st.cfg && st.cfg.view_type==='kanban') _bdwFetch(true);
+      else { _bdwRerenderRow(rec.id); _bdwMarkRow(); _bdwRefreshCalc(); }
+    }
   }
 }
 function _bdwPnlTitleEdit(el){
@@ -19141,7 +19211,8 @@ function _bdwPnlAct(act, a, e){
     case 'upload': return _bdwUpload();
     case 'fdel': return _bdwDeleteFile(+a.getAttribute('data-id'));
     case 'emtoggle': return a.classList.toggle('open');
-    case 'job': { var mid=+a.getAttribute('data-id'); bdwPanelClose(true); return selectMandate(mid); }
+    case 'job': { if(e) e.stopPropagation(); var mid=+a.getAttribute('data-id'); bdwPanelClose(true); return selectMandate(mid); }
+    case 'mkjob': return bdwCreateJobFromDeal(P.rec);
     case 'addrel': {
       var tgt=a.getAttribute('data-o'), pre={};
       if(P.obj==='companies') pre.client_id=[P.id, P.rec.name];
@@ -19159,6 +19230,158 @@ async function _bdwPnlDelete(){
   toast('&#10003;', esc(o.singular)+' deleted');
   if(P.stack.length){ await _bdwPnlBack(); } else bdwPanelClose();
   if(BDW.obj===obj) _bdwFetch(true);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  BD WORKSPACE (Wave 4) — Kanban board + deal -> job
+// ═══════════════════════════════════════════════════════════════════════
+function _bdwKbSumField(){
+  var o=_bdwO(), c=_bdwVisCols().filter(function(c){ return o._by[c.field] && o._by[c.field].type==='currency'; })[0];
+  return c ? c.field : null;
+}
+function _bdwKbFilter(value){
+  var st=_bdwSt(), kf=st.cfg.kanban_field;
+  var gf = value==='' ? {field:kf, op:'is_empty'} : {field:kf, op:'in', value:[value]};
+  return st.cfg.filter.conditions.length ? {logic:'and', conditions:[st.cfg.filter, gf]} : [gf];
+}
+async function _bdwFetchKanban(){
+  var st=_bdwSt(), obj=BDW.obj, kf=st.cfg.kanban_field, token=++BDW.seq;
+  st.loading=true;
+  var sc=document.getElementById('bdw-scroll');
+  if(sc && !st.kb) sc.innerHTML='<div class="bdw-state"><div class="spinner" style="margin:0 auto 10px"></div>Loading\u2026</div>';
+  var sumF=_bdwKbSumField();
+  var g=await req('POST','/bd/records/'+obj+'/groups',{group_by:kf, sum_field:sumF, q:st.q,
+            filter:st.cfg.filter.conditions.length?st.cfg.filter:null});
+  if(token!==BDW.seq || obj!==BDW.obj) return;
+  if(!g || !g.ok){ st.loading=false; if(sc) sc.innerHTML='<div class="bdw-state" style="color:#D92D20">'+esc((g&&g.error)||'Could not load board')+'</div>'; return; }
+  var cols=g.groups.filter(function(c){ return c.value!=='' || c.count>0; });
+  var res=await Promise.all(cols.map(function(c){
+    return c.count ? req('POST','/bd/records/'+obj+'/query',{q:st.q, filter:_bdwKbFilter(c.value), sort:st.cfg.sort, per_page:30, page:1}) : Promise.resolve({ok:true, records:[]});
+  }));
+  if(token!==BDW.seq || obj!==BDW.obj) return;
+  st.loading=false;
+  st.kb={field:kf, sumField:sumF, cols:cols.map(function(c,i){
+    return {value:c.value, label:c.label, count:c.count, sum:c.sum||0, page:1, records:(res[i]&&res[i].records)||[]};
+  })};
+  st.total=g.total; st.records=[].concat.apply([], st.kb.cols.map(function(c){ return c.records; }));
+  _bdwRenderCount(); _bdwRenderBar(); _bdwRenderBulk(); _bdwRenderKanban();
+}
+async function _bdwKbMore(value){
+  var st=_bdwSt(), obj=BDW.obj; if(!st.kb) return;
+  var col=st.kb.cols.filter(function(c){ return String(c.value)===String(value); })[0]; if(!col) return;
+  var r=await req('POST','/bd/records/'+obj+'/query',{q:st.q, filter:_bdwKbFilter(col.value), sort:st.cfg.sort, per_page:30, page:col.page+1});
+  if(obj!==BDW.obj || !r || !r.ok) return;
+  col.page++; col.records=col.records.concat(r.records);
+  st.records=st.records.concat(r.records);
+  _bdwRenderKanban();
+}
+function _bdwKcHtml(rec){
+  var st=_bdwSt(), o=_bdwO(), kf=st.cfg.kanban_field;
+  var title=rec[o.title_field]||('Untitled '+o.singular.toLowerCase());
+  var h='<div class="bdw-kc" draggable="true" data-a="kbopen" data-id="'+rec.id+'"><div class="kt">'+esc(title)+'</div>';
+  var n=0;
+  _bdwVisCols().forEach(function(c){
+    if(n>=5 || c.field===o.title_field || c.field===kf) return;
+    var f=o._by[c.field]; if(!f) return;
+    var v=rec[f.key];
+    if(v==null || v==='' || ((f.type==='relation'||f.type==='user') && !v) || (Array.isArray(v)&&!v.length)) return;
+    h+='<div class="kf" title="'+esc(f.label+': '+_bdwPlain(f,rec))+'"><span class="kl">'+esc(f.label)+'</span>'+_bdwCell(f,rec,false)+'</div>'; n++;
+  });
+  return h+'</div>';
+}
+function _bdwRenderKanban(){
+  var sc=document.getElementById('bdw-scroll'), st=_bdwSt(); if(!sc || !st.kb) return;
+  var f=_bdwO()._by[st.kb.field], sumF=st.kb.sumField && _bdwO()._by[st.kb.sumField];
+  var h='<div class="bdw-kb">';
+  st.kb.cols.forEach(function(c){
+    var vattr=esc(c.value);
+    h+='<div class="bdw-kcol" data-v="'+vattr+'"><div class="bdw-kh">'+(c.value===''?'<span class="bdw-pill" style="background:#F2F4F7;color:#667085">No value</span>':_bdwPill(f, c.value))
+      +'<span class="c">'+c.count+'</span>'+(sumF?'<span class="s" title="'+esc(sumF.label)+'">'+esc(_bdwMoney(c.sum||0))+'</span>':'<span class="s"></span>')
+      +(c.value!==''?'<button class="p" data-a="kbnew" data-v="'+vattr+'" title="New in '+esc(c.label)+'">+</button>':'')+'</div><div class="bdw-kl">'
+      +(c.records.length ? c.records.map(_bdwKcHtml).join('') : '<div class="bdw-kempty">Drop here</div>')
+      +(c.records.length<c.count?'<button class="bdw-kmore" data-a="kbmore" data-v="'+vattr+'">Show more ('+(c.count-c.records.length)+')</button>':'')
+      +'</div></div>';
+  });
+  sc.innerHTML=h+'</div>';
+  _bdwMarkRow();
+  _bdwKbWire();
+}
+function _bdwKbWire(){
+  if(BDW.kbWired) return; BDW.kbWired=true;
+  var g=document.getElementById('bdw-grid');
+  g.addEventListener('dragstart', function(e){
+    var card=e.target.closest && e.target.closest('.bdw-kc'); if(!card) return;
+    var col=card.closest('.bdw-kcol');
+    BDW.drag={id:+card.getAttribute('data-id'), from:col.getAttribute('data-v')};
+    try{ e.dataTransfer.setData('text/plain', String(BDW.drag.id)); e.dataTransfer.effectAllowed='move'; }catch(x){}
+    card.classList.add('drag'); bdwPopClose();
+  });
+  g.addEventListener('dragend', function(){
+    document.querySelectorAll('.bdw-kc.drag').forEach(function(x){ x.classList.remove('drag'); });
+    document.querySelectorAll('.bdw-kcol.over').forEach(function(x){ x.classList.remove('over'); });
+    BDW.drag=null;
+  });
+  g.addEventListener('dragover', function(e){
+    var col=e.target.closest && e.target.closest('.bdw-kcol'); if(!col || !BDW.drag) return;
+    e.preventDefault();
+    document.querySelectorAll('.bdw-kcol.over').forEach(function(x){ if(x!==col) x.classList.remove('over'); });
+    col.classList.add('over');
+  });
+  g.addEventListener('drop', function(e){
+    var col=e.target.closest && e.target.closest('.bdw-kcol'); if(!col || !BDW.drag) return;
+    e.preventDefault(); col.classList.remove('over');
+    var d=BDW.drag, to=col.getAttribute('data-v'); BDW.drag=null;
+    if(to===d.from || to==='') return;
+    _bdwKbMove(d.id, d.from, to);
+  });
+}
+async function _bdwKbMove(id, from, to){
+  var st=_bdwSt(), obj=BDW.obj, kf=st.cfg.kanban_field; if(!st.kb) return;
+  var cf=st.kb.cols.filter(function(c){ return String(c.value)===String(from); })[0];
+  var ct=st.kb.cols.filter(function(c){ return String(c.value)===String(to); })[0];
+  if(!cf || !ct) return;
+  var rec=cf.records.filter(function(r){ return r.id===id; })[0]; if(!rec) return;
+  var body={}; body[kf]=to;
+  if(obj==='opportunities' && kf==='stage' && to==='lost'){
+    var why=prompt('Why was "'+(rec.name||'this deal')+'" lost? (optional)', rec.lost_reason||'');
+    if(why===null) return;
+    if(why.trim()) body.lost_reason=why.trim();
+  }
+  // optimistic move
+  var amt=st.kb.sumField ? (+rec[st.kb.sumField]||0) : 0;
+  cf.records=cf.records.filter(function(r){ return r.id!==id; }); cf.count--; cf.sum-=amt;
+  ct.records.unshift(rec); ct.count++; ct.sum+=amt;
+  _bdwRenderKanban();
+  var r=await req('PUT','/bd/records/'+obj+'/'+id, body);
+  if(obj!==BDW.obj) return;
+  if(!r || r.error){ _bdwToast((r&&r.error)||'Could not move card'); _bdwFetch(true); return; }
+  ct.records=ct.records.map(function(x){ return x.id===id ? r.record : x; });
+  st.records=st.records.map(function(x){ return x.id===id ? r.record : x; });
+  _bdwRenderKanban();
+  if(BDW.pnl && BDW.pnl.obj===obj && BDW.pnl.id===id){ BDW.pnl.rec=r.record; _bdwPnlRender(); }
+  if(obj==='opportunities' && kf==='stage' && to==='won' && !r.record.mandate_id){
+    if(confirm('Deal won! Open the job (mandate) for '+(r.record.client_id_label||'this company')+' now?')) bdwCreateJobFromDeal(r.record);
+  }
+}
+
+// ── Won deal -> job (reuses the normal "New Job" form) ────────────────────
+function bdwCreateJobFromDeal(rec){
+  if(!rec || typeof openModal!=='function') return;
+  openModal('modal-mandate');
+  window._bdwOppForMandate = rec.id;       // saveMandate() links the new job back to this deal
+  var ci=document.getElementById('m-client'), hid=document.getElementById('m-client-id');
+  if(ci) ci.value=rec.client_id_label||'';
+  if(hid) hid.value=rec.client_id||'';
+  var role=document.getElementById('m-role'); if(role){ try{ role.focus(); }catch(e){} }
+  if(typeof refreshMandateDots==='function') setTimeout(refreshMandateDots, 30);
+}
+async function bdwLinkJobToDeal(mandateId){
+  var oid=window._bdwOppForMandate; window._bdwOppForMandate=null;
+  if(!oid || !mandateId) return;
+  var r=await req('POST','/bd/records/opportunities/'+oid+'/link-mandate',{mandate_id:mandateId});
+  if(r && r.ok) toast('&#10003;','Job linked to the deal');
+  else if(r && r.error) _bdwToast('Job created, but not linked to the deal: '+r.error);
+  var st=BDW.st.opportunities; if(st){ st.records=[]; st.kb=null; }
 }
 </script>
 
