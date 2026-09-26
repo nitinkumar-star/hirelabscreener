@@ -136,6 +136,25 @@ def migrate(conn):
         updated_at TEXT DEFAULT ''
     )''')
 
+    # Wave 4: per-user default view (any view the user can see, or 0 = "All")
+    c.execute('''CREATE TABLE IF NOT EXISTS bd_view_defaults (
+        company_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        object TEXT NOT NULL,
+        view_id INTEGER DEFAULT 0,
+        updated_at TEXT DEFAULT '',
+        PRIMARY KEY (company_id, user_id, object)
+    )''')
+    # Wave 4: built-in views are seeded once per tenant+object (admins may
+    # edit or delete them afterwards; a delete is never undone by re-seeding)
+    c.execute('''CREATE TABLE IF NOT EXISTS bd_view_seeds (
+        company_id INTEGER NOT NULL,
+        object TEXT NOT NULL,
+        version INTEGER DEFAULT 0,
+        seeded_at TEXT DEFAULT '',
+        PRIMARY KEY (company_id, object)
+    )''')
+
     # Twenty-style company fields the CRM never had.
     for col, defn in [('domain', "TEXT DEFAULT ''"), ('linkedin', "TEXT DEFAULT ''"),
                       ('employees', 'INTEGER'), ('annual_revenue', 'REAL')]:
@@ -176,7 +195,7 @@ OPS_BY_TYPE = {
     'number':   ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'between', 'is_empty', 'is_not_empty'],
     'date':     ['is', 'before', 'after', 'on_or_before', 'on_or_after', 'between',
                  'is_today', 'is_past', 'is_future', 'in_last_days', 'in_next_days',
-                 'is_empty', 'is_not_empty'],
+                 'not_in_last_days', 'is_empty', 'is_not_empty'],
     'select':   ['in', 'not_in', 'is_empty', 'is_not_empty'],
     'bool':     ['is_true', 'is_false'],
     'user':     ['in', 'not_in', 'is_me', 'is_empty', 'is_not_empty'],
@@ -618,6 +637,14 @@ def _compile_condition(o, cond, params, ctx):
             lo, hi = (other.isoformat(), today) if op == 'in_last_days' else (today, other.isoformat())
             params.extend([lo, hi])
             return f'({nonempty} AND {d} BETWEEN ? AND ?)'
+        if op == 'not_in_last_days':
+            # "nothing in the last N days" — an empty date also qualifies
+            try:
+                n = max(0, min(3650, int(val)))
+            except Exception:
+                raise RecordError('Number of days expected.')
+            params.append((datetime.date.fromisoformat(today) - datetime.timedelta(days=n)).isoformat())
+            return f'(NOT ({nonempty}) OR {d} < ?)'
         if op == 'between':
             if not isinstance(val, list) or len(val) != 2:
                 raise RecordError('between needs [from, to].')
@@ -1536,6 +1563,7 @@ def _view_public(row):
         d['config'] = {}
     d['is_default'] = bool(d.get('is_default'))
     d['is_mine'] = d.get('user_id') == real_user_id()
+    d['is_system'] = not d.get('user_id')
     d.pop('is_active', None)
     return d
 
@@ -1725,12 +1753,16 @@ def list_views():
     conn = get_db()
     try:
         _obj(obj)
+        company_id, uid = effective_company_id(), real_user_id()
+        seed_builtin_views(conn, company_id, obj)
         rows = conn.execute(
             "SELECT * FROM bd_views WHERE company_id=? AND object=? AND is_active=1 "
             "AND (user_id=? OR visibility='team') ORDER BY position, id",
-            (effective_company_id(), obj, real_user_id())).fetchall()
+            (company_id, obj, uid)).fetchall()
+        views = [_view_public(r) for r in rows]
         return jsonify({'ok': True, 'object': obj, 'default_config': default_view_config(obj),
-                        'views': [_view_public(r) for r in rows]})
+                        'views': views,
+                        'default_view_id': _user_default_view(conn, company_id, uid, obj, views)})
     except RecordError as e:
         return _err(e)
     finally:
@@ -1971,6 +2003,161 @@ def record_calendar_api(obj, rid):
     conn = get_db()
     try:
         return jsonify({'ok': True, **record_calendar(conn, obj, rid)})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  WAVE 4 — built-in views, personal default view, deal -> job link
+# ══════════════════════════════════════════════════════════════════════════
+_OPEN_DEAL = {'field': 'stage', 'op': 'not_in', 'value': ['won', 'lost']}
+BUILTIN_VIEWS_VERSION = 1
+BUILTIN_VIEWS = {
+    'opportunities': [
+        ('Pipeline', {'view_type': 'kanban', 'kanban_field': 'stage',
+                      'columns': ['name', 'client_id', 'amount', 'close_date', 'owner_user_id'],
+                      'sort': [{'field': 'close_date', 'dir': 'asc'}]}),
+        ('My open deals', {'filter': [{'field': 'owner_user_id', 'op': 'is_me'}, _OPEN_DEAL],
+                           'sort': [{'field': 'close_date', 'dir': 'asc'}], 'calc': {'amount': 'sum'}}),
+        ('Closing in 30 days', {'filter': [{'field': 'close_date', 'op': 'in_next_days', 'value': 30}, _OPEN_DEAL],
+                                'sort': [{'field': 'close_date', 'dir': 'asc'}], 'calc': {'amount': 'sum'}}),
+        ('Won deals', {'filter': [{'field': 'stage', 'op': 'in', 'value': ['won']}],
+                       'sort': [{'field': 'won_at', 'dir': 'desc'}], 'calc': {'amount': 'sum'}}),
+    ],
+    'tasks': [
+        ('My open tasks', {'filter': [{'field': 'owner_user_id', 'op': 'is_me'},
+                                      {'field': 'status', 'op': 'in', 'value': ['open']}],
+                           'sort': [{'field': 'due_at', 'dir': 'asc'}]}),
+        ('Overdue', {'filter': [{'field': 'is_overdue', 'op': 'is_true'}],
+                     'sort': [{'field': 'due_at', 'dir': 'asc'}]}),
+        ('Due this week', {'filter': [{'field': 'status', 'op': 'in', 'value': ['open']},
+                                      {'field': 'due_at', 'op': 'in_next_days', 'value': 7}],
+                           'sort': [{'field': 'due_at', 'dir': 'asc'}]}),
+    ],
+    'companies': [
+        ('Prospects', {'filter': [{'field': 'status', 'op': 'in', 'value': ['prospect']}]}),
+        ('Active clients', {'filter': [{'field': 'status', 'op': 'in', 'value': ['active']}],
+                            'calc': {'pipeline_value': 'sum'}}),
+        ('Gone quiet (30 days)', {'filter': [{'field': 'status', 'op': 'in', 'value': ['active', 'prospect']},
+                                             {'field': 'last_activity', 'op': 'not_in_last_days', 'value': 30}],
+                                  'sort': [{'field': 'last_activity', 'dir': 'asc'}]}),
+        ('Board by status', {'view_type': 'kanban', 'kanban_field': 'status'}),
+    ],
+    'people': [
+        ('Decision makers', {'filter': [{'field': 'is_decision_maker', 'op': 'is_true'}]}),
+        ('No contact in 30 days', {'filter': [{'field': 'last_activity', 'op': 'not_in_last_days', 'value': 30}],
+                                   'sort': [{'field': 'last_activity', 'dir': 'asc'}]}),
+    ],
+    'notes': [
+        ('My notes', {'filter': [{'field': 'created_by', 'op': 'is_me'}]}),
+        ('Last 7 days', {'filter': [{'field': 'created_at', 'op': 'in_last_days', 'value': 7}]}),
+    ],
+}
+
+
+def seed_builtin_views(conn, company_id, obj):
+    """Create the built-in team views for this tenant+object once. Owned by
+    user 0 ("system"), shared with the team, editable/deletable by admins."""
+    presets = BUILTIN_VIEWS.get(obj)
+    if not presets or not company_id:
+        return
+    row = conn.execute('SELECT version FROM bd_view_seeds WHERE company_id=? AND object=?',
+                       (company_id, obj)).fetchone()
+    if row and (row['version'] or 0) >= BUILTIN_VIEWS_VERSION:
+        return
+    o = _obj(obj)
+    now = ts()
+    try:
+        conn.execute('INSERT OR IGNORE INTO bd_view_seeds (company_id, object, version, seeded_at) VALUES (?,?,?,?)',
+                     (company_id, obj, 0, now))
+        claimed = conn.execute('UPDATE bd_view_seeds SET version=?, seeded_at=? WHERE company_id=? AND object=? '
+                               'AND COALESCE(version,0)<?',
+                               (BUILTIN_VIEWS_VERSION, now, company_id, obj, BUILTIN_VIEWS_VERSION)).rowcount
+        if not claimed:            # another request seeded it first
+            conn.commit(); return
+        for pos, (name, cfg) in enumerate(presets, start=1):
+            clean = _clean_view_config(o, cfg)
+            conn.execute('INSERT INTO bd_views (company_id,user_id,object,name,config,visibility,is_default,'
+                         'position,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?)',
+                         (company_id, 0, obj, name, json.dumps(clean), 'team', 0, -100 + pos, now, now))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f'[bd_records] built-in view seed failed for {obj}: {e}')
+
+
+def _user_default_view(conn, company_id, uid, obj, visible_views):
+    """The view this user wants to open first: their saved choice if that view
+    is still visible to them, else their legacy starred own view, else 0 (All)."""
+    ids = {v['id'] for v in visible_views}
+    r = conn.execute('SELECT view_id FROM bd_view_defaults WHERE company_id=? AND user_id=? AND object=?',
+                     (company_id, uid, obj)).fetchone()
+    if r is not None:
+        return r['view_id'] if r['view_id'] in ids else 0
+    legacy = [v['id'] for v in visible_views if v.get('is_default') and v.get('is_mine')]
+    return legacy[0] if legacy else 0
+
+
+@bp.route('/views/default', methods=['POST'])
+@login_required
+def set_default_view():
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        obj = d.get('object', '')
+        _obj(obj)
+        try:
+            vid = int(d.get('view_id') or 0)
+        except Exception:
+            raise RecordError('Invalid view.')
+        company_id, uid = effective_company_id(), real_user_id()
+        if vid:
+            row = _view_row(conn, vid)
+            if not row or row['object'] != obj or (row['user_id'] != uid and row['visibility'] != 'team'):
+                raise RecordError('View not found.', 404)
+        conn.execute('INSERT INTO bd_view_defaults (company_id,user_id,object,view_id,updated_at) VALUES (?,?,?,?,?) '
+                     'ON CONFLICT(company_id,user_id,object) DO UPDATE SET view_id=excluded.view_id, '
+                     'updated_at=excluded.updated_at', (company_id, uid, obj, vid, ts()))
+        conn.commit()
+        return jsonify({'ok': True, 'object': obj, 'default_view_id': vid})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
+
+
+@bp.route('/records/opportunities/<int:oid>/link-mandate', methods=['POST'])
+@login_required
+def link_mandate(oid):
+    """Record that a job (mandate) was opened for this deal. The mandate must
+    belong to this tenant and to the deal's company."""
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        company_id = effective_company_id()
+        opp = _opp_row(conn, company_id, oid)
+        if not opp:
+            raise RecordError('Opportunity not found.', 404)
+        try:
+            mid = int(d.get('mandate_id') or 0)
+        except Exception:
+            raise RecordError('Invalid job.')
+        m = conn.execute('SELECT id, role, crm_client_id FROM mandates WHERE id=? AND owner_id=?',
+                         (mid, company_id)).fetchone()
+        if not m:
+            raise RecordError('Job not found.', 404)
+        if int(m['crm_client_id'] or 0) != int(opp['client_id']):
+            raise RecordError('That job belongs to a different company than this deal.')
+        conn.execute('UPDATE bd_opportunities SET mandate_id=?, updated_by=?, updated_at=? WHERE id=?',
+                     (mid, real_user_id(), ts(), oid))
+        conn.commit()
+        record_changes('opportunity', oid, {'mandate_id': opp['mandate_id']}, {'mandate_id': mid}, ['mandate_id'])
+        log_activity('opportunity.job_created', f'Job "{m["role"]}" opened for deal "{opp["name"]}"',
+                     entity_type='client', entity_id=opp['client_id'],
+                     meta={'opportunity_id': oid, 'mandate_id': mid})
+        return jsonify({'ok': True, 'record': get_record(conn, 'opportunities', oid)})
     except RecordError as e:
         return _err(e)
     finally:
