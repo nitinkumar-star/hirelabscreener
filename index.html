@@ -1897,6 +1897,10 @@ async function readHash() {
       return;
     }
 
+    // Recruiter sub-accounts: admin-module links go to Home instead of a 403 page
+    if (_isRecruiterScoped() && ['crm','bd','invoicing','email','command','analytics','orgmap','freelancers','admin'].indexOf(head)>=0) {
+      await renderContent(); return;
+    }
     // BD workspace deep link: #bd/<page>
     if (head === 'bd') { openBd(parts[1] || 'home', parts[2]); return; }
 
@@ -2013,6 +2017,7 @@ async function init(){
 
   // state === 'app' — logged in
   S.currentUser = status.user || null;
+  try{ applyRecruiterScope(); }catch(e){}
   S.viewingAs = status.viewing_as || null;
   S.pendingCount = status.pending_count || 0;
 
@@ -2644,6 +2649,7 @@ async function ntfEnableDesktop(){
 // ── Pop-up cards (top-right, sticky) ──
 function _ntfMeta(n){
   if (n.kind === 'fl_upload') return { icon:'\uD83D\uDCE5', label:'New CV from freelancer', color:'#0F6E56', bg:'#ECFDF3' };
+  if (n.kind === 'mandate_assigned') return { icon:'\uD83D\uDCBC', label:'New position assigned to you', color:'#3538CD', bg:'#EEF0FF' };
   return { icon:'\uD83D\uDCCB', label:'Update on your candidate', color:'#2D6FB3', bg:'#EEF4FF' };
 }
 function _ntfBodyHtml(body, max){
@@ -3521,10 +3527,11 @@ async function renderDashboard(el){
     return;
   }
   el.innerHTML='<div class="loading"><div class="spinner"></div>Loading your dashboard...</div>';
+  var _rs=_isRecruiterScoped();   // recruiter sub-account: own jobs only, no company analytics
   const [analytics, tasksData, activityData] = await Promise.all([
-    req('GET','/analytics?range=30').catch(function(){return {};}),
+    _rs ? Promise.resolve({}) : req('GET','/analytics?range=30').catch(function(){return {};}),
     req('GET','/tasks').catch(function(){return {tasks:[],counts:{}};}),
-    req('GET','/activity?per_page=8').catch(function(){return {activity:[]};})
+    _rs ? Promise.resolve({activity:[]}) : req('GET','/activity?per_page=8').catch(function(){return {activity:[]};})
   ]);
   const kpi     = (analytics && analytics.kpi) || {};
   const funnel  = (analytics && analytics.funnel) || [];
@@ -3551,6 +3558,15 @@ async function renderDashboard(el){
         wsMode()==='corporate' ? 'opened &rarr; joined' : 'created &rarr; placed')
     +statCard('Candidates in pipeline', (kpi.pipeline_candidates!=null?kpi.pipeline_candidates:'&mdash;'), 'Current snapshot')
     +'</div>';
+  if(_rs){
+    // Company KPIs are admin-only; a recruiter sees their own workload instead.
+    var _od=allTasks.filter(function(t){return t.section==='overdue';}).length;
+    cards='<div style="padding:18px 16px 4px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px">'
+      +statCard('My open '+esc(String(T('mandate_plural','mandates')).toLowerCase()), openM, 'assigned to you')
+      +statCard('Due today', allTasks.filter(function(t){return t.section==='today';}).length, 'follow-ups &amp; tasks', "openTasks()")
+      +statCard('Overdue', _od, _od?'needs attention':'all clear', "openTasks()")
+      +'</div>';
+  }
 
   var maxF=1; funnel.forEach(function(f){ if(f.count>maxF)maxF=f.count; });
   var funnelRows=funnel.map(function(f){
@@ -3601,7 +3617,7 @@ async function renderDashboard(el){
 
   var twoCol='<div style="padding:14px 16px 26px;display:grid;grid-template-columns:1.4fr 1fr;gap:14px;align-items:start">'
     +'<div>'+focusCard+'</div>'
-    +'<div>'+quick+activityCard+'</div>'
+    +'<div>'+quick+(_rs?'':activityCard)+'</div>'
     +'</div>';
 
   el.innerHTML = cards + funnelCard + twoCol;
@@ -3652,9 +3668,10 @@ function renderMandateSetup(el){
   var adminCard = '';
   if (S.currentUser && S.currentUser.is_company_admin) {
     adminCard = '<div class="card setup-card" data-sc="manage" style="max-width:580px;margin-top:16px"><div class="card-head"><span style="font-weight:500">Assignment &amp; Job Management</span></div><div class="card-body">'
-      + '<div class="fg-row"><label>Assign this job to recruiter</label>'
-      + '<select id="ms-assign" class="inp" style="width:100%"><option value="">Loading team...</option></select></div>'
-      + '<button class="btn btn-g" style="margin-top:8px" onclick="assignMandateTo()">Save Assignment</button>'
+      + '<div class="fg-row"><label>Recruiters on this job</label>'
+      + '<div style="font-size:11px;color:var(--muted);margin:-2px 0 6px">Tick everyone who works this position. All of them see the full pipeline; the primary recruiter owns it.</div>'
+      + '<div id="ms-assign" class="ms-assign"><div style="font-size:12px;color:var(--muted);padding:6px 0">Loading team&hellip;</div></div></div>'
+      + '<button class="btn btn-g" style="margin-top:8px" onclick="assignMandateTo()">Save Recruiters</button>'
       + '<div style="margin-top:18px;padding-top:14px;border-top:0.5px solid var(--line)">'
       + '<div style="font-size:12px;color:#A32D2D;font-weight:600;margin-bottom:6px">Danger zone</div>'
       + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Deleting this job removes the mandate, but its candidates stay safe in your Central Database.</div>'
@@ -4176,28 +4193,57 @@ async function deleteClientNote(nid){
   else toast('ERR', r.error||'Failed');
 }
 
+// Multi-recruiter assignment: every ticked recruiter sees the mandate and its
+// full pipeline; the primary one owns it (mandates.assigned_user_id).
 async function loadTeamForAssign(currentAssigned) {
-  var sel = document.getElementById('ms-assign');
-  if (!sel) return;
-  var r = await req('GET', '/my-team');
-  if (!r.ok) { sel.innerHTML = '<option value="">(could not load team)</option>'; return; }
-  sel.innerHTML = '<option value="">— Unassigned —</option>' + r.team.map(function(t){
-    var label = (t.display_name || t.username) + (t.is_company_admin ? ' (admin)' : '');
-    var selected = (t.id === currentAssigned) ? ' selected' : '';
-    return '<option value="' + t.id + '"' + selected + '>' + esc(label) + '</option>';
+  var box = document.getElementById('ms-assign');
+  if (!box || !S.activeMandate) return;
+  var mid = S.activeMandate.id;
+  var both = await Promise.all([req('GET', '/my-team'), req('GET', '/access/mandates/' + mid + '/assignees')]);
+  var t = both[0], a = both[1];
+  if (!t || !t.ok) { box.innerHTML = '<div style="font-size:12px;color:#A32D2D">Could not load your team.</div>'; return; }
+  var on = {}, primary = currentAssigned || 0;
+  ((a && a.ok && a.assignees) || []).forEach(function(x){ on[x.user_id] = 1; if (x.is_primary) primary = x.user_id; });
+  if (!Object.keys(on).length && currentAssigned) on[currentAssigned] = 1;
+  var team = (t.team || []).filter(function(u){ return u.role !== 'freelancer_sourcer'; });
+  if (!team.length) { box.innerHTML = '<div style="font-size:12px;color:var(--muted)">No recruiters yet. Add them in Admin &rarr; Users.</div>'; return; }
+  box.innerHTML = team.map(function(u){
+    var nm = (u.display_name || u.username) + (u.is_company_admin ? ' (admin)' : '');
+    return '<div class="ms-as-row">'
+      + '<label class="ms-as-l"><input type="checkbox" class="ms-as-ck" value="' + u.id + '"' + (on[u.id] ? ' checked' : '') + ' onchange="_msAssignSync()"> ' + esc(nm) + '</label>'
+      + '<label class="ms-as-p" title="Primary recruiter"><input type="radio" name="ms-as-primary" value="' + u.id + '"' + (u.id === primary ? ' checked' : '') + ' onchange="_msAssignSync(this)"> Primary</label>'
+      + '</div>';
   }).join('');
+  _msAssignSync();
 }
-
+function _msAssignSync(radio) {
+  var box = document.getElementById('ms-assign'); if (!box) return;
+  if (radio) { var ck = box.querySelector('.ms-as-ck[value="' + radio.value + '"]'); if (ck) ck.checked = true; }
+  var rows = box.querySelectorAll('.ms-as-row'), anyPrimary = false, firstOn = null;
+  rows.forEach(function(r){
+    var ck = r.querySelector('.ms-as-ck'), rd = r.querySelector('input[type=radio]');
+    if (!ck.checked) rd.checked = false;           // un-ticking the primary hands it to the next ticked one
+    if (rd.checked) anyPrimary = true;
+    if (ck.checked && !firstOn) firstOn = rd;
+    r.classList.toggle('on', ck.checked);
+  });
+  if (!anyPrimary && firstOn) firstOn.checked = true;
+}
 async function assignMandateTo() {
-  var sel = document.getElementById('ms-assign');
-  if (!sel || !S.activeMandate) return;
-  var uid = sel.value ? parseInt(sel.value) : 0;
-  var r = await req('POST', '/mandates/' + S.activeMandate.id + '/assign', {user_id: uid});
-  if (r.ok) {
-    toast('OK', uid ? 'Job assigned' : 'Job unassigned');
-    S.activeMandate.assigned_user_id = uid;
+  var box = document.getElementById('ms-assign');
+  if (!box || !S.activeMandate) return;
+  var ids = [].slice.call(box.querySelectorAll('.ms-as-ck:checked')).map(function(c){ return parseInt(c.value); });
+  var pr = box.querySelector('input[name="ms-as-primary"]:checked');
+  var primary = pr ? parseInt(pr.value) : (ids[0] || 0);
+  var r = await req('PUT', '/access/mandates/' + S.activeMandate.id + '/assignees', {user_ids: ids, primary_user_id: primary});
+  if (r && r.ok) {
+    S.activeMandate.assigned_user_id = primary;
+    S.activeMandate.assignees = r.assignees || [];
+    var mm = (S.mandates || []).find(function(x){ return x.id === S.activeMandate.id; });
+    if (mm) { mm.assigned_user_id = primary; mm.assignees = S.activeMandate.assignees; }
+    toast('&#10003;', ids.length ? ('Saved — ' + ids.length + ' recruiter' + (ids.length === 1 ? '' : 's') + ' on this job') : 'Job unassigned');
   } else {
-    toast('ERR', r.error || 'Failed');
+    toast('&#9888;&#65039;', esc((r && r.error) || 'Could not save recruiters'));
   }
 }
 
@@ -7890,6 +7936,7 @@ function sesToggle(){
 
 async function loadSesStatus(){
   var box = document.getElementById('ses-hook'); if(!box) return;
+  if(_isRecruiterScoped()) return;
   try{
     var r = await req('GET','/ses/status');
     if(!r || !r.ok) return;
@@ -8073,6 +8120,7 @@ async function savePipelineStages(){
 async function loadMyBillingCard(){
   var box = document.getElementById('my-billing-card');
   if (!box) return;
+  if (_isRecruiterScoped()) { box.innerHTML=''; return; }      // subscription is the admin's
   var r = await req('GET', '/billing/me');
   if (!r || !r.ok || !r.bill) { box.innerHTML=''; return; }
   var b = r.bill;
@@ -8333,7 +8381,7 @@ function waConfigHTML(s){
 async function renderWaSettings(){
   var box=document.getElementById('wa-settings-box'); if(!box) return;
   var cfg={}, cats=[];
-  try{ cfg=await req('GET','/wa-inbound-config'); }catch(e){}
+  try{ if(!_isRecruiterScoped()) cfg=await req('GET','/wa-inbound-config'); }catch(e){}
   try{ cats=await waLoadTemplates(true); }catch(e){}
   var setup='<div class="card" style="margin-bottom:14px"><div class="card-body">'
     +'<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:8px">&#128225; Reply-capture listener</div>'
@@ -10288,12 +10336,30 @@ async function loadWorkspace(){
 // Relabel the static chrome and hide the modules that only make sense when
 // recruitment is being sold as a service. Hidden, never deleted — a tenant
 // switched back to agency gets everything intact.
+// Recruiter sub-accounts work only their assigned jobs. The server refuses the
+// admin modules (modules/access.py); this keeps them out of the menu too.
+var _RECRUITER_HIDDEN = ['crm','bd','invoicing','email','command','analytics','orgmap','freelancers','admin'];
+function _isRecruiterScoped(){
+  var u = S.currentUser;
+  return !!u && !(u.role==='admin' || u.is_company_admin) && u.role!=='freelancer_sourcer' && !S.viewingAs;
+}
+function applyRecruiterScope(){
+  // A class on <body>, not on the menu items: navigation code resets each
+  // item's className to 'sb-gear', which would wipe a per-item class.
+  document.body.classList.toggle('rs-scoped', _isRecruiterScoped());
+  if(!_isRecruiterScoped()) return;
+  document.querySelectorAll('.cdb-subtab').forEach(function(b){
+    var oc=b.getAttribute('onclick')||'';
+    if(/openBd\(|openCrm\(|openAnalytics\(|openInvoicing\(|openCommand\(/.test(oc)) b.classList.add('rs-hidden');
+  });
+}
 function applyWorkspace(){
   var hidden = (S.ws && S.ws.hidden_modules) || [];
   ['invoicing','bd','command','freelancers'].forEach(function(m){
     var el = document.getElementById('sb-'+m);
     if(el) el.style.display = (hidden.indexOf(m)>=0) ? 'none' : '';
   });
+  applyRecruiterScope();
   var relabel = [
     ['sb-mandates', T('mandate_plural','Mandates')],
     ['sb-jobs',     T('mandate_plural','Mandates')],
@@ -13304,6 +13370,7 @@ function switchAITab(tab) {
 
 async function loadAIIndexStatus() {
   var badge = document.getElementById('ai-index-badge');
+  if (_isRecruiterScoped()) { if (badge) badge.innerHTML = ''; return; }   // index upkeep is admin-only
   try {
     var r = await req('GET', '/ai/index-status');
     if (r.ok) {
@@ -13341,8 +13408,8 @@ function renderAITab() {
       + '</div>'
       + '<label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11px;color:var(--muted);cursor:pointer">'
       + '<input type="checkbox" id="ai-explain" checked> Add AI reasoning (only for text queries)</label>'
-      + '<div style="margin-top:10px"><button class="btn btn-o" style="font-size:11px" onclick="runReindex(false)">&#8635; Index new candidates</button> '
-      + '<button class="btn btn-o" style="font-size:11px" onclick="runReindex(true)">Re-index all</button></div>'
+      + (_isRecruiterScoped() ? '' : '<div style="margin-top:10px"><button class="btn btn-o" style="font-size:11px" onclick="runReindex(false)">&#8635; Index new candidates</button> '
+      + '<button class="btn btn-o" style="font-size:11px" onclick="runReindex(true)">Re-index all</button></div>')
       + '</div>'
       + '<div id="ai-search-results" style="margin-top:16px"></div>'
       + '</div>';
@@ -15276,6 +15343,7 @@ function _fmtDateTime(iso){
 }
 
 async function updateBdBadge(){
+  if(_isRecruiterScoped()) return;           // BD is admin-only
   try{
     var r=await req('GET','/bd/command-center');
     if(r.ok){
@@ -15337,7 +15405,9 @@ function renderJobs(){
       +'<div style="padding:14px 16px;display:flex;align-items:flex-start;justify-content:space-between;gap:8px">'
       +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#0a2540;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(m.role||'Untitled')+'</div>'
       +'<div style="font-size:12px;color:#555;margin-top:3px">'+esc(m.client||'')+'</div>'
-      +'<div style="font-size:11px;color:#888;margin-top:2px">'+esc(m.location||'')+(m.division?' &middot; '+esc(m.division):'')+'</div></div>'
+      +'<div style="font-size:11px;color:#888;margin-top:2px">'+esc(m.location||'')+(m.division?' &middot; '+esc(m.division):'')+'</div>'
+      +((m.assignees&&m.assignees.length)?'<div style="font-size:11px;color:#667085;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="Recruiters on this job">&#128101; '+m.assignees.map(function(a){ return esc(a.name)+(a.is_primary&&m.assignees.length>1?' &#9733;':''); }).join(', ')+'</div>':'')
+      +'</div>'
       +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'
       +'<button onclick="event.stopPropagation();openStatusModal('+m.id+')" title="Change status (Active / Hold / Closed)" class="pill" style="background:'+dotC+'22;color:'+dotC+';border:none;cursor:pointer;font:inherit;display:inline-flex;align-items:center;gap:4px">'+statusLabel+' &#9662;</button>'
       +((m.ctc_min||m.ctc_max)?'<span style="font-size:10px;color:#aaa">&#8377;'+(m.ctc_min||0)+'&ndash;'+(m.ctc_max||0)+'L</span>':'')
@@ -17440,6 +17510,22 @@ async function cpOrgResolve(cid, field, keep){
 
 </script>
 <style id="bdw-style">
+/* Recruiter sub-accounts: admin modules removed from the menu. The id+class
+   selector outranks '#sidebar .sb-gear{display:flex!important}'. */
+body.rs-scoped #sidebar #sb-crm, body.rs-scoped #sidebar #sb-bd, body.rs-scoped #sidebar #sb-invoicing,
+body.rs-scoped #sidebar #sb-email, body.rs-scoped #sidebar #sb-command, body.rs-scoped #sidebar #sb-analytics,
+body.rs-scoped #sidebar #sb-orgmap, body.rs-scoped #sidebar #sb-freelancers, body.rs-scoped #sidebar #sb-admin,
+body.rs-scoped #ai-tab-stats, body.rs-scoped #ai-tab-companies, body.rs-scoped #ai-tab-movement,
+.cdb-subtab.rs-hidden{display:none!important}
+/* ═══ Multi-recruiter picker (mandate setup) ═══ */
+.ms-assign{border:0.5px solid var(--line);border-radius:10px;max-height:260px;overflow:auto;background:#fff}
+.ms-as-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:0.5px solid #F2F4F7}
+.ms-as-row:last-child{border-bottom:none}
+.ms-as-row.on{background:#F5F8FF}
+.ms-as-l{flex:1;display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin:0}
+.ms-as-p{display:flex;align-items:center;gap:5px;font-size:11.5px;color:#667085;cursor:pointer;margin:0}
+.ms-as-row input{accent-color:#3E63DD;cursor:pointer}
+.ms-as-row:not(.on) .ms-as-p{opacity:.55}
 /* ═══ BD Workspace (Wave 2) — Twenty-style record tables ═══ */
 #bdw-shell{flex:1;display:flex;overflow:hidden;min-height:0}
 #bdw-nav{width:188px;flex-shrink:0;background:#fff;border-right:0.5px solid #e8e8e8;padding:10px 8px;overflow-y:auto}

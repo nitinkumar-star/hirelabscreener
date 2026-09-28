@@ -4630,14 +4630,31 @@ def shorten_jd():
 
 @app.route('/api/reminders', methods=['GET'])
 @login_required
+def _ms(col):
+    """Recruiter scope on a mandate-id column ('' for admins). See modules/access.py."""
+    from modules.access import mandate_scope_sql
+    return mandate_scope_sql(col)
+
+
+def _cs(col, include_pool=True):
+    """Recruiter scope on a candidate's mandate column (+ Central DB pool)."""
+    from modules.access import candidate_scope_sql
+    return candidate_scope_sql(col, include_pool=include_pool)
+
+
+def _reminder_scope():
+    from modules.access import reminder_scope_sql
+    return reminder_scope_sql('r')
+
+
 def get_reminders():
     conn = get_db()
     rows = conn.execute(
         'SELECT r.*, c.phone AS cand_phone, c.company AS cand_company, '
         'c.designation AS cand_designation, c.stage AS cand_stage '
         'FROM reminders r LEFT JOIN candidates c ON c.id = r.candidate_id '
-        'WHERE r.done=0 AND r.owner_id=? ORDER BY r.due_at ASC',
-        (effective_user_id(),)
+        'WHERE r.done=0 AND r.owner_id=? ' + _reminder_scope()[0] + ' ORDER BY r.due_at ASC',
+        [effective_user_id()] + _reminder_scope()[1]
     ).fetchall()
     conn.close()
     return jsonify({'ok': True, 'reminders': [dict(r) for r in rows]})
@@ -4662,7 +4679,8 @@ def add_reminder():
     mandate_id = None
     mandate_label = ''
     if cid:
-        cand = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+        cand = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?',
+                            (cid, effective_user_id())).fetchone()   # own tenant only
         if not cand:
             conn.close()
             return jsonify({'error': 'Candidate not found'}), 404
@@ -4674,9 +4692,10 @@ def add_reminder():
 
     done_flag = 1 if stage == 'done' else 0
     conn.execute(
-        'INSERT INTO reminders (candidate_id,mandate_id,candidate_name,mandate_label,note,due_at,done,stage,created_at,owner_id) '
-        'VALUES (?,?,?,?,?,?,?,?,?,?)',
-        (cand_id, mandate_id, cand_name, mandate_label, note, due, done_flag, stage, ts(), effective_user_id())
+        'INSERT INTO reminders (candidate_id,mandate_id,candidate_name,mandate_label,note,due_at,done,stage,created_at,owner_id,created_by) '
+        'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        (cand_id, mandate_id, cand_name, mandate_label, note, due, done_flag, stage, ts(), effective_user_id(),
+         real_user_id() or 0)
     )
     conn.commit(); conn.close()
     return jsonify({'ok': True})
@@ -4710,7 +4729,7 @@ def tasks_board():
     rows = conn.execute(
         "SELECT r.*, c.phone AS cand_phone, c.name AS cand_name2 "
         "FROM reminders r LEFT JOIN candidates c ON c.id = r.candidate_id "
-        "WHERE r.owner_id=? ORDER BY r.id DESC", (uid,)
+        "WHERE r.owner_id=? " + _reminder_scope()[0] + " ORDER BY r.id DESC", [uid] + _reminder_scope()[1]
     ).fetchall()
     conn.close()
     cols = {'todo': [], 'doing': [], 'done': []}
@@ -4746,10 +4765,16 @@ def _reminder_token(rid):
 
 
 def _reminder_action_ok(rid):
-    """Authorized if the user has a session OR a valid reminder token."""
+    """Authorized if the reminder belongs to the logged-in user's company, OR
+    the request carries this reminder's token (mobile app). Previously any
+    session passed, so one agency could close/snooze another agency's reminders."""
     try:
         if session.get('user_id'):
-            return True
+            _c = get_db()
+            _r = _c.execute('SELECT owner_id FROM reminders WHERE id=?', (rid,)).fetchone()
+            _c.close()
+            if _r and _r['owner_id'] == effective_company_id():
+                return True
     except Exception:
         pass
     tok = request.values.get('token', '')
@@ -4834,7 +4859,7 @@ def edit_reminder(rid):
 @login_required
 def delete_reminder(rid):
     conn = get_db()
-    conn.execute('DELETE FROM reminders WHERE id=?', (rid,))
+    conn.execute('DELETE FROM reminders WHERE id=? AND owner_id=?', (rid, effective_company_id()))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
@@ -4899,7 +4924,7 @@ def analytics():
     if admin:
         mrows = conn.execute('SELECT * FROM mandates WHERE owner_id=?', (cid,)).fetchall()
     else:
-        mrows = conn.execute('SELECT * FROM mandates WHERE owner_id=? AND assigned_user_id=?',
+        mrows = conn.execute('SELECT * FROM mandates WHERE owner_id=? AND id IN (SELECT mandate_id FROM mandate_assignees WHERE user_id=? AND is_active=1)',
                              (cid, real_user_id())).fetchall()
     mandates = [dict(m) for m in mrows]
     mandate_ids = [m['id'] for m in mandates]
@@ -5008,7 +5033,7 @@ def analytics():
         team = conn.execute("SELECT id, display_name, username FROM users WHERE company_id=? AND status='approved'", (cid,)).fetchall()
         for u in team:
             uid = u['id']
-            u_mandates = conn.execute('SELECT id FROM mandates WHERE owner_id=? AND assigned_user_id=?', (cid, uid)).fetchall()
+            u_mandates = conn.execute('SELECT id FROM mandates WHERE owner_id=? AND id IN (SELECT mandate_id FROM mandate_assignees WHERE user_id=? AND is_active=1)', (cid, uid)).fetchall()
             u_mids = [r['id'] for r in u_mandates]
             added = placed = interviews = 0
             if u_mids:
@@ -5234,7 +5259,7 @@ def analytics_stage_candidates():
     if is_company_admin():
         mrows = conn.execute('SELECT id, role, client FROM mandates WHERE owner_id=?', (cid,)).fetchall()
     else:
-        mrows = conn.execute('SELECT id, role, client FROM mandates WHERE owner_id=? AND assigned_user_id=?',
+        mrows = conn.execute('SELECT id, role, client FROM mandates WHERE owner_id=? AND id IN (SELECT mandate_id FROM mandate_assignees WHERE user_id=? AND is_active=1)',
                              (cid, real_user_id())).fetchall()
     mmap = {m['id']: dict(m) for m in mrows}
     mandate_ids = list(mmap.keys())
@@ -5282,7 +5307,7 @@ def analytics_placed_list():
     if is_company_admin():
         rows = conn.execute(sel + "owner_id=? AND " + PLACED_SQL + order, (cid,)).fetchall()
     else:
-        mrows = conn.execute('SELECT id FROM mandates WHERE owner_id=? AND assigned_user_id=?',
+        mrows = conn.execute('SELECT id FROM mandates WHERE owner_id=? AND id IN (SELECT mandate_id FROM mandate_assignees WHERE user_id=? AND is_active=1)',
                              (cid, real_user_id())).fetchall()
         mids = [m['id'] for m in mrows]
         if not mids:
@@ -5328,12 +5353,15 @@ def get_tasks():
         return 'upcoming'
 
     # ── 1. Manual reminders ──────────────────────────────────────────────
+    # Recruiter sub-accounts only get tasks for the mandates assigned to them.
+    from modules.access import mandate_scope_sql, candidate_id_scope_sql
+    _rs, _rp = _reminder_scope()
     rem_rows = conn.execute(
         "SELECT r.*, c.phone AS cand_phone FROM reminders r "
         "LEFT JOIN mandates m ON m.id = r.mandate_id "
         "LEFT JOIN candidates c ON c.id = r.candidate_id "
-        "WHERE r.done=0 AND r.owner_id=? AND (m.id IS NULL OR m.status NOT IN ('hold','closed')) "
-        "ORDER BY r.due_at ASC", (uid,)
+        "WHERE r.done=0 AND r.owner_id=? AND (m.id IS NULL OR m.status NOT IN ('hold','closed')) " + _rs + " "
+        "ORDER BY r.due_at ASC", [uid] + _rp
     ).fetchall()
     for r in rem_rows:
         try:
@@ -5366,7 +5394,8 @@ def get_tasks():
     cand_rows = conn.execute(
         "SELECT c.id, c.name, c.phone, c.mandate_id, c.updated_at, c.task_snoozed_until, c.stage, "
         "m.role, m.client FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
-        "WHERE c.owner_id=? AND m.status='active' AND m.id != ?", (uid, central_mid)
+        "WHERE c.owner_id=? AND m.status='active' AND m.id != ?" + mandate_scope_sql('c.mandate_id')[0],
+        [uid, central_mid] + mandate_scope_sql('c.mandate_id')[1]
     ).fetchall()
 
     # Stale follow-up only applies to candidates still in an active, meaningful
@@ -5445,7 +5474,8 @@ def get_tasks():
         "SELECT i.*, c.name, c.phone, m.role, m.client FROM interviews i "
         "LEFT JOIN candidates c ON c.id=i.candidate_id "
         "LEFT JOIN mandates m ON m.id=i.mandate_id "
-        "WHERE i.owner_id=? AND i.status='scheduled'", (uid,)
+        "WHERE i.owner_id=? AND i.status='scheduled'" + candidate_id_scope_sql('i.candidate_id')[0],
+        [uid] + candidate_id_scope_sql('i.candidate_id')[1]
     ).fetchall()
     for iv in iv_rows:
         snz = iv['task_snoozed_until']
@@ -5494,8 +5524,9 @@ def get_tasks():
         "SELECT c.id, c.name, c.phone, c.mandate_id, c.update_submitted_at, "
         "m.role, m.client FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
         "WHERE c.owner_id=? AND c.update_submitted_at!='' "
-        "AND (c.task_snoozed_until IS NULL OR c.task_snoozed_until='' OR c.task_snoozed_until<?)",
-        (uid, now.isoformat())
+        "AND (c.task_snoozed_until IS NULL OR c.task_snoozed_until='' OR c.task_snoozed_until<?)"
+        + mandate_scope_sql('c.mandate_id')[0],
+        [uid, now.isoformat()] + mandate_scope_sql('c.mandate_id')[1]
     ).fetchall()
     for c in upd_rows:
         mandate_label = (c['role'] + ' \u2014 ' + c['client']) if c['role'] else ''
@@ -5509,10 +5540,13 @@ def get_tasks():
         })
 
     # ── 5. New submissions (not yet reviewed, not snoozed) ────────────────
+    # (Before: no tenant filter at all — every agency saw every agency's
+    # careers-page applicants in its task list.)
     sub_rows = conn.execute(
-        "SELECT * FROM submissions WHERE status='new' "
+        "SELECT * FROM submissions WHERE status='new' AND owner_id=? "
         "AND (task_snoozed_until IS NULL OR task_snoozed_until='' OR task_snoozed_until<?) "
-        "ORDER BY created_at DESC", (now.isoformat(),)
+        + mandate_scope_sql('mandate_id')[0] +
+        " ORDER BY created_at DESC", [uid, now.isoformat()] + mandate_scope_sql('mandate_id')[1]
     ).fetchall()
     for s in sub_rows:
         tasks.append({
@@ -5545,13 +5579,13 @@ def snooze_task():
         return jsonify({'error': 'type, ref_id and snoozed_until required'}), 400
     conn = get_db()
     if ttype == 'reminder':
-        conn.execute('UPDATE reminders SET due_at=? WHERE id=?', (snoozed_until, ref_id))
+        conn.execute('UPDATE reminders SET due_at=? WHERE id=? AND owner_id=?', (snoozed_until, ref_id, effective_company_id()))
     elif ttype in ('stale', 'promise'):
-        conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=?', (snoozed_until, ref_id))
+        conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=? AND owner_id=?', (snoozed_until, ref_id, effective_company_id()))
     elif ttype == 'interview':
-        conn.execute('UPDATE interviews SET task_snoozed_until=? WHERE id=?', (snoozed_until, ref_id))
+        conn.execute('UPDATE interviews SET task_snoozed_until=? WHERE id=? AND owner_id=?', (snoozed_until, ref_id, effective_company_id()))
     elif ttype == 'submission':
-        conn.execute('UPDATE submissions SET task_snoozed_until=? WHERE id=?', (snoozed_until, ref_id))
+        conn.execute('UPDATE submissions SET task_snoozed_until=? WHERE id=? AND owner_id=?', (snoozed_until, ref_id, effective_company_id()))
     else:
         conn.close(); return jsonify({'error': 'Unknown task type'}), 400
     conn.commit(); conn.close()
@@ -5568,20 +5602,20 @@ def task_done():
         return jsonify({'error': 'type and ref_id required'}), 400
     conn = get_db()
     if ttype == 'reminder':
-        conn.execute('UPDATE reminders SET done=1 WHERE id=?', (ref_id,))
+        conn.execute('UPDATE reminders SET done=1 WHERE id=? AND owner_id=?', (ref_id, effective_company_id()))
     elif ttype in ('stale', 'promise'):
         # Push the suppression window out by the relevant threshold so it
         # naturally resurfaces later if still untouched, rather than being
         # silenced forever.
         days = float(get_setting('stale_days', '7') or 7) if ttype == 'stale' else 1
         push_to = (_ist_now() + datetime.timedelta(days=days)).isoformat()
-        conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=?', (push_to, ref_id))
+        conn.execute('UPDATE candidates SET task_snoozed_until=? WHERE id=? AND owner_id=?', (push_to, ref_id, effective_company_id()))
     elif ttype == 'updated':
-        conn.execute("UPDATE candidates SET update_submitted_at='' WHERE id=?", (ref_id,))
+        conn.execute("UPDATE candidates SET update_submitted_at='' WHERE id=? AND owner_id=?", (ref_id, effective_company_id()))
     elif ttype == 'interview':
-        conn.execute("UPDATE interviews SET status='completed' WHERE id=?", (ref_id,))
+        conn.execute("UPDATE interviews SET status='completed' WHERE id=? AND owner_id=?", (ref_id, effective_company_id()))
     elif ttype == 'submission':
-        conn.execute("UPDATE submissions SET status='reviewed' WHERE id=?", (ref_id,))
+        conn.execute("UPDATE submissions SET status='reviewed' WHERE id=? AND owner_id=?", (ref_id, effective_company_id()))
     else:
         conn.close(); return jsonify({'error': 'Unknown task type'}), 400
     conn.commit(); conn.close()
@@ -5827,8 +5861,9 @@ def extension_mandates():
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT id, role, client, location FROM mandates WHERE status='active' AND owner_id=? ORDER BY created_at DESC",
-            (effective_user_id(),)
+            "SELECT id, role, client, location FROM mandates WHERE status='active' AND owner_id=?"
+            + _ms('id')[0] + " ORDER BY created_at DESC",
+            [effective_user_id()] + _ms('id')[1]
         ).fetchall()
     conn.close()
     out = [dict(r) for r in rows]
@@ -8403,10 +8438,11 @@ def _search_rank(conn, qvec, min_score, max_cands, pool, owner_id):
         elif sim > heap[0][0]:
             _heapq.heappushpop(heap, (sim, cid))
 
+    # Recruiter sub-accounts rank only the pool + their own mandates' candidates.
     cur = conn.execute(
         "SELECT id, embedding_vec, embedding FROM candidates "
         "WHERE embedding IS NOT NULL AND embedding NOT IN ('', '[]') "
-        "AND owner_id=?", (owner_id,))
+        "AND owner_id=?" + _cs('mandate_id')[0], [owner_id] + _cs('mandate_id')[1])
     while True:
         batch = cur.fetchmany(chunk)
         if not batch:
@@ -8471,6 +8507,8 @@ def _search_hydrate(conn, page_slice, owner_id=None):
     if owner_id is not None:                 # defense-in-depth tenant scope
         where += " AND c.owner_id=?"
         params.append(owner_id)
+    _sc, _sp = _cs('c.mandate_id')           # ...and recruiter scope
+    where += _sc; params += _sp
     rows = conn.execute(
         "SELECT c.id, c.name, c.designation, c.company, c.experience, c.location, "
         "c.ctc_current, c.ctc_expected, c.notice_period, c.phone, c.email, c.key_skills, "
@@ -9023,7 +9061,11 @@ def ai_search():
     _oid = effective_company_id()
     # Cache key MUST include the tenant id, else two agencies searching the same
     # phrase could share cached rankings (cross-tenant leak).
-    ckey = f'{_oid}|{query.lower()}|{min_score}|{max_cands}|{pool}'
+    # ...and the viewer's scope: a recruiter must never be served a ranking
+    # cached for an admin (who can see every mandate).
+    from modules.access import scoped_user as _su
+    _scope = 'u%d' % _su()[0] if _su() else 'all'
+    ckey = f'{_oid}|{_scope}|{query.lower()}|{min_score}|{max_cands}|{pool}'
 
     # ── 1) Query embedding (cache) ─────────────────────────────────────
     t0 = _time.perf_counter()
@@ -9379,9 +9421,9 @@ def _match_candidates(conn, oid, jd, must_extra=None, min_exp=None, max_exp=None
                 params.append(lt)
         sql = ("SELECT id,name,company,designation,location,experience,phone,mandate_id,stage,"
                "key_skills,key_skill_tags,secondary_skills FROM candidates "
-               "WHERE owner_id=? AND (" + " OR ".join(ors) + ")")
+               "WHERE owner_id=?" + _cs('mandate_id')[0] + " AND (" + " OR ".join(ors) + ")")
         try:
-            rows = conn.execute(sql, [oid] + params).fetchall()
+            rows = conn.execute(sql, [oid] + _cs('mandate_id')[1] + params).fetchall()
         except Exception:
             rows = []
 
@@ -10033,9 +10075,12 @@ def email_agent_status():
     mands = conn.execute("SELECT id,role,client,email_agent,"
                          "(SELECT COUNT(*) FROM candidates c WHERE c.mandate_id=m.id AND c.email_agent=1) watched "
                          "FROM mandates m WHERE owner_id=? AND LOWER(COALESCE(status,'open')) NOT IN "
-                         "('closed','lost','filled') ORDER BY email_agent DESC, role", (oid,)).fetchall()
-    pend = conn.execute("SELECT COUNT(*) n FROM agent_items WHERE owner_id=? AND status='pending'", (oid,)).fetchone()['n']
-    watched = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND email_agent=1", (oid,)).fetchone()['n']
+                         "('closed','lost','filled') " + _ms('m.id')[0] + " ORDER BY email_agent DESC, role",
+                         [oid] + _ms('m.id')[1]).fetchall()
+    pend = conn.execute("SELECT COUNT(*) n FROM agent_items WHERE owner_id=? AND status='pending'" + _ms('mandate_id')[0],
+                        [oid] + _ms('mandate_id')[1]).fetchone()['n']
+    watched = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND email_agent=1" + _ms('mandate_id')[0],
+                           [oid] + _ms('mandate_id')[1]).fetchone()['n']
     conn.close()
     return jsonify({'ok': True, 'pending': pend, 'watched': watched,
                     'mandates': [{'id': m['id'], 'role': m['role'], 'client': m['client'] or '',
@@ -10050,8 +10095,9 @@ def email_agent_items():
         "SELECT a.*, c.name cand_name, c.email cand_email, c.company cand_company, m.role role "
         "FROM agent_items a JOIN candidates c ON c.id=a.candidate_id "
         "LEFT JOIN mandates m ON m.id=a.mandate_id "
-        "WHERE a.owner_id=? AND a.status='pending' ORDER BY "
-        "CASE a.kind WHEN 'reply' THEN 0 WHEN 'referral' THEN 1 ELSE 2 END, a.created_at DESC", (oid,)).fetchall()
+        "WHERE a.owner_id=? AND a.status='pending' " + _ms('a.mandate_id')[0] + " ORDER BY "
+        "CASE a.kind WHEN 'reply' THEN 0 WHEN 'referral' THEN 1 ELSE 2 END, a.created_at DESC",
+        [oid] + _ms('a.mandate_id')[1]).fetchall()
     conn.close()
     return jsonify({'ok': True, 'items': [dict(r) for r in rows]})
 
@@ -10124,7 +10170,7 @@ def market_report():
     core_disp = {t: _sg_disp(t, g) for t in core}
     rows = conn.execute(
         "SELECT location,experience,company,key_skills,key_skill_tags,secondary_skills,"
-        "domain_tags,product_handles FROM candidates WHERE owner_id=?", (oid,)).fetchall()
+        "domain_tags,product_handles FROM candidates WHERE owner_id=?" + _cs('mandate_id')[0], [oid] + _cs('mandate_id')[1]).fetchall()
     conn.close()
 
     cand = []
@@ -10229,7 +10275,7 @@ def market_salary():
     rows = conn.execute(
         "SELECT location,experience,company,ctc_current,ctc_expected,"
         "key_skills,key_skill_tags,secondary_skills,domain_tags,product_handles "
-        "FROM candidates WHERE owner_id=?", (oid,)).fetchall()
+        "FROM candidates WHERE owner_id=?" + _cs('mandate_id')[0], [oid] + _cs('mandate_id')[1]).fetchall()
     conn.close()
 
     def has(sk, term):
@@ -10731,8 +10777,8 @@ def candidate_match_mandates(cid):
     rows = conn.execute(
         "SELECT mv.mandate_id, mv.embedding_vec, m.role, m.client, m.location, m.status "
         "FROM mandate_vectors mv JOIN mandates m ON m.id=mv.mandate_id "
-        "WHERE mv.status='completed' AND mv.embedding_vec IS NOT NULL AND m.owner_id=?",
-        (effective_company_id(),)).fetchall()
+        "WHERE mv.status='completed' AND mv.embedding_vec IS NOT NULL AND m.owner_id=?" + _ms('m.id')[0],
+        [effective_company_id()] + _ms('m.id')[1]).fetchall()
     out = []
     for r in rows:
         try:
@@ -11562,11 +11608,22 @@ def list_mandates():
                             (effective_company_id(),)).fetchall()
     else:
         # Recruiter: only mandates assigned to them within their company.
-        rows = conn.execute("SELECT * FROM mandates WHERE owner_id=? AND assigned_user_id=? "
+        rows = conn.execute("SELECT * FROM mandates WHERE owner_id=? AND id IN (SELECT mandate_id FROM mandate_assignees WHERE user_id=? AND is_active=1) "
                             "AND COALESCE(status,'')!='central' ORDER BY created_at DESC",
                             (effective_company_id(), real_user_id())).fetchall()
+    # Every recruiter on each mandate (multi-recruiter assignment).
+    try:
+        from modules.access import assignees_by_mandate
+        amap = assignees_by_mandate(conn, effective_company_id())
+    except Exception:
+        amap = {}
     conn.close()
-    return jsonify([dict(r) for r in rows])
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['assignees'] = amap.get(d['id'], [])
+        out.append(d)
+    return jsonify(out)
 
 @app.route('/api/mandates/<int:mid>/client-notes', methods=['GET'])
 @login_required
@@ -12154,10 +12211,19 @@ def get_mandate(mid):
     conn.close()
     if not r:
         return jsonify({'error': 'Not found'}), 404
-    # Recruiters can only open mandates assigned to them.
-    if not is_company_admin() and r['assigned_user_id'] != real_user_id():
-        return jsonify({'error': 'Not found'}), 404
-    return jsonify(dict(r))
+    # Recruiters can only open mandates assigned to them (any of the recruiters on it).
+    if not is_company_admin():
+        from modules.access import can_see_mandate
+        _c = get_db(); _ok = can_see_mandate(_c, mid); _c.close()
+        if not _ok:
+            return jsonify({'error': 'Not found'}), 404
+    d = dict(r)
+    try:
+        from modules.access import mandate_assignees
+        _c = get_db(); d['assignees'] = mandate_assignees(_c, mid); _c.close()
+    except Exception:
+        d['assignees'] = []
+    return jsonify(d)
 
 
 @app.route('/api/my-profile', methods=['GET'])
@@ -12192,7 +12258,7 @@ def my_team():
     if not is_company_admin():
         return jsonify({'error': 'Not allowed'}), 403
     conn = get_db()
-    rows = conn.execute('''SELECT id, username, display_name, is_company_admin
+    rows = conn.execute('''SELECT id, username, display_name, is_company_admin, role
                            FROM users WHERE company_id=? AND status='approved'
                            ORDER BY is_company_admin DESC, id''',
                         (effective_company_id(),)).fetchall()
@@ -13870,8 +13936,8 @@ def list_submission_drafts():
             rows = conn.execute('SELECT * FROM submission_drafts WHERE owner_id=? AND mandate_id=? '
                                 'ORDER BY updated_at DESC', (company_id, mid)).fetchall()
         else:
-            rows = conn.execute('SELECT * FROM submission_drafts WHERE owner_id=? '
-                                'ORDER BY updated_at DESC', (company_id,)).fetchall()
+            rows = conn.execute('SELECT * FROM submission_drafts WHERE owner_id=? ' + _ms('mandate_id')[0] +
+                                ' ORDER BY updated_at DESC', [company_id] + _ms('mandate_id')[1]).fetchall()
     except Exception:
         conn.close(); return jsonify({'ok': True, 'drafts': []})
     conn.close()
@@ -19538,7 +19604,10 @@ def move_candidate(cid):
     if not target_mid:
         return jsonify({'error': 'Target mandate required'}), 400
     conn = get_db()
-    cand = conn.execute('SELECT mandate_id, name, stage FROM candidates WHERE id=?', (cid,)).fetchone()
+    # Both ends must belong to this tenant. The source was not checked before,
+    # so another agency could pull any candidate into its own mandate.
+    cand = conn.execute('SELECT mandate_id, name, stage FROM candidates WHERE id=? AND owner_id=?',
+                        (cid, effective_company_id())).fetchone()
     if not cand:
         conn.close(); return jsonify({'error': 'Candidate not found'}), 404
     # Verify target mandate belongs to this tenant
@@ -20773,12 +20842,13 @@ def central_search():
     # TENANT ISOLATION: only this company's candidates. owner_id stores the
     # tenant (company) id, so this scopes the Central Database to the current
     # agency. Without this filter, agencies would see each other's candidates.
+    # Recruiter sub-accounts: the Central Database pool + their own mandates.
     rows = conn.execute(
         'SELECT c.*, m.role as mandate_role, m.client as mandate_client '
         'FROM candidates c LEFT JOIN mandates m ON c.mandate_id = m.id '
-        'WHERE c.owner_id = ? '
+        'WHERE c.owner_id = ? ' + _cs('c.mandate_id')[0] + ' '
         'ORDER BY c.created_at DESC',
-        (effective_company_id(),)
+        [effective_company_id()] + _cs('c.mandate_id')[1]
     ).fetchall()
     conn.close()
 
@@ -21089,8 +21159,8 @@ def get_submissions():
     page     = int(request.args.get('page', 1)); per = 30
 
     conn  = get_db()
-    rows  = conn.execute('SELECT * FROM submissions WHERE owner_id=? ORDER BY created_at DESC',
-                         (effective_company_id(),)).fetchall()
+    rows  = conn.execute('SELECT * FROM submissions WHERE owner_id=?' + _ms('mandate_id')[0] +
+                         ' ORDER BY created_at DESC', [effective_company_id()] + _ms('mandate_id')[1]).fetchall()
     conn.close()
 
     def parse_range(s):
@@ -21908,8 +21978,9 @@ def wa_suggestions_list():
         "SELECT s.id, s.candidate_id, s.kind, s.message, s.reason, s.created_at, "
         "COALESCE(s.category,'followup') category, c.name cand_name, c.phone cand_phone "
         "FROM wa_suggestions s JOIN candidates c ON c.id=s.candidate_id "
-        "WHERE s.company_id=? AND s.status='pending' ORDER BY s.id DESC LIMIT 100",
-        (company_id,)).fetchall()
+        "WHERE s.company_id=? AND s.status='pending' " + _cs('c.mandate_id', include_pool=False)[0] +
+        " ORDER BY s.id DESC LIMIT 100",
+        [company_id] + _cs('c.mandate_id', include_pool=False)[1]).fetchall()
     conn.close()
     return jsonify({'ok': True, 'suggestions': [dict(r) for r in rows]})
 
@@ -22032,7 +22103,8 @@ def mandate_jd_clean(mid):
     conn.close()
     if not m:
         return jsonify({'ok': True, 'html': '', 'text': ''})
-    if not is_company_admin() and m['assigned_user_id'] != real_user_id():
+    from modules.access import can_see_mandate
+    if not is_company_admin() and not can_see_mandate(None, mid):   # conn is closed above
         return jsonify({'ok': True, 'html': '', 'text': ''})
     if not m['jd']:
         return jsonify({'ok': True, 'html': '', 'text': ''})
@@ -22731,6 +22803,10 @@ def export_data():
 @login_required
 def import_data():
     import time
+    # Restoring a backup rewrites a whole workspace: company admins only.
+    # (It was open to every logged-in user, including recruiters.)
+    if not is_company_admin():
+        return jsonify({'error': 'Only an admin can import a backup.'}), 403
     # Ensure DB is initialized before import
     try:
         init_db()
@@ -22744,8 +22820,13 @@ def import_data():
                 return jsonify({'error': 'Invalid backup file. Must be a HireLab JSON export.'}), 400
             conn = get_db(); c = conn.cursor()
             n = ts(); mid_map = {}; cid_map = {}; m_done = cand_done = hist_done = 0
-            for k, v in (data.get('settings') or {}).items():
-                c.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (k, str(v)))
+            # `settings` is the GLOBAL table shared by every agency (AI keys,
+            # SMTP, billing). Only the platform owner may restore it.
+            if is_admin():
+                for k, v in (data.get('settings') or {}).items():
+                    c.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (k, str(v)))
+            _own_mids = {r['id'] for r in c.execute('SELECT id FROM mandates WHERE owner_id=?',
+                                                    (effective_user_id(),)).fetchall()}
             for m in (data.get('mandates') or []):
                 old_id = m.get('id')
                 c.execute('INSERT INTO mandates (client,role,location,division,ctc_min,ctc_max,jd,sop_text,sop_version,sop_changelog,status,created_at,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -22757,6 +22838,10 @@ def import_data():
             for cand in (data.get('candidates') or []):
                 old_id = cand.get('id')
                 new_mid = mid_map.get(cand.get('mandate_id'), cand.get('mandate_id'))
+                # A candidate may only land in one of THIS tenant's mandates;
+                # an id from the file that belongs to another agency is skipped.
+                if new_mid not in _own_mids and new_mid not in mid_map.values():
+                    continue
                 c.execute(
                     'INSERT INTO candidates (mandate_id,name,company,designation,experience,ctc_current,'
                     'ctc_expected,notice_period,location,phone,email,qualification,key_skills,secondary_skills,'
@@ -22792,6 +22877,9 @@ def import_data():
                 os.makedirs(CV_DIR, exist_ok=True)
                 for _fname, _b64data in cv_files.items():
                     try:
+                        _fname = os.path.basename(str(_fname or ''))   # no ../ out of CV_DIR
+                        if not _fname or _fname.startswith('.'):
+                            continue
                         _dest = os.path.join(CV_DIR, _fname)
                         if not os.path.exists(_dest):   # don't overwrite existing
                             with open(_dest, 'wb') as _wf:
