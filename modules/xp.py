@@ -101,7 +101,7 @@ def recompute_all():
         return jsonify({'error': 'Only a company admin can run a full recompute.'}), 403
     conn = get_db()
     try:
-        n = fb.recompute_all(conn)
+        n = fb.recompute_all(conn, owner_id=effective_company_id())   # this tenant only
     except Exception as e:
         conn.close(); return jsonify({'error': f'Recompute failed: {e}'}), 500
     conn.close()

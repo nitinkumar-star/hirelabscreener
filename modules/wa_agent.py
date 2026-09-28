@@ -1383,6 +1383,12 @@ def api_start_qualification(conv_id):
 
 
 # ── List conversations (for the recruiter dashboard) ─────────────────────
+def _cand_scope(col):
+    """Recruiter sub-accounts only see conversations with their candidates."""
+    from modules.access import candidate_id_scope_sql
+    return candidate_id_scope_sql(col)
+
+
 @bp.route('/conversations', methods=['GET'])
 @login_required
 def list_conversations():
@@ -1392,8 +1398,9 @@ def list_conversations():
     rows = conn.execute(
         'SELECT c.*, m.role, m.client FROM wa_conversations c '
         'LEFT JOIN mandates m ON m.id=c.mandate_id '
-        'WHERE c.company_id=? AND c.status=? ORDER BY c.last_message_at DESC',
-        (company_id, status)).fetchall()
+        'WHERE c.company_id=? AND c.status=? ' + _cand_scope('c.candidate_id')[0] +
+        ' ORDER BY c.last_message_at DESC',
+        [company_id, status] + _cand_scope('c.candidate_id')[1]).fetchall()
 
     out = []
     for r in rows:
@@ -1440,8 +1447,9 @@ def list_escalations():
         "FROM wa_escalations e "
         "JOIN wa_conversations c ON c.id=e.conversation_id "
         "LEFT JOIN mandates m ON m.id=c.mandate_id "
-        "WHERE e.company_id=? AND e.status='pending' ORDER BY e.id DESC",
-        (company_id,)).fetchall()
+        "WHERE e.company_id=? AND e.status='pending' " + _cand_scope('c.candidate_id')[0] +
+        " ORDER BY e.id DESC",
+        [company_id] + _cand_scope('c.candidate_id')[1]).fetchall()
     conn.close()
     return jsonify({'ok': True, 'escalations': [dict(r) for r in rows]})
 

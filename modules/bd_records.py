@@ -2295,7 +2295,9 @@ def build_home(conn, company_id, me, scope_me=False):
               [{'field': 'last_activity', 'dir': 'asc'}], 10)
 
     # ── open requirements (active jobs per client) ────────────────────────
-    asg_sql, asg_p = ('AND m.assigned_user_id=?', [me]) if scope_me else ('', [])
+    # "Mine" = every job I am one of the recruiters on (multi-recruiter assignment)
+    asg_sql, asg_p = (('AND m.id IN (SELECT mandate_id FROM mandate_assignees WHERE user_id=? AND is_active=1)', [me])
+                      if scope_me else ('', []))
     req_rows = conn.execute(
         f"SELECT m.id, m.role, m.location, m.created_at, m.crm_client_id, c.name AS client_name, "
         f"(SELECT COUNT(*) FROM candidates k WHERE k.mandate_id=m.id) AS candidates "

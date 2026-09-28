@@ -456,6 +456,26 @@ def update_availability():
     return jsonify({'ok': True, 'availability': av})
 
 
+def _recruiter_meeting_scope(a):
+    """Recruiter sub-accounts: their own bookings, or ones with their candidates."""
+    from modules.access import scoped_user, candidate_id_scope_sql
+    su = scoped_user()
+    if not su:
+        return '', []
+    inner, params = candidate_id_scope_sql(f'{a}.candidate_id')
+    return f' AND ({a}.host_user_id=? OR ({inner[len(" AND "):]}))', [su[0]] + params
+
+
+def _reminder_scope_sql(a):
+    from modules.access import reminder_scope_sql
+    return reminder_scope_sql(a)
+
+
+def _cand_id_scope_sql(col):
+    from modules.access import candidate_id_scope_sql
+    return candidate_id_scope_sql(col)
+
+
 @bp.route('/meetings', methods=['GET'])
 @login_required
 def list_meetings():
@@ -474,6 +494,8 @@ def list_meetings():
     if mine:
         q += " AND m.host_user_id=?"
         args.append(real_user_id())
+    _sq, _sp = _recruiter_meeting_scope('m')
+    q += _sq; args += _sp
     if scope == 'upcoming':
         q += " AND m.start_at>=? AND m.status='confirmed'"
         args.append(now)
@@ -607,8 +629,9 @@ def calendar_events():
         "SELECT m.id, m.start_at, m.guest_name, m.guest_phone, m.mode, m.candidate_id, "
         "m.crm_client_id, c.name AS cand_name FROM meetings m "
         "LEFT JOIN candidates c ON c.id=m.candidate_id "
-        "WHERE m.company_id=? AND m.status='confirmed' AND substr(m.start_at,1,10) BETWEEN ? AND ?",
-        (cid, frm, to)).fetchall():
+        "WHERE m.company_id=? AND m.status='confirmed' AND substr(m.start_at,1,10) BETWEEN ? AND ?"
+        + _recruiter_meeting_scope('m')[0],
+        [cid, frm, to] + _recruiter_meeting_scope('m')[1]).fetchall():
         events.append({'kind': 'appointment', 'id': m['id'], 'when': m['start_at'],
                        'title': m['guest_name'] or 'Meeting',
                        'subtitle': ' · '.join([x for x in [m['mode'], m['cand_name']] if x]) or 'Booked',
@@ -619,8 +642,9 @@ def calendar_events():
         for r in conn.execute(
             "SELECT r.id, r.due_at, r.note, r.candidate_name, r.candidate_id, c.phone AS cand_phone "
             "FROM reminders r LEFT JOIN candidates c ON c.id=r.candidate_id "
-            "WHERE r.owner_id=? AND r.done=0 AND substr(r.due_at,1,10) BETWEEN ? AND ?",
-            (cid, frm, to)).fetchall():
+            "WHERE r.owner_id=? AND r.done=0 AND substr(r.due_at,1,10) BETWEEN ? AND ?"
+            + _reminder_scope_sql('r')[0],
+            [cid, frm, to] + _reminder_scope_sql('r')[1]).fetchall():
             events.append({'kind': 'reminder', 'id': r['id'], 'when': r['due_at'],
                            'title': r['candidate_name'] or 'Reminder',
                            'subtitle': r['note'] or 'Reminder',
@@ -635,8 +659,9 @@ def calendar_events():
             "c.name AS cand_name, c.phone AS cand_phone FROM interviews i "
             "LEFT JOIN candidates c ON c.id=i.candidate_id "
             "WHERE i.owner_id=? AND substr(i.scheduled_at,1,10) BETWEEN ? AND ? "
-            "AND (i.status IS NULL OR i.status NOT IN ('cancelled','canceled'))",
-            (cid, frm, to)).fetchall():
+            "AND (i.status IS NULL OR i.status NOT IN ('cancelled','canceled'))"
+            + _cand_id_scope_sql('i.candidate_id')[0],
+            [cid, frm, to] + _cand_id_scope_sql('i.candidate_id')[1]).fetchall():
             events.append({'kind': 'interview', 'id': i['id'], 'when': i['scheduled_at'],
                            'title': i['cand_name'] or 'Interview',
                            'subtitle': ' · '.join([x for x in [i['round_name'], i['mode']] if x]) or 'Interview',
