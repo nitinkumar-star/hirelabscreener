@@ -1184,9 +1184,9 @@ body{font-size:14px !important; line-height:1.5}
             <button id="bd-scope-team" class="an-scope-btn active" onclick="setBdScope('team')" style="border:none;border-radius:0;font-size:11.5px;padding:6px 12px">Team</button>
             <button id="bd-scope-me" class="an-scope-btn" onclick="setBdScope('me')" style="border:none;border-radius:0;font-size:11.5px;padding:6px 12px;border-left:0.5px solid var(--line)">Mine</button>
           </div>
-          <button class="btn btn-o" style="font-size:11px" onclick="renderBd()">&#8635; Refresh</button>
+          <button class="btn btn-o" style="font-size:11px" onclick="renderBd()" title="Refresh">&#8635;<span class="bdh-lbl"> Refresh</span></button>
         </div>
-        <button class="btn btn-o" onclick="closeBd()">&#10005; Close</button>
+        <button class="btn btn-o" onclick="closeBd()" title="Close">&#10005;<span class="bdh-lbl"> Close</span></button>
       </div>
     </div>
     <div class="cdb-subtab-bar">
@@ -15015,7 +15015,7 @@ function setBdScope(s){
   renderBd();
 }
 
-async function renderBd(){
+async function _renderBdLegacy(){
   var body=document.getElementById('bd-body');
   if(!body) return;
   body.innerHTML='<div class="loading"><div class="spinner"></div>Loading command center...</div>';
@@ -17630,6 +17630,69 @@ table.bdw-t{border-collapse:separate;border-spacing:0;table-layout:fixed;font-si
 .bdw-kmore{border:none;background:transparent;color:#3E63DD;font:inherit;font-size:12px;cursor:pointer;padding:6px}
 .bdw-kempty{font-size:12px;color:#D0D5DD;text-align:center;padding:14px 0}
 .bdw-won{background:#ECFDF3;border:0.5px solid #ABEFC6;border-radius:10px;padding:10px 12px;margin-top:12px;display:flex;align-items:center;gap:10px;font-size:12.5px;color:#067647}
+/* ═══ BD Workspace (Wave 5) — Home dashboard ═══ */
+.bdh{max-width:1200px;margin:0 auto;color:#101828}
+.bdh-top{display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.bdh-top .g{font-size:13px;color:#667085;flex:1;min-width:200px}
+.bdh-btn{border:0.5px solid #D0D5DD;background:#fff;color:#344054;font:inherit;font-size:12.5px;padding:7px 12px;border-radius:8px;cursor:pointer;font-weight:500}
+.bdh-btn:hover{background:#F9FAFB}
+.bdh-btn.p{background:#3E63DD;border-color:#3E63DD;color:#fff}
+.bdh-btn.p:hover{background:#3451B2}
+.bdh-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.bdh-tile{background:#fff;border:0.5px solid #EAECF0;border-radius:12px;padding:13px 15px;cursor:pointer;text-align:left;font:inherit;color:inherit}
+.bdh-tile:hover{border-color:#D0D5DD;box-shadow:0 2px 8px rgba(16,24,40,.06)}
+.bdh-tile .l{font-size:12px;color:#667085}
+.bdh-tile .v{font-size:24px;font-weight:600;margin-top:4px;letter-spacing:-.2px}
+.bdh-tile .s{font-size:11.5px;color:#98A2B3;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bdh-tile .up{color:#067647}.bdh-tile .dn{color:#B42318}
+.bdh-tile.alert .v{color:#B42318}
+.bdh-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-bottom:14px}
+.bdh-card{background:#fff;border:0.5px solid #EAECF0;border-radius:12px;padding:14px 16px;min-width:0}
+.bdh-ch{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.bdh-ch .t{font-size:13.5px;font-weight:600}
+.bdh-ch .n{font-size:12px;color:#98A2B3}
+.bdh-ch .a{margin-left:auto}
+.bdh-sub{font-size:11.5px;color:#98A2B3;margin:-6px 0 10px}
+.bdh-empty{font-size:12.5px;color:#98A2B3;padding:12px 0}
+.bdh-row{display:flex;align-items:center;gap:10px;padding:8px 6px;margin:0 -6px;border-radius:7px;cursor:pointer;min-width:0}
+.bdh-row:hover{background:#F9FAFB}
+.bdh-row+.bdh-row{border-top:0.5px solid #F2F4F7}
+.bdh-row .m{flex:1;min-width:0}
+.bdh-row .t1{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bdh-row .t2{font-size:11.5px;color:#98A2B3;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bdh-row .r{font-size:12.5px;color:#475467;white-space:nowrap;text-align:right}
+.bdh-row input[type=checkbox]{width:15px;height:15px;accent-color:#3E63DD;cursor:pointer;flex-shrink:0}
+.bdh-when{font-size:11.5px;color:#475467;white-space:nowrap}
+.bdh-when.late{color:#B42318;font-weight:500}
+.bdh-dt{width:40px;flex-shrink:0;text-align:center;border:0.5px solid #EAECF0;border-radius:7px;padding:3px 0}
+.bdh-dt b{display:block;font-size:15px}
+.bdh-dt span{font-size:10px;color:#98A2B3;text-transform:uppercase}
+.bdh-tag{font-size:11px;font-weight:500;padding:2px 7px;border-radius:5px;white-space:nowrap}
+.bdh-tag.slipped{background:#FEF3F2;color:#B42318}
+.bdh-tag.stuck{background:#FFFAEB;color:#B54708}
+.bdh-tag.soon{background:#EEF4FF;color:#3538CD}
+.bdh-sec{font-size:11px;font-weight:600;color:#98A2B3;text-transform:uppercase;letter-spacing:.4px;margin:10px 0 2px}
+/* charts: single series, one hue, value labels in text ink */
+.bdh-fn{display:flex;flex-direction:column;gap:8px}
+.bdh-fr{display:grid;grid-template-columns:132px minmax(0,1fr);align-items:center;gap:10px;cursor:pointer;border-radius:6px;padding:2px 4px;margin:0 -4px}
+.bdh-fr:hover{background:#F9FAFB}
+.bdh-fr .lb{font-size:12.5px;color:#475467;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bdh-fr .tr{display:flex;align-items:center;gap:8px;min-width:0}
+.bdh-bar{height:18px;background:#3E63DD;border-radius:0 4px 4px 0;min-width:2px;flex-shrink:0}
+.bdh-fr .vl{font-size:12px;color:#344054;white-space:nowrap}
+.bdh-fr .vl i{font-style:normal;color:#98A2B3;margin-left:4px}
+.bdh-cols{display:flex;align-items:flex-end;gap:14px;height:150px;padding:20px 4px 0;border-bottom:1px solid #EAECF0}
+.bdh-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;cursor:pointer;min-width:0}
+.bdh-col .bx{width:100%;max-width:24px;background:#3E63DD;border-radius:4px 4px 0 0;min-height:2px}
+.bdh-col.cur .bx{background:#3E63DD}
+.bdh-col:not(.cur) .bx{background:#A7B7F0}
+.bdh-col .cap{font-size:11.5px;color:#344054;margin-bottom:4px;white-space:nowrap}
+.bdh-xl{display:flex;gap:14px;padding:6px 4px 0}
+.bdh-xl span{flex:1;text-align:center;font-size:11.5px;color:#98A2B3}
+.bdh-xl span.cur{color:#344054;font-weight:600}
+#bdh-tip{position:fixed;z-index:9900;background:#101828;color:#fff;font-size:12px;padding:6px 9px;border-radius:7px;pointer-events:none;display:none;white-space:nowrap;box-shadow:0 6px 16px rgba(16,24,40,.2)}
+@media (max-width:980px){ .bdh-tiles{grid-template-columns:repeat(2,minmax(0,1fr))} .bdh-grid{grid-template-columns:minmax(0,1fr)} }
+@media (max-width:768px){ #bd-head-sub{display:none} #bd-head-title{font-size:13.5px} #bd-home-ctl .btn{padding:6px 9px} .bdh-lbl{display:none} .bdh-fr{grid-template-columns:104px minmax(0,1fr)} }
 </style>
 
 <script id="bdw-script">
@@ -18944,6 +19007,7 @@ async function _bdwPnlCommit(key, value){
 }
 function _bdwPnlSync(rec){
   var P=BDW.pnl; if(!P) return;
+  if(typeof _bdhSoon==='function') _bdhSoon();
   P.rec=rec; _bdwPnlRender();
   // keep the table behind the panel in step
   var st=BDW.st[P.obj];
@@ -19048,6 +19112,7 @@ async function _bdwToggleTask(id, done){
   _bdwPnlTab(); _bdwAfterChildWrite('tasks');
 }
 function _bdwAfterChildWrite(obj){
+  if(typeof _bdhSoon==='function') _bdhSoon();
   // refresh the table behind the panel when it lists the object just written
   if(BDW.obj===obj) _bdwFetch(true);
 }
@@ -19228,6 +19293,7 @@ async function _bdwPnlDelete(){
   var obj=P.obj, r=await req('DELETE','/bd/records/'+obj+'/'+P.id);
   if(!r || r.error){ _bdwToast((r&&r.error)||'Could not delete'); return; }
   toast('&#10003;', esc(o.singular)+' deleted');
+  if(typeof _bdhSoon==='function') _bdhSoon();
   if(P.stack.length){ await _bdwPnlBack(); } else bdwPanelClose();
   if(BDW.obj===obj) _bdwFetch(true);
 }
@@ -19322,7 +19388,16 @@ function _bdwKbWire(){
     BDW.drag=null;
   });
   g.addEventListener('dragover', function(e){
-    var col=e.target.closest && e.target.closest('.bdw-kcol'); if(!col || !BDW.drag) return;
+    if(!BDW.drag) return;
+    // Auto-scroll the board while a card is held near its left/right edge, so
+    // columns that are off-screen (Won, Lost) can be reached in one drag.
+    var sc=document.getElementById('bdw-scroll');
+    if(sc){
+      var rb=sc.getBoundingClientRect(), edge=80;
+      if(e.clientX > rb.right-edge) sc.scrollLeft += Math.ceil((e.clientX-(rb.right-edge))/3)+6;
+      else if(e.clientX < rb.left+edge) sc.scrollLeft -= Math.ceil(((rb.left+edge)-e.clientX)/3)+6;
+    }
+    var col=e.target.closest && e.target.closest('.bdw-kcol'); if(!col) return;
     e.preventDefault();
     document.querySelectorAll('.bdw-kcol.over').forEach(function(x){ if(x!==col) x.classList.remove('over'); });
     col.classList.add('over');
@@ -19382,6 +19457,212 @@ async function bdwLinkJobToDeal(mandateId){
   if(r && r.ok) toast('&#10003;','Job linked to the deal');
   else if(r && r.error) _bdwToast('Job created, but not linked to the deal: '+r.error);
   var st=BDW.st.opportunities; if(st){ st.records=[]; st.kb=null; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  BD WORKSPACE (Wave 5) — Home dashboard   (backend: GET /api/bd/home)
+// ═══════════════════════════════════════════════════════════════════════
+var BDH = { data:null, seq:0, t:null, wired:false };
+
+function _bdwCompact(v){
+  v=+v||0; var a=Math.abs(v);
+  if(a>=1e7) return '₹'+(v/1e7).toFixed(a>=1e8?0:1).replace(/\.0$/,'')+' Cr';
+  if(a>=1e5) return '₹'+(v/1e5).toFixed(a>=1e6?0:1).replace(/\.0$/,'')+' L';
+  if(a>=1e3) return '₹'+(v/1e3).toFixed(0)+'K';
+  return '₹'+v.toLocaleString('en-IN');
+}
+async function bdwGo(obj, conds){
+  await bdwShow(obj);
+  var st=BDW.st[obj]; if(!st || BDW.obj!==obj) return;
+  st.view=null; st.cfg.filter={logic:'and', conditions:conds||[]}; st.cfg.view_type='table'; st.kb=null;
+  st.q=''; st.sel={}; st.records=[];
+  _bdwRenderFrame(); _bdwFetch(true);
+}
+function _bdhSoon(){ if(BDW.page!=='home') return; clearTimeout(BDH.t); BDH.t=setTimeout(renderBd, 250); }
+
+async function renderBd(){
+  var body=document.getElementById('bd-body'); if(!body) return;
+  var tog=document.getElementById('bd-scope-toggle'); if(tog) tog.style.display='flex';
+  var tok=++BDH.seq;
+  if(!BDH.data) body.innerHTML='<div class="loading"><div class="spinner"></div>Loading command center...</div>';
+  var both=await Promise.all([req('GET','/bd/home'+(_bdScope==='me'?'?scope=me':'')), _bdwEnsureMeta()]);
+  var r=both[0];
+  if(tok!==BDH.seq) return;
+  if(!r || !r.ok || !both[1]){
+    // keep the day usable if the new endpoint isn't deployed yet
+    if(typeof _renderBdLegacy==='function') return _renderBdLegacy();
+    body.innerHTML='<div style="padding:20px;color:#D92D20">Failed to load</div>'; return;
+  }
+  BDH.data=r; _bdhWire();
+  body.innerHTML=_bdhHtml(r);
+  var badge=document.getElementById('nav-bd-badge'), total=(r.overdue_total||0)+(r.today_total||0);
+  if(badge){ if(total){ badge.style.display=''; badge.textContent=total; } else badge.style.display='none'; }
+}
+
+function _bdhHtml(r){
+  var w=r.wins, tm=w.this_month, lm=w.last_month, pl=r.pipeline;
+  var h='<div class="bdh">';
+  h+='<div class="bdh-top"><div class="g">'+_bdGreeting()+(r.scope==='me'?' <span class="bdw-mute">(showing only yours)</span>':'')+'</div>'
+    +'<button class="bdh-btn" data-h="logact">+ Log activity</button>'
+    +'<button class="bdh-btn" data-h="newtask">+ Task</button>'
+    +'<button class="bdh-btn p" data-h="newdeal">+ New deal</button></div>';
+
+  // ── stat tiles
+  var delta='';
+  if(lm.amount || tm.amount){
+    var diff=tm.amount-lm.amount;
+    delta = diff===0 ? ' · same as '+esc(lm.label) : ' · <span class="'+(diff>0?'up':'dn')+'">'+(diff>0?'▲ ':'▼ ')+esc(_bdwCompact(Math.abs(diff)))+'</span> vs '+esc(lm.label);
+  }
+  h+='<div class="bdh-tiles">'
+    +'<button class="bdh-tile" data-h="go-open"><div class="l">Open pipeline</div><div class="v">'+esc(_bdwCompact(pl.amount))+'</div>'
+      +'<div class="s">'+pl.count+' deal'+(pl.count===1?'':'s')+' · weighted '+esc(_bdwCompact(pl.weighted))+'</div></button>'
+    +'<button class="bdh-tile" data-h="go-wonmonth"><div class="l">Won this month</div><div class="v">'+esc(_bdwCompact(tm.amount))+'</div>'
+      +'<div class="s">'+tm.count+' deal'+(tm.count===1?'':'s')+delta+'</div></button>'
+    +'<button class="bdh-tile" data-h="go-won90"><div class="l">Win rate · 90 days</div><div class="v">'+(w.win_rate_90d==null?'—':esc(w.win_rate_90d+'%'))+'</div>'
+      +'<div class="s">'+w.won_90d+' won · '+w.lost_90d+' lost</div></button>'
+    +'<button class="bdh-tile" data-h="go-today"><div class="l">Due today</div><div class="v">'+r.today_total+'</div><div class="s">tasks, calls &amp; follow-ups</div></button>'
+    +'<button class="bdh-tile'+(r.overdue_total?' alert':'')+'" data-h="go-overdue"><div class="l">'+(r.overdue_total?'&#9888;&#65039; ':'')+'Overdue</div><div class="v">'+r.overdue_total+'</div><div class="s">'+(r.overdue_total?'needs attention':'nothing overdue')+'</div></button>'
+    +'</div>';
+
+  // ── charts
+  var maxF=Math.max.apply(null, r.funnel.map(function(f){ return f.amount; }).concat([1]));
+  var fn='<div class="bdh-fn">'+r.funnel.map(function(f){
+    var pct=Math.round(100*f.amount/maxF);
+    return '<div class="bdh-fr" data-h="go-stage" data-v="'+esc(f.stage)+'" data-tip="'+esc(f.label+': '+f.count+' deal'+(f.count===1?'':'s')+' · '+_bdwMoney(f.amount))+'">'
+      +'<span class="lb">'+esc(f.label)+'</span><span class="tr"><span class="bdh-bar" style="width:calc('+pct+'% - 90px)"></span>'
+      +'<span class="vl">'+esc(_bdwCompact(f.amount))+'<i>\u00B7 '+f.count+' deal'+(f.count===1?'':'s')+'</i></span></span></div>';
+  }).join('')+'</div>';
+  var maxT=Math.max.apply(null, w.trend.map(function(t){ return t.amount; }).concat([1]));
+  var cols='<div class="bdh-cols">'+w.trend.map(function(t,i){
+    var cur=(i===w.trend.length-1);
+    return '<div class="bdh-col'+(cur?' cur':'')+'" data-h="go-month" data-v="'+esc(t.month)+'" data-tip="'+esc(t.label+': '+_bdwMoney(t.amount)+' · '+t.count+' won')+'">'
+      +(cur||t.amount===maxT&&t.amount?'<span class="cap">'+esc(_bdwCompact(t.amount))+'</span>':'')
+      +'<span class="bx" style="height:'+Math.max(2, Math.round(110*t.amount/maxT))+'px"></span></div>';
+  }).join('')+'</div><div class="bdh-xl">'+w.trend.map(function(t,i){ return '<span class="'+(i===w.trend.length-1?'cur':'')+'">'+esc(t.label)+'</span>'; }).join('')+'</div>';
+  h+='<div class="bdh-grid">'
+    +'<div class="bdh-card"><div class="bdh-ch"><span class="t">Pipeline by stage</span><span class="n">open deals · value &amp; count</span></div>'+(pl.count?fn:'<div class="bdh-empty">No open deals yet. Add one with + New deal.</div>')+'</div>'
+    +'<div class="bdh-card"><div class="bdh-ch"><span class="t">Won · last 6 months</span><span class="n">deal value</span></div>'+cols+'</div>'
+    +'</div>';
+
+  // ── follow-ups + agenda
+  h+='<div class="bdh-grid"><div class="bdh-card"><div class="bdh-ch"><span class="t">Follow-ups</span>'
+    +'<span class="n">'+(r.overdue_total+r.today_total)+'</span><span class="a"><button class="bdw-lnk" data-h="newtask">+ Task</button></span></div>';
+  if(!r.overdue.length && !r.today.length) h+='<div class="bdh-empty">You’re all caught up for today.</div>';
+  if(r.overdue.length){ h+='<div class="bdh-sec" style="color:#B42318">Overdue · '+r.overdue_total+'</div>'+r.overdue.map(function(t){ return _bdhTask(t,true); }).join('');
+    if(r.overdue_total>r.overdue.length) h+='<button class="bdw-lnk" data-h="go-overdue">View all '+r.overdue_total+'</button>'; }
+  if(r.today.length){ h+='<div class="bdh-sec">Today · '+r.today_total+'</div>'+r.today.map(function(t){ return _bdhTask(t,false); }).join(''); }
+  h+='</div><div class="bdh-card"><div class="bdh-ch"><span class="t">Next 7 days</span><span class="n">meetings &amp; calls</span></div>';
+  h+= r.agenda.length ? r.agenda.map(_bdhAgenda).join('') : '<div class="bdh-empty">No meetings or calls booked this week.</div>';
+  h+='</div></div>';
+
+  // ── deals needing attention + open requirements
+  h+='<div class="bdh-grid"><div class="bdh-card"><div class="bdh-ch"><span class="t">Deals needing attention</span><span class="n">'+r.attention_total+'</span></div>'
+    +'<div class="bdh-sub">Close date passed, closing within 14 days, or stuck '+r.stuck_days+'+ days in one stage</div>';
+  h+= r.attention.length ? r.attention.map(function(d){
+    return '<div class="bdh-row" data-h="open" data-o="opportunities" data-id="'+d.id+'"><div class="m"><div class="t1">'+esc(d.name)+'</div>'
+      +'<div class="t2">'+esc([d.client_id_label, _bdwPlain(_bdwF('stage','opportunities'), d), d.owner_user_id_label].filter(Boolean).join(' · '))+'</div></div>'
+      +'<span class="bdh-tag '+d.reason_kind+'">'+esc(d.reason)+'</span><span class="r">'+esc(d.amount!=null?_bdwCompact(d.amount):'')+'</span></div>';
+  }).join('') : '<div class="bdh-empty">Every open deal is on track.</div>';
+  h+='</div><div class="bdh-card"><div class="bdh-ch"><span class="t">Open requirements</span><span class="n">'+r.requirements_total+' active job'+(r.requirements_total===1?'':'s')+'</span></div>';
+  if(!r.requirements.length) h+='<div class="bdh-empty">No active jobs'+(r.scope==='me'?' assigned to you':'')+'.</div>';
+  r.requirements.forEach(function(g){
+    h+='<div class="bdh-sec" style="text-transform:none;letter-spacing:0;font-size:12.5px;color:#344054;cursor:pointer" data-h="open" data-o="companies" data-id="'+g.client_id+'">'+esc(g.client_name)+' <span class="bdw-mute" style="font-weight:500">· '+g.jobs.length+'</span></div>';
+    g.jobs.forEach(function(j){
+      h+='<div class="bdh-row" data-h="job" data-id="'+j.id+'"><span style="font-size:14px">&#128188;</span><div class="m"><div class="t1">'+esc(j.role||'Untitled role')+'</div>'
+        +'<div class="t2">'+esc([j.location, 'opened '+_bdwAgo(j.created_at)].filter(Boolean).join(' · '))+'</div></div>'
+        +'<span class="r">'+j.candidates+' cand.</span></div>';
+    });
+  });
+  h+='</div></div>';
+
+  // ── gone quiet + recent wins
+  h+='<div class="bdh-grid"><div class="bdh-card"><div class="bdh-ch"><span class="t">Gone quiet</span><span class="n">'+r.stale_total+'</span>'
+    +(r.stale_total>r.stale.length?'<span class="a"><button class="bdw-lnk" data-h="go-stale">View all</button></span>':'')+'</div>'
+    +'<div class="bdh-sub">Active clients &amp; prospects with no activity in '+r.stale_days+' days</div>';
+  h+= r.stale.length ? r.stale.map(function(c){
+    return '<div class="bdh-row" data-h="open" data-o="companies" data-id="'+c.id+'">'+_bdwAv(c.name,true)+'<div class="m"><div class="t1">'+esc(c.name)+'</div>'
+      +'<div class="t2">'+esc([_bdwPlain(_bdwF('status','companies'), c), c.city, c.owner_user_id_label].filter(Boolean).join(' · '))+'</div></div>'
+      +'<span class="r bdw-mute">'+(c.last_activity?'last '+esc(_bdwAgo(c.last_activity)):'never contacted')+'</span></div>';
+  }).join('') : '<div class="bdh-empty">Every client heard from you recently.</div>';
+  h+='</div><div class="bdh-card"><div class="bdh-ch"><span class="t">Recent wins</span></div>';
+  h+= r.recent_wins.length ? r.recent_wins.map(function(d){
+    return '<div class="bdh-row" data-h="open" data-o="opportunities" data-id="'+d.id+'"><span style="font-size:14px">&#127881;</span><div class="m"><div class="t1">'+esc(d.name)+'</div>'
+      +'<div class="t2">'+esc([d.client_id_label, d.won_at?'won '+_bdwAgo(d.won_at):'', d.mandate_id?'job opened':'no job yet'].filter(Boolean).join(' · '))+'</div></div>'
+      +'<span class="r">'+esc(d.amount!=null?_bdwCompact(d.amount):'')+'</span></div>';
+  }).join('') : '<div class="bdh-empty">No deals won yet.</div>';
+  h+='</div></div></div>';
+  return h;
+}
+function _bdhTask(t, late){
+  var tf=_bdwF('activity_type','tasks');
+  return '<div class="bdh-row" data-h="open" data-o="tasks" data-id="'+t.id+'"><input type="checkbox" data-h="done" data-id="'+t.id+'" title="Mark done">'
+    +'<div class="m"><div class="t1">'+esc(t.subject||'(untitled)')+'</div><div class="t2">'
+    +esc([t.client_id_label, t.opportunity_id_label, t.owner_user_id_label].filter(Boolean).join(' · '))+'</div></div>'
+    +(tf?_bdwPill(tf,t.activity_type):'')+'<span class="bdh-when'+(late?' late':'')+'">'+esc(late?_bdwAgoDue(t.due_at):_bdwTime(t.due_at))+'</span></div>';
+}
+function _bdwTime(s){ var d=_bdwParse(s); if(!d) return ''; var h=d.getHours(), m=('0'+d.getMinutes()).slice(-2); return ((h%12)||12)+':'+m+(h>=12?' pm':' am'); }
+function _bdwAgoDue(s){
+  var d=_bdwParse(s); if(!d) return '';
+  var days=Math.floor((Date.now()-d.getTime())/86400000);
+  return days<1 ? 'due '+_bdwTime(s) : days+'d late';
+}
+function _bdhAgenda(a){
+  var d=_bdwParse(a.start_at);
+  var tgt = a.source==='bd' ? 'data-o="tasks" data-id="'+a.id+'"' : 'data-o="companies" data-id="'+a.client_id+'"';
+  return '<div class="bdh-row" data-h="open" '+tgt+'><div class="bdh-dt"><b>'+(d?d.getDate():'?')+'</b><span>'+(d?_BDW_MON[d.getMonth()]:'')+'</span></div>'
+    +'<div class="m"><div class="t1">'+esc(a.title)+'</div><div class="t2">'+esc([_bdwTime(a.start_at), a.client_name, a.opportunity, a.owner].filter(Boolean).join(' · '))+'</div></div>'
+    +'<span class="bdw-pill" style="background:#F2F4F7;color:#475467">'+(a.source==='scheduler'?'Scheduler':(a.kind==='call'?'Call':'Meeting'))+'</span></div>';
+}
+
+function _bdhWire(){
+  if(BDH.wired) return; BDH.wired=true;
+  var body=document.getElementById('bd-body');
+  var tip=document.createElement('div'); tip.id='bdh-tip'; document.body.appendChild(tip);
+  body.addEventListener('mousemove', function(e){
+    var t=e.target.closest && e.target.closest('[data-tip]');
+    if(!t || !body.contains(t)){ tip.style.display='none'; return; }
+    tip.textContent=t.getAttribute('data-tip'); tip.style.display='block';
+    var x=Math.min(e.clientX+12, window.innerWidth-tip.offsetWidth-8);
+    tip.style.left=x+'px'; tip.style.top=(e.clientY+14)+'px';
+  });
+  body.addEventListener('mouseleave', function(){ tip.style.display='none'; });
+  body.addEventListener('click', function(e){
+    if(BDW.page!=='home') return;
+    var a=e.target.closest('[data-h]'); if(!a || !body.contains(a)) return;
+    var act=a.getAttribute('data-h'), v=a.getAttribute('data-v'), id=+a.getAttribute('data-id');
+    if(act==='done'){ e.stopPropagation(); return _bdhDone(id, a); }
+    tip.style.display='none';
+    _bdhAct(act, v, id, a);
+  });
+}
+async function _bdhAct(act, v, id, a){
+  var today=(BDH.data&&BDH.data.now||'').slice(0,10);
+  switch(act){
+    case 'logact': return openLogActivity();
+    case 'newdeal': if(!(await _bdwEnsureMeta())) return; return bdwNewModal('opportunities', {}, _bdhSoon);
+    case 'newtask': if(!(await _bdwEnsureMeta())) return; return bdwNewModal('tasks', {}, _bdhSoon);
+    case 'open': return bdwPanelOpen(a.getAttribute('data-o'), id);
+    case 'job': return selectMandate(id);
+    case 'go-open': return bdwGo('opportunities', _bdhMine([{field:'stage', op:'not_in', value:['won','lost']}]));
+    case 'go-stage': return bdwGo('opportunities', _bdhMine([{field:'stage', op:'in', value:[v]}]));
+    case 'go-wonmonth': v=today.slice(0,7);   /* falls through */
+    case 'go-month': {
+      var y=+v.slice(0,4), m=+v.slice(5,7), last=new Date(y, m, 0).getDate();
+      return bdwGo('opportunities', _bdhMine([{field:'stage', op:'in', value:['won']}, {field:'won_at', op:'between', value:[v+'-01', v+'-'+('0'+last).slice(-2)]}]));
+    }
+    case 'go-won90': return bdwGo('opportunities', _bdhMine([{field:'stage', op:'in', value:['won','lost']},
+      {logic:'or', conditions:[{field:'won_at', op:'in_last_days', value:90}, {field:'lost_at', op:'in_last_days', value:90}]}]));
+    case 'go-today': return bdwGo('tasks', _bdhMine([{field:'status', op:'in', value:['open']}, {field:'due_at', op:'is_today'}]));
+    case 'go-overdue': return bdwGo('tasks', _bdhMine([{field:'is_overdue', op:'is_true'}]));
+    case 'go-stale': return bdwGo('companies', _bdhMine([{field:'status', op:'in', value:['active','prospect']}, {field:'last_activity', op:'not_in_last_days', value:BDH.data.stale_days}]));
+  }
+}
+function _bdhMine(c){ return (_bdScope==='me') ? [{field:'owner_user_id', op:'is_me'}].concat(c) : c; }
+async function _bdhDone(id, box){
+  box.disabled=true;
+  var r=await req('PUT','/bd/records/tasks/'+id, {status:'done'});
+  if(!r || r.error){ box.checked=false; box.disabled=false; _bdwToast((r&&r.error)||'Could not update task'); return; }
+  toast('&#10003;','Marked done'); _bdhSoon();
 }
 </script>
 
