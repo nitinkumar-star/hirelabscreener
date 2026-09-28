@@ -75,7 +75,13 @@ def migrate(conn):
 #  HELPERS
 # ══════════════════════════════════════════════════════════════════════════
 def _now():
-    return datetime.datetime.now()
+    # Due dates are saved in IST (ts() / the browser's local time), so "today"
+    # and "overdue" must be judged on the IST clock too. The server's own clock
+    # is UTC on Render, which shifted these windows by 5h30m.
+    try:
+        return datetime.datetime.fromisoformat(ts()[:19])
+    except Exception:
+        return datetime.datetime.now()
 
 
 def _parse_iso(s):

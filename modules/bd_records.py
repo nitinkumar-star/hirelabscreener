@@ -2162,3 +2162,180 @@ def link_mandate(oid):
         return _err(e)
     finally:
         conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  WAVE 5 — BD Home dashboard  (read-only aggregation)
+# ══════════════════════════════════════════════════════════════════════════
+OPEN_STAGES = [k for k, _, _ in OPP_STAGES if k not in OPP_CLOSED]
+STUCK_DAYS_DEFAULT = 21
+CLOSING_SOON_DAYS = 14
+
+
+def _setting_int(key, default):
+    try:
+        from modules.shared import _core as c
+        return max(1, int(float(c().get_setting(key, str(default)) or default)))
+    except Exception:
+        return default
+
+
+def _month_start(d):
+    return d.replace(day=1)
+
+
+def _add_months(d, n):
+    y, m = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
+    return d.replace(year=y, month=m, day=1)
+
+
+def build_home(conn, company_id, me, scope_me=False):
+    now = _now_iso()
+    today = datetime.date.fromisoformat(now[:10])
+    ctx_me = me
+    mine = [{'field': 'owner_user_id', 'op': 'is_me'}] if scope_me else []
+    stale_days = _setting_int('bd_stale_days', 21)
+    stuck_days = _setting_int('bd_stuck_days', STUCK_DAYS_DEFAULT)
+
+    def Q(obj, conds, sort=None, per=10, calc=None):
+        spec = {'filter': {'logic': 'and', 'conditions': mine + conds} if (mine or conds) else None,
+                'sort': sort, 'per_page': per, 'calc': calc}
+        return query_records(conn, obj, spec, company_id, ctx_me)
+
+    owner_sql, owner_p = ('AND o.owner_user_id=?', [me]) if scope_me else ('', [])
+    base = ('FROM bd_opportunities o JOIN crm_clients c ON c.id=o.client_id AND c.company_id=o.company_id '
+            'WHERE o.company_id=? AND o.is_active=1 AND c.is_active=1 AND COALESCE(c.is_internal,0)=0 ' + owner_sql)
+    bp_ = [company_id] + owner_p
+
+    # ── pipeline by open stage ────────────────────────────────────────────
+    rows = {r['stage']: r for r in conn.execute(
+        f"SELECT o.stage, COUNT(*) n, COALESCE(SUM(o.amount),0) amt, "
+        f"COALESCE(SUM(COALESCE(o.amount,0)*COALESCE(o.probability,0)/100.0),0) w {base} GROUP BY o.stage", bp_)}
+    labels = {k: l for k, l, _ in OPP_STAGES}
+    funnel = [{'stage': k, 'label': labels[k], 'count': rows[k]['n'] if k in rows else 0,
+               'amount': round(rows[k]['amt'], 2) if k in rows else 0} for k in OPEN_STAGES]
+    pipeline = {'count': sum(f['count'] for f in funnel), 'amount': round(sum(f['amount'] for f in funnel), 2),
+                'weighted': round(sum(rows[k]['w'] for k in OPEN_STAGES if k in rows), 2)}
+
+    # ── wins: this month, last month, 6-month trend, win rate (90 days) ───
+    ms = _month_start(today)
+    months = [_add_months(ms, -i) for i in range(5, -1, -1)]
+    won = {r['m']: r for r in conn.execute(
+        f"SELECT substr(o.won_at,1,7) m, COUNT(*) n, COALESCE(SUM(o.amount),0) amt {base} "
+        f"AND o.stage='won' AND COALESCE(o.won_at,'')>=? GROUP BY m", bp_ + [months[0].isoformat()])}
+    trend = [{'month': m.strftime('%Y-%m'), 'label': m.strftime('%b'),
+              'count': won[m.strftime('%Y-%m')]['n'] if m.strftime('%Y-%m') in won else 0,
+              'amount': round(won[m.strftime('%Y-%m')]['amt'], 2) if m.strftime('%Y-%m') in won else 0}
+             for m in months]
+    since = (today - datetime.timedelta(days=90)).isoformat()
+    wr = conn.execute(
+        f"SELECT SUM(CASE WHEN o.stage='won' AND COALESCE(o.won_at,'')>=? THEN 1 ELSE 0 END) w, "
+        f"SUM(CASE WHEN o.stage='lost' AND COALESCE(o.lost_at,'')>=? THEN 1 ELSE 0 END) l {base}",
+        [since, since] + bp_).fetchone()
+    w_, l_ = (wr['w'] or 0), (wr['l'] or 0)
+    wins = {'this_month': trend[-1], 'last_month': trend[-2], 'trend': trend,
+            'win_rate_90d': round(100.0 * w_ / (w_ + l_), 1) if (w_ + l_) else None,
+            'won_90d': w_, 'lost_90d': l_}
+
+    # ── follow-ups ────────────────────────────────────────────────────────
+    t_open = {'field': 'status', 'op': 'in', 'value': ['open']}
+    overdue = Q('tasks', [{'field': 'is_overdue', 'op': 'is_true'}], [{'field': 'due_at', 'dir': 'asc'}], 25)
+    due_today = Q('tasks', [t_open, {'field': 'due_at', 'op': 'is_today'}, {'field': 'is_overdue', 'op': 'is_false'}],
+                  [{'field': 'due_at', 'dir': 'asc'}], 25)
+
+    # ── meetings & calls, next 7 days (BD activities + scheduler bookings) ─
+    week = (today + datetime.timedelta(days=7)).isoformat() + 'T23:59:59'
+    agenda = []
+    for r in Q('tasks', [t_open, {'field': 'activity_type', 'op': 'in', 'value': ['meeting', 'call']},
+                         {'field': 'is_overdue', 'op': 'is_false'}, {'field': 'due_at', 'op': 'in_next_days', 'value': 7}],
+               [{'field': 'due_at', 'dir': 'asc'}], 30)['records']:
+        agenda.append({'source': 'bd', 'id': r['id'], 'kind': r['activity_type'], 'title': r['subject'] or r['activity_type'].title(),
+                       'start_at': r['due_at'], 'client_id': r['client_id'], 'client_name': r['client_id_label'],
+                       'owner': r['owner_user_id_label'], 'opportunity': r['opportunity_id_label']})
+    try:
+        host_sql, host_p = ('AND m.host_user_id=?', [me]) if scope_me else ('', [])
+        for r in conn.execute(
+                f"SELECT m.id, m.purpose, m.guest_name, m.start_at, m.mode, m.crm_client_id, c.name AS client_name, "
+                f"{_user_label('m.host_user_id')} AS host FROM meetings m "
+                f"JOIN crm_clients c ON c.id=m.crm_client_id AND c.company_id=m.company_id AND c.is_active=1 "
+                f"WHERE m.company_id=? AND COALESCE(m.status,'confirmed')='confirmed' "
+                f"AND m.start_at>=? AND m.start_at<=? {host_sql}",
+                [company_id, now[:16], week] + host_p):
+            agenda.append({'source': 'scheduler', 'id': r['id'], 'kind': 'meeting',
+                           'title': r['purpose'] or ('Meeting with ' + (r['guest_name'] or 'guest')),
+                           'start_at': r['start_at'], 'client_id': r['crm_client_id'], 'client_name': r['client_name'],
+                           'owner': r['host'] or '', 'opportunity': '', 'mode': r['mode'] or ''})
+    except Exception:
+        pass
+    agenda.sort(key=lambda a: a['start_at'] or '')
+
+    # ── deals needing attention ───────────────────────────────────────────
+    d_open = {'field': 'stage', 'op': 'not_in', 'value': list(OPP_CLOSED)}
+    att = Q('opportunities', [d_open, {'logic': 'or', 'conditions': [
+        {'field': 'close_date', 'op': 'is_past'},
+        {'field': 'close_date', 'op': 'in_next_days', 'value': CLOSING_SOON_DAYS},
+        {'field': 'days_in_stage', 'op': 'gte', 'value': stuck_days}]}],
+        [{'field': 'close_date', 'dir': 'asc'}], 50)['records']
+    attention = []
+    for r in att:
+        cd = r.get('close_date') or ''
+        if cd and cd < today.isoformat():
+            reason, kind = f'Close date passed ({(today - datetime.date.fromisoformat(cd)).days}d ago)', 'slipped'
+        elif (r.get('days_in_stage') or 0) >= stuck_days:
+            reason, kind = f'No stage change in {r["days_in_stage"]} days', 'stuck'
+        else:
+            reason, kind = f'Closing in {(datetime.date.fromisoformat(cd) - today).days}d', 'soon'
+        attention.append({**r, 'reason': reason, 'reason_kind': kind})
+    order = {'slipped': 0, 'stuck': 1, 'soon': 2}
+    attention.sort(key=lambda r: (order[r['reason_kind']], r.get('close_date') or '9999'))
+
+    # ── companies gone quiet ──────────────────────────────────────────────
+    stale = Q('companies', [{'field': 'status', 'op': 'in', 'value': ['active', 'prospect']},
+                            {'field': 'last_activity', 'op': 'not_in_last_days', 'value': stale_days}],
+              [{'field': 'last_activity', 'dir': 'asc'}], 10)
+
+    # ── open requirements (active jobs per client) ────────────────────────
+    asg_sql, asg_p = ('AND m.assigned_user_id=?', [me]) if scope_me else ('', [])
+    req_rows = conn.execute(
+        f"SELECT m.id, m.role, m.location, m.created_at, m.crm_client_id, c.name AS client_name, "
+        f"(SELECT COUNT(*) FROM candidates k WHERE k.mandate_id=m.id) AS candidates "
+        f"FROM mandates m JOIN crm_clients c ON c.id=m.crm_client_id AND c.company_id=m.owner_id AND c.is_active=1 "
+        f"WHERE m.owner_id=? AND (m.status IS NULL OR m.status='active') {asg_sql} "
+        f"ORDER BY c.name COLLATE NOCASE, m.created_at DESC", [company_id] + asg_p).fetchall()
+    reqs = {}
+    for r in req_rows:
+        g = reqs.setdefault(r['crm_client_id'], {'client_id': r['crm_client_id'], 'client_name': r['client_name'],
+                                                 'jobs': []})
+        g['jobs'].append({'id': r['id'], 'role': r['role'], 'location': r['location'] or '',
+                          'candidates': r['candidates'] or 0, 'created_at': r['created_at'] or ''})
+    requirements = sorted(reqs.values(), key=lambda g: (-len(g['jobs']), (g['client_name'] or '').lower()))
+
+    # ── recent wins ───────────────────────────────────────────────────────
+    recent = Q('opportunities', [{'field': 'stage', 'op': 'in', 'value': ['won']}], [{'field': 'won_at', 'dir': 'desc'}], 5)
+
+    return {
+        'now': now, 'scope': 'me' if scope_me else 'team',
+        'stale_days': stale_days, 'stuck_days': stuck_days,
+        'pipeline': pipeline, 'funnel': funnel, 'wins': wins,
+        'overdue': overdue['records'], 'overdue_total': overdue['total'],
+        'today': due_today['records'], 'today_total': due_today['total'],
+        'agenda': agenda[:20], 'agenda_total': len(agenda),
+        'attention': attention[:12], 'attention_total': len(attention),
+        'stale': stale['records'], 'stale_total': stale['total'],
+        'requirements': requirements,
+        'requirements_total': sum(len(g['jobs']) for g in requirements),
+        'recent_wins': recent['records'],
+    }
+
+
+@bp.route('/home', methods=['GET'])
+@login_required
+def bd_home():
+    conn = get_db()
+    try:
+        return jsonify({'ok': True, **build_home(conn, effective_company_id(), real_user_id(),
+                                                 request.args.get('scope') == 'me')})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
