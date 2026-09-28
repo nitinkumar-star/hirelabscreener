@@ -167,10 +167,16 @@ def recompute_candidate(conn, candidate_id, lexicon=None, commit=True):
     return derived
 
 
-def recompute_all(conn, limit=None):
-    """Backfill every candidate (safe for all 570). Returns how many were computed."""
+def recompute_all(conn, limit=None, owner_id=None):
+    """Backfill every candidate (safe for all 570). Returns how many were computed.
+    owner_id limits the run to one tenant (a company admin must not rewrite
+    other agencies' candidates); None = whole platform (owner / maintenance)."""
     lex = load_lexicon(conn)
-    ids = [r['id'] for r in conn.execute('SELECT id FROM candidates ORDER BY id').fetchall()]
+    if owner_id is None:
+        ids = [r['id'] for r in conn.execute('SELECT id FROM candidates ORDER BY id').fetchall()]
+    else:
+        ids = [r['id'] for r in conn.execute('SELECT id FROM candidates WHERE owner_id=? ORDER BY id',
+                                             (owner_id,)).fetchall()]
     if limit:
         ids = ids[:limit]
     n = 0
