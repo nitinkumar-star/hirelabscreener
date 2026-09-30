@@ -301,7 +301,7 @@ W = ('POST', 'PUT', 'PATCH', 'DELETE')
 # Modules a recruiter never uses (decided with the owner, Sep 2026).
 _ADMIN_ONLY = [(ANY, r'^/api/(activity|audit|analytics|bd|billing|campaigns|command|crm|crm-link|emailbox|'
                      r'expenses|export|import|invoices|movement|org|rme|rkg|users|freelancers|admin|ses|'
-                     r'vector|my-team|diag|companies)(/|$)'),
+                     r'vector|my-team|team|diag|companies)(/|$)'),
                (ANY, r'^/api/email/(?!signature/?$)'),               # company mailbox setup / sync
                (W,   r'^/api/email/signature/?$'),
                (ANY, r'^/api/ai/(?!search/?$)'),                     # index/queue maintenance

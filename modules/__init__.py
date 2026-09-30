@@ -24,6 +24,7 @@ from importlib import import_module
 # Modules to mount, in load order. Add new module filenames here (without .py).
 _MODULE_NAMES = [
     'access',          # recruiter access guard + multi-recruiter assignment (load first)
+    'mail_identity',   # per-recruiter Gmail + signature
     'crm',
     'bd',
     'bd_records',
