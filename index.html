@@ -899,8 +899,8 @@ body{font-size:14px !important; line-height:1.5}
   <div id="data-bar">
     <button onclick="toggleSidebar()" title="Hide / show menu" aria-label="Toggle menu" style="background:none;border:none;color:rgba(255,255,255,0.55);font-size:16px;cursor:pointer;padding:0 4px;line-height:1;flex-shrink:0">&#9776;</button>
     <span style="font-size:10px;color:rgba(255,255,255,0.3)">HireLab Screener v2</span>
-    <button class="db-btn" onclick="exportAll()">&#8595; Export JSON</button>
-    <label class="db-btn" style="cursor:pointer">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="importAll(this)"></label>
+    <button class="db-btn rs-hide" onclick="exportAll()">&#8595; Export JSON</button>
+    <label class="db-btn rs-hide" style="cursor:pointer">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="importAll(this)"></label>
 
     <span class="db-status" id="db-status"></span>
     <div id="user-bar" style="margin-left:auto;display:flex;align-items:center;gap:12px"></div>
@@ -7626,7 +7626,9 @@ function renderSettings(){
   const s = S.settings;
   const admin = _setIsAdmin();
 
-  var rail = SETTINGS_TABS.filter(function(t){ return !t.adminOnly || admin; }).map(function(t){
+  var _rsOnly = _isRecruiterScoped();          // recruiters: company settings are the admin's
+  if (_rsOnly) _setTab = 'account';
+  var rail = SETTINGS_TABS.filter(function(t){ return (!t.adminOnly || admin) && (!_rsOnly || t.id === 'account'); }).map(function(t){
     return '<button class="set-tab" id="settab-' + t.id + '" onclick="setTab(\'' + t.id + '\')">'
       + '<span class="st-ic">' + t.ic + '</span>'
       + '<span style="min-width:0"><span class="st-l" style="display:block">' + t.label + '</span>'
@@ -7654,6 +7656,8 @@ function renderSettings(){
           + '<div class="fg-row"><label>Email</label><input class="inp" id="mp-email" value="" placeholder="e.g. you@company.com"></div>'
           + '</div><span id="mp-save-status" style="font-size:11px;color:#888"></span>'
           + '</div></div>')
+      + (admin ? '' : _sec('sec-mymail', 'account', 'My Email (send from my own Gmail)', 'gmail email app password smtp mailbox sender my email',
+          '<div id="my-mail-card">' + myMailCardHTML() + '</div>'))
       + _setSaveBar('account')
     + '</div>'
 
@@ -7759,6 +7763,11 @@ function renderSettings(){
     + '<span id="s-save-status" style="font-size:11px;color:#888"></span>'
     + '</div></div>';
 
+  if(_rsOnly){
+    Array.prototype.forEach.call(body.querySelectorAll('.set-pane'), function(p){
+      if(p.id !== 'setpane-account') p.parentNode.removeChild(p);
+    });
+  }
   var wrap = body.querySelector('.set-wrap');
   if(wrap && !wrap._setBound){
     wrap._setBound = true;
@@ -7868,6 +7877,7 @@ async function saveSettingsTab(tab){
   try{
     if(tab === 'account'){
       await saveMyProfile();
+      if(document.getElementById('mm-email') && _myMailDirty()) await saveMyMail(true);
     } else if(tab === 'workspace'){
       await saveVocab();
       if(_setIsAdmin() && Array.isArray(_pipeEdit) && _pipeEdit.length) await savePipelineStages();
@@ -8057,6 +8067,7 @@ async function loadMyProfile(){
   e('mp-phone', p.profile_phone);
   e('mp-designation', p.profile_designation);
   e('mp-email', p.profile_email);
+  if(document.getElementById('mm-email')) await loadMyMail();
   if(typeof _setSnapshot === 'function') _setSnapshot('account');
   loadMyBillingCard();
   renderPipelineEditor();
@@ -8151,6 +8162,125 @@ async function loadMyBillingCard(){
     + capBlock
     + '<div style="font-size:10.5px;color:var(--muted);margin-top:12px;border-top:0.5px solid var(--line);padding-top:8px">Bill: '+b.recruiters+' recruiter(s) &times; '+inr(b.price_per_recruiter)+' = '+inr(b.base_inr)+' + AI usage '+inr(b.token_inr)+' + GST '+b.gst_rate+'% = <b>'+inr(b.total_inr)+'/month</b>. Pay via UPI to your account manager.</div>'
     + '</div></div>';
+}
+
+// ── My Email: each recruiter sends from their OWN Gmail ────────────────────
+var _myMail = null;
+function myMailCardHTML(){
+  return '<div class="card" style="margin-bottom:14px;border-top:2px solid #0F8A6B"><div class="card-head"><span style="font-weight:500">&#9993; My Email &mdash; send from my own Gmail</span></div><div class="card-body">'
+    + '<div id="mm-status" style="font-size:11.5px;margin-bottom:10px;padding:8px 11px;border-radius:8px;background:#F4F3EF;color:var(--muted)">Loading&hellip;</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.55">Emails you send to candidates (and Email-Agent follow-ups on jobs where you are the primary recruiter) go out from this Gmail, signed with your profile above. Replies land in <b>this Gmail inbox</b>.<br>'
+    + 'Gmail needs an <b>App Password</b>, not your normal password: Google Account &rarr; Security &rarr; turn on <b>2-Step Verification</b> &rarr; search <b>App passwords</b> &rarr; create one and paste the 16 letters here.</div>'
+    + '<div class="g2">'
+    + '<div class="fg-row"><label>My Gmail address</label><input class="inp" id="mm-email" placeholder="you@gmail.com" autocomplete="off"></div>'
+    + '<div class="fg-row"><label>App Password (16 letters)</label><input class="inp" id="mm-pass" type="password" placeholder="xxxx xxxx xxxx xxxx" autocomplete="new-password"></div>'
+    + '<div class="fg-row"><label>Sender name (what candidates see)</label><input class="inp" id="mm-dname" placeholder="e.g. Riya Sharma | HireLab"></div>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:4px">'
+    + '<button class="btn btn-o" style="font-size:11px" onclick="testMyMail()">&#128268; Test connection</button>'
+    + '<button class="btn btn-g" style="font-size:11px" onclick="saveMyMail()">&#128190; Save my email</button>'
+    + '<button class="btn btn-o" id="mm-remove" style="font-size:11px;color:#C0522B;display:none" onclick="removeMyMail()">Stop using my Gmail</button>'
+    + '<span id="mm-msg" style="font-size:11px;color:#888"></span></div>'
+    + '</div></div>';
+}
+function _mmVal(id){ var el=document.getElementById(id); return el ? el.value.trim() : ''; }
+function _myMailDirty(){
+  if(!_myMail) return !!(_mmVal('mm-email') || _mmVal('mm-pass'));
+  return _mmVal('mm-email') !== (_myMail.smtp_email||'') || !!_mmVal('mm-pass') || _mmVal('mm-dname') !== (_myMail.smtp_display_name||'');
+}
+function _renderMyMailStatus(m){
+  var st = document.getElementById('mm-status'); if(!st) return;
+  var rm = document.getElementById('mm-remove');
+  if(m.smtp_email && m.has_password){
+    st.style.background = '#E6F6F1'; st.style.color = '#0F6E56';
+    st.innerHTML = '&#10003; Your emails go out from <b>' + esc(m.smtp_email) + '</b>' + (m.verified_at ? ' &middot; tested' : ' &middot; <span style="color:#9A6A1F">not tested yet &mdash; click Test connection</span>');
+    if(rm) rm.style.display = '';
+  } else {
+    st.style.background = '#FFF6E6'; st.style.color = '#8A5A0B';
+    st.innerHTML = 'Not set up &mdash; your emails currently go out from the company mailbox' + (m.company_sender ? ' (<b>' + esc(m.company_sender) + '</b>)' : '') + ', signed with your name.';
+    if(rm) rm.style.display = (m.smtp_email ? '' : 'none');
+  }
+}
+async function loadMyMail(){
+  var r = await req('GET', '/me/mail');
+  if(!r || !r.ok) return;
+  _myMail = r.mail || {};
+  var set = function(id, v){ var el=document.getElementById(id); if(el) el.value = v || ''; };
+  set('mm-email', _myMail.smtp_email); set('mm-pass', ''); set('mm-dname', _myMail.smtp_display_name);
+  var pw = document.getElementById('mm-pass');
+  if(pw) pw.placeholder = _myMail.has_password ? 'Saved — leave blank to keep it' : 'xxxx xxxx xxxx xxxx';
+  _renderMyMailStatus(_myMail);
+}
+async function saveMyMail(silent){
+  var msg = document.getElementById('mm-msg');
+  var body = {smtp_email: _mmVal('mm-email'), smtp_display_name: _mmVal('mm-dname')};
+  if(_mmVal('mm-pass')) body.smtp_app_password = _mmVal('mm-pass');
+  if(body.smtp_email && !body.smtp_app_password && !(_myMail && _myMail.has_password && _myMail.smtp_email === body.smtp_email)){
+    if(msg){ msg.style.color='#C0522B'; msg.textContent='Add the App Password for this Gmail.'; }
+    return;
+  }
+  var r = await req('PUT', '/me/mail', body);
+  if(r && r.ok){
+    _myMail = r.mail; await loadMyMail();
+    if(msg){ msg.style.color='#0F8A6B'; msg.textContent='✓ Saved'; setTimeout(function(){ msg.textContent=''; }, 2500); }
+    if(!silent) toast('OK', 'Your email is saved');
+    _setSnapshot('account');
+  } else if(msg){ msg.style.color='#C0522B'; msg.textContent=(r&&r.error)||'Could not save'; }
+}
+async function testMyMail(){
+  var msg = document.getElementById('mm-msg');
+  if(msg){ msg.style.color='#888'; msg.textContent='Connecting to Gmail…'; }
+  var body = {smtp_email: _mmVal('mm-email'), smtp_display_name: _mmVal('mm-dname')};
+  if(_mmVal('mm-pass')) body.smtp_app_password = _mmVal('mm-pass');
+  var r = await req('POST', '/me/mail/test', body);
+  if(r && r.ok){ if(msg){ msg.style.color='#0F8A6B'; msg.textContent='✓ ' + (r.message||'Connected'); } loadMyMail(); }
+  else if(msg){ msg.style.color='#C0522B'; msg.textContent=(r&&r.error)||'Test failed'; }
+}
+async function removeMyMail(){
+  if(!confirm('Stop sending from your own Gmail? Your emails will go out from the company mailbox again.')) return;
+  var r = await req('DELETE', '/me/mail');
+  if(r && r.ok){ toast('OK','Switched back to the company mailbox'); loadMyMail(); }
+}
+
+// ── Admin: edit a team member (name, login id, email, own Gmail) ──────────
+async function openEditUser(uid){
+  var r = await req('GET', '/team/' + uid);
+  if(!r || !r.ok){ toast('ERR', (r&&r.error)||'Could not load user'); return; }
+  var u = r.user, p = u.profile || {};
+  var m = document.getElementById('modal-edit-user');
+  if(!m){
+    m = document.createElement('div'); m.className = 'modal-bg'; m.id = 'modal-edit-user';
+    document.body.appendChild(m);
+  }
+  var f = function(id, label, val, type, ph){
+    return '<div class="fg-row"><label>' + label + '</label><input class="inp" id="eu-' + id + '" type="' + (type||'text') + '" value="' + esc(val||'') + '" placeholder="' + esc(ph||'') + '" autocomplete="off"></div>';
+  };
+  m.innerHTML = '<div class="modal" style="max-width:620px"><div class="modal-head"><span class="modal-title">Edit team member</span>'
+    + '<button class="modal-x" onclick="closeModal(\'modal-edit-user\')">&#10005;</button></div>'
+    + '<div class="modal-body" style="display:block;padding:16px 20px">'
+    + '<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:6px">Account &amp; profile</div><div class="g2">'
+    + f('display_name', 'Full name', p.display_name) + f('username', 'Login id', u.username)
+    + f('profile_designation', 'Designation', p.profile_designation) + f('profile_phone', 'Phone', p.profile_phone)
+    + f('profile_email', 'Email (shown in signature)', p.profile_email, 'text', 'name@company.com') + '</div>'
+    + '<div style="font-size:12px;font-weight:700;color:var(--navy);margin:12px 0 6px">Their own Gmail (optional)</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Leave empty to let them send from the company mailbox. The App Password is never shown &mdash; leave it blank to keep the saved one.</div><div class="g2">'
+    + f('smtp_email', 'Gmail address', u.smtp_email, 'text', 'recruiter@gmail.com')
+    + f('smtp_app_password', 'App Password', '', 'password', u.has_password ? 'Saved — leave blank to keep' : '16 letters')
+    + f('smtp_display_name', 'Sender name', u.smtp_display_name) + '</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;margin-top:12px"><button class="btn btn-g" onclick="saveEditUser(' + uid + ')">&#128190; Save</button>'
+    + '<span id="eu-msg" style="font-size:11px;color:#888"></span></div></div></div>';
+  openModal('modal-edit-user');
+}
+async function saveEditUser(uid){
+  var v = function(id){ var el=document.getElementById('eu-'+id); return el ? el.value.trim() : ''; };
+  var body = {display_name: v('display_name'), username: v('username'), profile_designation: v('profile_designation'),
+              profile_phone: v('profile_phone'), profile_email: v('profile_email'),
+              smtp_email: v('smtp_email'), smtp_display_name: v('smtp_display_name')};
+  if(v('smtp_app_password')) body.smtp_app_password = v('smtp_app_password');
+  var msg = document.getElementById('eu-msg'); if(msg){ msg.style.color='#888'; msg.textContent='Saving…'; }
+  var r = await req('PUT', '/team/' + uid, body);
+  if(r && r.ok){ toast('OK','Team member updated'); closeModal('modal-edit-user'); loadUsersList(); }
+  else if(msg){ msg.style.color='#C0522B'; msg.textContent=(r&&r.error)||'Could not save'; }
 }
 
 async function saveMyProfile(){
@@ -8620,6 +8750,7 @@ async function loadUsersList() {
       + '</div>';
     if (!isMe) {
       h += '<div style="display:flex;gap:6px">'
+        + '<button class="btn btn-o" style="font-size:10px;padding:4px 9px" onclick="openEditUser(' + u.id + ')">Edit</button>'
         + '<button class="btn btn-o" style="font-size:10px;padding:4px 9px" onclick="resetUserPwd(' + u.id + ',&quot;' + esc(u.username) + '&quot;)">Reset Password</button>'
         + '<button class="btn btn-o" style="font-size:10px;padding:4px 9px;color:#C0522B;border-color:#E8C4C4" onclick="deleteUser(' + u.id + ',&quot;' + esc(u.username) + '&quot;)">Delete</button>'
         + '</div>';
@@ -13645,7 +13776,7 @@ async function eaSend(iid, toEmail, cid, inReplyTo, threadId){
   if (!toEmail) { toast('EMAIL','No email on this candidate'); return; }
   if (!subject || !body) { toast('EMAIL','Add a subject and message'); return; }
   var d = document.getElementById('ea-done-'+iid); if (d) d.textContent = 'Sending...';
-  var r = await req('POST', '/candidates/'+cid+'/send-email', {to: toEmail, subject: subject, body: body, in_reply_to: inReplyTo||'', thread_id: threadId||''});
+  var r = await req('POST', '/candidates/'+cid+'/send-email', {to: toEmail, subject: subject, body: body, in_reply_to: inReplyTo||'', thread_id: threadId||'', agent_item_id: iid});
   if (r && r.ok) { await req('POST','/email-agent/item/'+iid+'/action',{action:'sent',subject:subject,body:body}); if(d) d.textContent='Sent ✓ (in thread)'; setTimeout(loadEmailAgent,600); }
   else if (d) d.textContent = (r&&r.error)||'Send failed';
 }
@@ -17512,6 +17643,7 @@ async function cpOrgResolve(cid, field, keep){
 <style id="bdw-style">
 /* Recruiter sub-accounts: admin modules removed from the menu. The id+class
    selector outranks '#sidebar .sb-gear{display:flex!important}'. */
+body.rs-scoped .rs-hide{display:none!important}
 body.rs-scoped #sidebar #sb-crm, body.rs-scoped #sidebar #sb-bd, body.rs-scoped #sidebar #sb-invoicing,
 body.rs-scoped #sidebar #sb-email, body.rs-scoped #sidebar #sb-command, body.rs-scoped #sidebar #sb-analytics,
 body.rs-scoped #sidebar #sb-orgmap, body.rs-scoped #sidebar #sb-freelancers, body.rs-scoped #sidebar #sb-admin,

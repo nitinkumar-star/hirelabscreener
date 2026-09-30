@@ -6403,6 +6403,9 @@ TENANT_SETTINGS = {
     'ack_enabled', 'ack_template', 'regret_template',
     'pipeline_stages',  # JSON array of custom stages before the fixed Placed/Joined
     'smtp_email', 'smtp_app_password', 'smtp_display_name',
+    # company signature: was a GLOBAL row shared by every agency; per-tenant now
+    # (an existing global value still acts as the fallback, so nothing changes)
+    'sig_name', 'sig_designation', 'sig_company', 'sig_phone', 'sig_email', 'sig_website', 'sig_html',
     'email_transport', 'ses_region', 'ses_smtp_user', 'ses_smtp_password',
     'ses_from_email', 'ses_from_name', 'ses_reply_to', 'ses_topic_arn',
     'ses_warmup_start', 'campaign_daily_cap',
@@ -6426,6 +6429,176 @@ def _safe_company_id():
     except Exception:
         return 0
 
+# ══════════════════════════════════════════════════════════════════════════
+#  PER-RECRUITER MAIL IDENTITY  (Sep 2026)
+#  Email settings used to be company-wide only, so every recruiter mailed
+#  candidates from the admin's Gmail with the admin's signature, and a
+#  recruiter could not change it (company settings are admin-only).
+#  Now the SENDER is a person:
+#    • request context  -> the logged-in user (not a super-admin viewing-as)
+#    • worker / special -> whoever is pinned with `with mail_sender(uid):`
+#  If that person saved their own Gmail + App Password (user_mail_identity,
+#  created by modules/mail_identity.py) the smtp_* keys resolve to it. A
+#  recruiter's signature keys always resolve to their own profile. Nothing
+#  configured -> exactly the old company behaviour. Because every send path
+#  reads these keys through get_setting(), one change covers all of them.
+#  The company mailbox sync (IMAP) pins sender 0 = company, always.
+# ══════════════════════════════════════════════════════════════════════════
+_MAIL_BOX_KEYS = frozenset(('smtp_email', 'smtp_app_password', 'smtp_display_name'))
+_MAIL_SIG_KEYS = frozenset(('sig_name', 'sig_designation', 'sig_phone', 'sig_email',
+                            'sig_html', 'recruiter_name'))
+_MAIL_PERSONAL_KEYS = _MAIL_BOX_KEYS | _MAIL_SIG_KEYS
+_MAIL_PIN = None   # threading.local(), lazily created
+_MAIL_UNSET = object()
+
+
+def _mail_pin_get():
+    if _MAIL_PIN is None:
+        return _MAIL_UNSET
+    return getattr(_MAIL_PIN, 'uid', _MAIL_UNSET)
+
+
+class mail_sender(object):
+    """`with mail_sender(uid):` — send as this user (0/None = the company).
+    Restores whatever was pinned before, so it nests safely."""
+    def __init__(self, uid):
+        self.uid = int(uid or 0)
+
+    def __enter__(self):
+        global _MAIL_PIN
+        import threading as _th
+        if _MAIL_PIN is None:
+            _MAIL_PIN = _th.local()
+        self._prev = getattr(_MAIL_PIN, 'uid', _MAIL_UNSET)
+        _MAIL_PIN.uid = self.uid
+        return self
+
+    def __exit__(self, *exc):
+        if self._prev is _MAIL_UNSET:
+            try:
+                del _MAIL_PIN.uid
+            except AttributeError:
+                pass
+        else:
+            _MAIL_PIN.uid = self._prev
+        return False
+
+
+class tenant_pin(object):
+    """`with tenant_pin(company_id):` for worker threads (no Flask session)."""
+    def __init__(self, oid):
+        self.oid = oid
+
+    def __enter__(self):
+        self._prev = _bg_tenant_get()
+        _bg_tenant_set(self.oid)
+        return self
+
+    def __exit__(self, *exc):
+        _bg_tenant_set(self._prev)
+        return False
+
+
+def _mail_sender_uid():
+    pinned = _mail_pin_get()
+    if pinned is not _MAIL_UNSET:
+        return pinned or 0
+    try:
+        from flask import has_request_context
+        if not has_request_context():
+            return 0
+        if session.get('view_as_company'):
+            return 0          # super-admin acting as a tenant = the tenant's mailbox
+        return int(session.get('user_id') or 0)
+    except Exception:
+        return 0
+
+
+def _mail_identity(uid):
+    """Resolved identity for user `uid`, or None. Keys: mailbox (bool),
+    personal_sig (bool), email, password, display_name, sig_* values."""
+    if not uid:
+        return None
+    cache = None
+    try:
+        from flask import has_request_context, g as _g
+        if has_request_context():
+            cache = _g.__dict__.setdefault('_mail_ident_cache', {})
+            if uid in cache:
+                return cache[uid]
+    except Exception:
+        cache = None
+    ident = None
+    conn = get_db()
+    try:
+        u = conn.execute('SELECT * FROM users WHERE id=?', (uid,)).fetchone()
+        tenant = _safe_company_id()
+        if u and (not tenant or u['company_id'] == tenant):
+            u = dict(u)
+            try:
+                row = conn.execute('SELECT * FROM user_mail_identity WHERE user_id=?', (uid,)).fetchone()
+                row = dict(row) if row else {}
+            except Exception:
+                row = {}          # table not migrated yet -> company behaviour
+            em = (row.get('smtp_email') or '').strip()
+            pw = (row.get('smtp_app_password') or '').replace(' ', '').strip()
+            is_adminish = (u.get('role') == 'admin') or (u.get('is_company_admin') == 1)
+            name = (u.get('display_name') or u.get('username') or '').strip()
+            ident = {
+                'uid': uid,
+                'mailbox': bool(em and pw),
+                'personal_sig': not is_adminish,
+                'email': em, 'password': pw,
+                'display_name': (row.get('smtp_display_name') or '').strip() or name or em,
+                'sig_name': name,
+                'sig_designation': (u.get('profile_designation') or '').strip(),
+                'sig_phone': (u.get('profile_phone') or '').strip(),
+                'sig_email': (u.get('profile_email') or '').strip() or (em if (em and pw) else ''),
+            }
+            if ident['mailbox'] and is_adminish:
+                # an admin who set a personal mailbox also signs as themself
+                ident['personal_sig'] = True
+    except Exception as _e:
+        print('[mail-identity] lookup failed:', _e)
+        ident = None
+    finally:
+        conn.close()
+    if cache is not None:
+        cache[uid] = ident
+    return ident
+
+
+def _mail_personal_value(key):
+    """Value of a personal mail key for the current sender, or None to fall
+    through to the company setting."""
+    uid = _mail_sender_uid()
+    if not uid:
+        return None
+    ident = _mail_identity(uid)
+    if not ident:
+        return None
+    if key in _MAIL_BOX_KEYS:
+        if not ident['mailbox']:
+            return None
+        return {'smtp_email': ident['email'], 'smtp_app_password': ident['password'],
+                'smtp_display_name': ident['display_name']}[key]
+    if not ident['personal_sig']:
+        return None
+    if key == 'sig_html':
+        return ''          # the company HTML signature carries the admin's name
+    if key == 'recruiter_name':
+        return ident['sig_name']
+    return ident.get(key, None)
+
+
+def mail_identity_status(uid):
+    """For the UI: how this user's emails go out right now."""
+    ident = _mail_identity(uid) or {}
+    return {'own_mailbox': bool(ident.get('mailbox')), 'email': ident.get('email', ''),
+            'display_name': ident.get('display_name', ''),
+            'personal_signature': bool(ident.get('personal_sig'))}
+
+
 def get_setting(key, default=''):
     # Env var takes priority for sensitive keys (see _ENV_KEY_MAP)
     env_name = _ENV_KEY_MAP.get(key)
@@ -6433,6 +6606,10 @@ def get_setting(key, default=''):
         env_val = os.environ.get(env_name, '').strip()
         if env_val:
             return env_val
+    if key in _MAIL_PERSONAL_KEYS:
+        _pv = _mail_personal_value(key)
+        if _pv is not None:
+            return _pv or default
     conn = get_db()
     # Per-tenant keys: prefer this company's own value, else fall back to the
     # global row (which acts as the default seed).
@@ -9808,6 +9985,8 @@ def _process_reply(conn, oid, cand, reply_body):
     first = (cand.get('name') or 'there').split(' ')[0]
     cfg = _agent_cfg()
     recruiter = cfg['signature']
+    if cand.get('mandate_id'):
+        recruiter = _agent_signoff_for(conn, cand.get('mandate_id'), oid, recruiter)[0]
     out = {'intent': '', 'extracted': {}, 'kind': 'reply', 'subject': 'Re: ' + role, 'body': ''}
     ds_key = get_setting('deepseek_api_key')
     if not ds_key or not (reply_body or '').strip():
@@ -9878,6 +10057,33 @@ _AGENT_MAX_SECONDS_PER_PASS = 90
 
 
 def _email_agent_scan(oid):
+    """Wrapper: pin the tenant (worker threads have no session) and the company
+    mailbox; each follow-up is signed as the mandate's primary recruiter."""
+    with tenant_pin(oid), mail_sender(0):
+        return _email_agent_scan_impl(oid)
+
+
+def _agent_signoff_for(conn, mandate_id, oid, default_sig):
+    """Sign-off for Email-Agent drafts on this mandate: the primary recruiter's
+    own name when they have a personal identity, else the company signature."""
+    try:
+        m = conn.execute('SELECT assigned_user_id FROM mandates WHERE id=? AND owner_id=?',
+                         (mandate_id, oid)).fetchone()
+        uid = int((m['assigned_user_id'] if m else 0) or 0)
+        if not uid:
+            return default_sig, 0
+        ident = _mail_identity(uid)
+        if not ident or not ident.get('personal_sig') or not ident.get('sig_name'):
+            return default_sig, 0
+        with mail_sender(uid):
+            company = get_setting('sig_company', '') or get_setting('company_name', '') or ''
+        sig = ident['sig_name'] + ((', ' + company) if company else '')
+        return sig, uid
+    except Exception:
+        return default_sig, 0
+
+
+def _email_agent_scan_impl(oid):
     """Compute pending agent items for one company's watched candidates.
 
     Commits after EACH candidate so the SQLite write lock is released between
@@ -9928,7 +10134,7 @@ def _email_agent_scan(oid):
                 r_irt = (em['msg_id'] if em else '') or ''
                 r_tid = (em['thread_id'] if em else '') or ''
                 _ai_work += 1  # this candidate triggers a DeepSeek call
-                pr = _process_reply(conn, oid, {'id': c['id'], 'name': c['name'], 'role': role}, rbody)
+                pr = _process_reply(conn, oid, {'id': c['id'], 'name': c['name'], 'role': role, 'mandate_id': c['mandate_id']}, rbody)
                 in_subj = ((em['subject'] if em else '') or '').strip()
                 if in_subj:
                     pr['subject'] = in_subj if re.match(r'^\s*re:', in_subj, re.I) else ('Re: ' + in_subj)
@@ -9983,7 +10189,9 @@ def _email_agent_scan(oid):
         orig_subject = ((src['subject'] if src else '') or '').strip() or role
         subj = orig_subject if re.match(r'^\s*re:', orig_subject, re.I) else ('Re: ' + orig_subject)
         _ai_work += 1  # this candidate triggers a DeepSeek follow-up generation
-        body = _gen_followup(first, role, cfg, fu_sent, get_setting('deepseek_api_key'))
+        _sig_c, _ = _agent_signoff_for(conn, c['mandate_id'], oid, cfg['signature'])
+        _cfg_c = cfg if _sig_c == cfg['signature'] else dict(cfg, signature=_sig_c)
+        body = _gen_followup(first, role, _cfg_c, fu_sent, get_setting('deepseek_api_key'))
         key = f"followup:{c['id']}:{fu_sent}"
         # In-Reply-To must reference a message the candidate actually received —
         # only a Sent original qualifies. thread_id always set (falls back to the
@@ -11577,6 +11785,18 @@ def get_settings():
         if _is_secret(k):
             # Tell the UI whether a key is configured, without leaking its value.
             out[k] = '__set__' if (out.get(k) or '').strip() else ''
+    # A recruiter sees the identity THEIR emails go out with (own Gmail /
+    # own name), not the admin's.
+    try:
+        _me = _mail_sender_uid()
+        if _me and not is_company_admin():
+            for _k in ('smtp_email', 'smtp_display_name', 'recruiter_name'):
+                _pv = _mail_personal_value(_k)
+                if _pv is not None:
+                    out[_k] = _pv
+            out['my_mail'] = mail_identity_status(_me)
+    except Exception:
+        pass
     # Ensure workflow_mode is always present so the UI can branch on it.
     if 'workflow_mode' not in out or not out.get('workflow_mode'):
         out['workflow_mode'] = 'agency'
@@ -14478,6 +14698,14 @@ def _resolve_thread_id(conn, oid, in_reply_to, references, subject):
 
 
 def _sync_mailbox(oid):
+    """Wrapper: the company inbox is always read with the COMPANY mailbox
+    (never a recruiter's personal Gmail) and with the tenant pinned, so the
+    background Email-Agent loop reads this company's settings, not globals."""
+    with tenant_pin(oid), mail_sender(0):
+        return _sync_mailbox_impl(oid)
+
+
+def _sync_mailbox_impl(oid):
     """Canonical IMAP sync -> emails table with full threading metadata + candidate
     linkage. Mirrors incoming candidate mail into email_messages too. Returns (added, error)."""
     import imaplib, email as emaillib, email.utils, datetime as _dt
@@ -16655,16 +16883,33 @@ def send_candidate_email(cid):
     if not to_email or not subject or not body:
         return jsonify({'error': 'To, Subject and Body are required'}), 400
 
-    if not get_setting('smtp_email', '') or not get_setting('smtp_app_password', ''):
-        return jsonify({'error': 'Email not configured. Go to Settings → Email Configuration and add your Gmail + App Password.'}), 400
-    # Route through the ONE central email pipeline (threading + signature + multipart).
-    ok, err, mid, tid = email_service_send(
-        to_email, subject, body,
-        body_html=(d.get('body_html') or None),
-        in_reply_to=(d.get('in_reply_to') or ''),
-        references=(d.get('references') or ''),
-        thread_id=(d.get('thread_id') or ''),
-        candidate_id=cid)
+    # Email-Agent drafts go out as the mandate's PRIMARY recruiter (their own
+    # Gmail + signature when they set one up), whoever clicks Send.
+    _sender = _mail_sender_uid()
+    _aid = d.get('agent_item_id')
+    if _aid:
+        try:
+            _c = get_db()
+            _it = _c.execute("SELECT mandate_id FROM agent_items WHERE id=? AND owner_id=? AND candidate_id=?",
+                             (int(_aid), effective_company_id(), cid)).fetchone()
+            if _it and _it['mandate_id']:
+                _sig, _puid = _agent_signoff_for(_c, _it['mandate_id'], effective_company_id(), '')
+                if _puid:
+                    _sender = _puid
+            _c.close()
+        except Exception as _e:
+            print('[send-email] agent sender resolve failed:', _e)
+    with mail_sender(_sender):
+        if not get_setting('smtp_email', '') or not get_setting('smtp_app_password', ''):
+            return jsonify({'error': 'Email not configured. Go to Settings → Email Configuration and add your Gmail + App Password.'}), 400
+        # Route through the ONE central email pipeline (threading + signature + multipart).
+        ok, err, mid, tid = email_service_send(
+            to_email, subject, body,
+            body_html=(d.get('body_html') or None),
+            in_reply_to=(d.get('in_reply_to') or ''),
+            references=(d.get('references') or ''),
+            thread_id=(d.get('thread_id') or ''),
+            candidate_id=cid)
     if not ok:
         return jsonify({'error': err or 'Failed to send email'}), 400
     u = current_user()
