@@ -69,6 +69,20 @@ def migrate(conn):
 # ══════════════════════════════════════════════════════════════════════════
 #  HELPERS
 # ══════════════════════════════════════════════════════════════════════════
+_INVISIBLE = re.compile(r'[\s\u00a0\u2000-\u200f\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]+')
+
+
+def _clean_pw(v):
+    """Google shows App Passwords as 'abcd efgh ijkl mnop'; copying it often
+    brings NON-BREAKING or zero-width spaces, which a plain replace(' ', '')
+    misses — Gmail then drops the login. Remove every kind of whitespace."""
+    return _INVISIBLE.sub('', str(v or ''))
+
+
+def _clean_email(v):
+    return _INVISIBLE.sub('', str(v or '')).strip()
+
+
 def _smtp_host(addr):
     e = (addr or '').lower()
     if '@outlook' in e or '@hotmail' in e or '@live' in e:
@@ -114,13 +128,13 @@ def _save_identity(conn, uid, company_id, d, actor):
     """Apply smtp_* fields from `d` to user `uid`. Blank password = keep.
     Returns error text or None."""
     cur = _row(conn, uid)
-    em = (d.get('smtp_email', cur.get('smtp_email', '')) or '').strip()
+    em = _clean_email(d.get('smtp_email', cur.get('smtp_email', '')))
     if em and not _EMAIL_RX.match(em):
         return 'That email address does not look right.'
     pw_in = d.get('smtp_app_password')
     pw = cur.get('smtp_app_password', '') or ''
     if pw_in is not None and str(pw_in).strip():
-        pw = str(pw_in).replace(' ', '').strip()
+        pw = _clean_pw(pw_in)
     if em.lower() != (cur.get('smtp_email', '') or '').lower() and (pw_in is None or not str(pw_in).strip()):
         # a new address needs its own app password — never reuse the old one
         pw = ''
@@ -151,11 +165,25 @@ def _save_profile(conn, uid, d):
 
 
 def _smtp_try(email_addr, password, send_to=None, display_name=''):
+    """Step-by-step check so the message says exactly WHAT failed."""
+    core = _core()
     host, port = _smtp_host(email_addr)
     try:
-        s = smtplib.SMTP(host, port, timeout=15)
-        s.starttls()
-        s.login(email_addr, password)
+        s, used = core.smtp_open(host, port, email_addr, password, timeout=20)
+    except smtplib.SMTPAuthenticationError as e:
+        raw = (e.smtp_error or b'').decode('utf-8', 'replace') if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
+        return False, ('Gmail rejected the login (' + (raw[:90] or 'wrong password') + '). Use a 16-letter App Password '
+                       '(Google Account → Security → 2-Step Verification → App passwords), not the normal Gmail password.')
+    except core.SmtpStepError as e:
+        if e.step.startswith('login'):
+            return False, ('Gmail closed the connection during login (' + e.detail[:80] + '). This almost always means '
+                           'the password is not an App Password, or 2-Step Verification is off on this Gmail. '
+                           'Create a new App Password and paste it again.')
+        return False, ('Could not reach Gmail from the server (' + e.step + ' — ' + e.detail[:80] + '). '
+                       'The server network is blocking email ports 587/465.')
+    except Exception as e:
+        return False, 'Could not connect: ' + str(e)[:160]
+    try:
         if send_to:
             msg = MIMEText('This is a test from HireLab ATS. Your emails to candidates '
                            'will now go out from this mailbox, and replies will land here.', 'plain', 'utf-8')
@@ -165,11 +193,8 @@ def _smtp_try(email_addr, password, send_to=None, display_name=''):
             s.sendmail(email_addr, [send_to], msg.as_string())
         s.quit()
         return True, ''
-    except smtplib.SMTPAuthenticationError:
-        return False, ('Login failed. For Gmail use a 16-letter App Password (Google Account → Security → '
-                       '2-Step Verification → App passwords), not your normal password.')
     except Exception as e:
-        return False, 'Could not connect: ' + str(e)[:160]
+        return False, 'Logged in, but Gmail refused to send the test mail: ' + str(e)[:140]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -231,19 +256,19 @@ def my_mail_test():
     d = request.json or {}
     conn = get_db()
     cur = _row(conn, uid)
-    em = (d.get('smtp_email') or cur.get('smtp_email') or '').strip()
-    pw = (d.get('smtp_app_password') or '').replace(' ', '').strip()
+    em = _clean_email(d.get('smtp_email') or cur.get('smtp_email'))
+    pw = _clean_pw(d.get('smtp_app_password'))
     if not pw and em.lower() == (cur.get('smtp_email') or '').lower():
         pw = cur.get('smtp_app_password') or ''
     dn = (d.get('smtp_display_name') or cur.get('smtp_display_name') or '').strip()
+    conn.close()      # never hold the database while talking to Gmail
     if not em or not pw:
-        conn.close()
         return jsonify({'error': 'Enter your Gmail address and App Password first.'}), 400
     ok, err = _smtp_try(em, pw, send_to=em, display_name=dn)
     if ok and em == cur.get('smtp_email') and pw == cur.get('smtp_app_password'):
+        conn = get_db()
         conn.execute('UPDATE user_mail_identity SET verified_at=? WHERE user_id=?', (ts(), uid))
-        conn.commit()
-    conn.close()
+        conn.commit(); conn.close()
     if not ok:
         return jsonify({'ok': False, 'error': err}), 400
     return jsonify({'ok': True, 'message': 'Connected. A test email was sent to ' + em + '.'})
