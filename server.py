@@ -6599,6 +6599,196 @@ def mail_identity_status(uid):
             'personal_signature': bool(ident.get('personal_sig'))}
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  PER-RECRUITER TEMPLATES  (Oct 2026)
+#  Company templates stay the admin's. A recruiter (non-admin) gets the company
+#  set PLUS their own: new templates, or a "customised" copy of a company one
+#  (same id -> their copy wins, for them only). Stored in user_templates
+#  (modules/user_templates.py). Scalar keys (WA outreach sequence, interview
+#  message) resolve through get_setting(); the two template lists are merged in
+#  their endpoints. Who: the same sender as mail identity (logged-in user, or
+#  `with mail_sender(uid)`); mail_sender(0) = the company values.
+# ══════════════════════════════════════════════════════════════════════════
+_TPL_SCALAR_KEYS = frozenset(('template_msg1', 'template_fu1', 'template_fu2', 'interview_template'))
+_TPL_LIST_KEYS = frozenset(('email_templates', 'wa_templates'))
+
+
+def _tpl_uid():
+    """User whose personal templates apply right now, or 0 (company)."""
+    uid = _mail_sender_uid()
+    if not uid:
+        return 0
+    cache = None
+    try:
+        from flask import has_request_context, g as _g
+        if has_request_context():
+            cache = _g.__dict__.setdefault('_tpl_uid_cache', {})
+            if uid in cache:
+                return cache[uid]
+    except Exception:
+        cache = None
+    out = 0
+    try:
+        conn = get_db()
+        u = conn.execute('SELECT role, is_company_admin, company_id FROM users WHERE id=?', (uid,)).fetchone()
+        conn.close()
+        tenant = _safe_company_id()
+        if u and u['role'] != 'admin' and (u['is_company_admin'] or 0) != 1 \
+                and (not tenant or u['company_id'] == tenant):
+            out = uid
+    except Exception:
+        out = 0
+    if cache is not None:
+        cache[uid] = out
+    return out
+
+
+def tpl_personal_get(uid, key):
+    """Raw stored personal value (str) or ''."""
+    if not uid:
+        return ''
+    try:
+        conn = get_db()
+        r = conn.execute('SELECT value FROM user_templates WHERE user_id=? AND key=?', (uid, key)).fetchone()
+        conn.close()
+        return (r['value'] if r else '') or ''
+    except Exception:
+        return ''          # table not migrated yet
+
+
+def tpl_personal_set(uid, key, value):
+    conn = get_db()
+    if value in (None, '', '[]'):
+        conn.execute('DELETE FROM user_templates WHERE user_id=? AND key=?', (uid, key))
+    else:
+        u = conn.execute('SELECT company_id FROM users WHERE id=?', (uid,)).fetchone()
+        conn.execute('INSERT OR REPLACE INTO user_templates (user_id, company_id, key, value, updated_at) '
+                     'VALUES (?,?,?,?,?)', (uid, (u['company_id'] if u else 0) or 0, key, value, ts()))
+    conn.commit(); conn.close()
+
+
+def _tpl_company_list(key, defaults):
+    with mail_sender(0):
+        raw = get_setting(key, '')
+    if raw:
+        try:
+            v = json.loads(raw)
+            if isinstance(v, list):
+                return v
+        except Exception:
+            pass
+    return json.loads(json.dumps(defaults))
+
+
+def _tpl_clean(t):
+    return {k: v for k, v in (t or {}).items() if not str(k).startswith('_')}
+
+
+def tpl_merge_email(company, personal):
+    """company + personal email templates; personal with a company id wins."""
+    pmap = {}
+    for t in personal or []:
+        if isinstance(t, dict) and t.get('id'):
+            pmap[str(t['id'])] = t
+    out, used = [], set()
+    for t in company or []:
+        tid = str((t or {}).get('id') or '')
+        if tid and tid in pmap:
+            out.append(dict(_tpl_clean(pmap[tid]), _src='custom'))
+            used.add(tid)
+        else:
+            out.append(dict(_tpl_clean(t), _src='company'))
+    for t in personal or []:
+        if isinstance(t, dict) and str(t.get('id') or '') not in used:
+            out.append(dict(_tpl_clean(t), _src='mine'))
+    return out
+
+
+def tpl_diff_email(posted, company):
+    """What of a recruiter's posted list is theirs (new or changed)."""
+    cmap = {str(t.get('id')): _tpl_clean(t) for t in (company or []) if isinstance(t, dict) and t.get('id')}
+    mine = []
+    for t in posted or []:
+        if not isinstance(t, dict):
+            continue
+        c = _tpl_clean(t)
+        tid = str(c.get('id') or '')
+        if not tid:
+            c['id'] = tid = 'u%d' % int(time.time() * 1000) + str(len(mine))
+        base = cmap.get(tid)
+        if base is not None and all((base.get(k) or '') == (c.get(k) or '') for k in ('title', 'subject', 'body')):
+            continue
+        mine.append(c)
+    return mine
+
+
+def _wa_key(cat, it):
+    return str(it.get('id') or ('%s|%s' % (cat, it.get('title') or '')))
+
+
+def tpl_merge_wa(company, personal):
+    out = [{'cat': c.get('cat', ''), 'items': [dict(_tpl_clean(i), _src='company') for i in (c.get('items') or [])]}
+           for c in (company or []) if isinstance(c, dict)]
+    where = {}
+    for ci, c in enumerate(out):
+        for ii, it in enumerate(c['items']):
+            where[_wa_key(c['cat'], it)] = (ci, ii)
+    for pc in personal or []:
+        if not isinstance(pc, dict):
+            continue
+        for it in pc.get('items') or []:
+            k = _wa_key(pc.get('cat', ''), it)
+            if k in where:
+                ci, ii = where[k]
+                out[ci]['items'][ii] = dict(_tpl_clean(it), _src='custom')
+                continue
+            tgt = next((c for c in out if c['cat'] == pc.get('cat')), None)
+            if tgt is None:
+                tgt = {'cat': pc.get('cat') or 'My templates', 'items': []}
+                out.append(tgt)
+            tgt['items'].append(dict(_tpl_clean(it), _src='mine'))
+    return out
+
+
+def tpl_diff_wa(posted, company):
+    base = {}
+    for c in company or []:
+        for it in (c or {}).get('items') or []:
+            base[_wa_key(c.get('cat', ''), it)] = (c.get('cat', ''), _tpl_clean(it))
+    mine = []
+    for pc in posted or []:
+        if not isinstance(pc, dict):
+            continue
+        keep = []
+        for it in pc.get('items') or []:
+            if not isinstance(it, dict):
+                continue
+            c = _tpl_clean(it)
+            b = base.get(_wa_key(pc.get('cat', ''), c))
+            if b and (b[1].get('title') or '') == (c.get('title') or '') and (b[1].get('body') or '') == (c.get('body') or ''):
+                continue
+            if not c.get('id'):
+                c['id'] = 'uwa%d' % int(time.time() * 1000) + str(len(keep))
+            keep.append(c)
+        if keep:
+            mine.append({'cat': pc.get('cat') or 'My templates', 'items': keep})
+    return mine
+
+
+def tpl_list_for(key, defaults):
+    """Template list as the current user sees it (merged for recruiters)."""
+    company = _tpl_company_list(key, defaults)
+    uid = _tpl_uid()
+    if not uid:
+        return company, 0
+    try:
+        personal = json.loads(tpl_personal_get(uid, key) or '[]')
+    except Exception:
+        personal = []
+    merge = tpl_merge_email if key == 'email_templates' else tpl_merge_wa
+    return merge(company, personal), uid
+
+
 def get_setting(key, default=''):
     # Env var takes priority for sensitive keys (see _ENV_KEY_MAP)
     env_name = _ENV_KEY_MAP.get(key)
@@ -6610,6 +6800,12 @@ def get_setting(key, default=''):
         _pv = _mail_personal_value(key)
         if _pv is not None:
             return _pv or default
+    if key in _TPL_SCALAR_KEYS:
+        _tu = _tpl_uid()
+        if _tu:
+            _tv = tpl_personal_get(_tu, key)
+            if _tv.strip():
+                return _tv
     conn = get_db()
     # Per-tenant keys: prefer this company's own value, else fall back to the
     # global row (which acts as the default seed).
@@ -11795,6 +11991,14 @@ def get_settings():
                 if _pv is not None:
                     out[_k] = _pv
             out['my_mail'] = mail_identity_status(_me)
+        _tu = _tpl_uid()
+        if _tu:
+            for _k in _TPL_SCALAR_KEYS:
+                _tv = tpl_personal_get(_tu, _k)
+                out['company_' + _k] = out.get(_k, '')
+                if _tv.strip():
+                    out[_k] = _tv
+            out['my_templates'] = True
     except Exception:
         pass
     # Ensure workflow_mode is always present so the UI can branch on it.
@@ -22562,15 +22766,18 @@ def wa_templates():
         tpls = data.get('templates')
         if not isinstance(tpls, list):
             return jsonify({'error': 'templates must be a list'}), 400
-        set_setting('wa_templates', json.dumps(tpls))
+        _tu = _tpl_uid()
+        if _tu:   # recruiter: only THEIR new/changed templates are stored, for them
+            mine = tpl_diff_wa(tpls, _tpl_company_list('wa_templates', WA_DEFAULT_TEMPLATES))
+            tpl_personal_set(_tu, 'wa_templates', json.dumps(mine) if mine else '')
+            return jsonify({'ok': True, 'personal': True})
+        if not is_company_admin():
+            return jsonify({'error': 'Only an admin can change company templates'}), 403
+        set_setting('wa_templates', json.dumps([{'cat': c.get('cat', ''), 'items': [_tpl_clean(i) for i in (c.get('items') or [])]}
+                                                for c in tpls if isinstance(c, dict)]))
         return jsonify({'ok': True})
-    raw = get_setting('wa_templates', '')
-    if raw:
-        try:
-            return jsonify({'ok': True, 'templates': json.loads(raw)})
-        except Exception:
-            pass
-    return jsonify({'ok': True, 'templates': WA_DEFAULT_TEMPLATES})
+    lst, _tu = tpl_list_for('wa_templates', WA_DEFAULT_TEMPLATES)
+    return jsonify({'ok': True, 'templates': lst, 'personal': bool(_tu)})
 
 
 EMAIL_DEFAULT_TEMPLATES = [
@@ -22597,15 +22804,17 @@ def email_templates():
         tpls = data.get('templates')
         if not isinstance(tpls, list):
             return jsonify({'error': 'templates must be a list'}), 400
-        set_setting('email_templates', json.dumps(tpls))
+        _tu = _tpl_uid()
+        if _tu:   # recruiter: only THEIR new/changed templates are stored, for them
+            mine = tpl_diff_email(tpls, _tpl_company_list('email_templates', EMAIL_DEFAULT_TEMPLATES))
+            tpl_personal_set(_tu, 'email_templates', json.dumps(mine) if mine else '')
+            return jsonify({'ok': True, 'personal': True})
+        if not is_company_admin():
+            return jsonify({'error': 'Only an admin can change company templates'}), 403
+        set_setting('email_templates', json.dumps([_tpl_clean(t) for t in tpls if isinstance(t, dict)]))
         return jsonify({'ok': True})
-    raw = get_setting('email_templates', '')
-    if raw:
-        try:
-            return jsonify({'ok': True, 'templates': json.loads(raw)})
-        except Exception:
-            pass
-    return jsonify({'ok': True, 'templates': EMAIL_DEFAULT_TEMPLATES})
+    lst, _tu = tpl_list_for('email_templates', EMAIL_DEFAULT_TEMPLATES)
+    return jsonify({'ok': True, 'templates': lst, 'personal': bool(_tu)})
 
 
 @app.route('/api/candidate-lookup')

@@ -7587,6 +7587,7 @@ function buildWAMsg(c,type){
 // would make hidden fields read as empty and silently wipe those settings.
 var SETTINGS_TABS = [
   {id:'account',    ic:'&#128100;', label:'My Account',    sub:'Your profile &amp; plan'},
+  {id:'mytpl',      ic:'&#128221;', label:'My Templates',  sub:'Email &amp; WhatsApp', recruiterOnly:true},
   {id:'workspace',  ic:'&#127970;', label:'Workspace',     sub:'Company-wide setup'},
   {id:'comm',       ic:'&#9993;',   label:'Communication', sub:'Email, WhatsApp, templates'},
   {id:'automation', ic:'&#9889;',   label:'Automation',    sub:'Follow-ups &amp; tasks'},
@@ -7628,7 +7629,7 @@ function renderSettings(){
 
   var _rsOnly = _isRecruiterScoped();          // recruiters: company settings are the admin's
   if (_rsOnly) _setTab = 'account';
-  var rail = SETTINGS_TABS.filter(function(t){ return (!t.adminOnly || admin) && (!_rsOnly || t.id === 'account'); }).map(function(t){
+  var rail = SETTINGS_TABS.filter(function(t){ return (!t.adminOnly || admin) && (!t.recruiterOnly || _rsOnly) && (!_rsOnly || t.id === 'account' || t.id === 'mytpl'); }).map(function(t){
     return '<button class="set-tab" id="settab-' + t.id + '" onclick="setTab(\'' + t.id + '\')">'
       + '<span class="st-ic">' + t.ic + '</span>'
       + '<span style="min-width:0"><span class="st-l" style="display:block">' + t.label + '</span>'
@@ -7660,6 +7661,7 @@ function renderSettings(){
           '<div id="my-mail-card">' + myMailCardHTML() + '</div>'))
       + _setSaveBar('account')
     + '</div>'
+    + (_rsOnly ? myTemplatesPaneHTML(s) : '')
 
     // ── ② Workspace ───────────────────────────────────────────────────────
     + '<div class="set-pane" id="setpane-workspace" style="display:none">'
@@ -7765,7 +7767,7 @@ function renderSettings(){
 
   if(_rsOnly){
     Array.prototype.forEach.call(body.querySelectorAll('.set-pane'), function(p){
-      if(p.id !== 'setpane-account') p.parentNode.removeChild(p);
+      if(p.id !== 'setpane-account' && p.id !== 'setpane-mytpl') p.parentNode.removeChild(p);
     });
   }
   var wrap = body.querySelector('.set-wrap');
@@ -7844,7 +7846,7 @@ function setJump(secId, tab){
 function _setPaneFields(tab){
   var p = document.getElementById('setpane-' + tab); if(!p) return [];
   return Array.prototype.slice.call(p.querySelectorAll('input,textarea,select'))
-    .filter(function(el){ return el.id && el.type !== 'file'; });
+    .filter(function(el){ return el.id && el.type !== 'file' && (tab !== 'mytpl' || el.id.indexOf('mt-') === 0); });
 }
 function _setVal(el){ return (el.type === 'checkbox') ? (el.checked ? '1' : '0') : (el.value || ''); }
 function _setSnapshot(tab){
@@ -7875,7 +7877,9 @@ async function saveSettingsTab(tab){
   var btn = document.getElementById('setbar-btn-' + tab);
   if(btn){ btn.disabled = true; btn.innerHTML = 'Saving&hellip;'; }
   try{
-    if(tab === 'account'){
+    if(tab === 'mytpl'){
+      await saveMySequence();
+    } else if(tab === 'account'){
       await saveMyProfile();
       if(document.getElementById('mm-email') && _myMailDirty()) await saveMyMail(true);
     } else if(tab === 'workspace'){
@@ -8268,8 +8272,33 @@ async function openEditUser(uid){
     + f('smtp_app_password', 'App Password', '', 'password', u.has_password ? 'Saved — leave blank to keep' : '16 letters')
     + f('smtp_display_name', 'Sender name', u.smtp_display_name) + '</div>'
     + '<div style="display:flex;gap:8px;align-items:center;margin-top:12px"><button class="btn btn-g" onclick="saveEditUser(' + uid + ')">&#128190; Save</button>'
-    + '<span id="eu-msg" style="font-size:11px;color:#888"></span></div></div></div>';
+    + '<span id="eu-msg" style="font-size:11px;color:#888"></span></div>'
+    + '<div style="font-size:12px;font-weight:700;color:var(--navy);margin:18px 0 6px;border-top:0.5px dashed var(--line);padding-top:12px">Their own templates</div>'
+    + '<div id="eu-tpls" style="font-size:11.5px;color:var(--muted)">Loading&hellip;</div>'
+    + '</div></div>';
   openModal('modal-edit-user');
+  loadMemberTemplates(uid);
+}
+async function loadMemberTemplates(uid){
+  var box=document.getElementById('eu-tpls'); if(!box) return;
+  var r=await req('GET','/team/'+uid+'/templates');
+  if(!r||!r.ok){ box.textContent=(r&&r.error)||'Could not load'; return; }
+  if(!r.items.length){ box.textContent='No personal templates yet — they use the company templates.'; return; }
+  var lbl={email:'✉️ Email', whatsapp:'💬 WhatsApp'};
+  box.innerHTML=r.items.map(function(t){
+    return '<div style="border:0.5px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px;background:#fff">'
+      + '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:10px;background:#F0F4F8;color:#41607A;padding:2px 7px;border-radius:8px;font-weight:600">'+(lbl[t.kind]||'📱 Sequence')+'</span>'
+      + '<b style="color:var(--navy);flex:1;min-width:0">'+esc(t.title||'')+(t.cat?' <span style="font-weight:400;color:var(--muted)">· '+esc(t.cat)+'</span>':'')+'</b>'
+      + '<button class="btn btn-o" style="font-size:10px;padding:3px 8px" onclick="promoteMemberTemplate('+uid+',\''+t.kind+'\',\''+esc(String(t.id||''))+'\')">Make company template</button></div>'
+      + (t.subject?'<div style="margin-top:4px;color:#555"><b>Subject:</b> '+esc(t.subject)+'</div>':'')
+      + '<div style="margin-top:4px;color:#555;white-space:pre-wrap;max-height:90px;overflow:auto">'+esc(String(t.body||'').replace(/<[^>]+>/g,' ').slice(0,600))+'</div></div>';
+  }).join('');
+}
+async function promoteMemberTemplate(uid, kind, id){
+  if(!confirm('Make this a company template? Everyone in your team will get it.')) return;
+  var r=await req('POST','/team/'+uid+'/templates/promote',{kind:kind,id:id});
+  if(r&&r.ok){ toast('OK','Added to company templates'); loadMemberTemplates(uid); }
+  else toast('ERR',(r&&r.error)||'Could not add');
 }
 async function saveEditUser(uid){
   var v = function(id){ var el=document.getElementById('eu-'+id); return el ? el.value.trim() : ''; };
@@ -8296,6 +8325,67 @@ async function saveMyProfile(){
     var ss = document.getElementById('mp-save-status');
     if(ss){ ss.textContent = '✅ Saved'; setTimeout(function(){ ss.textContent=''; }, 2000); }
   } else toast('ERR', r.error || 'Failed');
+}
+
+// ── Per-recruiter templates ────────────────────────────────────────────────
+function _tplBadge(t){
+  if(!t || !t._src) return '';
+  return t._src==='company' ? '🏢 ' : (t._src==='custom' ? '✏️ ' : '⭐ ');
+}
+function _tplSuffix(t){ return (t && t._src==='custom') ? ' (my copy)' : ''; }
+function myTemplatesPaneHTML(s){
+  var seq=[{k:'template_msg1',label:'First Outreach',color:'#1D9E75'},
+           {k:'template_fu1',label:'Follow Up 1',color:'#378ADD'},
+           {k:'template_fu2',label:'Follow Up 2',color:'#534AB7'},
+           {k:'interview_template',label:'Interview message',color:'#185FA5'}];
+  return '<div class="set-pane" id="setpane-mytpl" style="display:none">'
+    + _setHead('My Templates', 'Your own wording. Company templates stay as they are for everyone else.')
+    + '<div style="font-size:11.5px;line-height:1.6;background:#F4F3EF;border-radius:9px;padding:10px 13px;margin-bottom:14px;color:#444">'
+    + '&#127970; <b>Company template</b> &mdash; set by your admin. Edit it and it becomes <b>your own copy</b> (&#9999;&#65039;); only you see the change.<br>'
+    + '&#11088; <b>My template</b> &mdash; one you created. Delete your copy any time to get the company version back.</div>'
+    + _sec('sec-mytpl-email', 'mytpl', 'My Email Templates', 'email template subject body jd',
+        '<div class="card" style="margin-bottom:14px"><div class="card-body">' + savedTemplatesHTML(s) + '</div></div>')
+    + _sec('sec-mytpl-wa', 'mytpl', 'My WhatsApp Templates', 'whatsapp wa template message',
+        '<div class="card" style="margin-bottom:14px"><div class="card-body"><div id="wa-settings-box"><div class="loading" style="padding:12px"><div class="spinner"></div>Loading&hellip;</div></div></div></div>')
+    + _sec('sec-mytpl-seq', 'mytpl', 'My WhatsApp Outreach &amp; Interview Message', 'outreach first message follow up interview',
+        '<div class="card" style="margin-bottom:14px"><div class="card-body">'
+        + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5">Variables for the WhatsApp messages: <span class="var-pill">{Name}</span> <span class="var-pill">{Position}</span> <span class="var-pill">{Location}</span> <span class="var-pill">{Company}</span> <span class="var-pill">{RecruiterName}</span>. '
+        + 'Interview: <code>{name}</code> <code>{role}</code> <code>{client}</code> <code>{round}</code> <code>{datetime}</code> <code>{mode}</code> <code>{location_line}</code> <code>{interviewer}</code> <code>{recruiter}</code>.</div>'
+        + seq.map(function(t){
+            var co = s['company_'+t.k]!==undefined ? s['company_'+t.k] : (s[t.k]||'');
+            var mine = (s[t.k]||'') !== co;
+            return '<div style="border:0.5px solid #e8e8e8;border-radius:8px;overflow:hidden;margin-bottom:10px">'
+              + '<div style="padding:8px 13px;background:#f9f9f9;border-top:2px solid '+t.color+';display:flex;align-items:center;justify-content:space-between">'
+              + '<span style="font-size:12px;font-weight:600">'+t.label+'</span>'
+              + '<span style="font-size:10.5px;color:var(--muted)"><span id="mt-tag-'+t.k+'">'+(mine?'✏️ My version':'🏢 Company version')+'</span>'
+              + ' &middot; <a href="#" onclick="mtReset(\''+t.k+'\');return false" style="color:#0F6E56">use company text</a></span></div>'
+              + '<div style="padding:9px 13px"><textarea class="ta" id="mt-'+t.k+'" rows="'+(t.k==='interview_template'?7:4)+'" data-company="'+esc(co)+'">'+esc(s[t.k]||'')+'</textarea></div></div>';
+          }).join('')
+        + '<span id="mt-status" style="font-size:11px;color:#888"></span>'
+        + '</div></div>')
+    + _setSaveBar('mytpl', 'Saves your WhatsApp outreach &amp; interview text. Email / WhatsApp templates save with their own Save button.')
+    + '</div>';
+}
+function mtReset(k){
+  var el=document.getElementById('mt-'+k); if(!el) return;
+  el.value = el.getAttribute('data-company') || '';
+  _setDirtyRefresh('mytpl');
+}
+async function saveMySequence(){
+  var keys=['template_msg1','template_fu1','template_fu2','interview_template'], body={};
+  keys.forEach(function(k){ var el=document.getElementById('mt-'+k); if(el) body[k]=el.value; });
+  var r=await req('PUT','/me/templates',body);
+  var st=document.getElementById('mt-status');
+  if(r&&r.ok){
+    keys.forEach(function(k){
+      var el=document.getElementById('mt-'+k); if(!el) return;
+      S.settings[k]=el.value;
+      var tag=document.getElementById('mt-tag-'+k);
+      if(tag) tag.textContent = (el.value.trim() && el.value !== (el.getAttribute('data-company')||'')) ? '✏️ My version' : '🏢 Company version';
+    });
+    toast('OK','Your templates are saved');
+    if(st){ st.style.color='#0F8A6B'; st.textContent='✓ Saved'; setTimeout(function(){ st.textContent=''; },2500); }
+  } else if(st){ st.style.color='#C0522B'; st.textContent=(r&&r.error)||'Could not save'; }
 }
 
 function savedTemplatesHTML(s){
@@ -8372,7 +8462,7 @@ async function loadEmailTemplates(){
 function etRefreshDropdown(selIdx){
   var sel=document.getElementById('et-sel'); if(!sel) return;
   var opts='<option value="-1">— Select a template —</option>';
-  _emailTpls.forEach(function(t,i){ opts+='<option value="'+i+'">'+esc(t.title||('Template '+(i+1)))+'</option>'; });
+  _emailTpls.forEach(function(t,i){ opts+='<option value="'+i+'">'+_tplBadge(t)+esc(t.title||('Template '+(i+1)))+_tplSuffix(t)+'</option>'; });
   sel.innerHTML=opts; sel.setAttribute('data-cur','-1'); sel.value=String(typeof selIdx==='number'?selIdx:-1);
   etSelect();
 }
@@ -8404,19 +8494,29 @@ async function etSave(){
   _emailTpls[i]={id:_emailTpls[i].id||('t'+Date.now()),
     title:(document.getElementById('et-title').value||'').trim()||'Untitled template',
     subject:(document.getElementById('et-subject').value||'').trim(),
-    body:etGetBody()};
+    body:etGetBody(), _src:_emailTpls[i]._src};
   var st=document.getElementById('et-status'); if(st){ st.style.color='#0F6E56'; st.textContent='Saving…'; }
   var r=await req('POST','/email-templates',{templates:_emailTpls});
-  if(r&&r.ok){ if(st){ st.innerHTML='Saved &#10003;'; } etRefreshDropdown(i); }
+  if(r&&r.ok){
+    if(r.personal){
+      var keepId=_emailTpls[i].id;
+      try{ var rr=await req('GET','/email-templates'); _emailTpls=(rr&&rr.templates)||_emailTpls; }catch(e){}
+      var ni=_emailTpls.findIndex(function(t){ return t.id===keepId; }); i = ni>=0 ? ni : i;
+    }
+    etRefreshDropdown(i);
+    if(st){ st.style.color='#0F6E56'; st.innerHTML = r.personal ? 'Saved as your own template &#10003;' : 'Saved &#10003;'; }
+  }
   else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Save failed'; } }
 }
 async function etDelete(){
   var sel=document.getElementById('et-sel'); var i=parseInt(sel.value,10);
   if(isNaN(i)||i<0){ return; }
-  if(!confirm('Delete this email template?')) return;
+  var _src=(_emailTpls[i]||{})._src;
+  if(_src==='company'){ toast('&#8505;&#65039;','This is a company template &mdash; only your admin can delete it. Edit it to make your own copy.'); return; }
+  if(!confirm(_src==='custom' ? 'Remove your copy? The company version comes back.' : 'Delete this email template?')) return;
   _emailTpls.splice(i,1);
   var r=await req('POST','/email-templates',{templates:_emailTpls});
-  if(r&&r.ok){ etRefreshDropdown(-1); }
+  if(r&&r.ok){ if(r.personal){ await loadEmailTemplates(); } else etRefreshDropdown(-1); }
   else { toast('&#9888;&#65039;',(r&&r.error)||'Delete failed'); }
 }
 // ── Variable autocomplete (generic, robust): type "{" then filter ─────────
@@ -8565,7 +8665,7 @@ function waRenderTplDropdown(selIdx){
   var box=_waBox(); var csel=document.getElementById('wa-cat-sel'); var tsel=document.getElementById('wa-tpl-sel'); if(!box||!csel||!tsel) return;
   var ci=parseInt(csel.value,10); var cat=box._cats[ci]||{items:[]};
   var opts='<option value="-1">— Select a template —</option>';
-  (cat.items||[]).forEach(function(t,i){ opts+='<option value="'+i+'">'+esc(t.title||('Template '+(i+1)))+'</option>'; });
+  (cat.items||[]).forEach(function(t,i){ opts+='<option value="'+i+'">'+_tplBadge(t)+esc(t.title||('Template '+(i+1)))+_tplSuffix(t)+'</option>'; });
   tsel.innerHTML=opts; tsel.setAttribute('data-cur','-1'); tsel.setAttribute('data-cat',String(ci));
   tsel.value=String(typeof selIdx==='number'?selIdx:-1);
   waTplChange();
@@ -8596,10 +8696,15 @@ async function waTplDelete(){
   var box=_waBox(); var csel=document.getElementById('wa-cat-sel'); var tsel=document.getElementById('wa-tpl-sel'); if(!box) return;
   var ci=parseInt(csel.value,10), ti=parseInt(tsel.value,10);
   if(isNaN(ci)||ci<0||isNaN(ti)||ti<0) return;
-  if(!confirm('Delete this WhatsApp template?')) return;
+  var _src=((box._cats[ci].items||[])[ti]||{})._src;
+  if(_src==='company'){ toast('&#8505;&#65039;','This is a company template &mdash; only your admin can delete it. Edit it to make your own copy.'); return; }
+  if(!confirm(_src==='custom' ? 'Remove your copy? The company version comes back.' : 'Delete this WhatsApp template?')) return;
   box._cats[ci].items.splice(ti,1);
   var r=await req('POST','/wa-templates',{templates:box._cats});
-  if(r&&r.ok){ _waTemplatesCache=box._cats; waRenderTplDropdown(-1); }
+  if(r&&r.ok){
+    if(r.personal){ box._cats=await waLoadTemplates(true); waRenderCatDropdown(); var cs=document.getElementById('wa-cat-sel'); if(cs&&box._cats[ci]){ cs.value=String(ci); waRenderTplDropdown(-1); } }
+    else { _waTemplatesCache=box._cats; waRenderTplDropdown(-1); }
+  }
   else toast('&#9888;&#65039;',(r&&r.error)||'Delete failed');
 }
 async function waLearnStyle(){
@@ -8628,7 +8733,16 @@ async function saveWaTemplates(){
   }
   var st=document.getElementById('wa-tpl-status'); if(st){ st.style.color='#0F6E56'; st.textContent='Saving…'; }
   var r=await req('POST','/wa-templates',{templates:box._cats});
-  if(r&&r.ok){ _waTemplatesCache=box._cats; if(st){ st.innerHTML='Saved &#10003;'; } waRenderTplDropdown(ti); }
+  if(r&&r.ok){
+    if(r.personal){
+      var keep=(box._cats[ci].items[ti]||{}).id;
+      box._cats=await waLoadTemplates(true); waRenderCatDropdown();
+      var cs=document.getElementById('wa-cat-sel'); if(cs){ cs.value=String(ci); }
+      var nti=((box._cats[ci]||{}).items||[]).findIndex(function(t){ return t.id===keep; });
+      waRenderTplDropdown(nti>=0?nti:ti);
+      st=document.getElementById('wa-tpl-status'); if(st){ st.style.color='#0F6E56'; st.innerHTML='Saved as your own template &#10003;'; }
+    } else { _waTemplatesCache=box._cats; if(st){ st.innerHTML='Saved &#10003;'; } waRenderTplDropdown(ti); }
+  }
   else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Save failed'; } }
 }
 function emailConfigHTML(s){
