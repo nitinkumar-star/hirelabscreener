@@ -6541,7 +6541,7 @@ def _mail_identity(uid):
             except Exception:
                 row = {}          # table not migrated yet -> company behaviour
             em = (row.get('smtp_email') or '').strip()
-            pw = (row.get('smtp_app_password') or '').replace(' ', '').strip()
+            pw = re.sub(r'[\s\u00a0\u2000-\u200f\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]+', '', row.get('smtp_app_password') or '')
             is_adminish = (u.get('role') == 'admin') or (u.get('is_company_admin') == 1)
             name = (u.get('display_name') or u.get('username') or '').strip()
             ident = {
@@ -17111,6 +17111,76 @@ def _smtp_params():
     return email, pw, host, port, dname
 
 
+class SmtpStepError(Exception):
+    """Connection-level SMTP failure with the step it happened at."""
+    def __init__(self, step, detail):
+        Exception.__init__(self, step + ': ' + detail)
+        self.step, self.detail = step, detail
+
+
+def _smtp_login_once(srv, user, pw):
+    """Log in with ONE auth method. smtplib.login() tries PLAIN, then LOGIN;
+    Gmail hangs up after rejecting the first try, so the second try fails
+    with 'Connection unexpectedly closed' and Gmail's real reason (wrong
+    password, sign-in blocked, ...) is lost. Asking once keeps the reason."""
+    if not hasattr(srv, 'ehlo_or_helo_if_needed') or not hasattr(srv, 'auth_plain'):
+        return srv.login(user, pw)          # test doubles
+    srv.ehlo_or_helo_if_needed()
+    feats = (srv.esmtp_features.get('auth', '') or '').upper().split()
+    if 'PLAIN' not in feats:
+        return srv.login(user, pw)
+    srv.user, srv.password = user, pw
+    return srv.auth('PLAIN', srv.auth_plain)
+
+
+def smtp_open(host, port, user, pw, timeout=20):
+    """Open an authenticated SMTP session. Tries STARTTLS on `port` (587) and,
+    when that connection is refused/dropped/times out, falls back to implicit
+    SSL on 465 — some networks close 587 but allow 465. A wrong password is
+    NOT retried (raises smtplib.SMTPAuthenticationError straight away).
+    Returns (server, port_used). Raises SmtpStepError on connection problems."""
+    import socket as _sock
+    # copy-pasted App Passwords carry non-breaking / zero-width spaces
+    _ws = re.compile(r'[\s\u00a0\u2000-\u200f\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]+')
+    user = _ws.sub('', str(user or ''))
+    pw = _ws.sub('', str(pw or ''))
+    attempts = [('starttls', port or 587)]
+    if (port or 587) != 465:
+        attempts.append(('ssl', 465))
+    last = None
+    for mode, p in attempts:
+        step = 'connect'
+        srv = None
+        try:
+            if mode == 'ssl':
+                srv = smtplib.SMTP_SSL(host, p, timeout=timeout)
+            else:
+                srv = smtplib.SMTP(host, p, timeout=timeout)
+                step = 'secure (STARTTLS)'
+                srv.starttls()
+            step = 'login'
+            _smtp_login_once(srv, user, pw)
+            return srv, p
+        except smtplib.SMTPAuthenticationError:
+            try:
+                srv and srv.close()
+            except Exception:
+                pass
+            raise
+        except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, ConnectionError,
+                _sock.timeout, TimeoutError, OSError) as e:
+            try:
+                srv and srv.close()
+            except Exception:
+                pass
+            err = SmtpStepError('%s on %s:%s' % (step, host, p), str(e) or e.__class__.__name__)
+            # keep the most telling failure: reaching login beats a blocked port
+            if last is None or (step == 'login' and not last.step.startswith('login')):
+                last = err
+            continue
+    raise last or SmtpStepError('connect', 'no route to ' + host)
+
+
 def _build_signature():
     """Official recruiter signature from ATS settings — (plain, html). Never
     AI-generated. Falls back to company name if nothing is configured."""
@@ -17329,10 +17399,8 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
         if extra:
             rcpts += [x.strip() for x in extra.split(',') if x.strip()]
     try:
-        server = smtplib.SMTP(host, port, timeout=20)
-        server.starttls()
         # SES's SMTP username is a generated credential, NOT the From address.
-        server.login((smtp_override or {}).get('smtp_user') or email_addr, pw)
+        server, _ = smtp_open(host, port, (smtp_override or {}).get('smtp_user') or email_addr, pw)
         server.sendmail(email_addr, rcpts, msg.as_string())
         server.quit()
     except smtplib.SMTPAuthenticationError:
