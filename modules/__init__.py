@@ -25,6 +25,7 @@ from importlib import import_module
 _MODULE_NAMES = [
     'access',          # recruiter access guard + multi-recruiter assignment (load first)
     'mail_identity',   # per-recruiter Gmail + signature
+    'user_templates',  # per-recruiter email / WhatsApp templates
     'crm',
     'bd',
     'bd_records',

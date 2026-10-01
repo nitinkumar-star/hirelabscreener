@@ -305,7 +305,7 @@ _ADMIN_ONLY = [(ANY, r'^/api/(activity|audit|analytics|bd|billing|campaigns|comm
                (ANY, r'^/api/email/(?!signature/?$)'),               # company mailbox setup / sync
                (W,   r'^/api/email/signature/?$'),
                (ANY, r'^/api/ai/(?!search/?$)'),                     # index/queue maintenance
-               (W,   r'^/api/(settings|form-config|email-templates|wa-templates|skill-graph)/?$'),
+               (W,   r'^/api/(settings|form-config|skill-graph)/?$'),   # templates: personal copies, see user_templates
                (W,   r'^/api/workspace/vocab/?$'),
                (W,   r'^/api/email-agent/(kb|scan)/?$'),
                (ANY, r'^/api/wa/(learned|webhook)(/|$)'),
