@@ -867,7 +867,7 @@ body{font-size:14px !important; line-height:1.5}
 
   <div style="padding:6px 0 2px">
     <a href="#" class="sb-gear" id="sb-home" onclick="return navClick(event,goHome)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Home</span><span class="sb-nav-sub">Dashboard &middot; today&#39;s focus</span></span></a>
-    <a href="#command" class="sb-gear" id="sb-command" onclick="return navClick(event,openCommandCenter)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Command Center</span><span class="sb-nav-sub">₹100 Cr brain &middot; strategy</span></span></a>
+    <!-- Command Center retired Oct 2026 -->
     <a href="#jobs" class="sb-gear" id="sb-jobs" onclick="return navClick(event,openJobs)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Jobs</span><span class="sb-nav-sub">All mandates &middot; pipeline</span></span></a>
     <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12l3 3 5-6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Tasks</span><span class="sb-nav-sub">Reminders &middot; interviews &middot; follow-ups</span></span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
     <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Analytics</span><span class="sb-nav-sub">Insights &middot; funnel &middot; sources</span></span></a>
@@ -1054,9 +1054,6 @@ body{font-size:14px !important; line-height:1.5}
   </div>
   <div id="email-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div id="emailbox-body" style="flex:1;overflow:auto;padding:20px"></div>
-  </div>
-  <div id="command-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
-    <div id="command-body" style="flex:1;overflow:auto;padding:20px"></div>
   </div>
   <div id="tasks-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
@@ -5090,113 +5087,22 @@ function openEmailBox(){
   try{ location.hash='#email'; }catch(e){}
   renderEmailBox();
 }
-function openCommandCenter(){
-  closeSidebarOnMobile(); _hideAllViews();
-  var v=document.getElementById('command-view'); if(v) v.style.display='flex';
-  var sb=document.getElementById('sb-command'); if(sb) sb.classList.add('active');
-  try{ location.hash='#command'; }catch(e){}
-  renderCommandCenter();
-}
-function _ccR(n){ n=Math.round(n||0); return '\u20B9'+n.toLocaleString('en-IN'); }
-function _ccCr(n){ return '\u20B9'+(( (n||0)/10000000).toFixed(2))+' Cr'; }
-async function renderCommandCenter(){
-  var el=document.getElementById('command-body'); if(!el) return;
-  el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
-  var r={};
-  try{ r=await req('GET','/command/overview'); }catch(e){}
-  var o=(r&&r.overview)||{};
-  var lp=''; try{ lp=r.last_plan?JSON.parse(r.last_plan):''; }catch(e){ lp=''; }
-  var lr=''; try{ lr=r.last_review?JSON.parse(r.last_review):''; }catch(e){ lr=''; }
-  var tgtTotal=o.target_total||1000000000, tgtYears=o.target_years||3;
-  var yrTarget=o.year_target||0, received=o.received||0;
-  var pct=yrTarget?Math.min(100,Math.round(received/yrTarget*100)):0;
-  var card=function(lbl,val,col,sub){ return '<div style="flex:1;min-width:150px;background:#fff;border:1px solid #eee;border-radius:12px;padding:14px 16px">'
-    +'<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.4px">'+lbl+'</div>'
-    +'<div style="font-size:20px;font-weight:700;color:'+(col||'#1B1B18')+';margin-top:4px">'+val+'</div>'
-    +(sub?'<div style="font-size:10.5px;color:#aaa;margin-top:2px">'+sub+'</div>':'')+'</div>'; };
-  // North-star header
-  var northStar='<div style="background:linear-gradient(135deg,#2B2A6B,#534AB7);color:#fff;border-radius:16px;padding:20px 22px;margin-bottom:16px">'
-    +'<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;align-items:flex-end">'
-    +'<div><div style="font-size:12px;opacity:.8;text-transform:uppercase;letter-spacing:1px">North Star &middot; '+tgtYears+'-year mission</div>'
-    +'<div style="font-size:30px;font-weight:800;margin-top:2px">'+_ccCr(tgtTotal)+' revenue company</div></div>'
-    +'<div style="text-align:right"><div style="font-size:11px;opacity:.8">This year target</div><div style="font-size:20px;font-weight:700">'+(yrTarget?_ccCr(yrTarget):'— set it below')+'</div></div></div>'
-    +(yrTarget?('<div style="margin-top:14px"><div style="display:flex;justify-content:space-between;font-size:11px;opacity:.9"><span>Received '+_ccR(received)+'</span><span>'+pct+'% of year target</span></div>'
-      +'<div style="height:8px;background:rgba(255,255,255,.2);border-radius:6px;margin-top:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:#7CF0C0"></div></div></div>'):'')
-    +'</div>';
-  // metric cards
-  var netCol=(o.net_profit||0)>=0?'#0F7A52':'#C0392B';
-  var runwayCol=(o.runway_months||0)>=6?'#0F7A52':((o.runway_months||0)>=3?'#B4690E':'#C0392B');
-  var cards='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
-    +card('Received (paid)',_ccR(o.received),'#0F7A52')
-    +card('Outstanding',_ccR(o.outstanding),'#B4690E')
-    +card('Net Profit',_ccR(o.net_profit),netCol)
-    +card('Runway',(o.runway_months||0)+' mo',runwayCol,'cash \u00F7 fixed cost')
-    +'</div>'
-    +'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
-    +card('Open Mandates',o.open_mandates||0,'#534AB7')
-    +card('Candidates',o.total_candidates||0,'#555')
-    +card('Shared w/ Client',o.shared_with_client||0,'#2456A6')
-    +card('Placed / Joined',o.placed||0,'#0F7A52')
-    +'</div>';
-  // snapshot form
-  var snap='<div style="background:#fff;border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:16px">'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-weight:600">Business Snapshot <span style="font-size:10.5px;color:#999;font-weight:400">(brain ko yeh numbers chahiye — jo kisi table mein nahi)</span></div>'
-    +'<button class="btn" style="background:#0F6E56;color:#fff;border:none;font-size:12px" onclick="saveSnapshot()">Save</button></div>'
-    +'<div style="display:flex;gap:10px;flex-wrap:wrap">'
-    +_ccInp('cc-bank','Bank cash (\u20B9)',o.bank_cash)
-    +_ccInp('cc-fixed','Monthly fixed cost (\u20B9)',o.monthly_fixed)
-    +_ccInp('cc-team','Team size',o.team_size)
-    +_ccInp('cc-ytarget','This year target (\u20B9)',o.year_target)
-    +_ccInp('cc-funding','Funding / discounting available (\u20B9)',o.funding_available)
-    +'</div></div>';
-  // plan section
-  var planHtml='';
-  if(lp&&lp.md){ planHtml='<div style="font-size:10.5px;color:#999;margin-bottom:6px">Last generated: '+esc(lp.at||'')+'</div>'
-    +'<div style="background:#fff;border:1px solid #eee;border-radius:12px;padding:18px 20px">'+_mdToHtml(lp.md)+'</div>'; }
-  else { planHtml='<div style="background:#FAF9FF;border:1px dashed #D5D0F0;border-radius:12px;padding:24px;text-align:center;color:#777">Business Snapshot bharo, phir <b>Generate Strategic Plan</b> dabao — brain tumhare live data pe ₹100 Cr ka honest weekly plan dega.</div>'; }
-  el.innerHTML=northStar
-    +'<div id="cc-tasks-card" style="background:#fff;border:1px solid #eee;border-radius:14px;padding:16px;margin-bottom:16px">'
-      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-weight:700;font-size:16px">\uD83D\uDCCB Today\u2019s Tasks <span style="font-size:10.5px;color:#999;font-weight:400">\u2014 tumhare work status se, refine kar sakte ho</span></div>'
-      +'<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12.5px" onclick="generateTasks(this)">\u2728 Generate Today\u2019s Tasks</button></div>'
-      +'<div id="cc-tasks-list">Loading…</div>'
-      +'<div style="display:flex;gap:8px;margin-top:10px"><input id="cc-task-add" class="inp" style="flex:1;font-size:12.5px" placeholder="Apna task add karo…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addCommandTask();}"><button class="btn btn-o" style="font-size:12px" onclick="addCommandTask()">Add</button></div>'
-      +'<div style="margin-top:8px;padding-top:10px;border-top:1px dashed #eee"><div style="font-size:10.5px;color:#888;margin-bottom:4px">&#128172; Refine the list \u2014 brain se bolo kaise badalna hai (jaise "har task mein client aur position ka naam daalo", "sirf payments pe focus", "aur detail do")</div>'
-      +'<div style="display:flex;gap:8px"><input id="cc-task-refine" class="inp" style="flex:1;font-size:12.5px" placeholder="e.g. har task mein client aur position naam bhi batao" onkeydown="if(event.key===\'Enter\'){event.preventDefault();refineTasks(this);}"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="refineTasks(this)">Refine</button></div>'
-      +'<div id="cc-task-prefs" style="font-size:10px;color:#aaa;margin-top:5px"></div></div>'
-    +'</div>'
-    +cards+snap
-    +'<div id="cc-vector-card" style="background:#fff;border:1px solid #eee;border-radius:14px;padding:16px;margin-bottom:16px">'
-      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-weight:700;font-size:15px">\uD83D\uDD0E Knowledge Base <span style="font-size:10.5px;color:#999;font-weight:400">\u2014 AI memory (vector): candidates, positions, emails semantic search</span></div>'
-      +'<button class="btn btn-o" style="font-size:11px" onclick="_ccToggleVec()" id="cc-vec-toggle">Setup</button></div>'
-      +'<div id="cc-vector-status" style="font-size:12px;color:#666">Loading…</div>'
-      +'<div id="cc-vector-setup" style="display:none;margin-top:10px;border-top:1px dashed #eee;padding-top:10px">'
-        +'<div style="font-size:10.5px;color:#888;margin-bottom:6px">Embeddings = <b>Jina</b>. API key <b>Render env var <code>JINA_API_KEY</code></b> mein daalo (UI mein nahi). Model/Base already set hain \u2014 bas Reindex dabao.</div>'
-        +'<div class="fg-row"><label>Embedding API Key <span style="color:#aaa">(optional \u2014 Render env preferred)</span></label><input id="vec-key" class="inp" type="password" style="width:100%" placeholder="Render env JINA_API_KEY (recommended) — ya yahan paste"></div>'
-        +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
-          +'<div style="flex:1;min-width:160px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">Model</label><input id="vec-model" class="inp" style="width:100%" placeholder="text-embedding-3-small"></div>'
-          +'<div style="flex:1;min-width:160px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">Base URL</label><input id="vec-base" class="inp" style="width:100%" placeholder="https://api.openai.com/v1"></div>'
-        +'</div>'
-        +'<div style="display:flex;gap:8px;margin-top:10px"><button class="btn" style="background:#0F6E56;color:#fff;border:none;font-size:12px" onclick="saveVectorConfig()">Save config</button>'
-        +'<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="reindexVectors(this)">\uD83D\uDD04 Reindex ATS</button></div>'
-      +'</div>'
-    +'</div>'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="font-weight:700;font-size:16px">\uD83E\uDDE0 Strategic Brain</div>'
-    +'<button class="btn" style="background:#534AB7;color:#fff;border:none" onclick="generatePlan(this)">\u2728 Generate Strategic Plan</button></div>'
-    +planHtml
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin:22px 0 10px"><div style="font-weight:700;font-size:16px">\uD83D\uDCC4 Weekly Review <span style="font-size:10.5px;color:#999;font-weight:400">\u2014 advisor ko bhejने ke liye, poora business</span></div>'
-    +'<button class="btn" style="background:#2B2A6B;color:#fff;border:none" onclick="generateWeeklyReview(this)">\uD83D\uDCC4 Generate Weekly Review</button></div>'
-    +(lr&&lr.md?('<div style="font-size:10.5px;color:#999;margin-bottom:6px">Generated: '+esc(lr.at||'')+' &nbsp;<a href="#" onclick="_ccCopyReview();return false;" style="color:#534AB7">copy</a></div><div id="cc-review-md" style="background:#fff;border:1px solid #eee;border-radius:12px;padding:18px 20px">'+_mdToHtml(lr.md)+'</div>'):'<div id="cc-review-md" style="background:#FAF9FF;border:1px dashed #D5D0F0;border-radius:12px;padding:20px;text-align:center;color:#777">Hafte ke end mein <b>Generate Weekly Review</b> dabao \u2014 money, placements, pipeline, risks aur next-week priorities ka poora report banega jo advisor ko bhej sako.</div>')
-    +'<div style="margin-top:22px;background:#fff;border:1px solid #eee;border-radius:14px;overflow:hidden">'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #f0f0f0;background:#FAF9FF">'
-      +'<div style="font-weight:700">\uD83D\uDCAC Talk to your brain <span style="font-size:10.5px;color:#999;font-weight:400">— jo baatein kisi field mein nahi (jaise "is week invoice clear ho rahi hai"), yahan batao; brain yaad rakhega</span></div>'
-      +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="clearCommandChat()">Clear</button></div>'
-    +'<div id="cc-chat-msgs" style="max-height:44vh;overflow:auto;padding:14px 16px;font-size:13px">Loading…</div>'
-    +'<div style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid #f0f0f0">'
-      +'<textarea id="cc-chat-input" rows="1" class="inp" style="flex:1;resize:none" placeholder="Brain se baat karo… (e.g. Nanj Solar ki invoice is week clear ho rahi hai)" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();sendCommandChat();}"></textarea>'
-      +'<button class="btn" style="background:#534AB7;color:#fff;border:none" onclick="sendCommandChat()" id="cc-chat-send">Send</button></div></div>';
-  loadCommandChat();
-  loadCommandTasks(true);
-  loadVectorStatus();
+// Knowledge Base (AI memory) — moved here from the retired Command Center.
+function knowledgeBaseHTML(){
+  return '<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head" style="display:flex;justify-content:space-between;align-items:center">'
+    + '<span style="font-weight:500">\uD83D\uDD0E Knowledge Base <span style="font-size:10.5px;color:#999;font-weight:400">\u2014 AI memory (vector): candidates, positions, emails semantic search</span></span>'
+    + '<button class="btn btn-o" style="font-size:11px" onclick="_ccToggleVec()" id="cc-vec-toggle">Setup</button></div><div class="card-body">'
+    + '<div id="cc-vector-status" style="font-size:12px;color:#666">Loading\u2026</div>'
+    + '<div id="cc-vector-setup" style="display:none;margin-top:10px;border-top:1px dashed #eee;padding-top:10px">'
+    + '<div style="font-size:10.5px;color:#888;margin-bottom:6px">Embeddings = <b>Jina</b>. API key <b>Render env var <code>JINA_API_KEY</code></b> mein daalo (UI mein nahi). Model/Base already set hain \u2014 bas Reindex dabao.</div>'
+    + '<div class="fg-row"><label>Embedding API Key <span style="color:#aaa">(optional \u2014 Render env preferred)</span></label><input id="vec-key" class="inp" type="password" style="width:100%" placeholder="Render env JINA_API_KEY (recommended) \u2014 ya yahan paste"></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:160px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">Model</label><input id="vec-model" class="inp" style="width:100%" placeholder="jina-embeddings-v3"></div>'
+    + '<div style="flex:1;min-width:160px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">Base URL</label><input id="vec-base" class="inp" style="width:100%" placeholder="https://api.jina.ai/v1"></div>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;margin-top:10px"><button class="btn" style="background:#0F6E56;color:#fff;border:none;font-size:12px" onclick="saveVectorConfig()">Save config</button>'
+    + '<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="reindexVectors(this)">\uD83D\uDD04 Reindex ATS</button></div>'
+    + '</div></div></div>';
 }
 function _ccToggleVec(){ var s=document.getElementById('cc-vector-setup'); if(s) s.style.display=(s.style.display==='none')?'block':'none'; }
 async function loadVectorStatus(){
@@ -5228,220 +5134,8 @@ async function reindexVectors(btn){
   toast('Done',(r.embedded||0)+' embedded, '+(r.skipped||0)+' unchanged');
   loadVectorStatus();
 }
-var _ccTaskPrioCol={high:'#C0392B',medium:'#B4690E',low:'#888'};
-var _ccPrioMeta={high:{c:'#E5484D',bg:'#FDECEC',lbl:'HIGH'},medium:{c:'#B4690E',bg:'#FBF0E2',lbl:'MED'},low:{c:'#7A8699',bg:'#EEF1F5',lbl:'LOW'}};
-var _ccCatMeta={
-  Payment:{i:'\uD83D\uDCB0',c:'#0F7A52'}, Invoice:{i:'\uD83E\uDDFE',c:'#0F7A52'},
-  Placement:{i:'\uD83C\uDFAF',c:'#534AB7'}, 'Follow-up':{i:'\uD83D\uDCDE',c:'#2456A6'},
-  Sourcing:{i:'\uD83D\uDD0D',c:'#B4690E'}, Client:{i:'\uD83E\uDD1D',c:'#2456A6'},
-  Email:{i:'\u2709\uFE0F',c:'#666'}, Admin:{i:'\uD83D\uDDC2\uFE0F',c:'#888'},
-  Growth:{i:'\uD83D\uDCC8',c:'#8E24AA'}
-};
-function _ccCat(cat){ return _ccCatMeta[cat]||{i:'\u26A1',c:'#888'}; }
-async function loadCommandTasks(autogen){
-  var box=document.getElementById('cc-tasks-list'); if(!box) return;
-  var r={};
-  try{ r=await req('GET','/command/tasks'); }catch(e){}
-  var tasks=(r&&r.tasks)||[];
-  var todayStr=new Date().toISOString().slice(0,10);
-  var hasTodayAI=tasks.some(function(t){return t.source==='ai' && t.task_date===todayStr;});
-  var hasRefs=tasks.some(function(t){return t.source==='ai' && (t.ref||'').trim();});
-  // Auto: agar aaj ke AI tasks nahi hain, YA hain par purane (bina deep-link) hain to ek baar bana do
-  if(autogen && (!hasTodayAI || (hasTodayAI && !hasRefs)) && !window._ccAutoGenTried){
-    window._ccAutoGenTried=true;
-    box.innerHTML='<div style="color:#888;padding:12px;text-align:center">\uD83E\uDDE0 Aaj ke tasks bana raha hoon (clickable)…</div>';
-    try{ var g=await req('POST','/command/tasks/generate',{}); if(g&&g.ok){ return loadCommandTasks(false); } }catch(e){}
-  }
-  if(!tasks.length){ box.innerHTML='<div style="color:#aaa;padding:12px;text-align:center">Abhi koi task nahi. <b>Generate Today\u2019s Tasks</b> dabao \u2014 brain tumhare pipeline, payments aur placements dekh ke aaj ka plan dega.</div>'; try{ var pr=await req('GET','/command/tasks/prefs'); _renderTaskPrefs(pr&&pr.prefs); }catch(e){} return; }
-  var doneN=tasks.filter(function(t){return t.done;}).length, totN=tasks.length;
-  var pctDone=totN?Math.round(doneN/totN*100):0;
-  var header='<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
-    +'<div style="flex:1;height:7px;background:#eceaf6;border-radius:6px;overflow:hidden"><div style="width:'+pctDone+'%;height:100%;background:linear-gradient(90deg,#7C6FF0,#534AB7);transition:width .3s"></div></div>'
-    +'<div style="font-size:11px;color:#888;white-space:nowrap;font-weight:600">'+doneN+' / '+totN+' done</div></div>';
-  box.innerHTML=header+tasks.map(function(t){
-    var pm=_ccPrioMeta[t.priority]||_ccPrioMeta.low;
-    var cm=_ccCat(t.category);
-    var clickable=(t.ref||'').trim() && !t.done;
-    var onclk=clickable?(' onclick="_ccOpenRef(\''+esc(t.ref)+'\')"'):'';
-    var cardBg=t.done?'#fafafa':'#fff';
-    var textStyle='font-size:13.5px;line-height:1.4;font-weight:500;'+(t.done?'text-decoration:line-through;color:#b0b0b0':(clickable?'color:#2B2A6B;cursor:pointer':'color:#1B1B18'));
-    var chips='<span style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:600;color:'+cm.c+';background:'+cm.c+'14;border-radius:20px;padding:2px 8px">'+cm.i+' '+esc(t.category||'Task')+'</span>'
-      +'<span style="font-size:9.5px;font-weight:700;color:'+pm.c+';background:'+pm.bg+';border-radius:20px;padding:2px 7px;letter-spacing:.3px">'+pm.lbl+'</span>'
-      +(t.source==='manual'?'<span style="font-size:9.5px;color:#aaa">\u2795 added</span>':'');
-    return '<div class="cc-taskcard" style="display:flex;gap:11px;padding:12px 13px;border-radius:13px;margin-bottom:9px;background:'+cardBg+';border:1px solid #ececf3;border-left:4px solid '+pm.c+';box-shadow:0 1px 2px rgba(20,20,40,.04)">'
-      +'<div onclick="toggleCommandTask('+t.id+','+(t.done?'false':'true')+')" title="Mark done" style="flex-shrink:0;width:20px;height:20px;margin-top:1px;border-radius:6px;border:2px solid '+(t.done?'#534AB7':'#cfcbe6')+';background:'+(t.done?'#534AB7':'#fff')+';cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;line-height:1">'+(t.done?'\u2713':'')+'</div>'
-      +'<div style="flex:1;min-width:0">'
-        +'<div'+onclk+' style="'+textStyle+'">'+esc(t.text)+(clickable?' <span style="font-size:11px">\u2197\uFE0F</span>':'')+'</div>'
-        +(t.reason&&!t.done?'<div style="font-size:11.5px;color:#7a7a7a;margin-top:4px;line-height:1.4"><span style="opacity:.7">\uD83D\uDCA1</span> '+esc(t.reason)+'</div>':'')
-        +'<div style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap">'+chips+'</div>'
-      +'</div>'
-      +'<div style="display:flex;flex-direction:column;gap:5px;align-items:center;flex-shrink:0">'
-        +(!t.done?'<button title="Snooze to tomorrow" onclick="snoozeTask('+t.id+')" style="border:none;background:#f4f3fb;color:#8a83b8;width:26px;height:26px;border-radius:8px;cursor:pointer;font-size:13px">\u21B7</button>':'')
-        +'<button title="Delete" onclick="deleteCommandTask('+t.id+')" style="border:none;background:#fcf0f0;color:#d0656a;width:26px;height:26px;border-radius:8px;cursor:pointer;font-size:12px">\u2715</button>'
-      +'</div></div>';
-  }).join('')
-    +((r.snoozed_count>0)?('<div style="font-size:11px;color:#9a94c0;padding:6px 4px 0;text-align:center">\u21B7 '+r.snoozed_count+' task(s) snoozed for tomorrow</div>'):'');
-  try{ var pr=await req('GET','/command/tasks/prefs'); _renderTaskPrefs(pr&&pr.prefs); }catch(e){}
-}
-function _ccOpenRef(ref){
-  if(!ref) return;
-  try{ _hideAllViews(); }catch(e){}
-  var p=ref.split(':');
-  if(p[0]==='cand' && p.length>=3){
-    var mid=parseInt(p[1]); var cid=parseInt(p[2]);
-    if(cid){ try{ openProfileById(cid, isNaN(mid)?null:mid); return; }catch(e){} }
-  }
-  if((p[0]==='cand'||p[0]==='mandate') && p[1]){
-    var mm=parseInt(p[1]);
-    if(!isNaN(mm)){
-      try{ var mv=document.getElementById('mandate-view'); if(mv) mv.style.display='flex'; selectMandate(mm); return; }
-      catch(e){ location.hash='mandate/'+mm; return; }
-    }
-  }
-  if(p[0]==='invoice'){ try{ openInvoicing(); }catch(e){} }
-}
-function snoozeTask(id){ openSnoozeMenu(id); }
-function _snoozeClose(){ var e=document.getElementById('snooze-modal'); if(e) e.remove(); }
-function _dPlus(days){ return new Date(Date.now()+days*86400000).toISOString().slice(0,10); }
-function openSnoozeMenu(id){
-  _snoozeClose();
-  var minD=_dPlus(1);
-  var bg=document.createElement('div'); bg.id='snooze-modal';
-  bg.style.cssText='position:fixed;inset:0;background:rgba(20,20,40,.35);z-index:9999;display:flex;align-items:center;justify-content:center';
-  bg.onclick=function(e){ if(e.target===bg) _snoozeClose(); };
-  var opt=function(lbl,sub,date){ return '<button onclick="snoozeTaskTo('+id+',\''+date+'\')" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;border:1px solid #ececf3;background:#fff;border-radius:10px;padding:11px 13px;margin-bottom:8px;cursor:pointer;font-size:13.5px;color:#1B1B18"><span>'+lbl+'</span><span style="font-size:11px;color:#999">'+sub+'</span></button>'; };
-  bg.innerHTML='<div style="background:#fff;border-radius:16px;padding:18px;width:320px;max-width:92%;box-shadow:0 12px 40px rgba(20,20,40,.25)" onclick="event.stopPropagation()">'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-weight:700;font-size:15px">↷ Snooze task tak…</div><button onclick="_snoozeClose()" style="border:none;background:none;font-size:16px;color:#999;cursor:pointer">✕</button></div>'
-    +opt('Kal','Tomorrow',_dPlus(1))
-    +opt('3 din baad',_niceDate(_dPlus(3)),_dPlus(3))
-    +opt('Agle hafte',_niceDate(_dPlus(7)),_dPlus(7))
-    +'<div style="margin-top:10px;border-top:1px dashed #eee;padding-top:12px">'
-      +'<div style="font-size:11px;color:#888;margin-bottom:5px">Ya koi aur date chuno:</div>'
-      +'<div style="display:flex;gap:8px"><input type="date" id="snooze-date" min="'+minD+'" value="'+_dPlus(1)+'" style="flex:1;padding:9px 11px;border:1px solid #ddd;border-radius:8px;font-size:13px">'
-      +'<button onclick="snoozeTaskTo('+id+',(document.getElementById(\'snooze-date\')||{}).value)" style="background:#534AB7;color:#fff;border:none;border-radius:8px;padding:9px 14px;cursor:pointer;font-size:13px">Set</button></div>'
-    +'</div></div>';
-  document.body.appendChild(bg);
-}
-function _niceDate(d){ try{ return new Date(d+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short',day:'2-digit',month:'short'}); }catch(e){ return d; } }
-async function snoozeTaskTo(id,date){
-  if(!date){ toast('Date chuno',''); return; }
-  _snoozeClose();
-  await req('PUT','/command/tasks/'+id,{snooze_until:date});
-  toast('Snoozed', _niceDate(date)+' tak chhupa diya');
-  loadCommandTasks();
-}
-async function generateTasks(btn){
-  if(btn){ btn.disabled=true; btn.innerHTML='\uD83E\uDDE0 Planning… (10-20s)'; }
-  var r;
-  try{ r=await req('POST','/command/tasks/generate',{}); }
-  catch(e){ if(btn){btn.disabled=false;btn.innerHTML='\u2728 Generate Today\u2019s Tasks';} toast('Error','Failed'); return; }
-  if(btn){ btn.disabled=false; btn.innerHTML='\u2728 Generate Today\u2019s Tasks'; }
-  if(r&&r.error){ toast('Error',esc(String(r.error))); return; }
-  loadCommandTasks();
-}
-async function toggleCommandTask(id,done){ await req('PUT','/command/tasks/'+id,{done:done?1:0}); loadCommandTasks(); }
-async function deleteCommandTask(id){ await req('DELETE','/command/tasks/'+id); loadCommandTasks(); }
-async function addCommandTask(){
-  var inp=document.getElementById('cc-task-add'); if(!inp) return;
-  var t=(inp.value||'').trim(); if(!t) return;
-  inp.value='';
-  await req('POST','/command/tasks',{text:t,priority:'medium'}); loadCommandTasks();
-}
-async function refineTasks(btn){
-  var inp=document.getElementById('cc-task-refine'); if(!inp) return;
-  var instr=(inp.value||'').trim(); if(!instr){ toast('Kya refine karna hai?',''); return; }
-  if(btn){ btn.disabled=true; btn.textContent='Revising…'; }
-  var r;
-  try{ r=await req('POST','/command/tasks/refine',{instruction:instr}); }
-  catch(e){ if(btn){btn.disabled=false;btn.textContent='Refine';} toast('Error','Refine failed'); return; }
-  if(btn){ btn.disabled=false; btn.textContent='Refine'; }
-  if(r&&r.error){ toast('Error',esc(String(r.error))); return; }
-  inp.value='';
-  toast('OK','Task list revised');
-  loadCommandTasks();
-}
-function _renderTaskPrefs(prefs){
-  var el=document.getElementById('cc-task-prefs'); if(!el) return;
-  if(prefs && prefs.trim()){ el.innerHTML='Standing preferences (har generate mein lagti hain): '+esc(prefs)+' &nbsp;<a href="#" onclick="clearTaskPrefs();return false;" style="color:#C0392B">clear</a>'; }
-  else { el.innerHTML=''; }
-}
-async function clearTaskPrefs(){
-  await req('POST','/command/tasks/prefs',{prefs:''});
-  _renderTaskPrefs('');
-  toast('Cleared','Preferences hata di');
-}
-function _ccBubble(role,content){
-  var mine=role==='user';
-  return '<div style="display:flex;justify-content:'+(mine?'flex-end':'flex-start')+';margin-bottom:10px">'
-    +'<div style="max-width:82%;padding:9px 13px;border-radius:12px;'
-    +(mine?'background:#534AB7;color:#fff;border-bottom-right-radius:3px':'background:#F4F3FB;color:#1B1B18;border-bottom-left-radius:3px')
-    +'">'+(mine?esc(content):_mdToHtml(content))+'</div></div>';
-}
-async function loadCommandChat(){
-  var box=document.getElementById('cc-chat-msgs'); if(!box) return;
-  var r={};
-  try{ r=await req('GET','/command/chat'); }catch(e){}
-  var msgs=(r&&r.messages)||[];
-  if(!msgs.length){ box.innerHTML='<div style="color:#aaa;text-align:center;padding:16px">Brain se baat shuru karo — koi bhi update, sawaal, ya soch. Jo yahan batao ge woh planning mein use hoga.</div>'; return; }
-  box.innerHTML=msgs.map(function(m){return _ccBubble(m.role,m.content);}).join('');
-  box.scrollTop=box.scrollHeight;
-}
-async function sendCommandChat(){
-  var inp=document.getElementById('cc-chat-input'); var box=document.getElementById('cc-chat-msgs'); var btn=document.getElementById('cc-chat-send');
-  if(!inp||!box) return;
-  var msg=(inp.value||'').trim(); if(!msg) return;
-  inp.value='';
-  if(box.querySelector('div[style*="text-align:center"]')) box.innerHTML='';
-  box.insertAdjacentHTML('beforeend',_ccBubble('user',msg));
-  box.insertAdjacentHTML('beforeend','<div id="cc-typing" style="color:#999;font-size:12px;padding:4px 6px">\uD83E\uDDE0 soch raha hoon…</div>');
-  box.scrollTop=box.scrollHeight;
-  if(btn) btn.disabled=true;
-  var r;
-  try{ r=await req('POST','/command/chat',{message:msg}); }
-  catch(e){ var t=document.getElementById('cc-typing'); if(t)t.remove(); if(btn)btn.disabled=false; toast('Error','Chat failed'); return; }
-  var t=document.getElementById('cc-typing'); if(t) t.remove();
-  if(btn) btn.disabled=false;
-  if(r&&r.error){ toast('Error',esc(String(r.error))); return; }
-  box.insertAdjacentHTML('beforeend',_ccBubble('assistant',(r&&r.reply)||'(no reply)'));
-  box.scrollTop=box.scrollHeight;
-}
-async function clearCommandChat(){
-  if(!confirm('Clear the whole chat? Brain is conversation ko bhool jayega.')) return;
-  await req('DELETE','/command/chat'); loadCommandChat();
-}
 function _ccInp(id,lbl,val){ return '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">'+lbl+'</label>'
   +'<input id="'+id+'" class="inp" type="number" value="'+(val!=null&&val!==''?val:'')+'" style="width:100%"></div>'; }
-async function saveSnapshot(){
-  var v=function(x){var e=document.getElementById(x);return e?e.value:'';};
-  var r=await req('POST','/command/snapshot',{cc_bank_cash:v('cc-bank'),cc_monthly_fixed:v('cc-fixed'),cc_team_size:v('cc-team'),cc_year_target:v('cc-ytarget'),cc_funding_available:v('cc-funding')});
-  if(r&&r.ok){ toast('OK','Snapshot saved'); renderCommandCenter(); } else toast('Error','Save failed');
-}
-async function generateWeeklyReview(btn){
-  if(btn){ btn.disabled=true; btn.innerHTML='\uD83D\uDCC4 Compiling… (15-30s)'; }
-  var r;
-  try{ r=await req('POST','/command/weekly-review',{}); }
-  catch(e){ if(btn){btn.disabled=false;btn.innerHTML='\uD83D\uDCC4 Generate Weekly Review';} toast('Error','Review failed'); return; }
-  if(btn){ btn.disabled=false; btn.innerHTML='\uD83D\uDCC4 Generate Weekly Review'; }
-  if(r&&r.error){ toast('Error',esc(String(r.error))); return; }
-  window._ccReviewMd=(r&&r.md)||'';
-  var box=document.getElementById('cc-review-md');
-  if(box){ box.innerHTML=_mdToHtml(window._ccReviewMd); box.style.background='#fff'; box.style.border='1px solid #eee'; }
-  toast('OK','Weekly review ready');
-}
-function _ccCopyReview(){
-  var md=window._ccReviewMd||'';
-  if(!md){ var box=document.getElementById('cc-review-md'); md=box?box.innerText:''; }
-  if(!md){ toast('Nothing to copy',''); return; }
-  try{ navigator.clipboard.writeText(md); toast('Copied','Advisor ko paste kar do'); }catch(e){ toast('Copy failed',''); }
-}
-async function generatePlan(btn){
-  if(btn){ btn.disabled=true; btn.innerHTML='\uD83E\uDDE0 Thinking… (10-20s)'; }
-  var r;
-  try{ r=await req('POST','/command/plan',{}); }
-  catch(e){ if(btn){btn.disabled=false;btn.innerHTML='\u2728 Generate Strategic Plan';} toast('Error','Plan failed'); return; }
-  if(r&&r.error){ if(btn){btn.disabled=false;btn.innerHTML='\u2728 Generate Strategic Plan';} toast('Error',esc(String(r.error))); return; }
-  renderCommandCenter();
-}
 window._emailFolder='';
 async function renderEmailBox(){
   var el=document.getElementById('emailbox-body'); if(!el) return;
@@ -5939,7 +5633,7 @@ async function renderExpenses(el){
     +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
     +'<thead><tr style="background:#F6F5FB;text-align:left"><th style="padding:8px">Date</th><th style="padding:8px">Category</th><th style="padding:8px">Paid To / Note</th><th style="padding:8px;text-align:right">Amount</th><th style="padding:8px"></th></tr></thead>'
     +'<tbody>'+(rows||'<tr><td colspan="5" style="padding:20px;text-align:center;color:#aaa">No expenses yet — click "Add Expense".</td></tr>')+'</tbody></table></div>'
-    +'<div style="font-size:10.5px;color:#999;margin-top:8px">Net Profit = Received (paid invoices) &minus; Total Expenses. Yeh Command Center ko feed karega.</div>';
+    +'<div style="font-size:10.5px;color:#999;margin-top:8px">Net Profit = Received (paid invoices) &minus; Total Expenses.</div>';
 }
 function _expClose(){ var e=document.getElementById('modal-expense'); if(e) e.remove(); }
 function openExpenseForm(){
@@ -7755,6 +7449,8 @@ function renderSettings(){
       + _setHead('Admin', 'Keys, users and platform billing.')
       + _sec('sec-keys', 'admin', 'AI API Keys', 'claude deepseek groq gemini api key ai',
              apiKeysHTML(s))
+      + _sec('sec-kb', 'admin', 'Knowledge Base (AI memory)', 'knowledge base vector embedding jina reindex ai memory semantic search',
+             knowledgeBaseHTML())
       + (admin ? _sec('sec-billing', 'admin', 'Billing Configuration', 'price gst trial invoice markup usd',
                       billingConfigHTML(s)) : '')
       + (admin ? _sec('sec-users', 'admin', 'User Management', 'users recruiters add remove role',
@@ -7786,6 +7482,7 @@ function renderSettings(){
   setTab(_setTab);
 
   if(admin) loadUsersList();
+  if(admin && document.getElementById('cc-vector-status')) loadVectorStatus();
   loadMyProfile();
   renderWaSettings();
   loadEmailTemplates();
@@ -7846,7 +7543,8 @@ function setJump(secId, tab){
 function _setPaneFields(tab){
   var p = document.getElementById('setpane-' + tab); if(!p) return [];
   return Array.prototype.slice.call(p.querySelectorAll('input,textarea,select'))
-    .filter(function(el){ return el.id && el.type !== 'file' && (tab !== 'mytpl' || el.id.indexOf('mt-') === 0); });
+    .filter(function(el){ return el.id && el.type !== 'file' && (tab !== 'mytpl' || el.id.indexOf('mt-') === 0)
+                                 && el.id.indexOf('vec-') !== 0; });
 }
 function _setVal(el){ return (el.type === 'checkbox') ? (el.checked ? '1' : '0') : (el.value || ''); }
 function _setSnapshot(tab){
@@ -13568,9 +13266,9 @@ var aiActiveTab = 'search';
 // Every open* function calls this first so views can never overlap.
 var _ALL_VIEWS = ['mandate-view','settings-view','central-view','cdb-view',
   'responses-view','tasks-view','admin-view','ai-view','analytics-view',
-  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view','jobs-view','invoicing-view','email-view','command-view'];
+  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view','jobs-view','invoicing-view','email-view'];
 var _ALL_SB = ['sb-tasks','sb-responses','sb-central','sb-admin','sb-ai',
-  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers','sb-jobs','sb-invoicing','sb-email','sb-command'];
+  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers','sb-jobs','sb-invoicing','sb-email'];
 function _hideAllViews(){
   _ALL_VIEWS.forEach(function(id){
     var v=document.getElementById(id); if(v) v.style.display='none';
@@ -13988,8 +13686,12 @@ async function agentAddPipe(cid) {
 }
 async function agentTask(cid, btn) {
   var st = _agState[cid]||{};
-  await req('POST','/command/tasks',{text:'Follow up for '+(st.role||'role')+' — candidate #'+cid,category:'outreach',priority:'medium'});
-  var d=document.getElementById('ag-done-'+cid); if(d) d.textContent='Task created ✓';
+  var _due=new Date(Date.now()+86400000); _due.setHours(10,0,0,0);
+  var _pad=function(n){return (n<10?'0':'')+n;};
+  var _dueS=_due.getFullYear()+'-'+_pad(_due.getMonth()+1)+'-'+_pad(_due.getDate())+'T10:00:00';
+  var r=await req('POST','/reminders',{candidate_id:cid,note:'Follow up for '+(st.role||'role'),due_at:_dueS});
+  var d=document.getElementById('ag-done-'+cid);
+  if(d) d.textContent = (r&&r.ok) ? 'Task added to Tasks ✓' : ((r&&r.error)||'Could not add task');
 }
 async function agentRegen(cid) {
   var ta = document.getElementById('ag-ta-'+cid); var st = _agState[cid]||{};

@@ -153,7 +153,8 @@ def tool_get_candidate(candidate_id: int):
 
 
 def tool_get_today_tasks():
-    return ats.get("/api/command/tasks")
+    # Command Center was retired (Oct 2026); action items live on the Tasks page.
+    return ats.get("/api/tasks")
 
 
 def tool_get_overview():
@@ -195,7 +196,11 @@ def tool_add_tags(candidate_id: int, tags: list, tag_type: str = "general"):
 
 
 def tool_create_task(text: str, category: str = "", priority: str = "medium"):
-    return ats.post("/api/command/tasks", {"text": text, "category": category, "priority": priority})
+    # Command Center was retired (Oct 2026): a task is now a Tasks-page item.
+    note = text if not category else f"[{category}] {text}"
+    if priority and priority.lower() == "high":
+        note = "HIGH: " + note
+    return ats.post("/api/reminders", {"note": note, "stage": "todo"})
 
 
 def tool_create_reminder(note: str, candidate_id: int = 0, due_at: str = "", stage: str = "todo"):
@@ -279,14 +284,14 @@ TOOLS = [
     },
     {
         "name": "get_today_tasks",
-        "description": ("The recruiter's current action items / to-dos from the CEO Command Center. "
-                        "Source: GET /api/command/tasks."),
+        "description": ("The recruiter's current action items / to-dos from the Tasks page (reminders, "
+                        "follow-ups, stale candidates, interviews). Source: GET /api/tasks."),
         "handler": tool_get_today_tasks,
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "get_overview",
-        "description": ("A high-level business snapshot (pipeline counts, activity) from the Command Center. "
+        "description": ("A high-level business snapshot (pipeline counts, money, activity). "
                         "Source: GET /api/command/overview."),
         "handler": tool_get_overview,
         "inputSchema": {"type": "object", "properties": {}},
@@ -374,8 +379,8 @@ TOOLS = [
     },
     {
         "name": "create_task",
-        "description": ("Add a to-do / action item to the recruiter's Command Center task list. "
-                        "Source: POST /api/command/tasks."),
+        "description": ("Add a to-do / action item to the recruiter's Tasks page. "
+                        "Source: POST /api/reminders."),
         "handler": tool_create_task, "write": True,
         "annotations": {"title": "Create task", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
         "inputSchema": {

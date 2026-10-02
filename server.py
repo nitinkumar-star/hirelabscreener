@@ -15851,84 +15851,13 @@ def _command_chat_history(conn, oid, limit=24):
     return [{'role': r['role'], 'content': r['content']} for r in reversed(rows)]
 
 
-@app.route('/api/command/chat', methods=['GET'])
-@login_required
-@agency_only
-@agency_only
-@agency_only
-def command_chat_history():
-    conn = get_db()
-    try:
-        hist = _command_chat_history(conn, effective_company_id(), 60)
-    finally:
-        conn.close()
-    return jsonify({'ok': True, 'messages': hist})
+# (removed Oct 2026: Command Center endpoint command_chat_history — feature retired)
 
 
-@app.route('/api/command/chat', methods=['DELETE'])
-@login_required
-@agency_only
-def command_chat_clear():
-    conn = get_db()
-    conn.execute('DELETE FROM command_chat WHERE owner_id=?', (effective_company_id(),))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
+# (removed Oct 2026: Command Center endpoint command_chat_clear — feature retired)
 
 
-@app.route('/api/command/chat', methods=['POST'])
-@login_required
-@agency_only
-def command_chat():
-    ds_key = get_setting('deepseek_api_key')
-    if not ds_key:
-        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
-    msg = ((request.json or {}).get('message') or '').strip()
-    if not msg:
-        return jsonify({'error': 'Empty message'}), 400
-    conn = get_db()
-    try:
-        oid = effective_company_id()
-        o = _command_overview(conn, oid)
-        hist = _command_chat_history(conn, oid, 24)
-        try:
-            brief = _work_status_brief(conn, oid)
-        except Exception:
-            brief = ''
-        def r(n): return f"₹{int(n or 0):,}"
-        live = ("FULL ATS SCAN (use this to answer):\n" + brief +
-                f"\n\nSNAPSHOT: bank cash {r(o['bank_cash'])}, monthly fixed {r(o['monthly_fixed'])}, "
-                f"runway {o['runway_months']} months, this-year target {r(o['year_target'])}.")
-        rag = _vector_search(conn, oid, msg, 8)
-        if rag:
-            live += "\n\nRELEVANT RECORDS (semantic search of candidates/positions/emails for this question):\n" + '\n---\n'.join(rag)
-        messages = [{'role': 'system', 'content': _personalise(CEO_CHAT_PROMPT) + "\n\n" + live}]
-        messages += hist
-        messages.append({'role': 'user', 'content': msg})
-
-        try:
-            rr = call_deepseek(ds_key,
-                {'model': 'deepseek-chat', 'temperature': 0.5, 'max_tokens': 900, 'messages': messages},
-                timeout=120, endpoint='command-chat')
-        except TokenCapError:
-            return jsonify({'error': 'Monthly AI token cap reached.'}), 429
-        except Exception as e:
-            return jsonify({'error': f'Could not reach DeepSeek — {type(e).__name__}: {e}'}), 502
-        if rr.status_code != 200:
-            try: err = rr.json().get('error', {}).get('message', rr.text[:300])
-            except Exception: err = rr.text[:300]
-            return jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502
-        try:
-            reply = rr.json()['choices'][0]['message']['content'].strip()
-        except Exception as e:
-            return jsonify({'error': f'Unexpected DeepSeek response: {e}'}), 502
-
-        now = ts()
-        conn.execute('INSERT INTO command_chat (owner_id, role, content, created_at) VALUES (?,?,?,?)', (oid, 'user', msg, now))
-        conn.execute('INSERT INTO command_chat (owner_id, role, content, created_at) VALUES (?,?,?,?)', (oid, 'assistant', reply, now))
-        conn.commit()
-        return jsonify({'ok': True, 'reply': reply})
-    finally:
-        conn.close()
+# (removed Oct 2026: Command Center endpoint command_chat — feature retired)
 
 
 def _work_status_brief(conn, oid):
@@ -16142,70 +16071,16 @@ Return ONLY a JSON array (no prose, no markdown fences), each item exactly:
  "ref": "entity to open, copied EXACTLY from the [ref ...] tag in the data (e.g. cand:40:786, mandate:40, or invoice); empty string if none"}"""
 
 
-@app.route('/api/command/tasks', methods=['GET'])
-@login_required
-@agency_only
-@agency_only
-def command_tasks_list():
-    import datetime as _dt
-    today = _dt.date.today().isoformat()
-    conn = get_db()
-    rows = conn.execute("SELECT id,text,category,priority,done,source,reason,ref,snooze_until,task_date FROM command_tasks WHERE owner_id=? ORDER BY done ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id DESC",
-                        (effective_company_id(),)).fetchall()
-    conn.close()
-    active, snoozed = [], 0
-    for r in rows:
-        d = dict(r)
-        if d.get('snooze_until') and d['snooze_until'][:10] > today and not d['done']:
-            snoozed += 1
-            continue
-        active.append(d)
-    return jsonify({'ok': True, 'tasks': active, 'snoozed_count': snoozed})
+# (removed Oct 2026: Command Center endpoint command_tasks_list — feature retired)
 
 
-@app.route('/api/command/tasks', methods=['POST'])
-@login_required
-@agency_only
-def command_tasks_add():
-    d = request.json or {}
-    txt = (d.get('text') or '').strip()
-    if not txt:
-        return jsonify({'error': 'Empty task'}), 400
-    conn = get_db()
-    conn.execute("INSERT INTO command_tasks (owner_id,text,category,priority,done,source,task_date,created_at) VALUES (?,?,?,?,0,'manual',?,?)",
-                 (effective_company_id(), txt, d.get('category', ''), d.get('priority', 'medium'), ts()[:10], ts()))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
+# (removed Oct 2026: Command Center endpoint command_tasks_add — feature retired)
 
 
-@app.route('/api/command/tasks/<int:tid>', methods=['PUT'])
-@login_required
-@agency_only
-@agency_only
-def command_tasks_update(tid):
-    d = request.json or {}
-    conn = get_db(); oid = effective_company_id()
-    sets, vals = [], []
-    if 'done' in d: sets.append('done=?'); vals.append(1 if d['done'] else 0)
-    if 'text' in d: sets.append('text=?'); vals.append((d['text'] or '').strip())
-    if 'priority' in d: sets.append('priority=?'); vals.append(d['priority'])
-    if 'snooze_until' in d: sets.append('snooze_until=?'); vals.append((d['snooze_until'] or '')[:10])
-    if sets:
-        vals += [tid, oid]
-        conn.execute(f'UPDATE command_tasks SET {",".join(sets)} WHERE id=? AND owner_id=?', tuple(vals))
-        conn.commit()
-    conn.close()
-    return jsonify({'ok': True})
+# (removed Oct 2026: Command Center endpoint command_tasks_update — feature retired)
 
 
-@app.route('/api/command/tasks/<int:tid>', methods=['DELETE'])
-@login_required
-@agency_only
-def command_tasks_delete(tid):
-    conn = get_db()
-    conn.execute('DELETE FROM command_tasks WHERE id=? AND owner_id=?', (tid, effective_company_id()))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
+# (removed Oct 2026: Command Center endpoint command_tasks_delete — feature retired)
 
 
 def _attach_task_refs(conn, oid, tasks):
@@ -16297,18 +16172,7 @@ def _run_task_generation(conn, oid, refine_instruction='', current_tasks=None):
     return [dict(r) for r in rows], None
 
 
-@app.route('/api/command/tasks/generate', methods=['POST'])
-@login_required
-@agency_only
-def command_tasks_generate():
-    conn = get_db()
-    try:
-        tasks, err = _run_task_generation(conn, effective_company_id())
-        if err:
-            return err
-        return jsonify({'ok': True, 'tasks': tasks})
-    finally:
-        conn.close()
+# (removed Oct 2026: Command Center endpoint command_tasks_generate — feature retired)
 
 
 WEEKLY_REVIEW_PROMPT = """You are not an AI assistant. You are the Executive Leadership Team of [[COMPANY]], acting simultaneously as CEO, COO, CRO, CFO, Head of Recruitment, Delivery Manager, Account Director, and Business Strategist. Your only responsibility is to maximize the long-term enterprise value of [[COMPANY]]. Ignore vanity metrics. Every recommendation must increase one or more of: Revenue, Gross Profit, Cash Flow, Placement Success, Client Retention, Candidate Quality, Recruiter Productivity, Business Scalability. Never optimize for activity — always optimize for business outcomes.
@@ -16352,109 +16216,16 @@ Prepare a BOARD REPORT for the week, to be sent to the founder's external adviso
 Be brutally honest and specific. Every number should teach the advisor something."""
 
 
-@app.route('/api/command/weekly-review', methods=['POST'])
-@login_required
-@agency_only
-def command_weekly_review():
-    ds_key = get_setting('deepseek_api_key')
-    if not ds_key:
-        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
-    import datetime as _dt
-    conn = get_db()
-    try:
-        oid = effective_company_id()
-        wk_ago = (_dt.date.today() - _dt.timedelta(days=7)).isoformat()
-        brief = _work_status_brief(conn, oid)
-        extra = []
-        try:
-            inv_new = conn.execute("SELECT invoice_no, buyer_name, amount, gst_rate, status, created_at FROM invoices WHERE owner_id=? AND (doc_type IS NULL OR doc_type='tax') AND substr(created_at,1,10)>=?", (oid, wk_ago)).fetchall()
-            if inv_new:
-                extra.append("INVOICES RAISED THIS WEEK: " + '; '.join(f"{r['invoice_no']} {r['buyer_name']} ₹{int((r['amount'] or 0)*(1+(r['gst_rate'] or 18)/100)):,} ({r['status']})" for r in inv_new))
-            paid_new = conn.execute("SELECT invoice_no, buyer_name, received_amount, received_date FROM invoices WHERE owner_id=? AND lower(status)='paid' AND substr(received_date,1,10)>=?", (oid, wk_ago)).fetchall()
-            if paid_new:
-                extra.append("PAYMENTS RECEIVED THIS WEEK: " + '; '.join(f"{r['buyer_name']} ₹{int(r['received_amount'] or 0):,}" for r in paid_new))
-        except Exception:
-            pass
-        try:
-            joined = conn.execute("SELECT name, joining_date FROM candidates WHERE owner_id=? AND substr(joining_date,1,10)>=?", (oid, wk_ago)).fetchall()
-            if joined:
-                extra.append("JOINED THIS WEEK: " + '; '.join(f"{r['name']} ({r['joining_date'][:10]})" for r in joined))
-        except Exception:
-            pass
-        try:
-            td = conn.execute("SELECT COUNT(*) n FROM command_tasks WHERE owner_id=? AND done=1", (oid,)).fetchone()['n']
-            tp = conn.execute("SELECT COUNT(*) n FROM command_tasks WHERE owner_id=? AND done=0", (oid,)).fetchone()['n']
-            extra.append(f"TASKS: {td} done, {tp} pending.")
-        except Exception:
-            pass
-        ctx = "FULL CURRENT ATS STATUS:\n" + brief + "\n\nTHIS WEEK'S ACTIVITY:\n" + ('\n'.join(extra) or 'No recorded activity this week.') + "\n\nWrite the weekly review."
-        try:
-            rr = call_deepseek(ds_key,
-                {'model': 'deepseek-chat', 'temperature': 0.35, 'max_tokens': 2600,
-                 'messages': [{'role': 'system', 'content': _personalise(WEEKLY_REVIEW_PROMPT)}, {'role': 'user', 'content': ctx}]},
-                timeout=200, endpoint='weekly-review')
-        except TokenCapError:
-            return jsonify({'error': 'Monthly AI token cap reached.'}), 429
-        except Exception as e:
-            return jsonify({'error': f'Could not reach DeepSeek — {type(e).__name__}: {e}'}), 502
-        if rr.status_code != 200:
-            try: err = rr.json().get('error', {}).get('message', rr.text[:200])
-            except Exception: err = rr.text[:200]
-            return jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502
-        md = rr.json()['choices'][0]['message']['content'].strip()
-        at = ts()
-        set_setting('cc_last_review', json.dumps({'md': md, 'at': at}))
-        return jsonify({'ok': True, 'md': md, 'at': at})
-    finally:
-        conn.close()
+# (removed Oct 2026: Command Center endpoint command_weekly_review — feature retired)
 
 
-@app.route('/api/command/tasks/refine', methods=['POST'])
-@login_required
-@agency_only
-def command_tasks_refine():
-    instr = ((request.json or {}).get('instruction') or '').strip()
-    if not instr:
-        return jsonify({'error': 'Kya refine karna hai? Instruction likho.'}), 400
-    conn = get_db()
-    try:
-        oid = effective_company_id()
-        cur = [r['text'] for r in conn.execute("SELECT text FROM command_tasks WHERE owner_id=? AND source='ai' ORDER BY id DESC", (oid,)).fetchall()]
-        tasks, err = _run_task_generation(conn, oid, refine_instruction=instr, current_tasks=cur)
-        if err:
-            return err
-        # remember this instruction as a standing preference (accumulate, capped)
-        prefs = (get_setting('cc_task_prefs', '') or '').strip()
-        combined = (prefs + ' | ' + instr) if prefs else instr
-        set_setting('cc_task_prefs', combined[-800:])
-        return jsonify({'ok': True, 'tasks': tasks, 'prefs': get_setting('cc_task_prefs', '')})
-    finally:
-        conn.close()
+# (removed Oct 2026: Command Center endpoint command_tasks_refine — feature retired)
 
 
-@app.route('/api/command/tasks/prefs', methods=['GET', 'POST'])
-@login_required
-@agency_only
-def command_tasks_prefs():
-    if request.method == 'POST':
-        set_setting('cc_task_prefs', ((request.json or {}).get('prefs') or '').strip()[:800])
-        return jsonify({'ok': True})
-    return jsonify({'ok': True, 'prefs': get_setting('cc_task_prefs', '')})
+# (removed Oct 2026: Command Center endpoint command_tasks_prefs — feature retired)
 
 
-@app.route('/api/command/snapshot', methods=['GET', 'POST'])
-@login_required
-@agency_only
-def command_snapshot():
-    keys = ['cc_bank_cash', 'cc_monthly_fixed', 'cc_team_size', 'cc_year_target',
-            'cc_funding_available', 'cc_target_total', 'cc_target_years', 'cc_notes']
-    if request.method == 'POST':
-        d = request.json or {}
-        for k in keys:
-            if k in d:
-                set_setting(k, str(d[k]))
-        return jsonify({'ok': True})
-    return jsonify({'ok': True, 'snapshot': {k: get_setting(k, '') for k in keys}})
+# (removed Oct 2026: Command Center endpoint command_snapshot — feature retired)
 
 
 @app.route('/api/command/overview', methods=['GET'])
@@ -16469,100 +16240,7 @@ def command_overview():
     return jsonify({'ok': True, 'overview': data, 'last_plan': get_setting('cc_last_plan', ''), 'last_review': get_setting('cc_last_review', '')})
 
 
-@app.route('/api/command/plan', methods=['POST'])
-@login_required
-@agency_only
-def command_plan():
-    ds_key = get_setting('deepseek_api_key')
-    if not ds_key:
-        return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
-    conn = get_db()
-    try:
-        oid = effective_company_id()
-        o = _command_overview(conn, oid)
-        # top clients by CRM value / invoice
-        try:
-            top_clients = conn.execute(
-                "SELECT buyer_name, COUNT(*) n, SUM(amount) amt FROM invoices WHERE owner_id=? AND (doc_type IS NULL OR doc_type='tax') GROUP BY buyer_name ORDER BY amt DESC LIMIT 6",
-                (oid,)).fetchall()
-            clients_str = '; '.join(f"{r['buyer_name']} (₹{int(r['amt'] or 0):,}, {r['n']} inv)" for r in top_clients) or 'none yet'
-        except Exception:
-            clients_str = 'n/a'
-        # recent email subjects (signal)
-        try:
-            em = conn.execute('SELECT folder, from_name, subject FROM emails WHERE owner_id=? ORDER BY date_ts DESC LIMIT 15', (oid,)).fetchall()
-            email_str = ' | '.join(f"[{e['folder']}] {e['from_name']}: {e['subject']}" for e in em) or 'no emails synced'
-        except Exception:
-            email_str = 'n/a'
-        # open mandates detail
-        try:
-            mand = conn.execute('SELECT role, client, location FROM mandates WHERE owner_id=? LIMIT 15', (oid,)).fetchall()
-            mand_str = '; '.join(f"{m['role']} @ {m['client']} ({m['location']})" for m in mand) or 'none'
-        except Exception:
-            mand_str = 'n/a'
-        # founder's recent chat notes (context he told the brain that isn't in any field)
-        try:
-            ch = _command_chat_history(conn, oid, 12)
-            notes = ' | '.join((m['content'][:200]) for m in ch if m['role'] == 'user') or 'none'
-        except Exception:
-            notes = 'none'
-        try:
-            full_brief = _work_status_brief(conn, oid)
-        except Exception:
-            full_brief = ''
-    finally:
-        conn.close()
-
-    def r(n): return f"₹{int(n or 0):,}"
-    ctx = f"""FULL ATS SCAN:
-{full_brief}
-
-LIVE BUSINESS DATA (as of {ts()[:10]}):
-
-MONEY:
-- Total invoiced (incl GST): {r(o['invoiced'])} | Received: {r(o['received'])} | Outstanding: {r(o['outstanding'])}
-- Total expenses: {r(o['total_expenses'])} | Net profit: {r(o['net_profit'])}
-- Expense breakdown: {o['expenses_by_category']}
-
-FOUNDER SNAPSHOT (self-reported):
-- Bank cash: {r(o['bank_cash'])} | Monthly fixed cost: {r(o['monthly_fixed'])} | Runway: {o['runway_months']} months
-- Team size: {o['team_size']} | This-year target: {r(o['year_target'])} | Funding/discounting available: {r(o['funding_available'])}
-- Mission: {r(o['target_total'])} in {int(o['target_years'])} years
-
-PIPELINE:
-- Open mandates: {o['open_mandates']} | Total candidates: {o['total_candidates']} | Shared with client: {o['shared_with_client']} | Placed/Joined: {o['placed']}
-- Candidate stages: {o['by_stage']}
-- Open mandates detail: {mand_str}
-
-TOP CLIENTS (by billing): {clients_str}
-
-RECENT EMAIL SIGNAL (last 15): {email_str}
-
-FOUNDER'S RECENT NOTES (things the founder told the brain in chat — treat as real, current facts): {notes}
-
-Now produce the strategic brief."""
-
-    try:
-        rr = call_deepseek(ds_key,
-            {'model': 'deepseek-chat', 'temperature': 0.4, 'max_tokens': 1600,
-             'messages': [{'role': 'system', 'content': _personalise(CEO_BRAIN_PROMPT)},
-                          {'role': 'user', 'content': ctx}]},
-            timeout=180, endpoint='command-center')
-    except TokenCapError:
-        return jsonify({'error': 'Monthly AI token cap reached.'}), 429
-    except Exception as e:
-        return jsonify({'error': f'Could not reach DeepSeek — {type(e).__name__}: {e}'}), 502
-    if rr.status_code != 200:
-        try: err = rr.json().get('error', {}).get('message', rr.text[:300])
-        except Exception: err = rr.text[:300]
-        return jsonify({'error': f'DeepSeek returned {rr.status_code}: {err}'}), 502
-    try:
-        md = rr.json()['choices'][0]['message']['content'].strip()
-    except Exception as e:
-        return jsonify({'error': f'Unexpected DeepSeek response: {e}'}), 502
-    at = ts()
-    set_setting('cc_last_plan', json.dumps({'md': md, 'at': at}))
-    return jsonify({'ok': True, 'md': md, 'at': at})
+# (removed Oct 2026: Command Center endpoint command_plan — feature retired)
 
 
 def _candidate_billing(conn, oid, cid):
