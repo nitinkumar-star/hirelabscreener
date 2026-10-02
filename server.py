@@ -4628,8 +4628,6 @@ def shorten_jd():
 #  REMINDERS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-@app.route('/api/reminders', methods=['GET'])
-@login_required
 def _ms(col):
     """Recruiter scope on a mandate-id column ('' for admins). See modules/access.py."""
     from modules.access import mandate_scope_sql
@@ -4647,6 +4645,8 @@ def _reminder_scope():
     return reminder_scope_sql('r')
 
 
+@app.route('/api/reminders', methods=['GET'])
+@login_required
 def get_reminders():
     conn = get_db()
     rows = conn.execute(
@@ -9766,8 +9766,6 @@ def _sg_disp(term, g):
     return node.get('display', term)
 
 
-@app.route('/api/jd/match', methods=['POST'])
-@login_required
 def _match_candidates(conn, oid, jd, must_extra=None, min_exp=None, max_exp=None, location='', limit=30):
     """Reusable explainable matcher (also the agent's 'rank' tool). Returns
     (candidates, must_have_display, core_terms)."""
@@ -14934,6 +14932,7 @@ def _sync_mailbox_impl(oid):
         email_to_cid[(r['email'] or '').strip().lower()] = r['id']
     folders = [('INBOX', 'Inbox'), ('"' + _find_sent_folder(M) + '"', 'Sent')]
     added = 0
+    _budget = [60]    # at most 60 full mail downloads per run; the rest next run
     _since_commit = 0  # commit in small batches so the write lock is released
                        # frequently during the slow IMAP fetch loop (otherwise the
                        # whole DB stays locked for the entire sync)
@@ -14945,29 +14944,39 @@ def _sync_mailbox_impl(oid):
                 typ, data = M.search(None, f'(SINCE {since})')
                 if typ != 'OK' or not data or not data[0]: continue
                 ids = data[0].split()[-400:]
+                # ONE round trip for all Message-IDs, ONE query for which we
+                # already have — then only NEW mails are downloaded. Before,
+                # every 2-minute cycle re-downloaded all of them (and re-wrote
+                # each while holding the database lock), which made the whole
+                # ATS slow and dropped saves such as stage changes.
+                _todo = set(ids)
+                try:
+                    _ht, _hd = M.fetch(b','.join(ids).decode(), '(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])')
+                    _num2mid = {}
+                    for _part in (_hd or []):
+                        if isinstance(_part, tuple) and len(_part) > 1:
+                            _n = (_part[0] or b'').split(b' ', 1)[0]
+                            _m = (emaillib.message_from_bytes(_part[1] or b'').get('Message-ID') or '').strip()
+                            _num2mid[_n] = _m or (fname + ':' + _n.decode())
+                    if _num2mid:
+                        _have = set()
+                        _mids = list(_num2mid.values())
+                        for _i in range(0, len(_mids), 400):
+                            _chunk = _mids[_i:_i + 400]
+                            for _r in conn.execute("SELECT msg_id FROM emails WHERE owner_id=? AND COALESCE(body,'')!='' "
+                                                   "AND msg_id IN (%s)" % ','.join('?' * len(_chunk)),
+                                                   [oid] + _chunk).fetchall():
+                                _have.add(_r[0])
+                        _todo = set(n for n in ids if _num2mid.get(n) not in _have)
+                except Exception:
+                    _todo = set(ids)
                 for num in ids:
                     try:
-                        # Cheap header peek first: a message already stored with
-                        # its body is skipped WITHOUT downloading it or writing
-                        # to the database. Before this, every 2-minute cycle
-                        # re-downloaded up to 400 full mails per folder and
-                        # re-wrote each one, holding the database write lock
-                        # through the network fetches — which froze stage
-                        # changes, pitch and other saves for everyone.
-                        try:
-                            _ht, _hd = M.fetch(num, '(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])')
-                            _hraw = b''
-                            for _part in (_hd or []):
-                                if isinstance(_part, tuple) and len(_part) > 1:
-                                    _hraw += _part[1] or b''
-                            _hmid = (emaillib.message_from_bytes(_hraw).get('Message-ID') or '').strip() \
-                                or (fname + ':' + num.decode())
-                            _have = conn.execute("SELECT 1 FROM emails WHERE owner_id=? AND msg_id=? "
-                                                 "AND COALESCE(body,'')!='' LIMIT 1", (oid, _hmid)).fetchone()
-                            if _have:
-                                continue
-                        except Exception:
-                            pass
+                        if num not in _todo:
+                            continue      # already in the ATS (see the batch check above)
+                        if _budget[0] <= 0:
+                            break         # rest comes in the next cycle
+                        _budget[0] -= 1
                         typ, md = M.fetch(num, '(RFC822)')
                         if typ != 'OK' or not md or not md[0]: continue
                         msg = emaillib.message_from_bytes(md[0][1])
