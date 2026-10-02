@@ -20904,11 +20904,11 @@ def analyse_call(cid):
                 if cv_ext == '.pdf' and HAS_PDF:
                     import pdfplumber
                     with pdfplumber.open(cv_path) as pdf:
-                        cv_text = '\n'.join(p.extract_text() or '' for p in pdf.pages)[:4000]
+                        cv_text = '\n'.join(p.extract_text() or '' for p in pdf.pages)[:7000]
                 elif cv_ext in ['.docx'] and HAS_DOCX:
                     from docx import Document as DocxDocument
                     doc = DocxDocument(cv_path)
-                    cv_text = '\n'.join(p.text for p in doc.paragraphs if p.text.strip())[:4000]
+                    cv_text = '\n'.join(p.text for p in doc.paragraphs if p.text.strip())[:7000]
             except Exception:
                 pass
 
@@ -20916,6 +20916,25 @@ def analyse_call(cid):
     cand_name  = cand['name'] or 'Candidate'
     role       = mandate['role'] if mandate else 'the position'
     client     = mandate['client'] if mandate else ''
+    # Extra inputs for the combined report: ATS profile facts + the Pitch tab's
+    # AI evaluation (strengths / gaps / points to verify on the call).
+    profile_txt, pitch_ev = '', None
+    try:
+        from modules import call_intel as _ci
+        _c2 = get_db()
+        profile_txt = _ci.profile_block(_c2, cand)
+        pitch_ev = _ci.pitch_evaluation(_c2, cid, cand['mandate_id'])
+        _c2.close()
+    except Exception as _e:
+        print('[call-analysis] context gather failed:', _e)
+    must = ''
+    if mandate:
+        try:
+            _mk = mandate.keys()
+            must = ', '.join(str(mandate[k]) for k in ('must_have_skills', 'good_to_have_skills')
+                             if k in _mk and mandate[k])
+        except Exception:
+            must = ''
 
     # ── Step 3: DeepSeek Analysis ─────────────────────────────────────────────
     system_msg = (
@@ -20941,21 +20960,36 @@ def analyse_call(cid):
         '  "recommendation_reason": "one sentence",\n'
         '  "call_summary": "3-4 sentences covering the full conversation",\n'
         '  "key_quotes": ["notable quote 1", "notable quote 2"],\n'
-        '  "languages_detected": "Hindi / English / Hinglish"\n'
-        '}'
+        '  "languages_detected": "Hindi / English / Hinglish",\n'
+        '  "jd_match_score": integer 0-100 (overall fit for THIS job using CV + profile + call together),\n'
+        '  "jd_verdict": "Strong fit" | "Possible fit" | "Weak fit",\n'
+        '  "overall_summary": "3-4 sentences: the combined picture from CV, pitch evaluation and the call, against the JD",\n'
+        '  "requirements": [ {"requirement": "a concrete JD requirement", "cv_evidence": "what the CV/profile shows, or \'not in CV\'", '
+        '"call_evidence": "what the candidate said on the call, or \'not discussed\'", "status": "MET" | "PARTIAL" | "GAP" | "UNVERIFIED"} ],\n'
+        '  "consistency": [ {"topic": "e.g. current CTC / role / team size / notice", "cv_says": "...", "call_says": "...", '
+        '"status": "MATCH" | "MISMATCH" | "NEW_INFO"} ],\n'
+        '  "pitch_followup": [ {"point": "an item from the pitch evaluation to_verify / gaps list", '
+        '"outcome": "CONFIRMED" | "NOT_CONFIRMED" | "NOT_DISCUSSED", "note": "one line"} ]\n'
+        '}\n\n'
+        'RULES: use ONLY facts in the inputs; never invent. requirements: the 5-10 most important JD needs, must-haves first. '
+        'consistency: only topics present in BOTH the CV/profile and the call, plus important NEW_INFO from the call. '
+        'pitch_followup: [] when no pitch evaluation is given. Keep every text field short and specific.'
     )
 
     user_msg = (
         'CANDIDATE: ' + cand_name + '\n'
         'ROLE: ' + role + ((' at ' + client) if client else '') + '\n\n'
-        + ('JD / SOP:\n' + jd_or_sop[:2000] + '\n\n' if jd_or_sop else '')
-        + ('CV / RESUME (extracted text):\n' + cv_text[:2000] + '\n\n' if cv_text else '')
-        + 'CALL TRANSCRIPT:\n' + transcript[:6000]
+        + ('MUST-HAVE / GOOD-TO-HAVE SKILLS: ' + must + '\n\n' if must else '')
+        + ('JD / SOP:\n' + jd_or_sop[:3500] + '\n\n' if jd_or_sop else '')
+        + ('ATS PROFILE:\n' + profile_txt[:3000] + '\n\n' if profile_txt else '')
+        + ('CV / RESUME (extracted text):\n' + cv_text[:5000] + '\n\n' if cv_text else '')
+        + ('PITCH TAB AI EVALUATION (made before the call):\n' + json.dumps(pitch_ev, ensure_ascii=False)[:2500] + '\n\n' if pitch_ev else '')
+        + 'CALL TRANSCRIPT:\n' + transcript[:9000]
     )
 
     try:
         ds_resp = call_deepseek(ds_key, {
-            'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 1500,
+            'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 3500,
             'response_format': {'type': 'json_object'},
             'messages': [{'role': 'system', 'content': system_msg},
                          {'role': 'user', 'content': user_msg}]},
@@ -21024,6 +21058,14 @@ def analyse_call(cid):
                  (cid, cand['stage'], cand['stage'],
                   'Call analysed. Interest: ' + analysis.get('interest_level','') + '. Rec: ' + analysis.get('recommendation','') + '. ' + analysis.get('next_step','') + (' | Updated: ' + upd_summary if upd_summary else ''),
                   ts()))
+    _sources = {'cv': bool(cv_text), 'jd': bool(jd_or_sop), 'pitch': bool(pitch_ev), 'profile': bool(profile_txt)}
+    try:
+        from modules import call_intel as _ci
+        _u = current_user() or {}
+        _ci.save(conn, effective_company_id(), cid, cand['mandate_id'], fname, f.filename, transcript,
+                 analysis, _sources, updates, real_user_id(), _u.get('display_name') or _u.get('username') or '')
+    except Exception as _e:
+        print('[call-analysis] save failed:', _e)
     conn.commit(); conn.close()
     _interest = analysis.get('interest_level', '')
     log_candidate_event(cid, 'call', 'Call analysed' + (' — interest: ' + _interest if _interest else '') + (' · updated ' + upd_summary if upd_summary else ''))
@@ -21035,7 +21077,10 @@ def analyse_call(cid):
         'recording_file': fname,
         'updated_fields': updates,
         'cv_used': bool(cv_text),
-        'jd_used': bool(jd_or_sop)
+        'jd_used': bool(jd_or_sop),
+        'pitch_used': bool(pitch_ev),
+        'recording_name': f.filename,
+        'created_at': ts()
     })
 
 @app.route('/api/calls/<path:filename>')

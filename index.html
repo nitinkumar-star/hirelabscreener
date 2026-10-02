@@ -6447,7 +6447,7 @@ function renderProfileDetail(c){
     +'</div>'
     +'</div>';
   var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">&#9993; Email thread</div><div style="display:flex;gap:7px"><button class="cp-hbtn" onclick="cpLoadEmailThread('+c.id+')">&#8635; Refresh</button><button class="cp-hbtn" style="background:#185FA5;color:#fff;border-color:transparent" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">&#9998; Compose / AI</button></div></div><div id="cp-email-'+c.id+'" style="max-height:460px;overflow-y:auto"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading emails…</div></div></div>';
-  var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload a call recording — Groq transcribes, DeepSeek analyses &amp; auto-updates CTC/company.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
+  var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload the call recording — DeepSeek reads the CV, the Pitch evaluation and the call together and compares them with the JD.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
 
   // ── Compose page ───────────────────────────────────────────────────────
   let html='';
@@ -6521,6 +6521,7 @@ function cpTab(name){
   if(name==='overview'){ try{ cpLoadHistory(cid); }catch(e){} }
   if(name==='ai'){ cpLoadDeepAnalysis(cid); }
   if(name==='pitch'){ cpLoadPitch(cid); }
+  if(name==='call'){ loadCallAnalysis(cid); }
   if(name==='billing'){ try{ cpLoadBilling(cid); }catch(e){} }
 }
 
@@ -11038,7 +11039,7 @@ async function handleCallUpload(cid, input) {
   try {
     // Step 2: Transcribing message after 5s
     const t1 = setTimeout(() => {
-      statusEl.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><div class="spinner" style="border-color:rgba(255,255,255,.3);border-top-color:#9FE1CB"></div><div><div style="font-weight:500">Step 2/3 — Analysing with DeepSeek</div><div style="font-size:10px;opacity:.7;margin-top:2px">Comparing transcript with JD, SOP &amp; CV...</div></div></div>';
+      statusEl.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><div class="spinner" style="border-color:rgba(255,255,255,.3);border-top-color:#9FE1CB"></div><div><div style="font-weight:500">Step 2/3 — Analysing with DeepSeek</div><div style="font-size:10px;opacity:.7;margin-top:2px">Reading CV, Pitch evaluation &amp; call together, comparing with the JD...</div></div></div>';
     }, 15000);
 
     const r = await reqFile('/candidates/'+cid+'/analyse-call', fd);
@@ -11050,84 +11051,12 @@ async function handleCallUpload(cid, input) {
       toast('⚠️', r.error); return;
     }
 
-    const a = r.analysis;
-    const intColor = a.interest_level==='HIGH'?'#1D9E75':a.interest_level==='MEDIUM'?'#EF9F27':'#E24B4A';
-    const recColor = a.recommendation==='PROCEED'?'#1D9E75':a.recommendation==='HOLD'?'#EF9F27':'#E24B4A';
-    const fitColor = a.fit_vs_jd==='STRONG'?'#1D9E75':a.fit_vs_jd==='MODERATE'?'#EF9F27':'#E24B4A';
-
-    statusEl.style.background = 'rgba(29,158,117,0.2)';
-    statusEl.innerHTML = '&#10003; Analysis complete — ' + r.transcript.split(' ').length + ' words transcribed' +
-      (r.cv_used?' &middot; CV used':' &middot; No CV') + (r.jd_used?' &middot; JD/SOP used':'');
-
-    // Banner: what the call auto-updated on the candidate record
-    var uf = r.updated_fields || {};
-    var ufKeys = Object.keys(uf);
-    if (ufKeys.length) {
-      var labelMap = {ctc_current:'Current CTC', ctc_expected:'Expected CTC', company:'Company', notice_period:'Notice (days)'};
-      var parts = ufKeys.map(function(k){
-        var v = uf[k];
-        if (k==='ctc_current'||k==='ctc_expected') v = '₹'+v+'L';
-        return (labelMap[k]||k)+': '+v;
-      });
-      analysisEl.innerHTML = '<div style="background:rgba(29,158,117,0.18);border:0.5px solid rgba(159,225,203,.4);border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:11.5px;color:#CFF3E6">&#10003; Auto-updated from call &middot; ' + esc(parts.join('  ·  ')) + '</div>';
-    } else {
-      analysisEl.innerHTML = '';
-    }
-    var _afterBanner = analysisEl.innerHTML;
-    analysisEl.innerHTML = _afterBanner
-      // Top metrics row
-      +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">'
-      +'<div style="background:rgba(255,255,255,.08);border-radius:8px;padding:10px;text-align:center">'
-      +'<div style="font-size:10px;color:rgba(255,255,255,.4);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Interest Level</div>'
-      +'<div style="font-size:18px;font-weight:700;color:'+intColor+'">'+esc(a.interest_level||'—')+'</div>'
-      +'<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:3px">'+esc(a.interest_reason||'')+'</div>'
-      +'</div>'
-      +'<div style="background:rgba(255,255,255,.08);border-radius:8px;padding:10px;text-align:center">'
-      +'<div style="font-size:10px;color:rgba(255,255,255,.4);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">JD Fit</div>'
-      +'<div style="font-size:18px;font-weight:700;color:'+fitColor+'">'+esc(a.fit_vs_jd||'—')+'</div>'
-      +'<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:3px">'+esc(a.fit_reason||'')+'</div>'
-      +'</div>'
-      +'<div style="background:rgba(255,255,255,.08);border-radius:8px;padding:10px;text-align:center">'
-      +'<div style="font-size:10px;color:rgba(255,255,255,.4);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Recommendation</div>'
-      +'<div style="font-size:18px;font-weight:700;color:'+recColor+'">'+esc(a.recommendation||'—')+'</div>'
-      +'<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:3px">'+esc(a.recommendation_reason||'')+'</div>'
-      +'</div>'
-      +'</div>'
-
-      // Discussed details
-      +(a.ctc_discussed||a.notice_discussed_days?
-        '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
-        +(a.ctc_discussed?'<div style="background:rgba(255,255,255,.08);border-radius:6px;padding:7px 12px;font-size:12px;color:#fff"><span style="opacity:.5;font-size:10px">Discussed CTC </span><strong>&#8377;'+a.ctc_discussed+'L</strong></div>':'')
-        +(a.notice_discussed_days?'<div style="background:rgba(255,255,255,.08);border-radius:6px;padding:7px 12px;font-size:12px;color:#fff"><span style="opacity:.5;font-size:10px">Notice </span><strong>'+a.notice_discussed_days+'d</strong>'+(a.notice_negotiable?' <span style="color:#9FE1CB;font-size:10px">(negotiable)</span>':a.notice_negotiable===false?' <span style="color:#f09595;font-size:10px">(firm)</span>':'')+'</div>':'')
-        +'</div>':'')
-
-      // Call Summary
-      +(a.call_summary?'<div style="background:rgba(255,255,255,.06);border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:rgba(255,255,255,.85);line-height:1.7">'+esc(a.call_summary)+'</div>':'')
-
-      // 3 columns: concerns, strengths, red flags
-      +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px">'
-      +renderCallList('Key Concerns', a.key_concerns, '#FAC775', '&#9432;')
-      +renderCallList('Strengths', a.candidate_strengths, '#9FE1CB', '&#10003;')
-      +renderCallList('Red Flags', a.red_flags, '#f09595', '&#9888;')
-      +'</div>'
-
-      // Key quotes
-      +(a.key_quotes&&a.key_quotes.length?
-        '<div style="margin-bottom:10px"><div style="font-size:10px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Key Quotes from Candidate</div>'
-        +a.key_quotes.map(q=>'<div style="border-left:2px solid rgba(255,255,255,.2);padding:5px 10px;margin-bottom:5px;font-size:11px;color:rgba(255,255,255,.7);font-style:italic">&ldquo;'+esc(q)+'&rdquo;</div>').join('')
-        +'</div>':'')
-
-      // Next Step
-      +(a.next_step?
-        '<div style="background:rgba(29,158,117,0.25);border:0.5px solid rgba(29,158,117,0.4);border-radius:8px;padding:10px 14px;display:flex;align-items:flex-start;gap:10px">'
-        +'<div style="font-size:16px;flex-shrink:0">&#128161;</div>'
-        +'<div><div style="font-size:11px;font-weight:600;color:#9FE1CB;margin-bottom:2px">Next Step</div>'
-        +'<div style="font-size:12px;color:#fff">'+esc(a.next_step)+(a.next_step_deadline?' <span style="color:#9FE1CB;font-weight:500">&mdash; '+esc(a.next_step_deadline)+'</span>':'')+'</div></div>'
-        +'</div>':'')
-
-      // Language detected
-      +(a.languages_detected?'<div style="margin-top:8px;font-size:10px;color:rgba(255,255,255,.3);text-align:right">Language: '+esc(a.languages_detected)+'</div>':'');
-
+    const a = r.analysis || {};
+    statusEl.style.display = 'none';
+    renderCallReport(cid, {analysis: a, transcript: r.transcript, recording_file: r.recording_file,
+      recording_name: r.recording_name, updated_fields: r.updated_fields,
+      sources: {cv: r.cv_used, jd: r.jd_used, pitch: r.pitch_used}, created_at: r.created_at,
+      created_by_name: (S.currentUser && (S.currentUser.display_name || S.currentUser.username)) || ''});
     toast('✅', 'Call analysed! Interest: '+a.interest_level+' | Rec: '+a.recommendation);
 
   } catch(e) {
@@ -11135,6 +11064,157 @@ async function handleCallUpload(cid, input) {
     statusEl.innerHTML = '&#9888; Error: ' + esc(e.message);
     toast('⚠️', 'Error: ' + e.message);
   }
+}
+
+// ── Call Analysis tab: one combined report (CV + Pitch + call vs JD) ──────
+async function loadCallAnalysis(cid){
+  var el = document.getElementById('call-analysis-'+cid); if(!el) return;
+  if(el.getAttribute('data-loaded')==='1') return;
+  el.innerHTML = '<div style="font-size:11.5px;color:rgba(255,255,255,.55);padding:8px 2px">Loading saved analysis&hellip;</div>';
+  var r = await req('GET','/candidates/'+cid+'/call-analysis');
+  if(!r || !r.ok){ el.innerHTML=''; return; }
+  if(!r.call){
+    el.innerHTML = '<div style="background:rgba(255,255,255,.06);border:1px dashed rgba(255,255,255,.18);border-radius:10px;padding:18px;text-align:center;color:rgba(255,255,255,.7);font-size:12px">'
+      + 'No call analysed yet. Click <b>Upload</b> and choose the call recording &mdash; DeepSeek will read the CV, the Pitch evaluation and the call together and compare them with the JD.</div>';
+    return;
+  }
+  renderCallReport(cid, r.call);
+}
+function _caChip(txt, kind){
+  var m = {good:['rgba(29,158,117,.25)','#9FE1CB'], mid:['rgba(239,159,39,.22)','#FAC775'], bad:['rgba(226,75,74,.22)','#F5A3A3'], na:['rgba(255,255,255,.1)','rgba(255,255,255,.65)']};
+  var c = m[kind] || m.na;
+  return '<span style="background:'+c[0]+';color:'+c[1]+';font-size:9.5px;font-weight:700;letter-spacing:.3px;padding:2px 8px;border-radius:20px;white-space:nowrap">'+esc(txt||'—')+'</span>';
+}
+function _caKind(v){
+  v = String(v||'').toUpperCase();
+  if(/^(MET|MATCH|CONFIRMED|HIGH|PROCEED|STRONG)/.test(v)) return 'good';
+  if(/^(PARTIAL|MEDIUM|HOLD|MODERATE|NEW_INFO|POSSIBLE|UNVERIFIED|NOT_DISCUSSED)/.test(v)) return 'mid';
+  if(/^(GAP|MISMATCH|NOT_CONFIRMED|LOW|REJECT|WEAK)/.test(v)) return 'bad';
+  return 'na';
+}
+function _caSec(title, inner){
+  return '<div style="background:rgba(255,255,255,.05);border:0.5px solid rgba(255,255,255,.1);border-radius:10px;padding:12px 14px;margin-bottom:10px">'
+    + '<div style="font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-bottom:8px">'+title+'</div>'+inner+'</div>';
+}
+function renderCallReport(cid, call){
+  var el = document.getElementById('call-analysis-'+cid); if(!el) return;
+  el.setAttribute('data-loaded','1');
+  var a = call.analysis || {}, src = call.sources || {}, uf = call.updated_fields || {};
+  var html = '';
+  // 1. original recording
+  if(call.recording_file){
+    var url = API + '/calls/' + encodeURIComponent(call.recording_file);
+    html += '<div style="background:rgba(255,255,255,.08);border-radius:10px;padding:10px 12px;margin-bottom:12px">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
+      + '<div style="font-size:11.5px;color:#fff;font-weight:600">&#127911; Original recording'
+      + (call.recording_name?' <span style="font-weight:400;color:rgba(255,255,255,.55)">&middot; '+esc(call.recording_name)+'</span>':'')+'</div>'
+      + '<a href="'+url+'" download style="font-size:11px;color:#9FE1CB;text-decoration:none;font-weight:600">&#11015; Download</a></div>'
+      + '<audio controls preload="none" src="'+url+'" style="width:100%;height:36px"></audio>'
+      + '<div style="font-size:10px;color:rgba(255,255,255,.45);margin-top:5px">Analysed '+esc(String(call.created_at||'').slice(0,16).replace('T',' '))
+      + (call.created_by_name?(' by '+esc(call.created_by_name)):'')
+      + ' &middot; used: '+['CV','JD','Pitch evaluation'].filter(function(x,i){ return [src.cv,src.jd,src.pitch][i]; }).concat(['Call']).join(', ')+'</div></div>';
+  }
+  // 2. auto-updated fields
+  var ufk = Object.keys(uf||{});
+  if(ufk.length){
+    var lm={ctc_current:'Current CTC', ctc_expected:'Expected CTC', company:'Company', notice_period:'Notice (days)'};
+    html += '<div style="background:rgba(29,158,117,0.18);border:0.5px solid rgba(159,225,203,.4);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:11.5px;color:#CFF3E6">&#10003; Auto-updated from call &middot; '
+      + esc(ufk.map(function(k){ var v=uf[k]; if(k==='ctc_current'||k==='ctc_expected') v='₹'+v+'L'; return (lm[k]||k)+': '+v; }).join('  ·  '))+'</div>';
+  }
+  // 3. headline row
+  var score = (a.jd_match_score!=null && !isNaN(a.jd_match_score)) ? Math.max(0,Math.min(100,parseInt(a.jd_match_score,10))) : null;
+  var sk = score==null ? 'na' : (score>=75?'good':(score>=50?'mid':'bad'));
+  var scol = {good:'#5FE0B4', mid:'#FAC775', bad:'#F5A3A3', na:'#ccc'}[sk];
+  var tile = function(lbl, val, sub, kind){
+    var col = {good:'#5FE0B4', mid:'#FAC775', bad:'#F5A3A3', na:'#fff'}[kind||'na'];
+    return '<div style="background:rgba(255,255,255,.08);border-radius:10px;padding:10px 12px;text-align:center">'
+      + '<div style="font-size:9.5px;color:rgba(255,255,255,.45);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">'+lbl+'</div>'
+      + '<div style="font-size:18px;font-weight:800;color:'+col+'">'+esc(val||'—')+'</div>'
+      + (sub?'<div style="font-size:10px;color:rgba(255,255,255,.55);margin-top:3px;line-height:1.35">'+esc(sub)+'</div>':'')+'</div>';
+  };
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px">'
+    + '<div style="background:rgba(255,255,255,.08);border-radius:10px;padding:10px 12px;text-align:center">'
+    +   '<div style="font-size:9.5px;color:rgba(255,255,255,.45);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">JD match</div>'
+    +   '<div style="font-size:26px;font-weight:800;color:'+scol+';line-height:1">'+(score==null?'—':score+'<span style="font-size:12px;opacity:.7">/100</span>')+'</div>'
+    +   '<div style="font-size:10px;color:rgba(255,255,255,.6);margin-top:4px">'+esc(a.jd_verdict||a.fit_vs_jd||'')+'</div></div>'
+    + tile('Interest', a.interest_level, a.interest_reason, _caKind(a.interest_level))
+    + tile('Recommendation', a.recommendation, a.recommendation_reason, _caKind(a.recommendation))
+    + '</div>';
+  // 4. combined summary
+  if(a.overall_summary || a.call_summary){
+    html += _caSec('Combined picture (CV + Pitch + call vs JD)',
+      '<div style="font-size:12px;color:rgba(255,255,255,.88);line-height:1.65">'+esc(a.overall_summary||a.call_summary)+'</div>'
+      + (a.overall_summary && a.call_summary ? '<div style="font-size:11px;color:rgba(255,255,255,.6);line-height:1.6;margin-top:8px"><b style="color:rgba(255,255,255,.75)">On the call:</b> '+esc(a.call_summary)+'</div>' : ''));
+  }
+  // 5. requirement matrix
+  var reqs = Array.isArray(a.requirements) ? a.requirements : [];
+  if(reqs.length){
+    html += _caSec('JD requirements &mdash; CV vs call',
+      '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px;color:rgba(255,255,255,.85)">'
+      + '<tr style="color:rgba(255,255,255,.45);font-size:10px;text-align:left"><td style="padding:4px 6px 6px 0">Requirement</td><td style="padding:4px 6px 6px">CV / profile</td><td style="padding:4px 6px 6px">On the call</td><td style="padding:4px 0 6px;text-align:right">Status</td></tr>'
+      + reqs.map(function(q){
+          return '<tr style="border-top:0.5px solid rgba(255,255,255,.08);vertical-align:top">'
+            + '<td style="padding:7px 6px 7px 0;font-weight:600;color:#fff;min-width:130px">'+esc(q.requirement||'')+'</td>'
+            + '<td style="padding:7px 6px;min-width:120px">'+esc(q.cv_evidence||'')+'</td>'
+            + '<td style="padding:7px 6px;min-width:120px">'+esc(q.call_evidence||'')+'</td>'
+            + '<td style="padding:7px 0;text-align:right">'+_caChip(q.status, _caKind(q.status))+'</td></tr>';
+        }).join('') + '</table></div>');
+  }
+  // 6. CV vs call consistency
+  var cons = Array.isArray(a.consistency) ? a.consistency : [];
+  if(cons.length){
+    html += _caSec('CV vs call &mdash; does it match?', cons.map(function(x){
+      return '<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:0.5px solid rgba(255,255,255,.07)">'
+        + '<div style="flex:1;min-width:0"><div style="font-size:11.5px;font-weight:600;color:#fff">'+esc(x.topic||'')+'</div>'
+        + '<div style="font-size:10.5px;color:rgba(255,255,255,.65);margin-top:2px">CV: '+esc(x.cv_says||'—')+' &nbsp;&middot;&nbsp; Call: '+esc(x.call_says||'—')+'</div></div>'
+        + _caChip(String(x.status||'').replace('_',' '), _caKind(x.status))+'</div>';
+    }).join(''));
+  }
+  // 7. pitch follow-up
+  var pf = Array.isArray(a.pitch_followup) ? a.pitch_followup : [];
+  if(pf.length){
+    html += _caSec('Points from the Pitch evaluation &mdash; checked on the call?', pf.map(function(x){
+      return '<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:0.5px solid rgba(255,255,255,.07)">'
+        + '<div style="flex:1;min-width:0"><div style="font-size:11.5px;color:#fff">'+esc(x.point||'')+'</div>'
+        + (x.note?'<div style="font-size:10.5px;color:rgba(255,255,255,.6);margin-top:2px">'+esc(x.note)+'</div>':'')+'</div>'
+        + _caChip(String(x.outcome||'').replace('_',' '), _caKind(x.outcome))+'</div>';
+    }).join(''));
+  } else if(!src.pitch){
+    html += '<div style="font-size:10.5px;color:rgba(255,255,255,.45);margin:-2px 0 10px">Tip: generate the <b>Pitch</b> tab before the call &mdash; its evaluation is then checked against what the candidate said.</div>';
+  }
+  // 8. discussed CTC / notice
+  if(a.ctc_discussed||a.ctc_expected_discussed||a.notice_discussed_days){
+    html += '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
+      + (a.ctc_discussed?'<div style="background:rgba(255,255,255,.08);border-radius:6px;padding:7px 12px;font-size:12px;color:#fff"><span style="opacity:.5;font-size:10px">Current CTC </span><strong>&#8377;'+esc(a.ctc_discussed)+'L</strong></div>':'')
+      + (a.ctc_expected_discussed?'<div style="background:rgba(255,255,255,.08);border-radius:6px;padding:7px 12px;font-size:12px;color:#fff"><span style="opacity:.5;font-size:10px">Expected </span><strong>&#8377;'+esc(a.ctc_expected_discussed)+'L</strong></div>':'')
+      + (a.notice_discussed_days?'<div style="background:rgba(255,255,255,.08);border-radius:6px;padding:7px 12px;font-size:12px;color:#fff"><span style="opacity:.5;font-size:10px">Notice </span><strong>'+esc(a.notice_discussed_days)+'d</strong>'+(a.notice_negotiable?' <span style="color:#9FE1CB;font-size:10px">(negotiable)</span>':a.notice_negotiable===false?' <span style="color:#f09595;font-size:10px">(firm)</span>':'')+'</div>':'')
+      + '</div>';
+  }
+  // 9. concerns / strengths / red flags
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:10px">'
+    + renderCallList('Key Concerns', a.key_concerns, '#FAC775', '&#9432;')
+    + renderCallList('Strengths', a.candidate_strengths, '#9FE1CB', '&#10003;')
+    + renderCallList('Red Flags', a.red_flags, '#f09595', '&#9888;')
+    + '</div>';
+  // 10. quotes
+  if(a.key_quotes && a.key_quotes.length){
+    html += _caSec('Key quotes from the candidate', a.key_quotes.map(function(q){
+      return '<div style="border-left:2px solid rgba(255,255,255,.2);padding:4px 10px;margin-bottom:5px;font-size:11px;color:rgba(255,255,255,.75);font-style:italic">&ldquo;'+esc(q)+'&rdquo;</div>';
+    }).join(''));
+  }
+  // 11. next step
+  if(a.next_step){
+    html += '<div style="background:rgba(29,158,117,0.25);border:0.5px solid rgba(29,158,117,0.4);border-radius:8px;padding:10px 14px;display:flex;align-items:flex-start;gap:10px;margin-bottom:10px">'
+      + '<div style="font-size:16px;flex-shrink:0">&#128161;</div><div><div style="font-size:11px;font-weight:600;color:#9FE1CB;margin-bottom:2px">Next step</div>'
+      + '<div style="font-size:12px;color:#fff">'+esc(a.next_step)+(a.next_step_deadline?' <span style="color:#9FE1CB;font-weight:500">&mdash; '+esc(a.next_step_deadline)+'</span>':'')+'</div></div></div>';
+  }
+  // 12. transcript
+  if(call.transcript){
+    html += '<details style="background:rgba(255,255,255,.04);border-radius:8px;padding:8px 12px"><summary style="cursor:pointer;font-size:11px;color:rgba(255,255,255,.7);font-weight:600">&#128221; Full transcript'
+      + (a.languages_detected?(' &middot; '+esc(a.languages_detected)):'')+'</summary>'
+      + '<div style="font-size:11px;color:rgba(255,255,255,.75);line-height:1.7;margin-top:8px;white-space:pre-wrap;max-height:320px;overflow:auto">'+esc(call.transcript)+'</div></details>';
+  }
+  el.innerHTML = html;
 }
 
 function renderCallList(title, items, color, icon) {
