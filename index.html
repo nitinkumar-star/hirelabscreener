@@ -3568,11 +3568,11 @@ async function renderDashboard(el){
   var maxF=1; funnel.forEach(function(f){ if(f.count>maxF)maxF=f.count; });
   var funnelRows=funnel.map(function(f){
     var pct=Math.round(f.count*100/maxF);
-    var isPlaced=/plac/i.test(f.label);
+    var isPlaced=!!f.all_jobs || /plac/i.test(f.label);
     var stg=((f.stages&&f.stages.length)?f.stages:[f.label]).join('||').replace(/'/g,'');
     return '<div class="funnelrow" onclick="renderStageCandidatesPage(\''+stg+'\')" title="Click to see all candidates in this stage" style="display:flex;align-items:center;gap:12px;margin-bottom:5px;cursor:pointer;padding:4px;border-radius:7px">'
       +'<div style="width:140px;font-size:12px;color:#444;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(f.label)+'</div>'
-      +'<div style="flex:1;height:22px;background:#efeef5;border-radius:6px;overflow:hidden"><div style="height:100%;width:'+Math.max(pct,2)+'%;background:'+(isPlaced?'#0F6E56':'#7B74E0')+';border-radius:6px"></div></div>'
+      +'<div style="flex:1;height:22px;background:#efeef5;border-radius:6px;overflow:hidden"><div style="height:100%;width:'+Math.max(pct,2)+'%;background:'+(isPlaced?((f.stages||[])[0]==='Joined'?'#0B4F3E':'#0F6E56'):'#7B74E0')+';border-radius:6px"></div></div>'
       +'<div style="width:44px;text-align:right;font-family:\'IBM Plex Mono\',monospace;font-size:13px;font-weight:600;color:var(--ink)">'+f.count+'</div>'
       +'</div>';
   }).join('');
@@ -14508,11 +14508,11 @@ async function renderAnalytics(){
   html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
     + '<div style="font-size:13px;font-weight:600">Pipeline funnel</div>'
     + '<span style="font-size:10.5px;color:var(--muted);background:#F1F0EC;padding:2px 8px;border-radius:6px">current snapshot</span></div>';
-  html += '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">Click any stage to see all candidates in that stage, across all positions. (Ctrl/Cmd+click opens it in a new tab.)</div>';
+  html += '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">Working stages count candidates on <b>active</b> positions only; <b>Placed</b> and <b>Joined</b> count every position (active, hold and closed). Click any stage to see those candidates. (Ctrl/Cmd+click opens it in a new tab.)</div>';
   html += '<div style="display:flex;flex-direction:column;gap:7px">';
   r.funnel.forEach(function(f){
     var pct = Math.round(f.count*100/maxFunnel);
-    var col = f.label==='Placed' ? '#0F6E56' : '#7F77DD';
+    var col = f.all_jobs ? ((f.stages||[])[0]==='Joined' ? '#0B4F3E' : '#0F6E56') : '#7F77DD';
     var stagesParam = encodeURIComponent(f.stages.join('||'));
     var href = '#analytics/stage/' + stagesParam;
     html += '<a href="'+href+'" style="display:flex;align-items:center;gap:10px;text-decoration:none;cursor:pointer" title="Open in this tab, or Ctrl/Cmd+click for a new tab">'

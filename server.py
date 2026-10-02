@@ -4988,10 +4988,19 @@ def analytics():
         (stage_label('Shared with Client'), ['Shared with Client']),
         ('Interview', ['Interview Inprocess']),
         (stage_label('Placed'), ['Placed']),
+        (stage_label('Joined'), ['Joined']),
     ]
+    # Working stages count only ACTIVE jobs (hold / closed / Central DB left out);
+    # Placed and Joined count every job, so a closed position's hires still show.
+    # analytics_stage_candidates() applies the same rule, so a bar's number and
+    # the list it opens always match.
+    _active_mids = set(m['id'] for m in mandates if (m.get('status') or 'active') == 'active')
     funnel = []
     for label, stages in funnel_map:
-        funnel.append({'label': label, 'count': len([c for c in cands if c['stage'] in stages]), 'stages': stages})
+        _all_jobs = set(stages) <= FUNNEL_ALL_JOB_STAGES
+        funnel.append({'label': label, 'stages': stages, 'all_jobs': _all_jobs,
+                       'count': len([c for c in cands if c['stage'] in stages
+                                     and (_all_jobs or c['mandate_id'] in _active_mids)])})
 
     # Source effectiveness (of placed candidates, by source)
     SOURCE_LABELS = {'naukri': 'Naukri extension', 'referral': 'Employee referral',
@@ -5245,6 +5254,10 @@ def analytics():
                     'range_label': range_label})
 
 
+# Funnel stages that count candidates from EVERY job (not just active ones).
+FUNNEL_ALL_JOB_STAGES = frozenset(('Placed', 'Joined'))
+
+
 @app.route('/api/analytics/stage-candidates')
 @login_required
 def analytics_stage_candidates():
@@ -5257,10 +5270,13 @@ def analytics_stage_candidates():
     conn = get_db()
     cid = effective_company_id()
     if is_company_admin():
-        mrows = conn.execute('SELECT id, role, client FROM mandates WHERE owner_id=?', (cid,)).fetchall()
+        mrows = conn.execute('SELECT id, role, client, status FROM mandates WHERE owner_id=?', (cid,)).fetchall()
     else:
-        mrows = conn.execute('SELECT id, role, client FROM mandates WHERE owner_id=? AND id IN (SELECT mandate_id FROM mandate_assignees WHERE user_id=? AND is_active=1)',
+        mrows = conn.execute('SELECT id, role, client, status FROM mandates WHERE owner_id=? AND id IN (SELECT mandate_id FROM mandate_assignees WHERE user_id=? AND is_active=1)',
                              (cid, real_user_id())).fetchall()
+    # Same rule as the funnel: working stages = active jobs only; Placed/Joined = all jobs.
+    if not (set(stages) <= FUNNEL_ALL_JOB_STAGES):
+        mrows = [m for m in mrows if (m['status'] or 'active') == 'active']
     mmap = {m['id']: dict(m) for m in mrows}
     mandate_ids = list(mmap.keys())
     if not mandate_ids:
