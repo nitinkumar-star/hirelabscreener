@@ -10417,6 +10417,10 @@ def _email_agent_loop():
     import time as _t
     while True:
         _t.sleep(120)
+        # Emergency switch (Render env EMAIL_AGENT_BG=off): stop the background
+        # inbox sync + agent scan without a redeploy. Manual sync still works.
+        if (os.environ.get('EMAIL_AGENT_BG', '') or '').strip().lower() in ('off', '0', 'false', 'no'):
+            continue
         # Skip this cycle entirely if a scan (manual or previous) is still
         # running — never stack overlapping sync/scan passes.
         if not _AGENT_BUSY.acquire(blocking=False):
@@ -14943,6 +14947,27 @@ def _sync_mailbox_impl(oid):
                 ids = data[0].split()[-400:]
                 for num in ids:
                     try:
+                        # Cheap header peek first: a message already stored with
+                        # its body is skipped WITHOUT downloading it or writing
+                        # to the database. Before this, every 2-minute cycle
+                        # re-downloaded up to 400 full mails per folder and
+                        # re-wrote each one, holding the database write lock
+                        # through the network fetches — which froze stage
+                        # changes, pitch and other saves for everyone.
+                        try:
+                            _ht, _hd = M.fetch(num, '(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])')
+                            _hraw = b''
+                            for _part in (_hd or []):
+                                if isinstance(_part, tuple) and len(_part) > 1:
+                                    _hraw += _part[1] or b''
+                            _hmid = (emaillib.message_from_bytes(_hraw).get('Message-ID') or '').strip() \
+                                or (fname + ':' + num.decode())
+                            _have = conn.execute("SELECT 1 FROM emails WHERE owner_id=? AND msg_id=? "
+                                                 "AND COALESCE(body,'')!='' LIMIT 1", (oid, _hmid)).fetchone()
+                            if _have:
+                                continue
+                        except Exception:
+                            pass
                         typ, md = M.fetch(num, '(RFC822)')
                         if typ != 'OK' or not md or not md[0]: continue
                         msg = emaillib.message_from_bytes(md[0][1])
@@ -14983,11 +15008,10 @@ def _sync_mailbox_impl(oid):
                                     (oid, cid, 'received', addr, user, subject, text, mid, irt, ts(), ts()))
                         # Release the write lock every few messages so toggles /
                         # refresh don't block for the whole (slow) IMAP fetch loop.
-                        _since_commit += 1
-                        if _since_commit >= 10:
-                            try: conn.commit()
-                            except Exception: pass
-                            _since_commit = 0
+                        # Commit straight away: the write lock is never held while
+                        # the next message is fetched over the network.
+                        try: conn.commit()
+                        except Exception: pass
                     except Exception:
                         continue
             except Exception:
