@@ -6447,7 +6447,7 @@ function renderProfileDetail(c){
     +'</div>'
     +'</div>';
   var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">&#9993; Email thread</div><div style="display:flex;gap:7px"><button class="cp-hbtn" onclick="cpLoadEmailThread('+c.id+')">&#8635; Refresh</button><button class="cp-hbtn" style="background:#185FA5;color:#fff;border-color:transparent" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">&#9998; Compose / AI</button></div></div><div id="cp-email-'+c.id+'" style="max-height:460px;overflow-y:auto"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading emails…</div></div></div>';
-  var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload a call recording — Groq transcribes, Claude analyses &amp; auto-updates CTC/company.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
+  var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload a call recording — Groq transcribes, DeepSeek analyses &amp; auto-updates CTC/company.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
 
   // ── Compose page ───────────────────────────────────────────────────────
   let html='';
@@ -7991,7 +7991,7 @@ function apiKeysHTML(s){
   return '<div class="card" style="margin-bottom:12px"><div class="card-head"><span style="font-weight:500">&#129302; AI API Keys</span></div><div class="card-body">'
     + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Stored keys are never sent back to the browser, so these boxes always look empty. '
     + '<b>Leave a box blank to keep the key that is already saved</b> &mdash; type a new one only when you want to replace it.</div>'
-    + '<div class="fg-row"><label>Claude API Key</label><input class="inp" id="s-claude" type="password" value="" placeholder="' + _secretPh(s.claude_api_key, 'sk-ant-...') + '"></div>'
+    + '<div class="fg-row"><label>Claude API Key <span style="color:#aaa;font-weight:400">(optional — no feature uses it now; call analysis runs on DeepSeek)</span></label><input class="inp" id="s-claude" type="password" value="" placeholder="' + _secretPh(s.claude_api_key, 'sk-ant-...') + '"></div>'
     + '<div class="fg-row"><label>DeepSeek API Key (Naukri quick-parse &amp; bulk add) <a href="https://platform.deepseek.com/api_keys" target="_blank" style="color:#1D9E75;font-size:10px">Get key &#8599;</a></label>'
     + '<input class="inp" id="s-deepseek" type="password" value="" placeholder="' + _secretPh(s.deepseek_api_key, 'sk-...') + '"></div>'
     + '<div class="fg-row"><label>Groq API Key (call recording transcription) <a href="https://console.groq.com/keys" target="_blank" style="color:#1D9E75;font-size:10px">Get key &#8599;</a></label>'
@@ -11018,10 +11018,8 @@ async function handleCallUpload(cid, input) {
   if (!input.files || !input.files[0]) return;
   const file = input.files[0];
 
-  const groqKey   = S.settings.groq_api_key;
-  const claudeKey = S.settings.claude_api_key;
-  if (!groqKey)   { toast('🔑','Add Groq API key in Settings (for transcription)'); toggleSettings(); return; }
-  if (!claudeKey) { toast('🔑','Add Claude API key in Settings'); return; }
+  // Keys live on the server (Settings / Render env) and are never sent to the
+  // browser, so the server checks them and returns a clear message if missing.
 
   const statusEl  = document.getElementById('call-status-'+cid);
   const analysisEl = document.getElementById('call-analysis-'+cid);
@@ -11033,8 +11031,6 @@ async function handleCallUpload(cid, input) {
 
   const fd = new FormData();
   fd.append('recording', file);
-  fd.append('groq_api_key', groqKey);
-  fd.append('claude_api_key', claudeKey);
   fd.append('language', 'hi');  // Hindi/Hinglish
 
   input.value = '';
@@ -11042,7 +11038,7 @@ async function handleCallUpload(cid, input) {
   try {
     // Step 2: Transcribing message after 5s
     const t1 = setTimeout(() => {
-      statusEl.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><div class="spinner" style="border-color:rgba(255,255,255,.3);border-top-color:#9FE1CB"></div><div><div style="font-weight:500">Step 2/3 — Analysing with Claude</div><div style="font-size:10px;opacity:.7;margin-top:2px">Comparing transcript with JD, SOP &amp; CV...</div></div></div>';
+      statusEl.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><div class="spinner" style="border-color:rgba(255,255,255,.3);border-top-color:#9FE1CB"></div><div><div style="font-weight:500">Step 2/3 — Analysing with DeepSeek</div><div style="font-size:10px;opacity:.7;margin-top:2px">Comparing transcript with JD, SOP &amp; CV...</div></div></div>';
     }, 15000);
 
     const r = await reqFile('/candidates/'+cid+'/analyse-call', fd);

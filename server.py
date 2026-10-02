@@ -1960,7 +1960,13 @@ CRM_FILES_DIR = os.path.join(DATA_DIR, 'crm_files')
 EMAIL_ATTACH_DIR = os.path.join(DATA_DIR, 'email_attachments')
 
 CLAUDE_URL   = 'https://api.anthropic.com/v1/messages'
-CLAUDE_MODEL = 'claude-sonnet-4-20250514'
+# Claude model. 'claude-sonnet-4-20250514' was RETIRED by Anthropic on
+# 15 Jun 2026 — every Claude call (CV screening, call analysis, ...) then failed
+# with "model: claude-sonnet-4-20250514". Now: env CLAUDE_MODEL overrides; else
+# Anthropic's recommended replacement. If a model is ever retired again,
+# call_claude() automatically moves to the next one in CLAUDE_MODEL_FALLBACKS.
+CLAUDE_MODEL = (os.environ.get('CLAUDE_MODEL', '') or '').strip() or 'claude-sonnet-4-6'
+CLAUDE_MODEL_FALLBACKS = ['claude-sonnet-4-6', 'claude-sonnet-5']
 
 for d in [DATA_DIR, CV_DIR, BAK_DIR, CRM_FILES_DIR, EMAIL_ATTACH_DIR]:
     os.makedirs(d, exist_ok=True)
@@ -4294,13 +4300,36 @@ def over_token_cap(company_id=None):
     return tokens_used_this_month(company_id) >= cap
 
 
+def _claude_model_gone(resp):
+    """True when Anthropic says the model itself does not exist / is retired."""
+    if resp.status_code not in (400, 404):
+        return False
+    try:
+        err = (resp.json() or {}).get('error') or {}
+    except Exception:
+        return False
+    msg = str(err.get('message') or '')
+    return err.get('type') == 'not_found_error' or msg.lower().startswith('model:')
+
+
 def call_claude(api_key, system_msg, messages, max_tokens=8000, endpoint='claude'):
+    global CLAUDE_MODEL
     if over_token_cap():
         raise TokenCapError()
-    resp = requests.post(CLAUDE_URL,
-        headers={'x-api-key': api_key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'},
-        json={'model': CLAUDE_MODEL, 'max_tokens': max_tokens, 'system': system_msg, 'messages': messages},
-        timeout=120)
+    tried = []
+    for model in [CLAUDE_MODEL] + [m for m in CLAUDE_MODEL_FALLBACKS if m != CLAUDE_MODEL]:
+        tried.append(model)
+        resp = requests.post(CLAUDE_URL,
+            headers={'x-api-key': api_key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'},
+            json={'model': model, 'max_tokens': max_tokens, 'system': system_msg, 'messages': messages},
+            timeout=120)
+        if _claude_model_gone(resp):
+            print(f'[claude] model {model} unavailable ({resp.status_code}); trying next')
+            continue
+        if model != CLAUDE_MODEL:
+            print(f'[claude] switched model {CLAUDE_MODEL} -> {model}')
+            CLAUDE_MODEL = model      # remember the working one for this process
+        break
     # Log token usage (per tenant) without breaking the caller.
     try:
         u = resp.json().get('usage', {})
@@ -20794,10 +20823,11 @@ def analyse_call(cid):
     language    = request.form.get('language', 'hi')   # hi = Hindi, en = English
     # Server keys (env var first, then DB) take priority over anything from frontend
     groq_key    = get_setting('groq_api_key') or request.form.get('groq_api_key', '').strip()
-    claude_key  = get_setting('claude_api_key') or request.form.get('claude_api_key', '').strip()
+    # Analysis runs on DeepSeek (Oct 2026; was Claude). Server key only.
+    ds_key      = get_setting('deepseek_api_key')
 
     if not groq_key: return jsonify({'error': 'Groq API key required (for transcription). Add in Settings.'}), 400
-    if not claude_key: return jsonify({'error': 'Claude API key required (for analysis). Add in Settings.'}), 400
+    if not ds_key: return jsonify({'error': 'DeepSeek API key required (for analysis). Add it in Settings → Admin → AI API Keys.'}), 400
     if 'recording' not in request.files: return jsonify({'error': 'No recording file uploaded'}), 400
 
     f = request.files['recording']
@@ -20887,7 +20917,7 @@ def analyse_call(cid):
     role       = mandate['role'] if mandate else 'the position'
     client     = mandate['client'] if mandate else ''
 
-    # ── Step 3: Claude Analysis ───────────────────────────────────────────────
+    # ── Step 3: DeepSeek Analysis ─────────────────────────────────────────────
     system_msg = (
         'You are an expert recruitment analyst. Analyse a recruiter-candidate call.\n'
         'Return ONLY valid JSON — no markdown, no explanation.\n\n'
@@ -20923,13 +20953,32 @@ def analyse_call(cid):
         + 'CALL TRANSCRIPT:\n' + transcript[:6000]
     )
 
-    claude_resp = call_claude(claude_key, system_msg, [{'role': 'user', 'content': user_msg}], max_tokens=1500)
-    if claude_resp.status_code != 200:
-        try: err = claude_resp.json().get('error', {}).get('message', 'Claude error')
-        except Exception: err = claude_resp.text[:200]
+    try:
+        ds_resp = call_deepseek(ds_key, {
+            'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 1500,
+            'response_format': {'type': 'json_object'},
+            'messages': [{'role': 'system', 'content': system_msg},
+                         {'role': 'user', 'content': user_msg}]},
+            timeout=120, endpoint='call-analysis')
+    except TokenCapError:
+        raise
+    except requests.Timeout:
+        return jsonify({'error': 'Analysis timed out. Please try again.', 'transcript': transcript}), 504
+    except Exception as e:
+        return jsonify({'error': 'Analysis failed: ' + str(e)[:200], 'transcript': transcript}), 500
+    if ds_resp.status_code != 200:
+        try: err = (ds_resp.json().get('error') or {}).get('message') or 'DeepSeek error'
+        except Exception: err = ds_resp.text[:200]
+        if ds_resp.status_code == 401:
+            err = 'Invalid DeepSeek API key'
+        elif ds_resp.status_code == 402:
+            err = 'DeepSeek balance is empty — top up your DeepSeek account'
         return jsonify({'error': 'Analysis failed: ' + err, 'transcript': transcript}), 500
 
-    analysis_text = claude_resp.json()['content'][0]['text']
+    try:
+        analysis_text = ds_resp.json()['choices'][0]['message']['content'] or ''
+    except Exception:
+        return jsonify({'error': 'Analysis failed: empty reply from DeepSeek', 'transcript': transcript}), 500
     analysis = parse_json(analysis_text)
     if not analysis:
         return jsonify({'error': 'Could not parse analysis', 'transcript': transcript, 'raw': analysis_text[:500]}), 500
