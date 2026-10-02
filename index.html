@@ -471,7 +471,8 @@ button,input,textarea,select{font-family:inherit}
 .cdb-subtab:hover{color:#534AB7}
 .cdb-subtab.active{border-bottom-color:#534AB7;color:#534AB7;font-weight:600}
 /* BD Command Center → sub-tab of Clients (CRM); Freelancers → sub-tab of Admin Panel. Home → logo click. My Mandates → Jobs tab. Force-hidden from the main sidebar. Uses #sidebar #id to beat #sidebar .sb-gear{display:flex!important}. */
-#sidebar #sb-bd,#sidebar #sb-freelancers,#sidebar #sb-home{display:none !important}
+#sidebar #sb-bd,#sidebar #sb-freelancers{display:none !important}
+/* Home is visible again (Oct 2026): it now holds the merged Analytics insights. */
 #sidebar .sb-mand-head,#sidebar #sb-mandates{display:none !important}
 /* Two-line sidebar nav items (title + subtitle), matching the requested design */
 #sidebar .sb-gear{align-items:flex-start !important}
@@ -866,11 +867,11 @@ body{font-size:14px !important; line-height:1.5}
   </div>
 
   <div style="padding:6px 0 2px">
-    <a href="#" class="sb-gear" id="sb-home" onclick="return navClick(event,goHome)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Home</span><span class="sb-nav-sub">Dashboard &middot; today&#39;s focus</span></span></a>
+    <a href="#" class="sb-gear" id="sb-home" onclick="return navClick(event,goHome)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Home</span><span class="sb-nav-sub">Today&#39;s focus &middot; insights</span></span></a>
     <!-- Command Center retired Oct 2026 -->
     <a href="#jobs" class="sb-gear" id="sb-jobs" onclick="return navClick(event,openJobs)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Jobs</span><span class="sb-nav-sub">All mandates &middot; pipeline</span></span></a>
     <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12l3 3 5-6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Tasks</span><span class="sb-nav-sub">Reminders &middot; interviews &middot; follow-ups</span></span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
-    <a href="#analytics" class="sb-gear" id="sb-analytics" onclick="return navClick(event,openAnalytics)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Analytics</span><span class="sb-nav-sub">Insights &middot; funnel &middot; sources</span></span></a>
+    <!-- Analytics merged into Home (Oct 2026) -->
     <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.5 8.5 0 01-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1121 11.5z"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Communications</span><span class="sb-nav-sub">WhatsApp AI &middot; escalations</span></span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
     <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M4 21V8l8-5 8 5v13M9 21v-6h6v6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Clients (CRM)</span><span class="sb-nav-sub">Companies &middot; contacts &middot; org chart</span></span></a>
     <a href="#invoicing" class="sb-gear" id="sb-invoicing" onclick="return navClick(event,openInvoicing)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Invoicing</span><span class="sb-nav-sub">GST invoices &middot; billing</span></span></a>
@@ -1087,15 +1088,11 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:28px;height:28px;border-radius:6px;background:#E7F3EE;display:flex;align-items:center;justify-content:center;font-size:14px">&#128202;</div>
-        <div><div style="font-size:14px;font-weight:600">Analytics</div><div style="font-size:11px;color:#888;margin-top:1px">Pipeline, performance &amp; sources</div></div>
+        <div><div style="font-size:14px;font-weight:600">Insights</div><div style="font-size:11px;color:#888;margin-top:1px">Candidate list from your Home dashboard</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-        <div id="analytics-scope-toggle" style="display:none;border:0.5px solid var(--line);border-radius:8px;overflow:hidden">
-          <button id="scope-team" class="an-scope-btn active" onclick="setAnalyticsScope('team')" style="border:none;border-radius:0;font-size:11.5px;padding:6px 12px">Team overview</button>
-          <button id="scope-me" class="an-scope-btn" onclick="setAnalyticsScope('me')" style="border:none;border-radius:0;font-size:11.5px;padding:6px 12px;border-left:0.5px solid var(--line)">My performance</button>
-        </div>
-        <button class="btn btn-o" style="font-size:11px" onclick="renderAnalytics()">&#8635; Refresh</button>
-        <button class="btn btn-o" onclick="closeAnalytics()">&#10005; Close</button>
+        <button class="btn btn-o" style="font-size:11px" onclick="readHash()">&#8635; Refresh</button>
+        <button class="btn btn-o" onclick="goHome()">&#8592; Back to Home</button>
       </div>
     </div>
     <div id="analytics-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:24px 20px"></div>
@@ -1220,7 +1217,7 @@ body{font-size:14px !important; line-height:1.5}
         <button id="hamburger-btn" onclick="toggleSidebar()" aria-label="Menu">
           <span></span><span></span><span></span>
         </button>
-        <div><div id="topbar-title">Select a mandate</div><div id="topbar-sub">Create or select from sidebar</div></div>
+        <div><div id="topbar-title">Home</div><div id="topbar-sub">Today&rsquo;s focus &amp; business insights</div></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
         <span class="sop-pill" id="sop-pill" style="display:none"></span>
@@ -1811,6 +1808,7 @@ function initSidebarResize() {
 // Click logo -> go to home dashboard (all positions overview)
 async function goHome() {
   closeSidebarOnMobile();
+  try { _hideAllViews(); } catch(e) {}
   // Close all overlay views
   ['ai-view','admin-view','tasks-view','responses-view','central-view','cdb-view','settings-view','jobs-view'].forEach(function(id){
     var v = document.getElementById(id); if (v) v.style.display = 'none';
@@ -3401,8 +3399,8 @@ async function selectMandate(id){
 }
 function updateTopbar(){
   const m=S.activeMandate;
-  document.getElementById('topbar-title').textContent=m?m.role+' — '+m.client:'Dashboard';
-  document.getElementById('topbar-sub').textContent=m?(m.location||'')+(m.division?' · '+m.division:'')+' · CTC '+(m.ctc_min||0)+'–'+(m.ctc_max||0)+' LPA':'Your mandates and tasks at a glance';
+  document.getElementById('topbar-title').textContent=m?m.role+' — '+m.client:'Home';
+  document.getElementById('topbar-sub').textContent=m?(m.location||'')+(m.division?' · '+m.division:'')+' · CTC '+(m.ctc_min||0)+'–'+(m.ctc_max||0)+' LPA':'Today\u2019s focus & business insights';
   const pill=document.getElementById('sop-pill');
   if(m&&m.sop_text){pill.textContent='SOP v'+m.sop_version;pill.style.display='';}else pill.style.display='none';
 }
@@ -3516,109 +3514,352 @@ function _copyFallback(text,cb){
   catch(e){ toast('Copy failed',''); }
 }
 
-// ── DASHBOARD ──────────────────────────────────────────────────────────────
+// ── HOME (Dashboard + Insights, merged Oct 2026) ─────────────────────────
+// One page: today's work on top, business insights below. The old Analytics
+// page is folded in here; its drill-down lists (#analytics/stage/…,
+// #analytics/placed) still open in their own view.
+var _homeReqSeq = 0;
+function _homeCss(){
+  if (document.getElementById('home-css')) return;
+  var st = document.createElement('style'); st.id = 'home-css';
+  st.textContent = [
+    '.hm-wrap{max-width:1180px;margin:0 auto;padding:22px 22px 34px}',
+    '.hm-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:18px}',
+    '.hm-hi{font-size:22px;font-weight:700;color:var(--navy);letter-spacing:-.3px}',
+    '.hm-date{font-size:12px;color:var(--muted);margin-top:3px}',
+    '.hm-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+    '.hm-seg{display:inline-flex;background:#fff;border:1px solid var(--line);border-radius:10px;padding:3px;box-shadow:var(--shadow-sm)}',
+    '.hm-seg button{border:none;background:none;font-size:12px;font-weight:600;color:#6B675E;padding:6px 12px;border-radius:7px;cursor:pointer}',
+    '.hm-seg button.on{background:#0F6E56;color:#fff}',
+    '.hm-seg button:hover:not(.on){background:#F3F2EE}',
+    '.hm-dates{display:none;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:4px 8px}',
+    '.hm-dates.on{display:inline-flex}',
+    '.hm-dates input{font-size:11.5px;border:none;background:#F6F5F1;border-radius:6px;padding:4px 6px}',
+    '.hm-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:16px}',
+    '.hm-kpi{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 18px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden;transition:transform .12s,box-shadow .12s}',
+    '.hm-kpi.click{cursor:pointer}.hm-kpi.click:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(20,20,40,.08)}',
+    '.hm-kpi .ic{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;margin-bottom:12px}',
+    '.hm-kpi .lb{font-size:12px;color:var(--muted);font-weight:500}',
+    '.hm-kpi .vl{font-family:"IBM Plex Mono",monospace;font-size:28px;font-weight:600;letter-spacing:-1px;color:var(--ink);margin-top:2px;line-height:1.15}',
+    '.hm-kpi .sb{font-size:11px;color:#9A968C;margin-top:4px}',
+    '.hm-kpi .go{position:absolute;top:16px;right:16px;font-size:12px;color:#0F6E56;font-weight:700}',
+    '.hm-grid2{display:grid;grid-template-columns:1.45fr 1fr;gap:16px;margin-bottom:16px;align-items:start}',
+    '.hm-grid2.even{grid-template-columns:1.2fr 1fr}',
+    '.hm-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px 20px;box-shadow:var(--shadow-sm);margin-bottom:16px}',
+    '.hm-grid2 .hm-card{margin-bottom:0}',
+    '.hm-ttl{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}',
+    '.hm-ttl b{font-size:13.5px;color:var(--navy);font-weight:700;display:flex;align-items:center;gap:8px}',
+    '.hm-chip{font-size:10.5px;color:#6B675E;background:#F3F2EE;padding:3px 9px;border-radius:20px;font-weight:600}',
+    '.hm-link{font-size:11.5px;color:#0F6E56;font-weight:700;cursor:pointer}',
+    '.hm-task{display:flex;gap:10px;align-items:flex-start;padding:10px 6px;border-radius:10px;cursor:pointer}',
+    '.hm-task:hover{background:#F7F6F2}',
+    '.hm-fun a{display:grid;grid-template-columns:150px 1fr 54px;align-items:center;gap:12px;padding:5px 6px;border-radius:9px;text-decoration:none}',
+    '.hm-fun a:hover{background:#F7F6F2}',
+    '.hm-fun .lbl{font-size:12.5px;color:var(--ink);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.hm-fun .bar{height:26px;background:#F1F0EC;border-radius:8px;overflow:hidden}',
+    '.hm-fun .bar i{display:block;height:100%;border-radius:8px}',
+    '.hm-fun .n{font-family:"IBM Plex Mono",monospace;font-size:14px;font-weight:600;color:var(--ink);text-align:right}',
+    '.hm-fun .sep{height:1px;background:repeating-linear-gradient(90deg,#E4E2DA 0 6px,transparent 6px 11px);margin:8px 6px}',
+    '.hm-qa{display:grid;grid-template-columns:1fr 1fr;gap:8px}',
+    '.hm-qa button{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:#fff;border-radius:11px;padding:11px 12px;font-size:12.5px;font-weight:600;color:var(--ink);cursor:pointer;text-align:left}',
+    '.hm-qa button:hover{border-color:#0F6E56;background:#F2FAF7}',
+    '.hm-qa button.pri{background:#534AB7;border-color:#534AB7;color:#fff}',
+    '.hm-qa button.pri:hover{background:#463EA0}',
+    '.hm-lb td{padding:9px 0;border-top:1px solid #F0EFE9;font-size:12.5px}',
+    '.hm-act{display:flex;gap:10px;padding:8px 2px;border-top:1px solid #F3F2EE}',
+    '.hm-act:first-child{border-top:none}',
+    '.hm-dot{width:8px;height:8px;border-radius:50%;background:#0F6E56;margin-top:5px;flex-shrink:0}',
+    '@media (max-width:980px){.hm-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.hm-grid2,.hm-grid2.even{grid-template-columns:1fr}.hm-grid2 .hm-card{margin-bottom:16px}}',
+    '@media (max-width:560px){.hm-wrap{padding:16px 12px 28px}.hm-fun a{grid-template-columns:96px 1fr 40px}}'
+  ].join('\n');
+  document.head.appendChild(st);
+}
+function _homeGreeting(){
+  var h = new Date().getHours();
+  return h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
+}
+function _homeKpi(icon, tint, label, val, sub, onclick){
+  return '<div class="hm-kpi'+(onclick?' click':'')+'"'+(onclick?(' onclick="'+onclick+'" title="Click to see the list"'):'')+'>'
+    + (onclick?'<span class="go">&#8599;</span>':'')
+    + '<div class="ic" style="background:'+tint[0]+';color:'+tint[1]+'">'+icon+'</div>'
+    + '<div class="lb">'+label+'</div><div class="vl">'+val+'</div>'
+    + (sub?'<div class="sb">'+sub+'</div>':'') + '</div>';
+}
+function _homeTaskBadge(t){
+  var m={reminder:['#E7F0FB','#2D6FB3','Reminder'],interview:['#EDE9FB','#6A5AD8','Interview'],stale:['#FDF0E1','#C0842B','Stale'],
+         promise:['#FDF0E1','#C0842B','Promise'],submission:['#E7F6EF','#0F6E56','New'],updated:['#E7F6EF','#0F6E56','Updated']};
+  var c=m[t.type]||['#EFEFEF','#666',(t.type||'Task')];
+  return '<span style="background:'+c[0]+';color:'+c[1]+';font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;flex-shrink:0">'+c[2]+'</span>';
+}
+function homeSetRange(r){
+  if (r === 'custom'){
+    var d=document.getElementById('hm-dates'); if(d) d.classList.toggle('on');
+    return;
+  }
+  _analyticsRange = r; _analyticsFrom = ''; _analyticsTo = '';
+  renderDashboard(document.getElementById('content'));
+}
+function homeApplyDates(){
+  var f=(document.getElementById('hm-from')||{}).value, t=(document.getElementById('hm-to')||{}).value;
+  if(!f||!t){ toast('ERR','Please choose both From and To'); return; }
+  _analyticsRange='custom'; _analyticsFrom=f; _analyticsTo=t;
+  renderDashboard(document.getElementById('content'));
+}
+function homeSetScope(s){
+  _analyticsScope = s;
+  renderDashboard(document.getElementById('content'));
+}
+
 async function renderDashboard(el){
+  if(!el) return;
+  _homeCss();
   el.style.padding='0'; el.style.overflow='auto'; el.style.background='#FAFAF9';
   if(!S.mandates.length){
     el.innerHTML='<div class="empty-state" style="padding:60px 20px"><div class="empty-icon" style="font-size:48px">&#128640;</div><div class="empty-title" style="font-size:18px;margin-bottom:8px">Welcome to HireLab Screener</div><div class="empty-sub" style="margin-bottom:20px">Create your first job to begin AI-powered screening.</div><button class="btn btn-g" style="font-size:13px;padding:10px 22px" onclick="openModal(\'modal-mandate\')">+ Create First Job</button></div>';
     return;
   }
-  el.innerHTML='<div class="loading"><div class="spinner"></div>Loading your dashboard...</div>';
-  var _rs=_isRecruiterScoped();   // recruiter sub-account: own jobs only, no company analytics
-  const [analytics, tasksData, activityData] = await Promise.all([
-    _rs ? Promise.resolve({}) : req('GET','/analytics?range=30').catch(function(){return {};}),
-    req('GET','/tasks').catch(function(){return {tasks:[],counts:{}};}),
-    _rs ? Promise.resolve({activity:[]}) : req('GET','/activity?per_page=8').catch(function(){return {activity:[]};})
+  try { if(!S.activeMandate) updateTopbar(); } catch(e) {}
+  var seq = ++_homeReqSeq;
+  if(!el.querySelector('.hm-wrap')) el.innerHTML='<div class="loading"><div class="spinner"></div>Loading your home&hellip;</div>';
+  else el.querySelector('.hm-wrap').style.opacity='.55';
+
+  var rs = _isRecruiterScoped();   // recruiter: own jobs only, no company insights
+  var isAdmin = !!(S.currentUser && (S.currentUser.role==='admin' || S.currentUser.is_company_admin));
+  var params = [];
+  if(_analyticsScope==='me' && isAdmin) params.push('scope=me');
+  if(_analyticsRange==='custom' && _analyticsFrom && _analyticsTo){ params.push('from='+_analyticsFrom); params.push('to='+_analyticsTo); }
+  else params.push('range='+_analyticsRange);
+  var res = await Promise.all([
+    rs ? Promise.resolve({}) : req('GET','/analytics?'+params.join('&')).catch(function(){return {};}),
+    req('GET','/tasks').catch(function(){return {tasks:[]};}),
+    rs ? Promise.resolve({activity:[]}) : req('GET','/activity?per_page=8').catch(function(){return {activity:[]};})
   ]);
-  const kpi     = (analytics && analytics.kpi) || {};
-  const funnel  = (analytics && analytics.funnel) || [];
-  const allTasks= (tasksData && tasksData.tasks) || [];
-  const focus   = allTasks.filter(function(t){return t.section==='overdue'||t.section==='today';});
-  const activity= (activityData && activityData.activity) || [];
+  if (seq !== _homeReqSeq) return;           // a newer filter click already re-rendered
+  var r = res[0] || {}, k = r.kpi || {};
+  var allTasks = (res[1] && res[1].tasks) || [];
+  var focus = allTasks.filter(function(t){ return t.section==='overdue' || t.section==='today'; });
+  var activity = (res[2] && res[2].activity) || [];
+  var nm = ((S.currentUser && (S.currentUser.display_name || S.currentUser.username)) || '').split(' ')[0];
+  var today = new Date().toLocaleDateString('en-IN',{weekday:'long', day:'numeric', month:'long', year:'numeric'});
+  var mWord = esc(String(T('mandate_plural','mandates')).toLowerCase());
+  var html = '<div class="hm-wrap">';
 
-  function statCard(label,val,sub,onclick){
-    var box='background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 17px;box-shadow:var(--shadow-sm)';
-    var attr = onclick ? (' onclick="'+onclick+'" title="Click to see the list" style="'+box+';cursor:pointer"') : (' style="'+box+'"');
-    return '<div'+attr+'>'
-      +'<div style="font-size:11.5px;color:var(--muted);font-weight:500">'+label+(onclick?' <span style="color:#0F6E56">&#8594;</span>':'')+'</div>'
-      +'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:26px;font-weight:600;letter-spacing:-1px;margin-top:6px;color:var(--ink)">'+val+'</div>'
-      +(sub?'<div style="font-size:10.5px;color:#aaa;margin-top:3px">'+sub+'</div>':'')+'</div>';
+  // ── header: greeting + filters ─────────────────────────────────────────
+  var ranges = [['7','7 days'],['30','30 days'],['90','90 days'],['all','All time'],['custom','&#128197;']];
+  html += '<div class="hm-head"><div><div class="hm-hi">'+_homeGreeting()+(nm?(', '+esc(nm)):'')+'</div>'
+    + '<div class="hm-date">'+esc(today)+(rs?'':' &middot; showing <b style="color:var(--teal-deep)">'+esc(r.range_label||'')+'</b>')+'</div></div>';
+  if(!rs){
+    html += '<div class="hm-ctrl"><div class="hm-seg">' + ranges.map(function(x){
+        var on = (_analyticsRange===x[0]);
+        return '<button class="'+(on?'on':'')+'" onclick="homeSetRange(\''+x[0]+'\')" title="'+(x[0]==='custom'?'Custom dates':x[1])+'">'+x[1]+'</button>';
+      }).join('') + '</div>'
+      + '<div class="hm-dates'+(_analyticsRange==='custom'?' on':'')+'" id="hm-dates"><input type="date" id="hm-from" value="'+esc(_analyticsFrom)+'"><span style="font-size:11px;color:var(--muted)">to</span><input type="date" id="hm-to" value="'+esc(_analyticsTo)+'"><button class="btn btn-g" style="font-size:11px;padding:4px 10px" onclick="homeApplyDates()">Apply</button></div>'
+      + (isAdmin ? '<div class="hm-seg"><button class="'+(_analyticsScope!=='me'?'on':'')+'" onclick="homeSetScope(\'team\')">Team</button><button class="'+(_analyticsScope==='me'?'on':'')+'" onclick="homeSetScope(\'me\')">Me</button></div>' : '')
+      + '</div>';
   }
-  var openM = (kpi.open_mandates!=null)?kpi.open_mandates:S.mandates.filter(function(m){return m.status==='active';}).length;
-  var cards='<div style="padding:18px 16px 4px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">'
-    +statCard('Open '+esc(String(T('mandate_plural','mandates')).toLowerCase()), openM, ((kpi.active!=null?kpi.active:openM)+' active'+(kpi.hold?', '+kpi.hold+' hold':''))+' &middot; now')
-    +statCard(esc(T('placed_plural','Placements')), (kpi.placed_this_month!=null?kpi.placed_this_month:0), 'All time &middot; Placed + Joined', "location.hash='analytics/placed'")
-    +statCard('Avg time-to-fill',
-        (wsMode()==='corporate' && analytics && analytics.corporate && analytics.corporate.avg_req_time_to_fill!=null)
-          ? (analytics.corporate.avg_req_time_to_fill+'d')
-          : (kpi.avg_time_to_fill!=null?kpi.avg_time_to_fill+'d':'&mdash;'),
-        wsMode()==='corporate' ? 'opened &rarr; joined' : 'created &rarr; placed')
-    +statCard('Candidates in pipeline', (kpi.pipeline_candidates!=null?kpi.pipeline_candidates:'&mdash;'), 'Current snapshot')
-    +'</div>';
-  if(_rs){
-    // Company KPIs are admin-only; a recruiter sees their own workload instead.
-    var _od=allTasks.filter(function(t){return t.section==='overdue';}).length;
-    cards='<div style="padding:18px 16px 4px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px">'
-      +statCard('My open '+esc(String(T('mandate_plural','mandates')).toLowerCase()), openM, 'assigned to you')
-      +statCard('Due today', allTasks.filter(function(t){return t.section==='today';}).length, 'follow-ups &amp; tasks', "openTasks()")
-      +statCard('Overdue', _od, _od?'needs attention':'all clear', "openTasks()")
-      +'</div>';
+  html += '</div>';
+
+  // ── KPI cards ──────────────────────────────────────────────────────────
+  var openM = (k.open_mandates!=null) ? k.open_mandates : S.mandates.filter(function(m){return m.status==='active';}).length;
+  if(rs){
+    var od = allTasks.filter(function(t){return t.section==='overdue';}).length;
+    var dt = allTasks.filter(function(t){return t.section==='today';}).length;
+    html += '<div class="hm-kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">'
+      + _homeKpi('&#128188;',['#EEEDFB','#534AB7'],'My open '+mWord, openM, 'assigned to you')
+      + _homeKpi('&#128197;',['#E7F0FB','#2D6FB3'],'Due today', dt, 'follow-ups &amp; tasks', 'openTasks()')
+      + _homeKpi('&#9888;&#65039;',[od?'#FDEEEE':'#E7F6EF',od?'#A32D2D':'#0F6E56'],'Overdue', od, od?'needs attention':'all clear', 'openTasks()')
+      + '</div>';
+  } else {
+    var ttf = (wsMode()==='corporate' && r.corporate && r.corporate.avg_req_time_to_fill!=null)
+      ? (r.corporate.avg_req_time_to_fill+'d') : (k.avg_time_to_fill!=null ? k.avg_time_to_fill+'d' : '&mdash;');
+    html += '<div class="hm-kpis">'
+      + _homeKpi('&#128188;',['#EEEDFB','#534AB7'],'Open '+mWord, openM, (k.active!=null?k.active:openM)+' active'+(k.hold?(' &middot; '+k.hold+' hold'):'')+' &middot; now')
+      + _homeKpi('&#127881;',['#E7F6EF','#0F6E56'],esc(T('placed_plural','Placements')), (k.placed_this_month!=null?k.placed_this_month:0), 'All time &middot; Placed + Joined', "location.hash='analytics/placed'")
+      + _homeKpi('&#9201;&#65039;',['#FDF0E1','#C0842B'],'Avg time-to-fill', ttf, (wsMode()==='corporate'?'opened &rarr; joined':'created &rarr; placed')+' &middot; '+esc((r.range_label||'').toLowerCase()))
+      + _homeKpi('&#128101;',['#E7F0FB','#2D6FB3'],'Candidates in pipeline', (k.pipeline_candidates!=null?k.pipeline_candidates:'&mdash;'), 'current snapshot')
+      + '</div>';
   }
 
-  var maxF=1; funnel.forEach(function(f){ if(f.count>maxF)maxF=f.count; });
-  var funnelRows=funnel.map(function(f){
-    var pct=Math.round(f.count*100/maxF);
-    var isPlaced=!!f.all_jobs || /plac/i.test(f.label);
-    var stg=((f.stages&&f.stages.length)?f.stages:[f.label]).join('||').replace(/'/g,'');
-    return '<div class="funnelrow" onclick="renderStageCandidatesPage(\''+stg+'\')" title="Click to see all candidates in this stage" style="display:flex;align-items:center;gap:12px;margin-bottom:5px;cursor:pointer;padding:4px;border-radius:7px">'
-      +'<div style="width:140px;font-size:12px;color:#444;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(f.label)+'</div>'
-      +'<div style="flex:1;height:22px;background:#efeef5;border-radius:6px;overflow:hidden"><div style="height:100%;width:'+Math.max(pct,2)+'%;background:'+(isPlaced?((f.stages||[])[0]==='Joined'?'#0B4F3E':'#0F6E56'):'#7B74E0')+';border-radius:6px"></div></div>'
-      +'<div style="width:44px;text-align:right;font-family:\'IBM Plex Mono\',monospace;font-size:13px;font-weight:600;color:var(--ink)">'+f.count+'</div>'
-      +'</div>';
-  }).join('');
-  var funnelCard = funnel.length ? ('<div style="padding:8px 16px 4px"><div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm)">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:13px;font-weight:700;color:var(--navy)">Pipeline funnel</div><span onclick="openAnalytics()" style="font-size:11px;color:var(--teal-deep);cursor:pointer;font-weight:600">Open Insights &#8594;</span></div>'
-    +funnelRows+'</div></div>') : '';
-
-  function taskBadge(t){
-    var m={reminder:['#E7F0FB','#2D6FB3','Reminder'],interview:['#EDE9FB','#6A5AD8','Interview'],stale:['#FDF0E1','#C0842B','Stale'],promise:['#FDF0E1','#C0842B','Promise'],submission:['#E7F6EF','#0F6E56','New'],updated:['#E7F0FB','#2D6FB3','Updated']};
-    var c=m[t.type]||['#eee','#666',(t.type||'Task')];
-    return '<span style="background:'+c[0]+';color:'+c[1]+';font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px">'+c[2]+'</span>';
-  }
+  // ── Today's focus + quick actions ──────────────────────────────────────
   var focusRows = focus.length ? focus.slice(0,8).map(function(t){
-    return '<div style="padding:10px 2px;border-bottom:0.5px solid #f0efe9;cursor:pointer" onclick="'+(t.candidate_id?('openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')'):'openTasks()')+'">'
-      +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+taskBadge(t)+'<span style="font-size:13px;font-weight:600;color:var(--ink)">'+esc(t.title||'')+'</span></div>'
-      +'<div style="font-size:11px;color:var(--muted);margin-top:2px">'+esc(t.subtitle||'')+'</div></div>';
-  }).join('') : '<div style="color:var(--muted);font-size:12px;padding:16px 2px">&#127881; Nothing pending — all caught up!</div>';
-  var focusCard='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm)">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div style="font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em">TODAY&#39;S FOCUS</div><span onclick="openTasks()" style="font-size:11.5px;color:var(--teal-deep);cursor:pointer;font-weight:600">View all</span></div>'
-    +focusRows+'</div>';
+      var go = t.candidate_id ? ('openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')') : 'openTasks()';
+      return '<div class="hm-task" onclick="'+go+'">'+_homeTaskBadge(t)
+        + '<div style="min-width:0"><div style="font-size:13px;font-weight:600;color:var(--ink)">'+esc(t.title||'')+'</div>'
+        + '<div style="font-size:11.5px;color:var(--muted);margin-top:2px">'+esc(t.subtitle||'')+'</div></div></div>';
+    }).join('')
+    : '<div style="text-align:center;padding:26px 10px;color:var(--muted);font-size:12.5px"><div style="font-size:30px;margin-bottom:6px">&#127881;</div>Nothing pending &mdash; all caught up!</div>';
+  var nOver = focus.filter(function(t){return t.section==='overdue';}).length;
+  var focusCard = '<div class="hm-card"><div class="hm-ttl"><b>&#127919; Today&rsquo;s focus'
+      + (focus.length?(' <span class="hm-chip">'+focus.length+(nOver?(' &middot; <span style="color:#A32D2D">'+nOver+' overdue</span>'):'')+'</span>'):'')
+      + '</b><span class="hm-link" onclick="openTasks()">All tasks &#8594;</span></div>' + focusRows + '</div>';
+  var quick = '<div class="hm-card"><div class="hm-ttl"><b>&#9889; Quick actions</b></div><div class="hm-qa">'
+    + '<button class="pri" onclick="openModal(\'modal-mandate\')">&#10133; New '+esc(T('mandate','Job'))+'</button>'
+    + '<button onclick="openCentralDB()">&#128269; Search talent</button>'
+    + '<button onclick="openTasks()">&#9989; Tasks</button>'
+    + (rs ? '<button onclick="openJobs()">&#128188; My '+mWord+'</button>'
+          : '<button onclick="openCrm()">&#127970; '+esc(T('client_plural','Clients'))+'</button>')
+    + '</div></div>';
+  html += '<div class="hm-grid2">'+focusCard+quick+'</div>';
 
-  var quick='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm);margin-bottom:14px">'
-    +'<div style="font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em;margin-bottom:12px">QUICK ACTIONS</div>'
-    +'<div style="display:flex;flex-wrap:wrap;gap:8px">'
-    +'<button class="btn" onclick="openModal(\'modal-mandate\')" style="background:#534AB7;color:#fff;border:none;font-size:12px">+ New Job</button>'
-    +'<button class="btn btn-o" onclick="openCentralDB()" style="font-size:12px">Search Talent</button>'
-    +'<button class="btn btn-o" onclick="openCrm()" style="font-size:12px">'+esc(T('client_plural','Clients'))+'</button>'
-    +'<button class="btn btn-o" onclick="openAnalytics()" style="font-size:12px">View insights</button>'
-    +'</div></div>';
+  if(!rs){
+    // ── corporate hiring metrics (in-house teams only) ───────────────────
+    if (wsMode()==='corporate' && r.corporate) html += _dashCorporateHTML(r);
 
-  var actRows = activity.length ? activity.slice(0,8).map(function(a){
-    var act=String(a.action||'').replace(/[_.]/g,' ');
-    return '<div style="padding:8px 2px;border-bottom:0.5px solid #f0efe9">'
-      +'<div style="font-size:12.5px;color:var(--ink)">'+esc(act)+(a.detail?' &mdash; '+esc(a.detail):'')+'</div>'
-      +'<div style="font-size:11px;color:var(--muted);font-family:\'IBM Plex Mono\',monospace">'+esc((a.username||'')+' · '+String(a.created_at||'').slice(0,16))+'</div></div>';
-  }).join('') : '<div style="color:var(--muted);font-size:12px;padding:12px 2px">No recent activity.</div>';
-  var activityCard='<div style="background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm)">'
-    +'<div style="font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em;margin-bottom:10px">RECENT ACTIVITY</div>'+actRows+'</div>';
+    // ── pipeline funnel ──────────────────────────────────────────────────
+    var funnel = r.funnel || [];
+    if (funnel.length){
+      var maxF = Math.max.apply(null, funnel.map(function(f){return f.count;}).concat([1]));
+      var work = funnel.filter(function(f){return !f.all_jobs;}), done = funnel.filter(function(f){return f.all_jobs;});
+      var row = function(f){
+        var pct = Math.max(Math.round(f.count*100/maxF), f.count?4:2);
+        var joined = (f.stages||[])[0]==='Joined';
+        var bg = f.all_jobs ? (joined?'linear-gradient(90deg,#0B4F3E,#13785C)':'linear-gradient(90deg,#0F6E56,#22A37F)')
+                            : 'linear-gradient(90deg,#6E66D6,#9A93EA)';
+        return '<a href="#analytics/stage/'+encodeURIComponent((f.stages||[f.label]).join('||'))+'" title="Click to see these candidates (Ctrl/Cmd+click: new tab)">'
+          + '<span class="lbl">'+esc(f.label)+'</span><span class="bar"><i style="width:'+pct+'%;background:'+bg+'"></i></span>'
+          + '<span class="n">'+f.count+'</span></a>';
+      };
+      html += '<div class="hm-card"><div class="hm-ttl"><b>&#128202; Pipeline funnel</b><span class="hm-chip">current snapshot</span></div>'
+        + '<div style="font-size:11.5px;color:var(--muted);margin:-4px 0 12px">Working stages: <b>active</b> '+mWord+' only &middot; Placed &amp; Joined: <b>every</b> '+esc(String(T('mandate','mandate')).toLowerCase())+'. Click a bar to see the candidates.</div>'
+        + '<div class="hm-fun">' + work.map(row).join('') + (done.length?'<div class="sep"></div>'+done.map(row).join(''):'') + '</div></div>';
+    }
 
-  var twoCol='<div style="padding:14px 16px 26px;display:grid;grid-template-columns:1.4fr 1fr;gap:14px;align-items:start">'
-    +'<div>'+focusCard+'</div>'
-    +'<div>'+quick+(_rs?'':activityCard)+'</div>'
-    +'</div>';
+    // ── leaderboard + sources ────────────────────────────────────────────
+    var lb = r.leaderboard || [], src = r.sources || [];
+    var medal = ['&#129351;','&#129352;','&#129353;'];
+    var lbCard = lb.length ? ('<div class="hm-card"><div class="hm-ttl"><b>&#127942; Recruiter leaderboard</b><span class="hm-chip">'+esc(r.range_label||'')+'</span></div>'
+        + '<table class="hm-lb" style="width:100%;border-collapse:collapse"><tr style="color:var(--muted);font-size:11px"><td style="border:none;padding:0 0 6px">Recruiter</td><td style="border:none;text-align:right;padding:0 0 6px">Added</td><td style="border:none;text-align:right;padding:0 0 6px">Interviews</td><td style="border:none;text-align:right;padding:0 0 6px">Placed</td></tr>'
+        + lb.map(function(u,i){
+            return '<tr><td><span style="display:inline-flex;align-items:center;gap:8px">'+(i<3?('<span style="width:18px">'+medal[i]+'</span>'):'<span style="width:18px;color:#bbb;font-size:11px;text-align:center">'+(i+1)+'</span>')+avatarHtml(u.name,24)+esc(u.name)+'</span></td>'
+              + '<td style="text-align:right">'+u.added+'</td><td style="text-align:right">'+u.interviews+'</td>'
+              + '<td style="text-align:right;font-weight:700;color:#0F6E56">'+u.placed+'</td></tr>';
+          }).join('') + '</table></div>') : '';
+    var srcCard = '<div class="hm-card"><div class="hm-ttl"><b>&#129517; Where placements come from</b></div>'
+      + (src.length ? ('<div style="display:flex;flex-direction:column;gap:11px">' + src.map(function(s){
+            return '<div><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--ink)">'+esc(s.source)+'</span><b>'+s.pct+'%</b></div>'
+              + '<div style="background:#F1F0EC;border-radius:6px;height:9px;overflow:hidden"><div style="width:'+s.pct+'%;height:100%;background:linear-gradient(90deg,#1D9E75,#5CC7A3);border-radius:6px"></div></div></div>';
+          }).join('') + '</div><div style="font-size:11px;color:var(--muted);margin-top:12px">Share of placed candidates by source</div>')
+        : '<div style="font-size:12px;color:var(--muted);padding:10px 0">No placements yet &mdash; source data will appear here.</div>')
+      + '</div>';
+    html += lbCard ? ('<div class="hm-grid2 even">'+lbCard+srcCard+'</div>') : srcCard;
 
-  el.innerHTML = cards + funnelCard + twoCol;
+    // ── stale jobs ───────────────────────────────────────────────────────
+    var stale = r.stale_mandates || [];
+    if (stale.length){
+      html += '<div class="hm-card" style="background:#FFFAF0;border-color:#F3DFB0"><div class="hm-ttl"><b style="color:#8A5A0B">&#9888;&#65039; '+stale.length+' '+(stale.length>1?mWord:esc(String(T('mandate','mandate')).toLowerCase()))+' with no movement for '+r.stale_days+'+ days</b></div>'
+        + stale.map(function(m){
+            return '<div onclick="selectMandate('+m.id+')" style="display:flex;align-items:center;gap:10px;padding:8px 6px;font-size:12.5px;cursor:pointer;border-top:1px solid #F3E6C4;border-radius:6px">'
+              + '<span style="width:8px;height:8px;border-radius:50%;background:#C7841E;flex-shrink:0"></span>'
+              + '<span style="flex:1;min-width:0"><b>'+esc(m.role)+'</b> <span style="color:#8A7A5A">&middot; '+esc(m.client)+'</span></span>'
+              + '<span style="color:#B5730F;font-weight:700;white-space:nowrap">'+m.days+' days</span></div>';
+          }).join('') + '</div>';
+    }
+
+    // ── recent activity ──────────────────────────────────────────────────
+    html += '<div class="hm-card"><div class="hm-ttl"><b>&#128336; Recent activity</b></div>'
+      + (activity.length ? activity.slice(0,8).map(function(a){
+          var act = String(a.action||'').replace(/[_.]/g,' ');
+          return '<div class="hm-act"><span class="hm-dot"></span><div style="min-width:0"><div style="font-size:12.5px;color:var(--ink)">'+esc(act)+(a.detail?(' &mdash; '+esc(a.detail)):'')+'</div>'
+            + '<div style="font-size:11px;color:var(--muted);font-family:\'IBM Plex Mono\',monospace">'+esc((a.username||'')+' · '+String(a.created_at||'').slice(0,16).replace('T',' '))+'</div></div></div>';
+        }).join('') : '<div style="color:var(--muted);font-size:12px;padding:6px 0">No recent activity.</div>')
+      + '</div>';
+  }
+
+  html += '</div>';
+  el.innerHTML = html;
   updateTasksBadge();
+}
+
+function _dashCorporateHTML(r){
+  var html='';
+  if (wsMode()==='corporate' && r.corporate) {
+    var cp = r.corporate;
+    var word = esc(T('mandate','Requisition'));
+    html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px">';
+    html += _kpiCard(word+' time-to-fill',
+      cp.avg_req_time_to_fill!=null ? (cp.avg_req_time_to_fill+' days') : '\u2014',
+      cp.filled_count ? ('opened \u2192 joined \u00b7 '+cp.filled_count+' filled') : 'opened \u2192 joined');
+    html += _kpiCard('Joining ratio',
+      cp.joining_ratio!=null ? (cp.joining_ratio+'%') : '\u2014',
+      cp.joined+' joined of '+cp.placed+' offers accepted');
+    html += _kpiCard('Awaiting joining', cp.awaiting_joining,
+      cp.dropout_count ? (cp.dropout_count+' never joined') : 'offer accepted, not yet joined');
+    html += _kpiCard('Offer \u2192 join gap',
+      cp.avg_offer_to_join!=null ? (cp.avg_offer_to_join+' days') : '\u2014', 'average wait');
+    html += '</div>';
+
+    // Requisitions waiting on headcount sign-off — the business is blocked
+    // here, so it sits above the ageing list.
+    if ((cp.pending_approval||[]).length) {
+      html += '<div style="background:#FFF8E6;border:1px solid #F0DFB0;border-radius:12px;padding:14px 18px;margin-bottom:20px">';
+      html += '<div style="font-size:13px;font-weight:600;color:#8A6512;margin-bottom:8px">&#9203; '
+        + cp.pending_approval.length + ' ' + esc(String(T(cp.pending_approval.length===1?'mandate':'mandate_plural','requisitions')).toLowerCase())
+        + ' awaiting approval</div>';
+      cp.pending_approval.forEach(function(a){
+        html += '<div style="font-size:12.5px;color:#8A6512;padding:3px 0;cursor:pointer" onclick="selectMandate('+a.id+')">'
+          + '&bull; ' + esc(a.role||'') + '<span style="opacity:.7"> \u00b7 ' + esc(a.client||'')
+          + (a.location?(' \u00b7 '+esc(a.location)):'') + '</span></div>';
+      });
+      html += '</div>';
+    }
+
+    // Budget adherence: what was committed against what the requisition
+    // was allowed to spend. Shown only once some offers carry a figure.
+    var bg = cp.budget || {};
+    if ((bg.within||0)+(bg.over||0) > 0) {
+      html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:20px">';
+      html += '<div style="font-size:13px;font-weight:600;margin-bottom:4px">Budget adherence</div>';
+      html += '<div style="font-size:11px;color:var(--muted);margin-bottom:12px">Offered CTC against each '
+        + esc(String(T('mandate','requisition')).toLowerCase()) + '\u2019s maximum.</div>';
+      html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">';
+      html += '<div><div style="font-size:20px;font-weight:700;color:#0F6E56">'+bg.within+'</div>'
+        + '<div style="font-size:11px;color:var(--muted)">within budget</div></div>';
+      html += '<div><div style="font-size:20px;font-weight:700;color:'+(bg.over?'#A32D2D':'#6b7280')+'">'+bg.over+'</div>'
+        + '<div style="font-size:11px;color:var(--muted)">over'+(bg.avg_over_by!=null?(' \u00b7 avg +\u20B9'+bg.avg_over_by+'L'):'')+'</div></div>';
+      html += '<div><div style="font-size:20px;font-weight:700;color:var(--navy)">'
+        + (bg.avg_offer!=null?('\u20B9'+bg.avg_offer+'L'):'\u2014') + '</div>'
+        + '<div style="font-size:11px;color:var(--muted)">average offer</div></div>';
+      html += '</div>';
+      if (bg.annual_cost!=null) {
+        html += '<div style="font-size:11.5px;color:var(--muted);margin-top:11px">Committed annual cost of these hires: <b style="color:var(--navy)">\u20B9'+bg.annual_cost+' L</b></div>';
+      }
+      if (bg.unknown) {
+        html += '<div style="font-size:11px;color:#8A6512;margin-top:7px">'+bg.unknown+' offer'+(bg.unknown===1?'':'s')
+          + ' have no CTC recorded, so they are not counted. Add it on the profile under Key Facts.</div>';
+      }
+      html += '</div>';
+    }
+
+    if (cp.seats_total) {
+      html += '<div style="font-size:11.5px;color:var(--muted);margin:-10px 0 18px">'
+        + cp.seats_open + ' of ' + cp.seats_total + ' seats still open across active '
+        + esc(String(T('mandate_plural','requisitions')).toLowerCase()) + '.</div>';
+    }
+
+    if ((cp.aging||[]).length) {
+      html += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:20px">';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'
+        + '<div style="font-size:13px;font-weight:600">Open '+esc(String(T('mandate_plural','requisitions')).toLowerCase())+' by age</div>'
+        + (cp.aging_over_60 ? '<span style="font-size:10.5px;color:#A32D2D;background:#FDEEEE;padding:2px 8px;border-radius:6px">'+cp.aging_over_60+' over 60 days</span>' : '')
+        + '</div>';
+      html += '<div style="font-size:11px;color:var(--muted);margin-bottom:12px">How long the business has been waiting, counted from the day it was opened \u2014 regardless of recent activity.</div>';
+      html += '<div style="display:flex;flex-direction:column;gap:5px">';
+      cp.aging.forEach(function(a){
+        var col = a.days_open>=90 ? '#A32D2D' : a.days_open>=60 ? '#BA7517' : '#6b7280';
+        html += '<div style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-bottom:0.5px solid #f3f3f3;cursor:pointer" onclick="selectMandate('+a.id+')">'
+          + '<div style="flex:1;font-size:12.5px;color:var(--navy);font-weight:500">'+esc(a.role||'')
+          + '<span style="color:#999;font-weight:400"> \u00b7 '+esc(a.client||'')+(a.location?(' \u00b7 '+esc(a.location)):'')+'</span>'
+          + ((a.headcount||1)>1 ? '<span style="color:#6b7280;font-weight:600;font-size:11px"> \u00b7 '+(a.filled||0)+'/'+a.headcount+' filled</span>' : '')
+          + (a.approval_status==='pending' ? '<span style="font-size:9.5px;font-weight:700;background:#FFF8E6;color:#8A6512;border-radius:20px;padding:1px 7px;margin-left:6px">PENDING</span>' : '')
+          + '</div>'
+          + '<div style="font-size:12px;font-weight:700;color:'+col+';white-space:nowrap">'+a.days_open+'d</div>'
+          + '</div>';
+      });
+      html += '</div></div>';
+    }
+  }
+
+  return html;
 }
 
 async function dashReminderDone(rid, btn) {
@@ -14306,6 +14547,9 @@ function _taskActionLabel(type){
 }
 
 function openAnalytics(skipRender) {
+  // Analytics is merged into Home (Oct 2026). Only the drill-down lists
+  // (funnel stage / placed list) still use this view shell.
+  if (!skipRender) { return goHome(); }
   closeSidebarOnMobile();
   _hideAllViews();
   var av=document.getElementById('ai-view'); if(av) av.style.display='none';
@@ -14319,7 +14563,7 @@ function openAnalytics(skipRender) {
   var tv = document.getElementById('tasks-view'); if(tv) tv.style.display='none';
   var st = document.getElementById('sb-tasks'); if(st) st.className='sb-gear';
   document.getElementById('analytics-view').style.display = 'flex';
-  document.getElementById('sb-analytics').className = 'sb-gear active';
+  var _sba = document.getElementById('sb-analytics'); if (_sba) _sba.className = 'sb-gear active';
   var sr = document.getElementById('sb-responses'); if (sr) sr.className = 'sb-gear';
   var sc = document.getElementById('sb-central'); if (sc) sc.className = 'sb-gear';
   document.getElementById('sb-gear').className = 'sb-gear';
@@ -14337,18 +14581,13 @@ function openAnalytics(skipRender) {
 function closeAnalytics() {
   document.getElementById('analytics-view').style.display = 'none';
   document.getElementById('mandate-view').style.display = 'flex';
-  document.getElementById('sb-analytics').className = 'sb-gear';
+  var _sba = document.getElementById('sb-analytics'); if (_sba) _sba.className = 'sb-gear';
 }
 var _analyticsScope = 'team';
-var _analyticsRange = '7';
+var _analyticsRange = '30';
 var _analyticsFrom = '';
 var _analyticsTo = '';
-function setAnalyticsScope(s){
-  _analyticsScope = s;
-  document.getElementById('scope-team').className = 'an-scope-btn' + (s==='team'?' active':'');
-  document.getElementById('scope-me').className = 'an-scope-btn' + (s==='me'?' active':'');
-  renderAnalytics();
-}
+function setAnalyticsScope(s){ homeSetScope(s); }
 function setAnalyticsRange(r){
   _analyticsRange = r; _analyticsFrom=''; _analyticsTo='';
   renderAnalytics();
@@ -14361,7 +14600,8 @@ function applyCustomRange(){
   renderAnalytics();
 }
 
-async function renderAnalytics(){
+async function renderAnalytics(){ return goHome(); }
+async function _renderAnalyticsLegacy(){
   var body = document.getElementById('analytics-body');
   if(!body) return;
   body.innerHTML = '<div class="loading"><div class="spinner"></div>Loading analytics...</div>';
@@ -16567,7 +16807,7 @@ async function renderStageCandidatesPage(stagesStr){
 
   var html = '<div style="max-width:920px;margin:0 auto">';
   html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
-    + '<a href="#analytics" style="font-size:12px;color:var(--teal-deep);text-decoration:none">&#8592; Analytics</a></div>';
+    + '<a href="#" onclick="goHome();return false;" style="font-size:12px;color:var(--teal-deep);text-decoration:none">&#8592; Home</a></div>';
   html += '<div style="font-size:18px;font-weight:700;color:var(--navy);margin-bottom:4px">'+esc(stages.join(' / '))+'</div>';
   html += '<div style="font-size:12px;color:var(--muted);margin-bottom:16px">'+cands.length+' candidate'+(cands.length!==1?'s':'')+' across all positions'
     + (staleCount?' &middot; <span style="color:#C0522B;font-weight:600">'+staleCount+' inactive '+r.stale_days+'+ days</span>':'')+'</div>';
@@ -16612,7 +16852,7 @@ async function renderPlacedCandidatesPage(){
 
   var html = '<div style="max-width:920px;margin:0 auto">';
   html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
-    + '<a href="#analytics" style="font-size:12px;color:var(--teal-deep);text-decoration:none">&#8592; Analytics</a></div>';
+    + '<a href="#" onclick="goHome();return false;" style="font-size:12px;color:var(--teal-deep);text-decoration:none">&#8592; Home</a></div>';
   html += '<div style="font-size:18px;font-weight:700;color:var(--navy);margin-bottom:4px">Placements &middot; Placed + Joined</div>';
   html += '<div style="font-size:12px;color:var(--muted);margin-bottom:16px"><b>'+cands.length+'</b> total'
     + ' &middot; '+nJoined+' joined, '+nPlaced+' '+String(stageLabel('Placed')).toLowerCase()
