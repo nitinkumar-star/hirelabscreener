@@ -11058,6 +11058,7 @@ async function handleCallUpload(cid, input) {
     statusEl.style.display = 'none';
     renderCallReport(cid, {analysis: a, transcript: r.transcript, recording_file: r.recording_file,
       recording_name: r.recording_name, updated_fields: r.updated_fields,
+      id: r.id, proposed_updates: r.proposed_updates || {}, applied_fields: r.applied_fields || [],
       sources: {cv: r.cv_used, jd: r.jd_used, pitch: r.pitch_used}, created_at: r.created_at,
       created_by_name: (S.currentUser && (S.currentUser.display_name || S.currentUser.username)) || ''});
     toast('✅', 'Call analysed! Interest: '+a.interest_level+' | Rec: '+a.recommendation);
@@ -11076,7 +11077,36 @@ async function handleCallUpload(cid, input) {
 //  confirms the candidate (auto-matched from the file name: phone number /
 //  contact name) and the file goes through the normal call analysis.
 // ═══════════════════════════════════════════════════════════════════════
-var _sc = {files: [], idx: 0, cand: null, busy: false, searchT: null};
+var _sc = {files: [], idx: 0, cand: null, busy: false, searchT: null, cdT: null, cdN: 0, autoDone: {}};
+// "Auto-upload jab number match ho" — remembered on this phone
+function _scAutoOn(){ try { return localStorage.getItem('hl_share_auto') === '1'; } catch (e) { return false; } }
+function _scSetAuto(on){
+  try { localStorage.setItem('hl_share_auto', on ? '1' : '0'); } catch (e) {}
+  if (!on) _scCancelAuto(true);
+  else { var q = document.getElementById('sc-q'); _scSuggest(q ? q.value : ''); }
+}
+function _scCancelAuto(silent){
+  if (_sc.cdT) { clearInterval(_sc.cdT); _sc.cdT = null; }
+  var box = document.getElementById('sc-auto'); if (box) box.innerHTML = '';
+  var go = document.getElementById('sc-go'); if (go && !_sc.busy) { go.textContent = 'Upload & analyse'; go.disabled = !_sc.cand; }
+}
+function _scStartAuto(c){
+  _sc.autoDone[_sc.idx] = true;          // only once per recording
+  _sc.cdN = 5;
+  var box = document.getElementById('sc-auto'); if (!box) return;
+  var draw = function(){
+    box.innerHTML = '<div style="display:flex;align-items:center;gap:10px;background:#E7F6EF;border:1px solid #9FD9C2;border-radius:12px;padding:11px 12px;margin-bottom:10px">'
+      + '<div style="width:34px;height:34px;border-radius:50%;background:#0F6E56;color:#fff;font-weight:800;font-size:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0">'+_sc.cdN+'</div>'
+      + '<div style="flex:1;font-size:13px;color:#0B4F3E;line-height:1.4"><b>'+esc(c.name)+'</b> pe upload ho raha hai&hellip;<div style="font-size:11px;color:#3D7A66">Number match hua hai</div></div>'
+      + '<button onclick="_scCancelAuto()" style="border:1px solid #0F6E56;background:#fff;color:#0F6E56;border-radius:9px;padding:8px 12px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button></div>';
+  };
+  draw();
+  _sc.cdT = setInterval(function(){
+    _sc.cdN--;
+    if (_sc.cdN <= 0) { clearInterval(_sc.cdT); _sc.cdT = null; box.innerHTML = ''; _scUpload(); return; }
+    draw();
+  }, 1000);
+}
 
 function _scCss(){
   if (document.getElementById('sc-css')) return;
@@ -11125,12 +11155,14 @@ async function openShareCall(state){
   if (!v) { v = document.createElement('div'); v.id = 'share-view'; document.body.appendChild(v); }
   v.style.display = 'block';
   v.innerHTML = '<div class="sc-wrap"><div class="loading"><div class="spinner"></div>Opening the shared recording&hellip;</div></div>';
+  _scCancelAuto(true); _sc.autoDone = {};
   _sc.files = await _scLoadFiles(); _sc.idx = 0; _sc.cand = null;
   if (!_sc.files.length) { _scEmpty(state); return; }
   _scRender();
 }
 
 function closeShareCall(){
+  _scCancelAuto(true);
   var v = document.getElementById('share-view'); if (v) v.style.display = 'none';
   try { history.replaceState(null, '', '#'); } catch (e) {}
   goHome();
@@ -11162,6 +11194,12 @@ function _scRender(){
     + '<div class="sc-card"><div style="font-size:13px;font-weight:600;color:var(--ink);word-break:break-all">'+esc(f.name)+'</div>'
     + '<div style="font-size:11.5px;color:var(--muted);margin:3px 0 8px">'+_scFmtSize(f.blob.size)+'</div>'
     + '<audio controls preload="metadata" src="'+url+'" style="width:100%;height:38px"></audio></div>'
+    + '<label class="sc-card" style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:12px 14px">'
+    +   '<div style="flex:1"><div style="font-size:13.5px;font-weight:700;color:var(--ink)">Auto-upload jab number match ho</div>'
+    +   '<div style="font-size:11.5px;color:var(--muted);margin-top:2px">Phone number se ek hi candidate mile to 5 sec mein apne aap upload. Warna aap khud chunein.</div></div>'
+    +   '<input type="checkbox" id="sc-auto-t" '+(_scAutoOn()?'checked':'')+' onchange="_scSetAuto(this.checked)" style="width:22px;height:22px;accent-color:#0F6E56;flex-shrink:0">'
+    + '</label>'
+    + '<div id="sc-auto"></div>'
     + '<div class="sc-card"><div class="sc-lbl">Which candidate is this call with?</div>'
     + '<input class="sc-in" id="sc-q" placeholder="Search name, phone or company" oninput="_scSearch(this.value)" autocomplete="off">'
     + '<div id="sc-list"><div class="loading"><div class="spinner"></div>Finding the candidate&hellip;</div></div></div>'
@@ -11172,6 +11210,7 @@ function _scRender(){
 }
 
 function _scSearch(q){
+  _scCancelAuto();
   clearTimeout(_sc.searchT);
   _sc.searchT = setTimeout(function(){ _scSuggest(q); }, 250);
 }
@@ -11201,10 +11240,15 @@ async function _scSuggest(q){
   }).join('');
   window._scList = list;
   var go = document.getElementById('sc-go'); if (go) go.disabled = !_sc.cand;
+  // auto mode: exactly one phone-number match → 5 sec countdown, then upload
+  var phones = list.filter(function(c){ return c.match === 'phone'; });
+  if (!q && _scAutoOn() && phones.length === 1 && !_sc.autoDone[_sc.idx] && !_sc.busy && !_sc.cdT
+      && _sc.cand && _sc.cand.id === phones[0].id) _scStartAuto(phones[0]);
 }
 
 function _scPick(id){
   var c = (window._scList || []).filter(function(x){ return x.id === id; })[0]; if (!c) return;
+  if (_sc.cdT && !(_sc.cand && _sc.cand.id === id)) _scCancelAuto();
   _sc.cand = c;
   Array.prototype.forEach.call(document.querySelectorAll('#sc-list .sc-c'), function(el){ el.classList.remove('on'); });
   var idx = (window._scList || []).indexOf(c);
@@ -11214,8 +11258,10 @@ function _scPick(id){
 
 async function _scUpload(){
   if (_sc.busy || !_sc.cand) return;
+  if (_sc.cdT) { clearInterval(_sc.cdT); _sc.cdT = null; var ab = document.getElementById('sc-auto'); if (ab) ab.innerHTML = ''; }
   var f = _sc.files[_sc.idx], c = _sc.cand;
   var go = document.getElementById('sc-go'), msg = document.getElementById('sc-msg');
+  if (!go || !msg) return;
   _sc.busy = true; go.disabled = true; go.textContent = 'Uploading…';
   msg.innerHTML = 'Transcribing and analysing the call for <b>'+esc(c.name)+'</b>. This takes about a minute &mdash; keep this screen open.';
   var t = setTimeout(function(){ go.textContent = 'Analysing…'; }, 8000);
@@ -11232,6 +11278,9 @@ async function _scUpload(){
   try { var cache = await caches.open('hl-share'); await cache.delete(f.key); } catch (e) {}
   var a = r.analysis || {};
   var next = _sc.idx + 1 < _sc.files.length;
+  var callRec = {id: r.id, proposed_updates: r.proposed_updates || {}, applied_fields: r.applied_fields || []};
+  window._caCalls = window._caCalls || {}; window._caCalls[c.id] = callRec;
+  var propHtml = (r.id && Object.keys(callRec.proposed_updates).length) ? _caProposedHTML(c.id, callRec, 'light') : '';
   document.getElementById('share-view').innerHTML = '<div class="sc-wrap">'
     + '<div class="sc-top"><b>&#10003; Call analysed</b><button class="sc-x" onclick="closeShareCall()">Close</button></div>'
     + '<div class="sc-card" style="text-align:center"><div style="font-size:15px;font-weight:700;color:var(--navy)">'+esc(c.name)+'</div>'
@@ -11241,6 +11290,7 @@ async function _scUpload(){
         return '<div style="background:#F6F5F1;border-radius:10px;padding:9px 4px"><div style="font-size:10px;color:var(--muted);text-transform:uppercase">'+x[0]+'</div><div style="font-size:15px;font-weight:800;color:var(--ink);margin-top:2px">'+esc(String(x[1]))+'</div></div>';
       }).join('')
     + '</div>' + (a.next_step ? '<div style="font-size:12.5px;color:#444;margin-top:12px">&#128161; '+esc(a.next_step)+'</div>' : '') + '</div>'
+    + (propHtml ? '<div data-ca-prop="'+c.id+'" data-theme="light">'+propHtml+'</div>' : '')
     + '<button class="sc-go" onclick="_scOpenCand('+c.id+','+(c.mandate_id||'null')+')">Open full report</button>'
     + (next ? '<button class="sc-go" style="background:#534AB7;margin-top:10px" onclick="_sc.idx++;_sc.cand=null;_scRender()">Next recording</button>' : '')
     + '</div>';
@@ -11282,6 +11332,66 @@ function _caSec(title, inner){
   return '<div style="background:rgba(255,255,255,.05);border:0.5px solid rgba(255,255,255,.1);border-radius:10px;padding:12px 14px;margin-bottom:10px">'
     + '<div style="font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-bottom:8px">'+title+'</div>'+inner+'</div>';
 }
+var _CA_FIELDS = {ctc_current:'Current CTC', ctc_expected:'Expected CTC', company:'Current company', notice_period:'Notice period'};
+function _caFmt(k, v, isCurrent){
+  if(v===null || v===undefined || v==='' || ((k==='ctc_current'||k==='ctc_expected') && !parseFloat(v))) return '—';
+  if(isCurrent && k==='notice_period' && !parseInt(v,10)) return '—';   // 0 = never filled in
+  if(k==='ctc_current'||k==='ctc_expected') return '₹'+v+' LPA';
+  if(k==='notice_period') return v+' days';
+  return String(v);
+}
+// "AI ko ye details mili" — profile value vs what the call said, tick to update
+function _caProposedHTML(cid, call, theme){
+  var p = call.proposed_updates || {}, done = call.applied_fields || [];
+  var keys = Object.keys(_CA_FIELDS).filter(function(k){ return p[k]; });
+  if(!keys.length) return '';
+  var dk = theme === 'dark';
+  var C = dk ? {bg:'rgba(250,199,117,.10)', bd:'rgba(250,199,117,.45)', h:'#FAC775', t:'#fff', m:'rgba(255,255,255,.55)', ok:'#9FE1CB', line:'rgba(255,255,255,.1)'}
+             : {bg:'#FFF8EC', bd:'#F0D29A', h:'#8A5A00', t:'#1F1E1B', m:'#6B675E', ok:'#0F6E56', line:'#EFE6D4'};
+  var pending = keys.filter(function(k){ return done.indexOf(k) < 0; });
+  var rows = keys.map(function(k){
+    var applied = done.indexOf(k) >= 0;
+    return '<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:0.5px solid '+C.line+';cursor:'+(applied?'default':'pointer')+'">'
+      + (applied ? '<span style="width:16px;text-align:center;color:'+C.ok+';font-weight:800">&#10003;</span>'
+                 : '<input type="checkbox" class="ca-pf-'+cid+'" value="'+k+'" checked style="width:16px;height:16px;accent-color:#0F6E56;margin:0">')
+      + '<div style="flex:1;min-width:0"><div style="font-size:11px;color:'+C.m+';font-weight:600">'+_CA_FIELDS[k]+'</div>'
+      + '<div style="font-size:12.5px;color:'+C.t+';margin-top:2px"><span style="color:'+C.m+';text-decoration:'+(applied?'line-through':'none')+'">'+esc(_caFmt(k,p[k].current,true))+'</span>'
+      + ' &rarr; <b>'+esc(_caFmt(k,p[k].proposed))+'</b>'+(applied?' <span style="font-size:10.5px;color:'+C.ok+';font-weight:700">Updated</span>':'')+'</div></div></label>';
+  }).join('');
+  return '<div style="background:'+C.bg+';border:1px solid '+C.bd+';border-radius:10px;padding:10px 14px 12px;margin-bottom:12px">'
+    + '<div style="font-size:12px;font-weight:700;color:'+C.h+'">&#129302; AI ko call mein ye details mili</div>'
+    + '<div style="font-size:10.5px;color:'+C.m+';margin:2px 0 6px">'+(pending.length ? 'Profile abhi nahi badla gaya. Jo sahi hai uspe tick rakhein aur update karein.' : 'Selected details profile mein update ho chuki hain.')+'</div>'
+    + rows
+    + (pending.length ? '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'
+        + '<button id="ca-apply-'+cid+'" onclick="applyCallDetails('+cid+')" style="border:none;background:#0F6E56;color:#fff;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer">Update selected</button>'
+        + '<span style="font-size:10.5px;color:'+C.m+';align-self:center">Untick karein jo galat hai &mdash; woh profile mein nahi jayega.</span></div>' : '')
+    + '</div>';
+}
+async function applyCallDetails(cid){
+  var call = (window._caCalls||{})[cid]; if(!call || !call.id) return;
+  var fields = Array.prototype.map.call(document.querySelectorAll('.ca-pf-'+cid+':checked'), function(x){ return x.value; });
+  if(!fields.length){ toast('ℹ️','Koi detail select nahi hai'); return; }
+  var b = document.getElementById('ca-apply-'+cid); if(b){ b.disabled = true; b.textContent = 'Updating…'; }
+  var r = await req('POST','/candidates/'+cid+'/call-analysis/'+call.id+'/apply',{fields: fields});
+  if(!r || r.error){ if(b){ b.disabled=false; b.textContent='Update selected'; } toast('⚠️',(r&&r.error)||'Update failed'); return; }
+  call.applied_fields = r.applied_fields || [];
+  // keep the open profile form in step, so a later "Save" doesn't put the old values back
+  var p = call.proposed_updates || {};
+  var ids = {ctc_current:'pf-ctc', ctc_expected:'pf-ectc', notice_period:'pf-notice', company:'pf-company'};
+  (r.applied||[]).forEach(function(k){ var el = document.getElementById(ids[k]); if(el && p[k]) el.value = p[k].proposed; });
+  document.querySelectorAll('[data-ca-prop="'+cid+'"], #ca-prop-'+cid).forEach(function(box){
+    box.innerHTML = _caProposedHTML(cid, call, box.getAttribute('data-theme') || 'dark');
+  });
+  toast('✅', (r.applied||[]).length ? 'Profile updated from call' : 'Already updated');
+}
+async function deleteCallRecording(cid, aid){
+  if(!confirm('Ye call recording aur iska poora analysis delete karna hai?\n\nJo details aap profile mein update kar chuke hain woh waisi hi rahengi.')) return;
+  var r = await req('DELETE','/candidates/'+cid+'/call-analysis/'+aid);
+  if(!r || r.error){ toast('⚠️',(r&&r.error)||'Delete failed'); return; }
+  var el = document.getElementById('call-analysis-'+cid);
+  if(el){ el.removeAttribute('data-loaded'); loadCallAnalysis(cid); }
+  toast('🗑️','Call recording deleted');
+}
 function renderCallReport(cid, call){
   var el = document.getElementById('call-analysis-'+cid); if(!el) return;
   el.setAttribute('data-loaded','1');
@@ -11294,13 +11404,22 @@ function renderCallReport(cid, call){
       + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
       + '<div style="font-size:11.5px;color:#fff;font-weight:600">&#127911; Original recording'
       + (call.recording_name?' <span style="font-weight:400;color:rgba(255,255,255,.55)">&middot; '+esc(call.recording_name)+'</span>':'')+'</div>'
-      + '<a href="'+url+'" download style="font-size:11px;color:#9FE1CB;text-decoration:none;font-weight:600">&#11015; Download</a></div>'
+      + '<div style="display:flex;gap:14px;align-items:center">'
+      + '<a href="'+url+'" download style="font-size:11px;color:#9FE1CB;text-decoration:none;font-weight:600">&#11015; Download</a>'
+      + (call.id ? '<button onclick="deleteCallRecording('+cid+','+call.id+')" style="border:none;background:none;padding:0;font-size:11px;color:#F5A3A3;font-weight:600;cursor:pointer">&#128465; Delete recording</button>' : '')
+      + '</div></div>'
       + '<audio controls preload="none" src="'+url+'" style="width:100%;height:36px"></audio>'
       + '<div style="font-size:10px;color:rgba(255,255,255,.45);margin-top:5px">Analysed '+esc(String(call.created_at||'').slice(0,16).replace('T',' '))
       + (call.created_by_name?(' by '+esc(call.created_by_name)):'')
       + ' &middot; used: '+['CV','JD','Pitch evaluation'].filter(function(x,i){ return [src.cv,src.jd,src.pitch][i]; }).concat(['Call']).join(', ')+'</div></div>';
   }
-  // 2. auto-updated fields
+  // 2. details the AI found — recruiter approves which ones to apply
+  window._caCalls = window._caCalls || {};
+  window._caCalls[cid] = call;
+  if(call.id && Object.keys(call.proposed_updates||{}).length){
+    html += '<div id="ca-prop-'+cid+'">'+_caProposedHTML(cid, call, 'dark')+'</div>';
+  }
+  // older records (before Oct 2026) were applied automatically
   var ufk = Object.keys(uf||{});
   if(ufk.length){
     var lm={ctc_current:'Current CTC', ctc_expected:'Expected CTC', company:'Company', notice_period:'Notice (days)'};

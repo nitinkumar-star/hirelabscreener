@@ -21133,37 +21133,51 @@ def analyse_call(cid):
     except (TypeError, ValueError):
         pass
 
-    note = '[CALL ANALYSIS ' + datetime.datetime.now().strftime('%d %b %Y %H:%M') + '] Recorded. Interest: ' + analysis.get('interest_level', '') + '. ' + analysis.get('call_summary', '')[:200]
-    if updates:
-        set_clause = ', '.join(f'{k}=?' for k in updates) + ', general_comments=?, updated_at=? WHERE id=?'
-        conn.execute('UPDATE candidates SET ' + set_clause,
-                     tuple(updates.values()) + (note, ts(), cid))
-    else:
-        conn.execute('UPDATE candidates SET general_comments=?,updated_at=? WHERE id=?',
-                     (note, ts(), cid))
-    upd_summary = ', '.join(f'{k}→{v}' for k, v in updates.items()) if updates else ''
+    # Nothing is written to the candidate automatically any more. The values
+    # the call surfaced are stored as *proposals*; the recruiter ticks which
+    # ones to apply (POST /api/candidates/<cid>/call-analysis/<aid>/apply).
+    # general_comments is no longer overwritten either.
+    _cd = dict(cand)
+    proposed = {}
+    for _k, _v in updates.items():
+        _cur = _cd.get(_k)
+        if isinstance(_v, str):
+            _same = (str(_cur or '').strip().lower() == _v.strip().lower())
+        else:
+            try:
+                _same = _cur not in (None, '') and float(_cur) == float(_v)
+            except (TypeError, ValueError):
+                _same = False
+        if not _same:
+            proposed[_k] = {'current': _cur if _cur not in (None,) else '', 'proposed': _v}
+    conn.execute('UPDATE candidates SET updated_at=? WHERE id=?', (ts(), cid))
     conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
                  (cid, cand['stage'], cand['stage'],
-                  'Call analysed. Interest: ' + analysis.get('interest_level','') + '. Rec: ' + analysis.get('recommendation','') + '. ' + analysis.get('next_step','') + (' | Updated: ' + upd_summary if upd_summary else ''),
+                  'Call analysed. Interest: ' + analysis.get('interest_level','') + '. Rec: ' + analysis.get('recommendation','') + '. ' + analysis.get('next_step',''),
                   ts()))
     _sources = {'cv': bool(cv_text), 'jd': bool(jd_or_sop), 'pitch': bool(pitch_ev), 'profile': bool(profile_txt)}
+    analysis_id = None
     try:
         from modules import call_intel as _ci
         _u = current_user() or {}
-        _ci.save(conn, effective_company_id(), cid, cand['mandate_id'], fname, f.filename, transcript,
-                 analysis, _sources, updates, real_user_id(), _u.get('display_name') or _u.get('username') or '')
+        analysis_id = _ci.save(conn, effective_company_id(), cid, cand['mandate_id'], fname, f.filename, transcript,
+                               analysis, _sources, {}, real_user_id(), _u.get('display_name') or _u.get('username') or '',
+                               proposed=proposed)
     except Exception as _e:
         print('[call-analysis] save failed:', _e)
     conn.commit(); conn.close()
     _interest = analysis.get('interest_level', '')
-    log_candidate_event(cid, 'call', 'Call analysed' + (' — interest: ' + _interest if _interest else '') + (' · updated ' + upd_summary if upd_summary else ''))
+    log_candidate_event(cid, 'call', 'Call analysed' + (' — interest: ' + _interest if _interest else ''))
 
     return jsonify({
         'ok': True,
+        'id': analysis_id,
         'transcript': transcript,
         'analysis': analysis,
         'recording_file': fname,
-        'updated_fields': updates,
+        'updated_fields': {},
+        'proposed_updates': proposed,
+        'applied_fields': [],
         'cv_used': bool(cv_text),
         'jd_used': bool(jd_or_sop),
         'pitch_used': bool(pitch_ev),
