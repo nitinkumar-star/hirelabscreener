@@ -122,3 +122,98 @@ def latest_call_analysis(cid):
         except Exception:
             d[k] = {}
     return jsonify({'ok': True, 'call': d})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  SHARE TO HIRELAB — match a shared phone recording to a candidate
+# ══════════════════════════════════════════════════════════════════════════
+import re as _re
+from flask import request as _request
+
+_STOP = {'call', 'calls', 'recording', 'recordings', 'record', 'recorded', 'audio', 'voice', 'phone',
+         'sim', 'incoming', 'outgoing', 'in', 'out', 'mp3', 'm4a', 'amr', 'wav', 'aac', 'ogg', 'opus',
+         'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'pm', 'am',
+         'new', 'file', 'track', 'unknown', 'number', 'private', 'with', 'from', 'and'}
+
+
+def _digits(s):
+    return _re.sub(r'\D', '', s or '')
+
+
+def _scope(conn):
+    """(sql, params) limiting candidates to what this user may work on."""
+    try:
+        from modules.access import candidate_id_scope_sql, scoped_user
+        if scoped_user():
+            sql, params = candidate_id_scope_sql('c.id', include_pool=False)
+            return sql, params
+    except Exception:
+        pass
+    return '', []
+
+
+def _row(r, how):
+    return {'id': r['id'], 'name': r['name'] or '', 'phone': r['phone'] or '', 'company': r['company'] or '',
+            'designation': r['designation'] or '', 'stage': r['stage'] or '', 'mandate_id': r['mandate_id'],
+            'role': r['role'] or '', 'client': r['client'] or '', 'match': how}
+
+
+@bp.route('/api/share-call/suggest', methods=['GET'])
+@login_required
+def share_call_suggest():
+    """Best candidate matches for a shared recording, from its file name
+    (phone number and/or contact name, as Samsung / Xiaomi / Realme / OnePlus
+    dialers write them), plus a free-text search and recent candidates."""
+    fname = (_request.args.get('name') or '')[:200]
+    q = (_request.args.get('q') or '').strip()[:80]
+    oid = effective_company_id()
+    conn = get_db()
+    ssql, sparams = _scope(conn)
+    base = ('SELECT c.id, c.name, c.phone, c.company, c.designation, c.stage, c.mandate_id, '
+            'm.role, m.client FROM candidates c LEFT JOIN mandates m ON m.id = c.mandate_id '
+            "WHERE c.owner_id=? AND COALESCE(m.status,'') != 'central' ")
+    out, seen = [], set()
+
+    def add(rows, how):
+        for r in rows:
+            if r['id'] not in seen:
+                seen.add(r['id']); out.append(_row(r, how))
+
+    stem = _re.sub(r'\.[A-Za-z0-9]{2,5}$', '', fname)
+    # 1) phone number in the file name (last 10 digits)
+    for num in _re.findall(r'\+?\d[\d\s-]{8,16}\d', stem):
+        d = _digits(num)
+        if len(d) < 10:
+            continue
+        last10 = d[-10:]
+        rows = conn.execute(base + ssql + ' AND c.phone LIKE ? ORDER BY c.updated_at DESC LIMIT 20',
+                            [oid] + sparams + ['%' + last10[-5:] + '%']).fetchall()
+        add([r for r in rows if _digits(r['phone'])[-10:] == last10], 'phone')
+    # 2) contact name in the file name
+    words = [w for w in _re.findall(r'[A-Za-z]{3,}', stem) if w.lower() not in _STOP]
+    if words:
+        like = ' OR '.join(['LOWER(c.name) LIKE ?'] * len(words))
+        rows = conn.execute(base + ssql + ' AND (' + like + ') ORDER BY c.updated_at DESC LIMIT 40',
+                            [oid] + sparams + ['%' + w.lower() + '%' for w in words]).fetchall()
+        lw = [w.lower() for w in words]
+        rows = sorted(rows, key=lambda r: -sum(1 for w in lw if w in (r['name'] or '').lower()))
+        full = [r for r in rows if all(w in (r['name'] or '').lower() for w in lw)]
+        add(full, 'name')
+        add(rows[:8], 'name-part')
+    # 3) typed search
+    if q:
+        qd = _digits(q)
+        if len(qd) >= 5:
+            rows = conn.execute(base + ssql + ' AND c.phone LIKE ? ORDER BY c.updated_at DESC LIMIT 15',
+                                [oid] + sparams + ['%' + qd[-8:] + '%']).fetchall()
+        else:
+            rows = conn.execute(base + ssql + ' AND (LOWER(c.name) LIKE ? OR LOWER(c.company) LIKE ?) '
+                                'ORDER BY c.updated_at DESC LIMIT 15',
+                                [oid] + sparams + ['%' + q.lower() + '%'] * 2).fetchall()
+        add(rows, 'search')
+    # 4) recently worked-on candidates
+    if not q:
+        rows = conn.execute(base + ssql + ' ORDER BY c.updated_at DESC LIMIT 8', [oid] + sparams).fetchall()
+        add(rows, 'recent')
+    conn.close()
+    return jsonify({'ok': True, 'candidates': out[:25]})
