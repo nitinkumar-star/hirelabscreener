@@ -1869,6 +1869,9 @@ async function readHash() {
     var parts = raw.split('/');
     var head = parts[0];
 
+    // Share to HireLab: a call recording shared from the phone
+    if (head === 'share-call') { openShareCall(parts[1] || ''); return; }
+
     // Analytics stage-candidate list (opened in new tab via funnel click)
     if (head === 'analytics' && parts[1] === 'stage' && parts[2]) {
       renderStageCandidatesPage(decodeURIComponent(parts[2]));
@@ -6447,7 +6450,7 @@ function renderProfileDetail(c){
     +'</div>'
     +'</div>';
   var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">&#9993; Email thread</div><div style="display:flex;gap:7px"><button class="cp-hbtn" onclick="cpLoadEmailThread('+c.id+')">&#8635; Refresh</button><button class="cp-hbtn" style="background:#185FA5;color:#fff;border-color:transparent" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">&#9998; Compose / AI</button></div></div><div id="cp-email-'+c.id+'" style="max-height:460px;overflow-y:auto"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading emails…</div></div></div>';
-  var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload the call recording — DeepSeek reads the CV, the Pitch evaluation and the call together and compares them with the JD.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
+  var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload the call recording — DeepSeek reads the CV, the Pitch evaluation and the call together and compares them with the JD. On your phone: open the recording &rarr; Share &rarr; HireLab.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
 
   // ── Compose page ───────────────────────────────────────────────────────
   let html='';
@@ -11064,6 +11067,189 @@ async function handleCallUpload(cid, input) {
     statusEl.innerHTML = '&#9888; Error: ' + esc(e.message);
     toast('⚠️', 'Error: ' + e.message);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SHARE TO HIRELAB — upload a phone call recording to the right candidate
+//  Phone: recording → Share → HireLab. The service worker keeps the file in
+//  Cache Storage ('hl-share') and opens #share-call. Here the recruiter
+//  confirms the candidate (auto-matched from the file name: phone number /
+//  contact name) and the file goes through the normal call analysis.
+// ═══════════════════════════════════════════════════════════════════════
+var _sc = {files: [], idx: 0, cand: null, busy: false, searchT: null};
+
+function _scCss(){
+  if (document.getElementById('sc-css')) return;
+  var st = document.createElement('style'); st.id = 'sc-css';
+  st.textContent = [
+    '#share-view{position:fixed;inset:0;z-index:99990;background:#F6F5F1;overflow:auto;font-family:inherit}',
+    '.sc-wrap{max-width:560px;margin:0 auto;padding:16px 14px 40px}',
+    '.sc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}',
+    '.sc-top b{font-size:17px;color:var(--navy)}',
+    '.sc-x{border:none;background:#fff;border:1px solid var(--line);border-radius:10px;padding:7px 12px;font-size:13px;cursor:pointer}',
+    '.sc-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px;box-shadow:var(--shadow-sm)}',
+    '.sc-lbl{font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px}',
+    '.sc-c{display:flex;align-items:center;gap:10px;padding:11px 10px;border:1.5px solid var(--line);border-radius:12px;margin-bottom:8px;cursor:pointer;background:#fff}',
+    '.sc-c.on{border-color:#0F6E56;background:#F0FAF6}',
+    '.sc-c .nm{font-size:14px;font-weight:600;color:var(--ink)}',
+    '.sc-c .sb{font-size:11.5px;color:var(--muted);margin-top:2px}',
+    '.sc-tag{font-size:9.5px;font-weight:800;letter-spacing:.3px;padding:2px 7px;border-radius:20px;white-space:nowrap}',
+    '.sc-go{width:100%;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;background:#0F6E56;color:#fff;cursor:pointer}',
+    '.sc-go:disabled{background:#B9C8C2;cursor:not-allowed}',
+    '.sc-in{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:14px;margin-bottom:10px}'
+  ].join('\n');
+  document.head.appendChild(st);
+}
+
+async function _scLoadFiles(){
+  var out = [];
+  if (!('caches' in window)) return out;
+  try {
+    var cache = await caches.open('hl-share');
+    var keys = await cache.keys();
+    keys.sort(function(a,b){ return a.url < b.url ? -1 : 1; });
+    for (var i = 0; i < keys.length; i++) {
+      var res = await cache.match(keys[i]); if (!res) continue;
+      var blob = await res.blob();
+      out.push({key: keys[i], blob: blob,
+        name: decodeURIComponent(res.headers.get('X-File-Name') || 'recording'),
+        type: res.headers.get('Content-Type') || blob.type || 'audio/mpeg'});
+    }
+  } catch (e) {}
+  return out;
+}
+
+async function openShareCall(state){
+  _scCss();
+  var v = document.getElementById('share-view');
+  if (!v) { v = document.createElement('div'); v.id = 'share-view'; document.body.appendChild(v); }
+  v.style.display = 'block';
+  v.innerHTML = '<div class="sc-wrap"><div class="loading"><div class="spinner"></div>Opening the shared recording&hellip;</div></div>';
+  _sc.files = await _scLoadFiles(); _sc.idx = 0; _sc.cand = null;
+  if (!_sc.files.length) { _scEmpty(state); return; }
+  _scRender();
+}
+
+function closeShareCall(){
+  var v = document.getElementById('share-view'); if (v) v.style.display = 'none';
+  try { history.replaceState(null, '', '#'); } catch (e) {}
+  goHome();
+}
+
+function _scEmpty(state){
+  var msg = state === 'retry'
+    ? 'The app was still starting when you shared. Please share the recording again.'
+    : (state === 'error' ? 'The shared file could not be read. Please share it again.' : 'No recording shared yet.');
+  document.getElementById('share-view').innerHTML = '<div class="sc-wrap">'
+    + '<div class="sc-top"><b>&#127911; Share a call recording</b><button class="sc-x" onclick="closeShareCall()">Close</button></div>'
+    + '<div class="sc-card"><div style="font-size:14px;color:var(--ink);margin-bottom:10px">'+esc(msg)+'</div>'
+    + '<div class="sc-lbl">How it works (Android)</div>'
+    + '<ol style="font-size:13px;color:#444;line-height:1.7;padding-left:18px;margin:0">'
+    + '<li>One time: open HireLab in <b>Chrome</b> on the phone &rarr; menu &#8942; &rarr; <b>Install app</b> / <b>Add to Home screen</b>.</li>'
+    + '<li>After a call: open the recording (Phone app &rarr; Recordings, or My Files &rarr; Call recordings).</li>'
+    + '<li>Tap <b>Share</b> &rarr; choose <b>HireLab</b>.</li>'
+    + '<li>Check the candidate HireLab picked &rarr; <b>Upload &amp; analyse</b>.</li></ol></div></div>';
+}
+
+function _scFmtSize(n){ return n > 1048576 ? (n/1048576).toFixed(1)+' MB' : Math.max(1, Math.round(n/1024))+' KB'; }
+
+function _scRender(){
+  var f = _sc.files[_sc.idx];
+  var url = URL.createObjectURL(f.blob);
+  var multi = _sc.files.length > 1 ? (' <span style="font-size:12px;color:var(--muted);font-weight:500">('+(_sc.idx+1)+' of '+_sc.files.length+')</span>') : '';
+  document.getElementById('share-view').innerHTML = '<div class="sc-wrap">'
+    + '<div class="sc-top"><b>&#127911; Upload call recording'+multi+'</b><button class="sc-x" onclick="closeShareCall()">Close</button></div>'
+    + '<div class="sc-card"><div style="font-size:13px;font-weight:600;color:var(--ink);word-break:break-all">'+esc(f.name)+'</div>'
+    + '<div style="font-size:11.5px;color:var(--muted);margin:3px 0 8px">'+_scFmtSize(f.blob.size)+'</div>'
+    + '<audio controls preload="metadata" src="'+url+'" style="width:100%;height:38px"></audio></div>'
+    + '<div class="sc-card"><div class="sc-lbl">Which candidate is this call with?</div>'
+    + '<input class="sc-in" id="sc-q" placeholder="Search name, phone or company" oninput="_scSearch(this.value)" autocomplete="off">'
+    + '<div id="sc-list"><div class="loading"><div class="spinner"></div>Finding the candidate&hellip;</div></div></div>'
+    + '<button class="sc-go" id="sc-go" disabled onclick="_scUpload()">Upload &amp; analyse</button>'
+    + '<div id="sc-msg" style="font-size:13px;margin-top:12px;text-align:center;color:var(--muted)"></div>'
+    + '</div>';
+  _scSuggest('');
+}
+
+function _scSearch(q){
+  clearTimeout(_sc.searchT);
+  _sc.searchT = setTimeout(function(){ _scSuggest(q); }, 250);
+}
+
+async function _scSuggest(q){
+  var f = _sc.files[_sc.idx]; var box = document.getElementById('sc-list'); if (!box || !f) return;
+  var r = await req('GET', '/share-call/suggest?name=' + encodeURIComponent(f.name) + (q ? '&q=' + encodeURIComponent(q) : ''));
+  var list = (r && r.candidates) || [];
+  if (!list.length) { box.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:6px 2px">No candidate found. Search by name or phone.</div>'; return; }
+  // the best match is pre-selected only when the phone number matched
+  if (!q && !_sc.cand && list[0].match === 'phone') _sc.cand = list[0];
+  var tagOf = function(m){
+    return m === 'phone' ? ['&#128222; Phone match', '#E7F6EF', '#0F6E56']
+         : m === 'name' ? ['Name match', '#EEEDFB', '#534AB7']
+         : m === 'name-part' ? ['Similar name', '#F3F2EE', '#6B675E']
+         : m === 'recent' ? ['Recent', '#F3F2EE', '#6B675E'] : ['', '', ''];
+  };
+  box.innerHTML = list.map(function(c){
+    var t = tagOf(c.match), on = _sc.cand && _sc.cand.id === c.id;
+    return '<div class="sc-c'+(on?' on':'')+'" onclick="_scPick('+c.id+')">'
+      + avatarHtml(c.name, 34)
+      + '<div style="flex:1;min-width:0"><div class="nm">'+esc(c.name)+'</div>'
+      + '<div class="sb">'+esc([c.phone, c.company].filter(Boolean).join(' · '))+'</div>'
+      + '<div class="sb">'+esc([c.role, c.client].filter(Boolean).join(' — '))+(c.stage?(' · '+esc(c.stage)):'')+'</div></div>'
+      + (t[0] ? '<span class="sc-tag" style="background:'+t[1]+';color:'+t[2]+'">'+t[0]+'</span>' : '')
+      + '</div>';
+  }).join('');
+  window._scList = list;
+  var go = document.getElementById('sc-go'); if (go) go.disabled = !_sc.cand;
+}
+
+function _scPick(id){
+  var c = (window._scList || []).filter(function(x){ return x.id === id; })[0]; if (!c) return;
+  _sc.cand = c;
+  Array.prototype.forEach.call(document.querySelectorAll('#sc-list .sc-c'), function(el){ el.classList.remove('on'); });
+  var idx = (window._scList || []).indexOf(c);
+  var row = document.querySelectorAll('#sc-list .sc-c')[idx]; if (row) row.classList.add('on');
+  var go = document.getElementById('sc-go'); if (go) go.disabled = false;
+}
+
+async function _scUpload(){
+  if (_sc.busy || !_sc.cand) return;
+  var f = _sc.files[_sc.idx], c = _sc.cand;
+  var go = document.getElementById('sc-go'), msg = document.getElementById('sc-msg');
+  _sc.busy = true; go.disabled = true; go.textContent = 'Uploading…';
+  msg.innerHTML = 'Transcribing and analysing the call for <b>'+esc(c.name)+'</b>. This takes about a minute &mdash; keep this screen open.';
+  var t = setTimeout(function(){ go.textContent = 'Analysing…'; }, 8000);
+  var fd = new FormData();
+  fd.append('recording', new File([f.blob], f.name, {type: f.type}));
+  fd.append('language', 'hi');
+  var r = await reqFile('/candidates/' + c.id + '/analyse-call', fd);
+  clearTimeout(t); _sc.busy = false;
+  if (!r || r.error) {
+    go.disabled = false; go.textContent = 'Try again';
+    msg.innerHTML = '<span style="color:#A32D2D">&#9888; '+esc((r && r.error) || 'Upload failed')+'</span>';
+    return;
+  }
+  try { var cache = await caches.open('hl-share'); await cache.delete(f.key); } catch (e) {}
+  var a = r.analysis || {};
+  var next = _sc.idx + 1 < _sc.files.length;
+  document.getElementById('share-view').innerHTML = '<div class="sc-wrap">'
+    + '<div class="sc-top"><b>&#10003; Call analysed</b><button class="sc-x" onclick="closeShareCall()">Close</button></div>'
+    + '<div class="sc-card" style="text-align:center"><div style="font-size:15px;font-weight:700;color:var(--navy)">'+esc(c.name)+'</div>'
+    + '<div style="font-size:12px;color:var(--muted);margin:2px 0 12px">'+esc([c.role, c.client].filter(Boolean).join(' — '))+'</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'
+    + [['JD match', (a.jd_match_score!=null ? a.jd_match_score+'/100' : '—')], ['Interest', a.interest_level||'—'], ['Advice', a.recommendation||'—']].map(function(x){
+        return '<div style="background:#F6F5F1;border-radius:10px;padding:9px 4px"><div style="font-size:10px;color:var(--muted);text-transform:uppercase">'+x[0]+'</div><div style="font-size:15px;font-weight:800;color:var(--ink);margin-top:2px">'+esc(String(x[1]))+'</div></div>';
+      }).join('')
+    + '</div>' + (a.next_step ? '<div style="font-size:12.5px;color:#444;margin-top:12px">&#128161; '+esc(a.next_step)+'</div>' : '') + '</div>'
+    + '<button class="sc-go" onclick="_scOpenCand('+c.id+','+(c.mandate_id||'null')+')">Open full report</button>'
+    + (next ? '<button class="sc-go" style="background:#534AB7;margin-top:10px" onclick="_sc.idx++;_sc.cand=null;_scRender()">Next recording</button>' : '')
+    + '</div>';
+}
+
+function _scOpenCand(cid, mid){
+  var v = document.getElementById('share-view'); if (v) v.style.display = 'none';
+  openProfileById(cid, mid);
+  setTimeout(function(){ try { cpTab('call'); } catch (e) {} }, 1500);
 }
 
 // ── Call Analysis tab: one combined report (CV + Pitch + call vs JD) ──────

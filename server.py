@@ -4538,8 +4538,30 @@ def pwa_manifest():
         'icons': [
             {'src': '/icon-192.png', 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any maskable'},
             {'src': '/icon-512.png', 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any maskable'},
-        ]
+        ],
+        # "Share to HireLab": after a call, share the phone's recording to the
+        # installed app; it lands on #share-call where the candidate is matched.
+        # Handled by the service worker (keeps the file on the phone until the
+        # recruiter confirms the candidate), see /sw.js.
+        'share_target': {
+            'action': '/share-call',
+            'method': 'POST',
+            'enctype': 'multipart/form-data',
+            'params': {
+                'title': 'title', 'text': 'text',
+                'files': [{'name': 'recording',
+                           'accept': ['audio/*', '.m4a', '.mp3', '.wav', '.ogg', '.opus', '.aac',
+                                      '.amr', '.3gp', '.awb', '.flac', '.webm', '.mp4']}],
+            },
+        },
     })
+
+@app.route('/share-call', methods=['GET', 'POST'])
+def share_call_fallback():
+    # Normally the service worker answers this POST on the phone. If it was not
+    # active yet, send the user into the app with a hint to share again.
+    return redirect('/#share-call/retry', code=303)
+
 
 @app.route('/sw.js')
 def pwa_sw():
@@ -4549,7 +4571,34 @@ def pwa_sw():
     sw = (
         "self.addEventListener('install', e => self.skipWaiting());\n"
         "self.addEventListener('activate', e => self.clients.claim());\n"
+        "// Share to HireLab: the phone shares a call recording to POST /share-call.\n"
+        "// Keep the file(s) in Cache Storage on the phone and open #share-call,\n"
+        "// where the recruiter confirms the candidate and the app uploads it.\n"
+        "async function _hlShare(req){\n"
+        "  try {\n"
+        "    const fd = await req.formData();\n"
+        "    const files = fd.getAll('recording').filter(f => f && f.size);\n"
+        "    const cache = await caches.open('hl-share');\n"
+        "    for (const k of await cache.keys()) await cache.delete(k);\n"
+        "    let i = 0;\n"
+        "    for (const f of files) {\n"
+        "      await cache.put('/__shared-call/' + i, new Response(f, {headers: {\n"
+        "        'Content-Type': f.type || 'application/octet-stream',\n"
+        "        'X-File-Name': encodeURIComponent(f.name || ('recording-' + i)),\n"
+        "        'X-Shared-At': String(Date.now())}}));\n"
+        "      i++;\n"
+        "    }\n"
+        "    return Response.redirect('/#share-call' + (i ? '' : '/empty'), 303);\n"
+        "  } catch (err) {\n"
+        "    return Response.redirect('/#share-call/error', 303);\n"
+        "  }\n"
+        "}\n"
         "self.addEventListener('fetch', function(e){\n"
+        "  const u = new URL(e.request.url);\n"
+        "  if (e.request.method === 'POST' && u.pathname === '/share-call') {\n"
+        "    e.respondWith(_hlShare(e.request));\n"
+        "    return;\n"
+        "  }\n"
         "  // Pass through to network; no offline caching of data.\n"
         "  e.respondWith(fetch(e.request).catch(function(){\n"
         "    return new Response('Offline', {status: 503});\n"
@@ -20810,6 +20859,37 @@ def bulk_add_candidates(mid):
 CALL_DIR = os.path.join(DATA_DIR, 'calls')
 os.makedirs(CALL_DIR, exist_ok=True)
 
+_CALL_CONVERT_EXTS = {'.amr', '.3gp', '.aac', '.opus', '.awb', '.3ga', '.wma'}
+
+
+def _convert_audio_to_mp3(data, ext):
+    """Convert phone-recorder audio to mp3 with a bundled ffmpeg
+    (imageio-ffmpeg wheel; falls back to a system ffmpeg). (bytes, None) or (None, error)."""
+    import subprocess, tempfile, shutil as _sh
+    exe = None
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        exe = _sh.which('ffmpeg')
+    if not exe:
+        return None, 'audio converter not installed'
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, 'in' + ext)
+        dst = os.path.join(td, 'out.mp3')
+        with open(src, 'wb') as fh:
+            fh.write(data)
+        try:
+            r = subprocess.run([exe, '-y', '-loglevel', 'error', '-i', src, '-ac', '1', '-ar', '16000',
+                                '-b:a', '48k', dst], capture_output=True, timeout=180)
+        except Exception as e:
+            return None, str(e)[:120]
+        if r.returncode != 0 or not os.path.exists(dst):
+            return None, (r.stderr or b'').decode('utf-8', 'replace')[:160]
+        with open(dst, 'rb') as fh:
+            return fh.read(), None
+
+
 @app.route('/api/candidates/<int:cid>/analyse-call', methods=['POST'])
 @login_required
 def analyse_call(cid):
@@ -20833,13 +20913,21 @@ def analyse_call(cid):
     f = request.files['recording']
     ext = Path(f.filename).suffix.lower()
     allowed = ['.mp3', '.m4a', '.mp4', '.wav', '.ogg', '.webm', '.flac']
-    if ext not in allowed:
-        return jsonify({'error': f'Unsupported format. Use: {", ".join(allowed)}'}), 400
+    file_bytes = f.read()
+    if ext in _CALL_CONVERT_EXTS:
+        # Phone dialers (Realme/Oppo/older Xiaomi) can save .amr/.3gp/.aac/.opus,
+        # which the transcriber does not accept: convert to mp3 first.
+        conv, cerr = _convert_audio_to_mp3(file_bytes, ext)
+        if conv is None:
+            return jsonify({'error': 'Could not convert ' + ext + ' recording: ' + (cerr or 'unknown error')
+                            + '. Set the phone recorder to m4a/mp3, or upload an mp3.'}), 400
+        file_bytes, ext = conv, '.mp3'
+    elif ext not in allowed:
+        return jsonify({'error': f'Unsupported format. Use: {", ".join(allowed + sorted(_CALL_CONVERT_EXTS))}'}), 400
 
     # Save recording
     fname = f'call_{cid}_{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}{ext}'
     fpath = os.path.join(CALL_DIR, fname)
-    file_bytes = f.read()
     with open(fpath, 'wb') as out:
         out.write(file_bytes)
 
@@ -20854,7 +20942,7 @@ def analyse_call(cid):
         whisper_resp = requests.post(
             'https://api.groq.com/openai/v1/audio/transcriptions',
             headers={'Authorization': 'Bearer ' + groq_key},
-            files={'file': (f.filename, file_bytes, mime)},
+            files={'file': (fname, file_bytes, mime)},
             data={'model': 'whisper-large-v3', 'language': language,
                   'response_format': 'verbose_json',
                   'prompt': 'This is a recruiter call with a candidate discussing a job opportunity. '
