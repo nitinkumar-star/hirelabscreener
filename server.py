@@ -13480,6 +13480,34 @@ def update_mandate(mid):
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
+@app.route('/api/mandates/<int:mid>/status', methods=['POST'])
+@login_required
+def set_mandate_status(mid):
+    """Status-only change (Active / On Hold / Closed) from the job status
+    modal. index.html has always called this URL, but the route was never
+    added, so every change failed with 405 Method Not Allowed. It writes ONLY
+    the status column, so no other job field can be touched or blanked."""
+    d = request.get_json(silent=True) or {}
+    st = str(d.get('status') or '').strip().lower()
+    if st not in ('draft', 'active', 'hold', 'closed'):
+        return jsonify({'error': 'Invalid status'}), 400
+    conn = get_db()
+    if not _tenant_owns_mandate(conn, mid):
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    row = conn.execute('SELECT status FROM mandates WHERE id=?', (mid,)).fetchone()
+    old = (row['status'] if row else '') or ''
+    if old == 'central':
+        conn.close(); return jsonify({'error': 'The central talent pool cannot change status'}), 400
+    if old != st:
+        conn.execute('UPDATE mandates SET status=? WHERE id=?', (st, mid))
+    conn.commit(); conn.close()
+    if old != st:
+        try:
+            log_audit('mandate', mid, 'status', old, st)
+        except Exception:
+            pass
+    return jsonify({'ok': True, 'status': st})
+
 @app.route('/api/mandates/<int:mid>/candidates')
 @login_required
 def list_candidates(mid):
