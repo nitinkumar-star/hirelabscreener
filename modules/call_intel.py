@@ -15,8 +15,9 @@ the tab just will not reload a saved report after a page refresh.
 import json
 
 from flask import Blueprint, jsonify
+from flask import request as _request
 
-from modules.shared import get_db, ts, effective_company_id, login_required
+from modules.shared import get_db, ts, effective_company_id, login_required, _core
 from modules import register_migration
 
 bp = Blueprint('call_intel', __name__)
@@ -42,6 +43,12 @@ def migrate(conn):
         created_at TEXT DEFAULT ''
     )''')
     conn.execute(f'CREATE INDEX IF NOT EXISTS idx_cca_cand ON {TABLE}(candidate_id, owner_id)')
+    # Oct 2026: AI-found details are proposals the recruiter approves.
+    for col in ('proposed_updates', 'applied_fields'):
+        try:
+            conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN {col} TEXT DEFAULT ''")
+        except Exception:
+            pass                      # column already there
     conn.commit()
 
 
@@ -94,12 +101,24 @@ def profile_block(conn, cand):
     return '\n'.join(lines)
 
 
-def save(conn, owner_id, cid, mid, rec_file, rec_name, transcript, analysis, sources, updated, user_id, user_name):
-    conn.execute(f'INSERT INTO {TABLE} (owner_id,candidate_id,mandate_id,recording_file,recording_name,transcript,'
-                 'analysis,sources,updated_fields,created_by,created_by_name,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                 (owner_id, cid, mid or 0, rec_file, rec_name or '', transcript,
-                  json.dumps(analysis, ensure_ascii=False), json.dumps(sources),
-                  json.dumps(updated or {}), user_id or 0, user_name or '', ts()))
+def save(conn, owner_id, cid, mid, rec_file, rec_name, transcript, analysis, sources, updated, user_id, user_name,
+         proposed=None):
+    cur = conn.execute(f'INSERT INTO {TABLE} (owner_id,candidate_id,mandate_id,recording_file,recording_name,transcript,'
+                       'analysis,sources,updated_fields,created_by,created_by_name,created_at,proposed_updates,applied_fields) '
+                       'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (owner_id, cid, mid or 0, rec_file, rec_name or '', transcript,
+                        json.dumps(analysis, ensure_ascii=False), json.dumps(sources),
+                        json.dumps(updated or {}), user_id or 0, user_name or '', ts(),
+                        json.dumps(proposed or {}, ensure_ascii=False), '[]'))
+    return cur.lastrowid
+
+
+def _load(raw, default):
+    try:
+        v = json.loads(raw or '')
+        return v if isinstance(v, type(default)) else default
+    except Exception:
+        return default
 
 
 # ── read endpoint ─────────────────────────────────────────────────────────
@@ -116,12 +135,93 @@ def latest_call_analysis(cid):
     if not r:
         return jsonify({'ok': True, 'call': None})
     d = dict(r)
-    for k in ('analysis', 'sources', 'updated_fields'):
-        try:
-            d[k] = json.loads(d.get(k) or '{}')
-        except Exception:
-            d[k] = {}
+    for k in ('analysis', 'sources', 'updated_fields', 'proposed_updates'):
+        d[k] = _load(d.get(k), {})
+    d['applied_fields'] = _load(d.get('applied_fields'), [])
     return jsonify({'ok': True, 'call': d})
+
+
+# ── approve AI-found details ──────────────────────────────────────────────
+APPLY_FIELDS = {'ctc_current': 'Current CTC', 'ctc_expected': 'Expected CTC',
+                'company': 'Current company', 'notice_period': 'Notice period'}
+
+
+def _own_record(conn, cid, aid):
+    """The analysis row if candidate + record belong to the caller's tenant."""
+    oid = effective_company_id()
+    own = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not own or own['owner_id'] != oid:
+        return None, None
+    r = conn.execute(f'SELECT * FROM {TABLE} WHERE id=? AND candidate_id=? AND owner_id=?',
+                     (aid, cid, oid)).fetchone()
+    return own, r
+
+
+@bp.route('/api/candidates/<int:cid>/call-analysis/<int:aid>/apply', methods=['POST'])
+@login_required
+def apply_call_details(cid, aid):
+    body = _request.get_json(silent=True) or {}
+    fields = [f for f in (body.get('fields') or []) if f in APPLY_FIELDS]
+    conn = get_db()
+    cand, rec = _own_record(conn, cid, aid)
+    if not rec:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    proposed = _load(rec['proposed_updates'], {})
+    done = _load(rec['applied_fields'], [])
+    upd = {f: proposed[f]['proposed'] for f in fields
+           if isinstance(proposed.get(f), dict) and f not in done}
+    if not upd:
+        conn.close(); return jsonify({'ok': True, 'applied': [], 'applied_fields': done})
+    before = dict(cand)
+    conn.execute('UPDATE candidates SET ' + ', '.join(f'{k}=?' for k in upd) + ', updated_at=? WHERE id=?',
+                 tuple(upd.values()) + (ts(), cid))
+    done = done + [f for f in upd if f not in done]
+    conn.execute(f'UPDATE {TABLE} SET applied_fields=? WHERE id=?', (json.dumps(done), aid))
+    summary = ', '.join(f'{APPLY_FIELDS[k]} {before.get(k) or "—"} → {v}' for k, v in upd.items())
+    conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
+                 (cid, cand['stage'], cand['stage'], 'Updated from call: ' + summary, ts()))
+    conn.commit(); conn.close()
+    core = _core()
+    try:
+        core.log_candidate_event(cid, 'call', 'Updated from call: ' + summary)
+    except Exception:
+        pass
+    try:
+        for k, v in upd.items():
+            core.log_audit('candidate', cid, k, before.get(k), v)
+    except Exception:
+        pass
+    return jsonify({'ok': True, 'applied': list(upd), 'applied_fields': done})
+
+
+# ── delete a wrongly tagged recording ─────────────────────────────────────
+@bp.route('/api/candidates/<int:cid>/call-analysis/<int:aid>', methods=['DELETE'])
+@login_required
+def delete_call_analysis(cid, aid):
+    import os
+    conn = get_db()
+    cand, rec = _own_record(conn, cid, aid)
+    if not rec:
+        conn.close(); return jsonify({'error': 'Not found'}), 404
+    fname = os.path.basename(rec['recording_file'] or '')
+    conn.execute(f'DELETE FROM {TABLE} WHERE id=?', (aid,))
+    note = 'Call recording deleted' + (f" ({rec['recording_name']})" if rec['recording_name'] else '')
+    conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
+                 (cid, cand['stage'], cand['stage'], note, ts()))
+    conn.commit(); conn.close()
+    core = _core()
+    if fname:
+        try:
+            path = os.path.join(core.CALL_DIR, fname)
+            if os.path.isfile(path):
+                os.remove(path)
+        except Exception as e:
+            print('[call-analysis] could not delete file:', e)
+    try:
+        core.log_candidate_event(cid, 'call', note)
+    except Exception:
+        pass
+    return jsonify({'ok': True})
 
 
 # ══════════════════════════════════════════════════════════════════════════
