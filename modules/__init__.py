@@ -27,6 +27,7 @@ _MODULE_NAMES = [
     'mail_identity',   # per-recruiter Gmail + signature
     'user_templates',  # per-recruiter email / WhatsApp templates
     'call_intel',      # saved call analyses (report + recording)
+    'call_report',     # downloadable call report (Word + print-to-PDF; internal / client)
     'crm',
     'bd',
     'bd_records',
