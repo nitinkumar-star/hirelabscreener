@@ -11384,6 +11384,32 @@ async function applyCallDetails(cid){
   });
   toast('✅', (r.applied||[]).length ? 'Profile updated from call' : 'Already updated');
 }
+function _caDlVer(cid, v){
+  var box = document.getElementById('ca-dl-'+cid); if(!box) return;
+  box.setAttribute('data-ver', v);
+  box.querySelectorAll('.ca-dl-v').forEach(function(b){
+    var on = b.getAttribute('data-v') === v;
+    b.style.background = on ? '#1D9E75' : 'transparent'; b.style.color = on ? '#fff' : 'rgba(255,255,255,.7)';
+  });
+  var tr = document.getElementById('ca-dl-tr-'+cid); if(tr) tr.style.display = v === 'client' ? 'none' : 'flex';
+  var nt = document.getElementById('ca-dl-note-'+cid); if(nt) nt.style.display = v === 'client' ? 'block' : 'none';
+}
+function downloadCallReport(cid, fmt){
+  var call = (window._caCalls||{})[cid]; if(!call || !call.id){ toast('⚠️','Report not saved yet'); return; }
+  var box = document.getElementById('ca-dl-'+cid);
+  var ver = (box && box.getAttribute('data-ver')) || 'internal';
+  var tr = document.getElementById('ca-dl-trc-'+cid);
+  var url = API + '/candidates/'+cid+'/call-analysis/'+call.id+'/report?version='+ver
+          + '&transcript='+((tr && tr.checked && ver==='internal')?'1':'0');
+  if(fmt === 'docx'){
+    var a = document.createElement('a'); a.href = url + '&format=docx'; a.download = '';
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('⬇️','Word report download ho raha hai');
+  } else {
+    var w = window.open(url + '&format=html', '_blank');
+    if(!w) location.href = url + '&format=html';
+  }
+}
 async function deleteCallRecording(cid, aid){
   if(!confirm('Ye call recording aur iska poora analysis delete karna hai?\n\nJo details aap profile mein update kar chuke hain woh waisi hi rahengi.')) return;
   var r = await req('DELETE','/candidates/'+cid+'/call-analysis/'+aid);
@@ -11412,6 +11438,23 @@ function renderCallReport(cid, call){
       + '<div style="font-size:10px;color:rgba(255,255,255,.45);margin-top:5px">Analysed '+esc(String(call.created_at||'').slice(0,16).replace('T',' '))
       + (call.created_by_name?(' by '+esc(call.created_by_name)):'')
       + ' &middot; used: '+['CV','JD','Pitch evaluation'].filter(function(x,i){ return [src.cv,src.jd,src.pitch][i]; }).concat(['Call']).join(', ')+'</div></div>';
+  }
+  // 1b. download the report (Word / PDF, internal or client version)
+  if(call.id){
+    html += '<div id="ca-dl-'+cid+'" style="background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.12);border-radius:10px;padding:9px 12px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+      + '<div style="font-size:11.5px;color:#fff;font-weight:600">&#11015; Download report</div>'
+      + '<div style="display:flex;border:1px solid rgba(255,255,255,.2);border-radius:8px;overflow:hidden">'
+      +   ['internal','client'].map(function(v){
+            return '<button data-v="'+v+'" onclick="_caDlVer('+cid+',\''+v+'\')" class="ca-dl-v" style="border:none;padding:5px 11px;font-size:11px;font-weight:700;cursor:pointer;'
+              + (v==='internal'?'background:#1D9E75;color:#fff':'background:transparent;color:rgba(255,255,255,.7)')+'">'+(v==='internal'?'Internal':'Client')+'</button>';
+          }).join('')
+      + '</div>'
+      + '<label id="ca-dl-tr-'+cid+'" style="font-size:11px;color:rgba(255,255,255,.75);display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="ca-dl-trc-'+cid+'" style="accent-color:#1D9E75;margin:0"> Transcript bhi</label>'
+      + '<div style="flex:1"></div>'
+      + '<button onclick="downloadCallReport('+cid+',\'pdf\')" style="border:none;background:#fff;color:#1F2A44;border-radius:8px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer">PDF</button>'
+      + '<button onclick="downloadCallReport('+cid+',\'docx\')" style="border:none;background:#fff;color:#1F2A44;border-radius:8px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer">Word</button>'
+      + '<div id="ca-dl-note-'+cid+'" style="width:100%;font-size:10px;color:rgba(255,255,255,.5);display:none">Client version: CTC, red flags, concerns, internal checks, quotes aur transcript nahi jaate &mdash; client ko bhejne layak.</div>'
+      + '</div>';
   }
   // 2. details the AI found — recruiter approves which ones to apply
   window._caCalls = window._caCalls || {};
