@@ -39,6 +39,7 @@ _MODULE_NAMES = [
     'notifications',
     'pitch',
     'storage_health',
+    'todo',            # Tasks v2 — Any.do-style to-do engine on the reminders table
 ]
 
 _MIGRATIONS = []

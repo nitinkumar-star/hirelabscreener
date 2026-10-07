@@ -121,6 +121,12 @@ def migrate(conn):
         c.execute('ALTER TABLE reminders ADD COLUMN created_by INTEGER DEFAULT 0')
     except Exception:
         pass
+    # Who a task is assigned to (Tasks v2). Added here as well as in
+    # modules/todo.py because reminder_scope_sql() below reads it.
+    try:
+        c.execute('ALTER TABLE reminders ADD COLUMN assigned_to INTEGER DEFAULT 0')
+    except Exception:
+        pass
 
     # Backfill existing assignments (idempotent: INSERT OR IGNORE never
     # re-activates a recruiter an admin has removed).
@@ -258,14 +264,15 @@ def candidate_id_scope_sql(col, include_pool=False):
 
 
 def reminder_scope_sql(alias='r'):
-    """Tasks/reminders a recruiter may see: on their candidates, or standalone
-    tasks they created themselves."""
+    """Tasks/reminders a recruiter may see: on their candidates, standalone
+    tasks they created themselves, or tasks assigned to them (Tasks v2)."""
     su = scoped_user()
     if not su:
         return '', []
     inner, params = candidate_id_scope_sql(f'{alias}.candidate_id')
     return (f' AND (({inner[len(" AND "):]}) OR (COALESCE({alias}.candidate_id,0)=0 '
-            f'AND COALESCE({alias}.created_by,0)=?))', params + [su[0]])
+            f'AND COALESCE({alias}.created_by,0)=?) OR COALESCE({alias}.assigned_to,0)=?)',
+            params + [su[0], su[0]])
 
 
 def can_see_mandate(conn, mid, write=False):
@@ -329,6 +336,8 @@ _OBJECT_ROUTES = [(re.compile(p), k) for p, k in [
     (r'^/api/interviews/(\d+)(/|$)', 'interview'),
     (r'^/api/scorecards/(\d+)(/|$)', 'feedback'),
     (r'^/api/reminders/(\d+)(/|$)', 'reminder'),
+    (r'^/api/todo/tasks/(\d+)(/|$)', 'reminder'),
+    (r'^/api/todo/subtasks/(\d+)(/|$)', 'todosub'),
     (r'^/api/submissions/(\d+)(/|$)', 'submission'),
     (r'^/api/submission-drafts/(\d+)(/|$)', 'draft'),
     (r'^/api/offers/(\d+)(/|$)', 'offer'),
@@ -346,6 +355,7 @@ _NUMERIC_OK = [re.compile(p) for p in [
     r'^/api/scheduler/public/',
     r'^/api/public/',
     r'^/api/notifications(/|$)',
+    r'^/api/todo/(lists|tags)/',          # checked inside modules/todo.py (own/shared lists)
 ]]
 _HAS_ID = re.compile(r'/\d+(/|$)')
 
@@ -357,7 +367,7 @@ _POOL_WRITE_OK = re.compile(r'^/api/candidates/\d+/move/?$')
 _RESOLVE_SQL = {
     'interview':  "SELECT i.mandate_id AS m, i.candidate_id AS c FROM interviews i WHERE i.id=? AND i.owner_id=?",
     'feedback':   "SELECT f.mandate_id AS m, f.candidate_id AS c FROM interview_feedback f WHERE f.id=? AND f.owner_id=?",
-    'reminder':   "SELECT r.mandate_id AS m, r.candidate_id AS c, COALESCE(r.created_by,0) AS u FROM reminders r WHERE r.id=? AND r.owner_id=?",
+    'reminder':   "SELECT r.mandate_id AS m, r.candidate_id AS c, COALESCE(r.created_by,0) AS u, COALESCE(r.assigned_to,0) AS a FROM reminders r WHERE r.id=? AND r.owner_id=?",
     'submission': "SELECT s.mandate_id AS m, 0 AS c FROM submissions s WHERE s.id=? AND s.owner_id=?",
     'draft':      "SELECT d.mandate_id AS m, 0 AS c FROM submission_drafts d WHERE d.id=? AND d.owner_id=?",
     'offer':      "SELECT o.mandate_id AS m, o.candidate_id AS c FROM offers o WHERE o.id=? AND o.company_id=?",
@@ -412,12 +422,18 @@ def _obj_ok(conn, kind, ident, write, path):
         if d.get('conversation_id'):
             return _obj_ok(conn, 'waconv', d['conversation_id'], write, path)
         return False
+    if kind == 'todosub':                                # Tasks v2 subtask -> its task
+        r = conn.execute('SELECT reminder_id FROM task_subtasks WHERE id=? AND company_id=?',
+                         (int(ident), su[1])).fetchone()
+        return bool(r) and _obj_ok(conn, 'reminder', r['reminder_id'], write, path)
     sql = _RESOLVE_SQL.get(kind)
     if not sql:
         return False
     r = conn.execute(sql, (int(ident), su[1])).fetchone()
     if not r:
         return False
+    if kind == 'reminder' and int(r['a'] or 0) == su[0]:
+        return True                                      # task assigned to this recruiter
     if kind == 'reminder' and not r['c'] and not r['m']:
         return int(r['u'] or 0) == su[0]                 # own standalone task
     if r['m']:
