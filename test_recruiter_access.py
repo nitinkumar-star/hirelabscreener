@@ -137,6 +137,13 @@ def env():
     ins('bd_opportunities', id=SECRET, company_id=CO, client_id=SECRET, name='ZZSECRET deal',
         stage='lead', created_at=now)
     ins('candidate_events', candidate_id=SECRET, event_type='note', detail='ZZSECRET event', created_at=now)
+    # Tasks v2 (modules/todo.py): the admin's private list, a subtask on the
+    # admin's reminder, a long note and a tag the recruiter may not recolour.
+    c.execute("UPDATE reminders SET notes='ZZSECRET notes', list_id=? WHERE id=?", (SECRET, SECRET))
+    ins('task_lists', id=SECRET, company_id=CO, created_by=ADMIN, name='ZZSECRET list', color='#000000',
+        is_shared=0, is_active=1, created_at=now)
+    ins('task_subtasks', id=SECRET, reminder_id=SECRET, company_id=CO, text='ZZSECRET subtask', created_at=now)
+    ins('task_tag_defs', id=SECRET, company_id=CO, name='zzhot', color='#111111', created_by=ADMIN, created_at=now)
     conn.commit(); conn.close()
     base = server.DB_PATH + '.acc_base'
     shutil.copy(server.DB_PATH, base)

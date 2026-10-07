@@ -5460,6 +5460,10 @@ def get_tasks():
     for r in rem_rows:
         try:
             due = datetime.datetime.fromisoformat(r['due_at'])
+            # All-day task ('YYYY-MM-DD', Tasks v2): due at the END of that day,
+            # so it reads "Today" on its date instead of "Overdue" from midnight.
+            if len((r['due_at'] or '').strip()) == 10:
+                due = due.replace(hour=23, minute=59, second=59)
         except Exception:
             due = now
         _standalone = not r['candidate_id']
