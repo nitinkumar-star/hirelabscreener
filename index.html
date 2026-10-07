@@ -1057,31 +1057,46 @@ body{font-size:14px !important; line-height:1.5}
     <div id="emailbox-body" style="flex:1;overflow:auto;padding:20px"></div>
   </div>
   <div id="tasks-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
-    <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
-      <div style="display:flex;align-items:center;gap:10px">
-        <div style="width:28px;height:28px;border-radius:6px;background:#FBEDE4;display:flex;align-items:center;justify-content:center;font-size:14px">&#9989;</div>
-        <div><div style="font-size:14px;font-weight:600">Tasks</div><div style="font-size:11px;color:#888;margin-top:1px">Reminders, follow-ups &amp; new applications</div></div>
-      </div>
-      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-        <div id="tasks-mode-toggle" style="display:inline-flex;border:0.5px solid #d5d5d5;border-radius:8px;overflow:hidden">
-          <button id="tm-list" onclick="setTasksMode('list')" style="font-size:11.5px;padding:6px 12px;border:none;background:#0F6E56;color:#fff;cursor:pointer">List</button>
-          <button id="tm-board" onclick="setTasksMode('board')" style="font-size:11.5px;padding:6px 12px;border:none;background:#fff;color:#555;cursor:pointer">Board</button>
+    <!-- Tasks v2 (Wave 2): Any.do-style 3-pane page. Logic lives in <script id="tv2-script">.
+         Legacy Follow-ups list + Kanban board still render into #tasks-body (inside #tv2-main). -->
+    <div id="tv2" class="tv2" data-theme="light">
+      <aside id="tv2-side" class="tv2-side"></aside>
+      <section id="tv2-main" class="tv2-main">
+        <div class="tv2-head">
+          <button class="tv2-ico tv2-only-m" data-act="side-toggle" title="Views">&#9776;</button>
+          <div class="tv2-title"><span id="tv2-title-txt">Tasks</span><span id="tv2-title-count" class="tv2-count"></span></div>
+          <div class="tv2-head-r">
+            <select id="task-filter" class="tv2-sel" style="display:none" onchange="renderTasksActive()">
+              <option value="">All types</option>
+              <option value="reminder">Reminders</option>
+              <option value="stale">Stale candidates</option>
+              <option value="promise">Promised follow-up</option>
+              <option value="interview">Interviews</option>
+              <option value="updated">Updated resume received</option>
+              <option value="submission">New submissions</option>
+            </select>
+            <div id="tv2-scope" class="tv2-seg" style="display:none">
+              <button data-act="scope" data-v="mine" class="on">Mine</button><button data-act="scope" data-v="team">Team</button>
+            </div>
+            <div class="tv2-search"><input id="tv2-q" type="search" placeholder="Search tasks" autocomplete="off"></div>
+            <button class="tv2-ico" data-act="refresh" title="Refresh">&#8635;</button>
+            <button class="tv2-ico" data-act="menu" title="More options">&#8943;</button>
+            <button class="tv2-ico" data-act="close-page" title="Close" onclick="closeTasks()">&#10005;</button>
+          </div>
         </div>
-        <select id="task-filter" onchange="renderTasksActive()" style="font-size:11.5px;padding:6px 10px">
-          <option value="">All types</option>
-          <option value="reminder">Reminders</option>
-          <option value="stale">Stale candidates</option>
-          <option value="promise">Promised follow-up</option>
-          <option value="interview">Interviews</option>
-          <option value="updated">Updated resume received</option>
-          <option value="submission">New submissions</option>
-        </select>
-        <button class="btn btn-g" style="font-size:11px" onclick="openNewTask()">&#43; New Task</button>
-        <button class="btn btn-o" style="font-size:11px" onclick="renderTasksActive()">&#8635; Refresh</button>
-        <button class="btn btn-o" onclick="closeTasks()">&#10005; Close</button>
-      </div>
+        <div id="tv2-bulk" class="tv2-bulk" style="display:none"></div>
+        <div id="tv2-list" class="tv2-list"></div>
+        <div id="tasks-body" class="tv2-legacy" style="display:none"></div>
+        <form id="tv2-add" class="tv2-add" autocomplete="off">
+          <span class="tv2-add-plus">+</span>
+          <input id="tv2-add-in" maxlength="500" placeholder="Add task (use #tag, !high)">
+          <button type="submit" class="tv2-btn">Add</button>
+        </form>
+      </section>
+      <aside id="tv2-detail" class="tv2-detail" style="display:none"></aside>
     </div>
-    <div id="tasks-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:24px 20px"></div>
+    <div id="tv2-pop" class="tv2-pop"></div>
+    <div id="tv2-modal" class="tv2-modal"></div>
   </div>
 
   <div id="analytics-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
@@ -17478,7 +17493,7 @@ function _paintBoard(cols){
     var overdue=false;
     if(t.due_at && !isDone){ try{ overdue=new Date(t.due_at)<new Date(); }catch(e){} }
     var titleTxt = t.candidate_id ? (t.candidate_name||'Candidate') : (t.note||'Task');
-    var sub = t.candidate_id ? [t.note, t.mandate_label].filter(Boolean).join(' &middot; ') : '';
+    var sub = t.candidate_id ? [t.note, t.mandate_label].filter(Boolean).join(' \u00b7 ') : '';
     var callBtn = t.phone ? '<a href="tel:'+esc(t.phone)+'" onclick="event.stopPropagation()" class="btn btn-o" style="font-size:10.5px;padding:4px 8px;text-decoration:none">&#128222;</a>' : '';
     var openAttr = t.candidate_id ? ' onclick="openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')" style="cursor:pointer"' : ' style="cursor:default"';
     return '<div id="tcard-'+t.id+'" draggable="true" ondragstart="_taskDragStart(event,'+t.id+')" '
@@ -20364,4 +20379,1084 @@ async function _bdhDone(id, box){
 }
 </script>
 
+<style id="tv2-style">
+/* ═══ Tasks v2 (Wave 2) — Any.do-style 3-pane page. Theme tokens live on #tasks-view. ═══ */
+#tasks-view{
+  --tv-bg:#F7F6F2; --tv-side:#FFFFFF; --tv-panel:#FFFFFF; --tv-card:#FFFFFF;
+  --tv-line:#E8E4DC; --tv-line2:#F0EDE6; --tv-text:#1B2B3A; --tv-muted:#8A92A0; --tv-faint:#B7BCC4;
+  --tv-hover:#F3F1EC; --tv-sel:#E6F6F1; --tv-chip:#F1EFE8; --tv-accent:#13A37E; --tv-accent-d:#0F8A6B;
+  --tv-accent-soft:#E6F6F1; --tv-red:#D63B3B; --tv-red-soft:#FDEEEE; --tv-amber:#C77B12; --tv-blue:#2D6FB3;
+  --tv-shadow:0 10px 30px rgba(14,42,71,.12); --tv-input:#FFFFFF;
+  background:var(--tv-bg); color:var(--tv-text);
+}
+#tasks-view[data-theme="dark"]{
+  --tv-bg:#141416; --tv-side:#1C1C1F; --tv-panel:#1E1E21; --tv-card:#232327;
+  --tv-line:#2E2E33; --tv-line2:#29292D; --tv-text:#ECECEE; --tv-muted:#9A9AA2; --tv-faint:#6B6B73;
+  --tv-hover:#2A2A2F; --tv-sel:#173A30; --tv-chip:#2C2C31; --tv-accent:#2EC48F; --tv-accent-d:#25A87A;
+  --tv-accent-soft:#163A2E; --tv-red:#FF6B6B; --tv-red-soft:#3A1F22; --tv-amber:#F0A940; --tv-blue:#5EA2F0;
+  --tv-shadow:0 14px 40px rgba(0,0,0,.5); --tv-input:#26262A;
+}
+.tv2{display:flex;flex:1;min-height:0;overflow:hidden;font-size:13px;color:var(--tv-text)}
+.tv2 *{box-sizing:border-box}
+.tv2 button{font:inherit;color:inherit}
+
+/* sidebar */
+.tv2-side{width:232px;flex-shrink:0;background:var(--tv-side);border-right:0.5px solid var(--tv-line);overflow-y:auto;padding:12px 10px 20px}
+.tv2-nav{display:flex;align-items:center;gap:9px;width:100%;border:none;background:transparent;padding:7px 10px;border-radius:8px;cursor:pointer;text-align:left;font-size:13px;color:var(--tv-text)}
+.tv2-nav:hover{background:var(--tv-hover)}
+.tv2-nav.on{background:var(--tv-accent-soft);color:var(--tv-accent-d);font-weight:600}
+#tasks-view[data-theme="dark"] .tv2-nav.on{color:var(--tv-accent)}
+.tv2-nav .ic{width:18px;text-align:center;flex-shrink:0;font-size:14px}
+.tv2-nav .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tv2-nav .ct{font-size:11px;color:var(--tv-muted);background:var(--tv-chip);border-radius:10px;padding:0 7px;min-width:20px;text-align:center}
+.tv2-nav .ct.red{background:var(--tv-red-soft);color:var(--tv-red);font-weight:600}
+.tv2-nav .dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0;vertical-align:middle}
+.tv2-sh{display:flex;align-items:center;justify-content:space-between;margin:16px 4px 4px 10px;font-size:11px;font-weight:700;color:var(--tv-muted);text-transform:uppercase;letter-spacing:.5px}
+.tv2-sh button{border:none;background:transparent;cursor:pointer;color:var(--tv-muted);font-size:16px;line-height:1;padding:0 4px;border-radius:5px}
+.tv2-sh button:hover{background:var(--tv-hover);color:var(--tv-text)}
+
+/* main column */
+.tv2-main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--tv-bg)}
+.tv2-head{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:0.5px solid var(--tv-line);background:var(--tv-panel);flex-shrink:0;min-height:52px}
+.tv2-title{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px;min-width:0}
+.tv2-title #tv2-title-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tv2-count{font-size:12px;font-weight:500;color:var(--tv-muted)}
+.tv2-head-r{margin-left:auto;display:flex;align-items:center;gap:6px}
+.tv2-ico{border:none;background:transparent;cursor:pointer;width:32px;height:32px;border-radius:8px;font-size:15px;color:var(--tv-muted);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.tv2-ico:hover{background:var(--tv-hover);color:var(--tv-text)}
+.tv2-ico.on{color:var(--tv-accent)}
+.tv2-sel,.tv2 select{font:inherit;font-size:12px;padding:6px 8px;border:0.5px solid var(--tv-line);border-radius:7px;background:var(--tv-input);color:var(--tv-text)}
+.tv2-seg{display:inline-flex;border:0.5px solid var(--tv-line);border-radius:8px;overflow:hidden}
+.tv2-seg button{border:none;background:var(--tv-input);padding:5px 11px;font-size:12px;cursor:pointer;color:var(--tv-muted)}
+.tv2-seg button.on{background:var(--tv-accent);color:#fff}
+.tv2-search input{font:inherit;font-size:12.5px;width:180px;padding:6px 10px;border:0.5px solid var(--tv-line);border-radius:8px;background:var(--tv-input);color:var(--tv-text);outline:none}
+.tv2-search input:focus{border-color:var(--tv-accent)}
+.tv2-list{flex:1;overflow-y:auto;padding:14px 16px 24px}
+.tv2-legacy{flex:1;overflow:auto;padding:20px;background:var(--tv-bg)}
+#tasks-view[data-theme="dark"] .tv2-legacy{background:#F7F6F2;color:#1B2B3A;margin:12px;border-radius:12px}
+
+/* groups + rows */
+.tv2-grp{margin-bottom:16px}
+.tv2-gh{display:flex;align-items:center;gap:8px;padding:4px 6px 6px;font-size:13px;font-weight:700;cursor:pointer;user-select:none}
+.tv2-gh .n{font-size:11.5px;font-weight:500;color:var(--tv-muted)}
+.tv2-gh .car{color:var(--tv-muted);font-size:10px;transition:transform .15s}
+.tv2-grp.closed .car{transform:rotate(-90deg)}
+.tv2-grp.closed .tv2-rows{display:none}
+.tv2-gh.red{color:var(--tv-red)}
+.tv2-rows{display:flex;flex-direction:column;gap:2px}
+.tv2-row{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-radius:9px;background:var(--tv-card);border:0.5px solid var(--tv-line2);cursor:pointer;position:relative}
+.tv2-row:hover{background:var(--tv-hover)}
+.tv2-row.sel{background:var(--tv-sel);border-color:var(--tv-accent)}
+.tv2-row.done .tt{text-decoration:line-through;color:var(--tv-muted)}
+.tv2-row.sortable-ghost{opacity:.35}
+.tv2-chk{width:20px;height:20px;border-radius:50%;border:1.6px solid var(--tv-faint);flex-shrink:0;margin-top:1px;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;padding:0}
+.tv2-chk:hover{border-color:var(--tv-accent)}
+.tv2-chk.p-high{border-color:var(--tv-red)}
+.tv2-chk.p-medium{border-color:var(--tv-amber)}
+.tv2-chk.p-low{border-color:var(--tv-blue)}
+.tv2-chk.on{background:var(--tv-accent);border-color:var(--tv-accent)}
+.tv2-msel{width:16px;height:16px;margin-top:3px;flex-shrink:0;accent-color:var(--tv-accent)}
+.tv2-rb{flex:1;min-width:0}
+.tv2-rb .tt{font-size:13.5px;line-height:1.35;word-break:break-word}
+.tv2-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:3px;font-size:11.5px;color:var(--tv-muted)}
+.tv2-meta .late{color:var(--tv-red);font-weight:600}
+.tv2-meta .cand{color:var(--tv-accent-d);font-weight:500}
+#tasks-view[data-theme="dark"] .tv2-meta .cand{color:var(--tv-accent)}
+.tv2-tag{font-size:11px;color:var(--tv-amber);font-weight:500}
+.tv2-ldot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px;vertical-align:middle}
+.tv2-av{width:22px;height:22px;border-radius:50%;background:var(--tv-chip);color:var(--tv-text);font-size:9.5px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.tv2-ra{display:flex;align-items:center;gap:2px;opacity:0;transition:opacity .1s}
+.tv2-row:hover .tv2-ra{opacity:1}
+.tv2-ra .tv2-ico{width:26px;height:26px;font-size:13px}
+.tv2-pin{position:absolute;right:8px;top:6px;font-size:10px;color:var(--tv-amber)}
+.tv2-empty{padding:60px 20px;text-align:center;color:var(--tv-muted)}
+.tv2-empty .big{font-size:38px;margin-bottom:8px}
+.tv2-empty b{display:block;color:var(--tv-text);font-size:15px;margin-bottom:3px}
+
+/* my day */
+.tv2-hello{padding:4px 6px 14px}
+.tv2-hello h2{margin:0;font-size:22px;font-weight:700;color:var(--tv-text)}
+.tv2-hello h2 em{font-style:normal;color:var(--tv-accent)}
+.tv2-hello p{margin:3px 0 0;color:var(--tv-muted);font-size:13px}
+.tv2-prog{height:5px;background:var(--tv-chip);border-radius:4px;overflow:hidden;margin:10px 0 2px;max-width:340px}
+.tv2-prog i{display:block;height:100%;background:var(--tv-accent);border-radius:4px}
+.tv2-sugg{margin-top:18px;border-top:0.5px dashed var(--tv-line);padding-top:12px}
+.tv2-sugg .tv2-row{background:transparent;border-style:dashed}
+.tv2-why{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;padding:1px 6px;border-radius:5px;background:var(--tv-chip);color:var(--tv-muted)}
+.tv2-why.overdue{background:var(--tv-red-soft);color:var(--tv-red)}
+
+/* quick add + bulk bar */
+.tv2-add{display:flex;align-items:center;gap:8px;margin:0 16px 14px;padding:6px 6px 6px 12px;border:0.5px solid var(--tv-line);border-radius:11px;background:var(--tv-card);flex-shrink:0}
+.tv2-add:focus-within{border-color:var(--tv-accent)}
+.tv2-add-plus{color:var(--tv-accent);font-size:18px;font-weight:600}
+.tv2-add input{flex:1;border:none;outline:none;background:transparent;font:inherit;font-size:13.5px;color:var(--tv-text);padding:6px 0}
+.tv2-btn{border:none;background:var(--tv-accent);color:#fff !important;border-radius:8px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer}
+.tv2-btn:hover{background:var(--tv-accent-d)}
+.tv2-btn.o{background:var(--tv-input);color:var(--tv-text) !important;border:0.5px solid var(--tv-line);font-weight:500}
+.tv2-btn.o:hover{background:var(--tv-hover)}
+.tv2-btn.red{background:var(--tv-red)}
+.tv2-bulk{display:flex;align-items:center;gap:6px;padding:8px 16px;background:var(--tv-accent-soft);border-bottom:0.5px solid var(--tv-line);flex-wrap:wrap;flex-shrink:0}
+.tv2-bulk .n{font-weight:600;margin-right:6px}
+
+/* detail panel */
+.tv2-detail{width:400px;flex-shrink:0;background:var(--tv-panel);border-left:0.5px solid var(--tv-line);overflow-y:auto;display:flex;flex-direction:column}
+.tv2-dh{display:flex;align-items:center;gap:6px;padding:10px 12px 0 18px;font-size:11.5px;color:var(--tv-muted)}
+.tv2-dh .crumb{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tv2-db{padding:8px 18px 24px}
+.tv2-dtitle{width:100%;border:none;background:transparent;font:inherit;font-size:19px;font-weight:700;color:var(--tv-text);resize:none;outline:none;padding:4px 0;line-height:1.3;overflow:hidden}
+.tv2-chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 16px}
+.tv2-chipb{display:inline-flex;align-items:center;gap:6px;border:0.5px solid var(--tv-line);background:var(--tv-input);border-radius:18px;padding:5px 11px;font-size:12px;cursor:pointer;color:var(--tv-text);max-width:100%}
+.tv2-chipb:hover{background:var(--tv-hover)}
+.tv2-chipb.set{border-color:var(--tv-accent);color:var(--tv-accent-d);background:var(--tv-accent-soft)}
+#tasks-view[data-theme="dark"] .tv2-chipb.set{color:var(--tv-accent)}
+.tv2-chipb.red{border-color:var(--tv-red);color:var(--tv-red);background:var(--tv-red-soft)}
+.tv2-chipb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tv2-lbl{font-size:11px;font-weight:700;color:var(--tv-muted);text-transform:uppercase;letter-spacing:.5px;margin:16px 0 6px;display:flex;align-items:center;gap:8px}
+.tv2-notes{width:100%;min-height:90px;border:0.5px solid var(--tv-line);border-radius:9px;background:var(--tv-input);color:var(--tv-text);font:inherit;font-size:13px;padding:9px 10px;resize:vertical;outline:none;line-height:1.45}
+.tv2-notes:focus{border-color:var(--tv-accent)}
+.tv2-subbar{height:4px;background:var(--tv-chip);border-radius:3px;overflow:hidden;flex:1}
+.tv2-subbar i{display:block;height:100%;background:var(--tv-accent)}
+.tv2-sub{display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:0.5px solid var(--tv-line2)}
+.tv2-sub input[type=text]{flex:1;border:none;background:transparent;font:inherit;font-size:13px;color:var(--tv-text);outline:none;padding:3px 0}
+.tv2-sub.done input[type=text]{text-decoration:line-through;color:var(--tv-muted)}
+.tv2-sub .tv2-chk{width:17px;height:17px;font-size:9px}
+.tv2-subadd{display:flex;align-items:center;gap:8px;padding:6px 2px}
+.tv2-subadd input{flex:1;border:none;background:transparent;font:inherit;font-size:13px;color:var(--tv-text);outline:none}
+.tv2-foot{margin-top:22px;font-size:11px;color:var(--tv-faint);line-height:1.6}
+.tv2-cand{display:flex;align-items:center;gap:10px;padding:10px 12px;border:0.5px solid var(--tv-line);border-radius:10px;background:var(--tv-card)}
+.tv2-cand .nm{font-weight:600;cursor:pointer;color:var(--tv-accent-d)}
+#tasks-view[data-theme="dark"] .tv2-cand .nm{color:var(--tv-accent)}
+.tv2-cand .sb{font-size:11.5px;color:var(--tv-muted)}
+.tv2-cand a{text-decoration:none}
+
+/* popover + modal */
+.tv2-pop{position:fixed;z-index:9600;background:var(--tv-panel);color:var(--tv-text);border:0.5px solid var(--tv-line);border-radius:12px;box-shadow:var(--tv-shadow);min-width:220px;max-width:330px;max-height:70vh;overflow:auto;display:none;font-size:13px}
+.tv2-pi{display:flex;align-items:center;gap:9px;width:100%;border:none;background:transparent;padding:8px 13px;cursor:pointer;text-align:left;font:inherit;color:inherit}
+.tv2-pi:hover{background:var(--tv-hover)}
+.tv2-pi.on{color:var(--tv-accent);font-weight:600}
+.tv2-pi .sub{margin-left:auto;font-size:11.5px;color:var(--tv-muted)}
+.tv2-ph{padding:9px 13px 4px;font-size:10.5px;font-weight:700;color:var(--tv-muted);text-transform:uppercase;letter-spacing:.5px}
+.tv2-psep{height:0.5px;background:var(--tv-line);margin:4px 0}
+.tv2-pbody{padding:10px 13px;display:flex;flex-direction:column;gap:8px}
+.tv2-pbody input,.tv2-pbody select{width:100%;font:inherit;font-size:13px;padding:7px 9px;border:0.5px solid var(--tv-line);border-radius:8px;background:var(--tv-input);color:var(--tv-text);outline:none}
+.tv2-pbody input:focus{border-color:var(--tv-accent)}
+.tv2-qd{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.tv2-qd button{border:0.5px solid var(--tv-line);background:var(--tv-input);border-radius:8px;padding:7px 8px;font-size:12px;cursor:pointer;text-align:left}
+.tv2-qd button:hover{background:var(--tv-hover)}
+.tv2-qd button small{display:block;color:var(--tv-muted);font-size:10.5px}
+.tv2-row2{display:flex;gap:8px}
+.tv2-modal{position:fixed;inset:0;z-index:9650;background:rgba(10,14,20,.45);display:none;align-items:flex-start;justify-content:center;padding-top:10vh}
+.tv2-modal .box{background:var(--tv-panel);color:var(--tv-text);border-radius:14px;width:420px;max-width:94vw;box-shadow:var(--tv-shadow);overflow:hidden}
+.tv2-modal .hd{padding:14px 18px;font-weight:700;font-size:15px;text-align:center;border-bottom:0.5px solid var(--tv-line)}
+.tv2-modal .bd{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.tv2-modal .ft{display:flex;border-top:0.5px solid var(--tv-line)}
+.tv2-modal .ft button{flex:1;border:none;background:transparent;padding:13px;font-size:14px;cursor:pointer;color:var(--tv-text)}
+.tv2-modal .ft button.pri{color:var(--tv-accent);font-weight:700;border-left:0.5px solid var(--tv-line)}
+.tv2-modal .ft button:hover{background:var(--tv-hover)}
+.tv2-freq{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tv2-freq button{border:0.5px solid var(--tv-line);background:var(--tv-input);border-radius:9px;padding:10px;cursor:pointer;font-size:13px;color:var(--tv-text)}
+.tv2-freq button.on{border-color:var(--tv-accent);background:var(--tv-accent-soft);color:var(--tv-accent-d);font-weight:600}
+.tv2-wd{display:flex;gap:5px;flex-wrap:wrap}
+.tv2-wd button{width:38px;height:32px;border-radius:8px;border:0.5px solid var(--tv-line);background:var(--tv-input);cursor:pointer;font-size:12px;color:var(--tv-text)}
+.tv2-wd button.on{background:var(--tv-accent);border-color:var(--tv-accent);color:#fff}
+.tv2-fr{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px}
+.tv2-fr input,.tv2-fr select{font:inherit;font-size:13px;padding:6px 8px;border:0.5px solid var(--tv-line);border-radius:8px;background:var(--tv-input);color:var(--tv-text)}
+.tv2-modal .bd input[type=text]{width:100%;font:inherit;font-size:13.5px;padding:8px 10px;border:0.5px solid var(--tv-line);border-radius:8px;background:var(--tv-input);color:var(--tv-text);outline:none}
+.tv2-colors{display:flex;gap:8px;flex-wrap:wrap}
+.tv2-colors button{width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer}
+.tv2-colors button.on{border-color:var(--tv-text)}
+.tv2-only-m{display:none}
+.tv2-back{display:none}
+
+/* responsive */
+@media (max-width:1180px){ .tv2-detail{width:340px} .tv2-search input{width:130px} }
+@media (max-width:960px){
+  .tv2-side{position:absolute;z-index:40;top:0;bottom:0;left:0;box-shadow:var(--tv-shadow);transform:translateX(-105%);transition:transform .18s}
+  .tv2.side-open .tv2-side{transform:none}
+  .tv2{position:relative}
+  .tv2-only-m{display:inline-flex}
+  .tv2-detail{position:absolute;z-index:45;top:0;right:0;bottom:0;width:min(420px,100%);box-shadow:var(--tv-shadow)}
+  .tv2-back{display:inline-flex}
+}
+@media (max-width:640px){
+  .tv2-search{flex:1;min-width:0}
+  .tv2-search input{width:100%}
+  .tv2-head{padding:8px 10px;gap:6px;flex-wrap:wrap}
+  .tv2-title{flex:1}
+  .tv2-head-r{width:100%;margin-left:0;order:3}
+  .tv2-title{font-size:15px}
+  .tv2-list{padding:10px 10px 20px}
+  .tv2-add{margin:0 10px 10px}
+  .tv2-ra{opacity:1}
+  .tv2-detail{width:100%}
+  #tv2-scope button{padding:5px 8px}
+}
+</style>
+<script id="tv2-script">
+/* ═══ Tasks v2 (Wave 2) — Any.do-style Tasks page on /api/todo (modules/todo.py).
+   Legacy Follow-ups list (renderTasksView) and Kanban board (renderTasksBoard)
+   are kept untouched and shown as views inside this page. All clicks go through
+   one delegated handler reading data-act attributes (no inline handlers with
+   user text, so names with quotes can never break the page). ═══ */
+(function(){
+  'use strict';
+  var TV = window.TV2 = {
+    view: 'my_day', listId: 0, tag: '', scope: 'mine', q: '',
+    meta: null, tasks: [], sugg: [], sel: {}, selMode: false,
+    detailId: 0, detail: null, collapsed: {}, bound: false, themePref: null, loadSeq: 0
+  };
+  var legacyList = window.renderTasksView;     // auto follow-ups (stale, promised, interviews…)
+  var legacyBoard = window.renderTasksBoard;   // Kanban todo / doing / done
+
+  var VIEWS = {
+    my_day:    {t: 'My Day',          ic: '☀️'},
+    next7:     {t: 'Next 7 days',     ic: '📅'},
+    all:       {t: 'All tasks',       ic: '☰'},
+    followups: {t: 'ATS follow-ups',  ic: '🔔'},
+    board:     {t: 'Board',           ic: '▦'},
+    assigned:  {t: 'Assigned to me',  ic: '👤'},
+    completed: {t: 'Completed',       ic: '✔️'},
+    inbox:     {t: 'Inbox (no list)', ic: '📥'}
+  };
+  var GROUPS = [['overdue', 'Overdue'], ['today', 'Today'], ['tomorrow', 'Tomorrow'],
+                ['upcoming', 'Upcoming'], ['someday', 'Someday']];
+  var PRIOS = [['none', 'No priority', 'var(--tv-faint)'], ['low', 'Low', 'var(--tv-blue)'],
+               ['medium', 'Medium', 'var(--tv-amber)'], ['high', 'High', 'var(--tv-red)']];
+  var COLORS = ['#13A37E', '#185FA5', '#D97A4D', '#7C5CC4', '#C0392B', '#B7950B', '#5D6D7E', '#E84393'];
+  var WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  function $(id){ return document.getElementById(id); }
+  function h(s){ return esc(s).replace(/'/g, '&#39;'); }
+  function api(method, path, body){ return req(method, '/todo' + path, body); }
+  function ok(r){ return r && r.ok; }
+  function fail(r, fallback){ toast('ERR', esc((r && r.error) || fallback || 'Something went wrong')); }
+
+  // ── dates (all in the server's IST calendar: meta.today) ────────────────
+  function todayIso(){ return (TV.meta && TV.meta.today) || isoOf(new Date()); }
+  function isoOf(d){ return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function dOf(iso){ var p = String(iso).slice(0, 10).split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
+  function addDays(iso, n){ var d = dOf(iso); d.setDate(d.getDate() + n); return isoOf(d); }
+  function dayDiff(iso){ return Math.round((dOf(iso) - dOf(todayIso())) / 86400000); }
+  function nextMonday(){ var d = dOf(todayIso()); var add = ((8 - d.getDay()) % 7) || 7; d.setDate(d.getDate() + add); return isoOf(d); }
+  function timeLbl(due){
+    if (!due || due.length <= 10) return '';
+    var hh = +due.slice(11, 13), mm = due.slice(14, 16);
+    return (hh % 12 || 12) + ':' + mm + (hh < 12 ? ' am' : ' pm');
+  }
+  function dayLbl(iso){
+    var n = dayDiff(iso), d = dOf(iso);
+    if (n === 0) return 'Today';
+    if (n === 1) return 'Tomorrow';
+    if (n === -1) return 'Yesterday';
+    if (n > 1 && n < 7) return WD[(d.getDay() + 6) % 7];
+    return d.getDate() + ' ' + MON[d.getMonth()] + (d.getFullYear() !== dOf(todayIso()).getFullYear() ? ' ' + d.getFullYear() : '');
+  }
+  function dueLbl(due){ if (!due) return ''; var t = timeLbl(due); return dayLbl(due) + (t ? ', ' + t : ''); }
+  function recurLbl(r){
+    if (!r) return '';
+    var n = r.interval || 1, base = {daily: 'day', weekly: 'week', monthly: 'month', yearly: 'year'}[r.freq] || r.freq;
+    var s = n === 1 ? ('Every ' + base) : ('Every ' + n + ' ' + base + 's');
+    if (r.freq === 'weekly' && r.weekdays && r.weekdays.length) s += ' (' + r.weekdays.map(function(w){ return WD[w]; }).join(', ') + ')';
+    return s;
+  }
+  function initials(n){
+    var p = String(n || '').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim().split(/\s+/);
+    return ((p[0] || '')[0] || '').toUpperCase() + (p.length > 1 ? (p[p.length - 1][0] || '').toUpperCase() : '');
+  }
+  function me(){ return (TV.meta && TV.meta.me) || 0; }
+  function listById(id){ return ((TV.meta && TV.meta.lists) || []).filter(function(l){ return l.id === id; })[0]; }
+  function tagDef(name){ return ((TV.meta && TV.meta.tags) || []).filter(function(t){ return t.name.toLowerCase() === String(name).toLowerCase(); })[0]; }
+  function taskById(id){
+    var all = TV.tasks.concat(TV.sugg);
+    for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+    return null;
+  }
+
+  // ── theme ───────────────────────────────────────────────────────────────
+  function applyTheme(pref){
+    TV.themePref = pref || 'light';
+    var t = TV.themePref;
+    if (t === 'system') t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    var v = $('tasks-view'); if (v) v.setAttribute('data-theme', t);
+    var r = $('tv2'); if (r) r.setAttribute('data-theme', t);
+  }
+  async function setTheme(pref){
+    applyTheme(pref);
+    var r = await api('POST', '/prefs', {theme: pref});
+    if (!ok(r)) fail(r, 'Could not save theme');
+  }
+
+  // ── loading ─────────────────────────────────────────────────────────────
+  async function loadMeta(){
+    var r = await api('GET', '/meta' + (TV.scope === 'team' ? '?scope=team' : ''));
+    if (!ok(r)) { fail(r, 'Could not load tasks'); return false; }
+    var first = !TV.meta;
+    TV.meta = r;
+    if (first) {
+      applyTheme((r.prefs && r.prefs.theme) || 'light');
+      var pv = r.prefs && r.prefs.default_view;
+      if (pv && VIEWS[pv]) TV.view = pv;
+      else {
+        try { var lv = JSON.parse(localStorage.getItem('tv2_last_view') || 'null');
+              if (lv && lv.v) { TV.view = lv.v; if (lv.v === 'list') TV.listId = +lv.x; if (lv.v === 'tag') TV.tag = String(lv.x || ''); } } catch (e) {}
+      }
+      if (!VIEWS[TV.view] && TV.view !== 'list' && TV.view !== 'tag') TV.view = 'my_day';
+    }
+    if (TV.view === 'list' && !listById(TV.listId)) TV.view = 'all';
+    renderSide();
+    var sc = $('tv2-scope'); if (sc) sc.style.display = (r.is_admin && TV.view !== 'followups' && TV.view !== 'board') ? '' : 'none';
+    return true;
+  }
+  var _metaT = null;
+  function refreshMetaSoon(){ clearTimeout(_metaT); _metaT = setTimeout(loadMeta, 350); }
+
+  function query(){
+    var p = ['view=' + encodeURIComponent(TV.view === 'my_day' ? 'my_day' : TV.view)];
+    if (TV.view === 'my_day') p.push('include_done=1');
+    if (TV.view === 'list') p.push('list_id=' + TV.listId);
+    if (TV.view === 'tag') p.push('tag=' + encodeURIComponent(TV.tag));
+    if (TV.view === 'assigned') p.push('assigned_to=' + me());
+    if (TV.scope === 'team') p.push('scope=team');
+    if (TV.q) p.push('q=' + encodeURIComponent(TV.q));
+    return '?' + p.join('&');
+  }
+  async function loadTasks(){
+    var seq = ++TV.loadSeq;
+    var list = $('tv2-list');
+    if (list && !TV.tasks.length) list.innerHTML = '<div class="loading"><div class="spinner"></div>Loading tasks...</div>';
+    var r = await api('GET', '/tasks' + query());
+    if (seq !== TV.loadSeq) return;                        // a newer view was opened meanwhile
+    if (!ok(r)) { if (list) list.innerHTML = '<div class="tv2-empty">Could not load tasks.<br>' + esc((r && r.error) || '') + '</div>'; return; }
+    TV.tasks = r.tasks || [];
+    TV.sugg = r.suggestions || [];
+    renderList();
+  }
+
+  // ── open / switch view ──────────────────────────────────────────────────
+  async function tv2Open(){
+    bindOnce();
+    if (!TV.meta) { if (!(await loadMeta())) return; }
+    else loadMeta();
+    show();
+  }
+  function setView(v, extra){
+    TV.view = v;
+    if (v === 'list') TV.listId = +extra;
+    if (v === 'tag') TV.tag = String(extra || '');
+    TV.sel = {}; TV.selMode = false; TV.tasks = []; TV.sugg = [];
+    var root = $('tv2'); if (root) root.classList.remove('side-open');
+    closeDetail();
+    try { localStorage.setItem('tv2_last_view', JSON.stringify({v: v, x: extra || ''})); } catch (e) {}
+    renderSide();
+    show();
+  }
+  function show(){
+    var legacy = (TV.view === 'followups' || TV.view === 'board');
+    $('tv2-list').style.display = legacy ? 'none' : '';
+    $('tasks-body').style.display = legacy ? '' : 'none';
+    $('tv2-add').style.display = (TV.view === 'completed' || TV.view === 'board') ? 'none' : '';
+    $('task-filter').style.display = TV.view === 'followups' ? '' : 'none';
+    $('tv2-q').parentNode.style.display = legacy ? 'none' : '';
+    var sc = $('tv2-scope'); if (sc) sc.style.display = (TV.meta && TV.meta.is_admin && !legacy) ? '' : 'none';
+    renderBulk();
+    setTitle();
+    if (TV.view === 'followups') { S._tasksMode = 'list'; legacyList(); }
+    else if (TV.view === 'board') { S._tasksMode = 'board'; legacyBoard(); }
+    else loadTasks();
+  }
+  function setTitle(){
+    var t = (VIEWS[TV.view] || {}).t || 'Tasks';
+    if (TV.view === 'list') { var l = listById(TV.listId); t = l ? l.name : 'List'; }
+    if (TV.view === 'tag') t = '#' + TV.tag;
+    $('tv2-title-txt').textContent = t;
+    $('tv2-title-count').textContent = '';
+  }
+
+  // Legacy code (old New Task modal, snooze/done failures…) calls this to refresh.
+  window.renderTasksActive = function(){
+    if (!TV.bound) return tv2Open();
+    if (TV.view === 'followups') return legacyList();
+    if (TV.view === 'board') return legacyBoard();
+    loadMeta();
+    return loadTasks();
+  };
+
+  // ── sidebar ─────────────────────────────────────────────────────────────
+  function navBtn(v, label, ic, count, extraAttr, on, red){
+    return '<button class="tv2-nav' + (on ? ' on' : '') + '" data-act="view" data-v="' + v + '"' + (extraAttr || '') + '>'
+      + '<span class="ic">' + ic + '</span><span class="nm">' + h(label) + '</span>'
+      + (count ? '<span class="ct' + (red ? ' red' : '') + '">' + count + '</span>' : '') + '</button>';
+  }
+  function renderSide(){
+    var el = $('tv2-side'); if (!el || !TV.meta) return;
+    var c = TV.meta.counts || {}, v = TV.view;
+    var fb = $('nav-tasks-badge'), fcount = (fb && fb.style.display !== 'none') ? fb.textContent : '';
+    var html = '';
+    html += navBtn('my_day', VIEWS.my_day.t, VIEWS.my_day.ic, c.my_day, '', v === 'my_day');
+    html += navBtn('next7', VIEWS.next7.t, VIEWS.next7.ic, c.next7, '', v === 'next7');
+    html += navBtn('all', VIEWS.all.t, VIEWS.all.ic, c.all, '', v === 'all', false);
+    html += navBtn('followups', VIEWS.followups.t, VIEWS.followups.ic, fcount, '', v === 'followups', true);
+    html += navBtn('board', VIEWS.board.t, VIEWS.board.ic, '', '', v === 'board');
+    html += navBtn('assigned', VIEWS.assigned.t, VIEWS.assigned.ic, '', '', v === 'assigned');
+    html += navBtn('completed', VIEWS.completed.t, VIEWS.completed.ic, '', '', v === 'completed');
+
+    html += '<div class="tv2-sh"><span>My lists</span><button data-act="list-new" title="New list">+</button></div>';
+    if (c.inbox || v === 'inbox') html += navBtn('inbox', VIEWS.inbox.t, VIEWS.inbox.ic, c.inbox, '', v === 'inbox');
+    (TV.meta.lists || []).forEach(function(l){
+      var dot = '<span class="dot" style="background:' + h(l.color || '#999') + '"></span>';
+      var lbl = l.name + (l.is_shared ? ' · team' : (!l.mine && l.owner_name ? ' · ' + l.owner_name : ''));
+      html += navBtn('list', lbl, dot, (c.lists || {})[String(l.id)], ' data-id="' + l.id + '"', v === 'list' && TV.listId === l.id);
+    });
+    html += '<div class="tv2-sh"><span>Tags</span><button data-act="tag-new" title="New tag">+</button></div>';
+    var tags = TV.meta.tags || [];
+    if (!tags.length) html += '<div style="padding:4px 12px;font-size:12px;color:var(--tv-faint)">Add #tags to tasks</div>';
+    tags.forEach(function(t){
+      var ic = '<span style="color:' + h(t.color || '#B7950B') + ';font-weight:700">#</span>';
+      html += navBtn('tag', t.name, ic, (c.tags || {})[t.name], ' data-tag="' + h(t.name) + '"', v === 'tag' && TV.tag.toLowerCase() === t.name.toLowerCase());
+    });
+    el.innerHTML = html;
+  }
+
+  // ── task list ───────────────────────────────────────────────────────────
+  function rowHtml(t, opts){
+    opts = opts || {};
+    var meta = [];
+    if (t.list_id && !(TV.view === 'list' && TV.listId === t.list_id) && t.list_name)
+      meta.push('<span><span class="tv2-ldot" style="background:' + h(t.list_color || '#999') + '"></span>' + h(t.list_name) + '</span>');
+    if (t.due_at && TV.view !== 'completed') meta.push('<span class="' + (t.late ? 'late' : '') + '">⏰ ' + h(dueLbl(t.due_at)) + '</span>');
+    if (TV.view === 'completed' && t.completed_at) meta.push('<span>✔ ' + h(dueLbl(t.completed_at.slice(0, 16))) + '</span>');
+    if (t.recurrence) meta.push('<span title="' + h(recurLbl(t.recurrence)) + '">↻</span>');
+    if (t.subtasks_total) meta.push('<span>☑ ' + t.subtasks_done + '/' + t.subtasks_total + '</span>');
+    if (t.notes) meta.push('<span title="Has notes">📝</span>');
+    if (t.candidate_id) meta.push('<span class="cand">👤 ' + h(t.candidate_name) + '</span>');
+    (t.tags || []).forEach(function(g){ var d = tagDef(g); meta.push('<span class="tv2-tag"' + (d ? ' style="color:' + h(d.color) + '"' : '') + '>#' + h(g) + '</span>'); });
+    if (t.assigned_to && t.assigned_to !== me()) meta.push('<span title="Assigned">→ ' + h(t.assigned_name || 'Teammate') + '</span>');
+    if (t.assigned_to === me() && t.created_by && t.created_by !== me()) meta.push('<span title="Assigned to you">← from ' + h(t.created_by_name || 'admin') + '</span>');
+    if (opts.why) meta.unshift('<span class="tv2-why ' + h(opts.why) + '">' + h({overdue: 'Overdue', due_today: 'Due today', recent: 'Recently added'}[opts.why] || opts.why) + '</span>');
+
+    var cls = 'tv2-row' + (t.done ? ' done' : '') + (TV.sel[t.id] ? ' sel' : '');
+    var chk = '<button class="tv2-chk p-' + h(t.priority) + (t.done ? ' on' : '') + '" data-act="toggle" data-id="' + t.id + '" title="' + (t.done ? 'Mark not done' : 'Complete') + '">' + (t.done ? '✓' : '') + '</button>';
+    var ra = opts.sugg
+      ? '<button class="tv2-btn o" style="padding:4px 10px;font-size:11.5px" data-act="myday" data-id="' + t.id + '" data-on="1">+ My Day</button>'
+      : '<button class="tv2-ico' + (t.my_day ? ' on' : '') + '" data-act="myday" data-id="' + t.id + '" data-on="' + (t.my_day ? '0' : '1') + '" title="' + (t.my_day ? 'Remove from My Day' : 'Add to My Day') + '">☀</button>';
+    return '<div class="' + cls + '" data-act="open" data-id="' + t.id + '">'
+      + (TV.selMode ? '<input type="checkbox" class="tv2-msel" data-act="msel" data-id="' + t.id + '"' + (TV.sel[t.id] ? ' checked' : '') + '>' : '')
+      + chk
+      + '<div class="tv2-rb"><div class="tt">' + h(t.title) + '</div>' + (meta.length ? '<div class="tv2-meta">' + meta.join('') + '</div>' : '') + '</div>'
+      + '<div class="tv2-ra">' + ra + '</div>'
+      + (t.assigned_to && t.assigned_to !== me() ? '<span class="tv2-av" title="' + h(t.assigned_name) + '">' + h(initials(t.assigned_name)) + '</span>' : '')
+      + (t.pinned ? '<span class="tv2-pin" title="Pinned">📌</span>' : '')
+      + '</div>';
+  }
+  function groupHtml(key, label, tasks, red){
+    if (!tasks.length) return '';
+    var closed = TV.collapsed[TV.view + ':' + key];
+    return '<div class="tv2-grp' + (closed ? ' closed' : '') + '" data-g="' + h(key) + '">'
+      + '<div class="tv2-gh' + (red ? ' red' : '') + '" data-act="collapse" data-g="' + h(key) + '"><span class="car">▼</span>' + h(label) + '<span class="n">' + tasks.length + '</span></div>'
+      + '<div class="tv2-rows" data-g="' + h(key) + '">' + tasks.map(function(t){ return rowHtml(t); }).join('') + '</div></div>';
+  }
+  function emptyHtml(){
+    var m = {
+      my_day: ['☀️', 'Plan your day', 'Add tasks below, or pick from the suggestions.'],
+      completed: ['✔️', 'Nothing completed yet', 'Finished tasks show up here.'],
+      assigned: ['👤', 'Nothing assigned to you', 'Tasks a teammate assigns to you land here.']
+    }[TV.view] || ['🎉', TV.q ? 'No matching tasks' : 'All clear', TV.q ? 'Try a different search.' : 'Add a task below.'];
+    return '<div class="tv2-empty"><div class="big">' + m[0] + '</div><b>' + m[1] + '</b>' + m[2] + '</div>';
+  }
+  function greeting(){
+    var hr = new Date().getHours();
+    var nm = ((S.currentUser && (S.currentUser.display_name || S.currentUser.username)) || '').split(' ')[0];
+    return (hr < 12 ? 'Good Morning' : hr < 17 ? 'Good Afternoon' : 'Good Evening') + (nm ? ', <em>' + h(nm) + '</em>' : '') + '.';
+  }
+  function renderList(){
+    var el = $('tv2-list'); if (!el) return;
+    var tasks = TV.tasks, html = '';
+    var open = tasks.filter(function(t){ return !t.done; });
+    $('tv2-title-count').textContent = TV.view === 'completed' ? (tasks.length ? tasks.length : '') : (open.length ? open.length : '');
+
+    if (TV.view === 'my_day') {
+      var done = tasks.filter(function(t){ return t.done; });
+      var d = dOf(todayIso());
+      var pct = tasks.length ? Math.round(done.length * 100 / tasks.length) : 0;
+      html += '<div class="tv2-hello"><h2>' + greeting() + '</h2><p>' + WD[(d.getDay() + 6) % 7] + ', ' + d.getDate() + ' ' + MON[d.getMonth()]
+        + (tasks.length ? ' · ' + done.length + ' of ' + tasks.length + ' done' : ' · What’s your plan for today?') + '</p>'
+        + (tasks.length ? '<div class="tv2-prog"><i style="width:' + pct + '%"></i></div>' : '') + '</div>';
+      html += open.length ? groupHtml('open', 'To do', open) : (tasks.length ? '' : emptyHtml());
+      html += groupHtml('done', 'Completed today', done);
+      if (TV.sugg.length) {
+        html += '<div class="tv2-sugg"><div class="tv2-gh" style="cursor:default">✨ Suggestions<span class="n">' + TV.sugg.length + '</span></div><div class="tv2-rows">'
+          + TV.sugg.map(function(t){ return rowHtml(t, {sugg: true, why: t.reason}); }).join('') + '</div></div>';
+      }
+    } else if (!tasks.length) {
+      html = emptyHtml();
+    } else if (TV.view === 'completed') {
+      html = groupHtml('done', 'Completed', tasks);
+    } else if (TV.view === 'next7') {
+      html += groupHtml('overdue', 'Overdue', open.filter(function(t){ return t.group === 'overdue'; }), true);
+      for (var i = 0; i <= 7; i++) {
+        var iso = addDays(todayIso(), i), dd = dOf(iso);
+        var lbl = (i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : WD[(dd.getDay() + 6) % 7]) + ' · ' + dd.getDate() + ' ' + MON[dd.getMonth()];
+        html += groupHtml('d' + iso, lbl, open.filter(function(t){ return t.due_at && t.due_at.slice(0, 10) === iso; }));
+      }
+    } else {
+      GROUPS.forEach(function(g){ html += groupHtml(g[0], g[1], open.filter(function(t){ return t.group === g[0]; }), g[0] === 'overdue'); });
+    }
+    el.innerHTML = html;
+    enableSort();
+  }
+
+  // drag to reorder (within a group; the whole visible order is saved)
+  function enableSort(){
+    if (typeof Sortable === 'undefined' || TV.selMode || TV.view === 'completed' || TV.view === 'next7' || TV.q) return;
+    document.querySelectorAll('#tv2-list .tv2-grp .tv2-rows').forEach(function(box){
+      if (box.closest('.tv2-sugg')) return;
+      Sortable.create(box, {animation: 140, delay: 120, delayOnTouchOnly: true, filter: '.tv2-chk,.tv2-ico,.tv2-btn',
+        preventOnFilter: false, onEnd: function(ev){ if (ev.oldIndex !== ev.newIndex) saveOrder(); }});
+    });
+  }
+  async function saveOrder(){
+    var ids = [];
+    document.querySelectorAll('#tv2-list .tv2-grp .tv2-row').forEach(function(r){ ids.push(+r.getAttribute('data-id')); });
+    var map = {}; TV.tasks.forEach(function(t){ map[t.id] = t; });
+    TV.tasks = ids.map(function(i){ return map[i]; }).filter(Boolean).concat(TV.tasks.filter(function(t){ return ids.indexOf(t.id) < 0; }));
+    var r = await api('POST', '/tasks/reorder', {ids: ids});
+    if (!ok(r)) { fail(r, 'Could not save order'); loadTasks(); }
+  }
+
+  // ── quick add ───────────────────────────────────────────────────────────
+  function parseQuick(txt){
+    var tags = [], prio = null;
+    var rest = txt.replace(/(^|\s)#([^\s#]{1,40})/g, function(m, sp, t){ tags.push(t); return sp; })
+                  .replace(/(^|\s)!(high|medium|low|h|m|l|1|2|3)(?=\s|$)/gi, function(m, sp, p){
+                    p = p.toLowerCase(); prio = {h: 'high', 1: 'high', m: 'medium', 2: 'medium', l: 'low', 3: 'low'}[p] || p; return sp; })
+                  .replace(/\s+/g, ' ').trim();
+    return {title: rest, tags: tags, priority: prio};
+  }
+  async function quickAdd(){
+    var inp = $('tv2-add-in'); var raw = (inp.value || '').trim();
+    if (!raw) return;
+    var p = parseQuick(raw);
+    if (!p.title) { toast('ERR', 'Write the task text'); return; }
+    var body = {title: p.title};
+    if (p.tags.length) body.tags = p.tags;
+    if (p.priority) body.priority = p.priority;
+    var v = TV.view;
+    if (v === 'my_day') body.my_day = true;
+    else if (v === 'list') body.list_id = TV.listId;
+    else if (v === 'inbox') body.list_id = 0;
+    else if (v === 'tag') body.tags = (body.tags || []).concat([TV.tag]);
+    if (v === 'next7' || v === 'all' || v === 'assigned' || v === 'followups' || v === 'my_day') body.due_at = todayIso();
+    inp.value = ''; inp.disabled = true;
+    var r = await api('POST', '/tasks', body);
+    inp.disabled = false; inp.focus();
+    if (!ok(r)) { inp.value = raw; fail(r, 'Could not add task'); return; }
+    if (v === 'followups') { toast('OK', 'Task added to Today'); }
+    else { TV.tasks.push(r.task); renderList(); loadTasks(); }
+    refreshMetaSoon();
+    if (typeof updateTasksBadge === 'function') updateTasksBadge();
+  }
+
+  // ── row actions ─────────────────────────────────────────────────────────
+  async function toggleDone(id){
+    var t = taskById(id) || (TV.detail && TV.detail.id === id ? TV.detail : null);
+    if (!t) return;
+    var to = !t.done;
+    t.done = to;
+    renderList();
+    if (TV.detail && TV.detail.id === id) { TV.detail.done = to; renderDetail(); }
+    var r = await api('POST', '/tasks/' + id + '/complete', {done: to});
+    if (!ok(r)) { t.done = !to; renderList(); fail(r, 'Could not update task'); return; }
+    if (r.rolled) toast('↻', 'Done. Next: ' + esc(dueLbl(r.next_due)));
+    else if (to) toast('✅', 'Completed');
+    setTimeout(loadTasks, to ? 450 : 0);
+    if (TV.detail && TV.detail.id === id) openDetail(id, true);
+    refreshMetaSoon();
+    if (typeof updateTasksBadge === 'function') updateTasksBadge();
+  }
+  async function setMyDay(id, on){
+    var r = await api('POST', '/tasks/' + id + '/my-day', {on: on});
+    if (!ok(r)) { fail(r); return; }
+    toast('☀', on ? 'Added to My Day' : 'Removed from My Day');
+    if (TV.detail && TV.detail.id === id) { TV.detail.my_day = on; renderDetail(); }
+    loadTasks(); refreshMetaSoon();
+  }
+
+  // ── detail panel ────────────────────────────────────────────────────────
+  async function openDetail(id, quiet){
+    TV.detailId = id;
+    var el = $('tv2-detail'); el.style.display = '';
+    if (!quiet) el.innerHTML = '<div class="loading" style="padding:30px"><div class="spinner"></div></div>';
+    var r = await api('GET', '/tasks/' + id);
+    if (TV.detailId !== id) return;
+    if (!ok(r)) { closeDetail(); fail(r, 'Task not found'); loadTasks(); return; }
+    TV.detail = r.task;
+    renderDetail();
+  }
+  function closeDetail(){
+    TV.detailId = 0; TV.detail = null;
+    var el = $('tv2-detail'); if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+  }
+  function chip(act, icon, label, set, red, title){
+    return '<button class="tv2-chipb' + (red ? ' red' : set ? ' set' : '') + '" data-act="' + act + '"' + (title ? ' title="' + h(title) + '"' : '') + '>' + icon + ' <span>' + h(label) + '</span></button>';
+  }
+  function renderDetail(){
+    var t = TV.detail, el = $('tv2-detail'); if (!t || !el) return;
+    var l = listById(t.list_id);
+    var crumb = l ? ('My lists › ' + l.name) : (t.list_id ? 'List' : 'Inbox (no list)');
+    var prio = PRIOS.filter(function(p){ return p[0] === t.priority; })[0] || PRIOS[0];
+    var subs = t.subtasks || [];
+    var nDone = subs.filter(function(s){ return s.done; }).length;
+    var html = '<div class="tv2-dh"><button class="tv2-ico tv2-back" data-act="close-detail" title="Back">←</button>'
+      + '<span class="crumb">' + h(crumb) + '</span>'
+      + '<button class="tv2-ico' + (t.pinned ? ' on' : '') + '" data-act="d-pin" title="' + (t.pinned ? 'Unpin' : 'Pin to top') + '">📌</button>'
+      + '<button class="tv2-ico" data-act="d-delete" title="Delete task">🗑</button>'
+      + '<button class="tv2-ico" data-act="close-detail" title="Close">✕</button></div>';
+    html += '<div class="tv2-db">';
+    html += '<div style="display:flex;gap:10px;align-items:flex-start;margin-top:4px">'
+      + '<button class="tv2-chk p-' + h(t.priority) + (t.done ? ' on' : '') + '" style="margin-top:7px" data-act="toggle" data-id="' + t.id + '">' + (t.done ? '✓' : '') + '</button>'
+      + '<textarea id="tv2-dtitle" class="tv2-dtitle" rows="1" maxlength="500">' + h(t.title) + '</textarea></div>';
+    html += '<div class="tv2-chips">'
+      + chip('pick-due', '⏰', t.due_at ? dueLbl(t.due_at) : 'Remind me', !!t.due_at, t.late)
+      + chip('pick-recur', '↻', t.recurrence ? recurLbl(t.recurrence) : 'Repeat', !!t.recurrence)
+      + chip('pick-list', '☰', l ? l.name : 'No list', !!l)
+      + chip('pick-prio', '<span style="color:' + prio[2] + '">⚑</span>', t.priority === 'none' ? 'Priority' : prio[1], t.priority !== 'none')
+      + chip('pick-tags', '#', (t.tags && t.tags.length) ? t.tags.join(', ') : 'Tags', !!(t.tags && t.tags.length))
+      + chip('pick-assign', '👤', t.assigned_to ? (t.assigned_to === me() ? 'Me' : (t.assigned_name || 'Assigned')) : 'Assign', !!t.assigned_to)
+      + chip('d-myday', '☀', t.my_day ? 'In My Day' : 'Add to My Day', t.my_day)
+      + '</div>';
+    html += '<div class="tv2-lbl">Linked candidate</div>';
+    if (t.candidate_id) {
+      html += '<div class="tv2-cand"><span class="tv2-av" style="width:34px;height:34px;font-size:12px">' + h(initials(t.candidate_name)) + '</span>'
+        + '<div style="flex:1;min-width:0"><div class="nm" data-act="open-cand">' + h(t.candidate_name || 'Candidate') + '</div>'
+        + (t.mandate_label ? '<div class="sb">' + h(t.mandate_label) + '</div>' : '') + '</div>'
+        + (t.candidate_phone ? '<a class="tv2-ico" href="tel:' + h(t.candidate_phone) + '" title="Call">📞</a>' : '')
+        + '<button class="tv2-ico" data-act="unlink-cand" title="Unlink">✕</button></div>';
+    } else {
+      html += (t.mandate_label ? '<div class="tv2-cand"><div style="flex:1"><div class="sb">Job</div><div>' + h(t.mandate_label) + '</div></div></div><div style="height:6px"></div>' : '')
+        + '<button class="tv2-chipb" data-act="pick-cand">+ Link a candidate</button>';
+    }
+    html += '<div class="tv2-lbl">Notes</div><textarea id="tv2-dnotes" class="tv2-notes" maxlength="20000" placeholder="Insert your notes here">' + h(t.notes) + '</textarea>';
+    html += '<div class="tv2-lbl">Subtasks <span style="font-weight:500">' + nDone + '/' + subs.length + '</span>'
+      + '<span class="tv2-subbar"><i style="width:' + (subs.length ? Math.round(nDone * 100 / subs.length) : 0) + '%"></i></span></div>';
+    subs.forEach(function(s){
+      html += '<div class="tv2-sub' + (s.done ? ' done' : '') + '">'
+        + '<button class="tv2-chk' + (s.done ? ' on' : '') + '" data-act="sub-toggle" data-sid="' + s.id + '">' + (s.done ? '✓' : '') + '</button>'
+        + '<input type="text" maxlength="500" data-sid="' + s.id + '" class="tv2-subtxt" value="' + h(s.text) + '">'
+        + '<button class="tv2-ico" data-act="sub-del" data-sid="' + s.id + '" title="Delete subtask">✕</button></div>';
+    });
+    html += '<div class="tv2-subadd"><span style="color:var(--tv-accent);font-size:16px">+</span><input id="tv2-subadd" maxlength="500" placeholder="Add a new subtask"></div>';
+    var by = t.created_by_name ? ' by ' + t.created_by_name : '';
+    html += '<div class="tv2-foot">Created' + h(by) + (t.created_at ? ' · ' + h(dueLbl(t.created_at.slice(0, 16))) : '')
+      + (t.completed_at ? '<br>Last completed · ' + h(dueLbl(t.completed_at.slice(0, 16))) : '')
+      + (t.updated_at ? '<br>Updated · ' + h(dueLbl(t.updated_at.slice(0, 16))) : '') + '</div>';
+    html += '</div>';
+    el.innerHTML = html;
+    autoGrow($('tv2-dtitle'));
+  }
+  function autoGrow(ta){ if (!ta) return; ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + 2) + 'px'; }
+
+  async function patch(fields, msg){
+    var t = TV.detail; if (!t) return null;
+    var r = await api('PATCH', '/tasks/' + t.id, fields);
+    if (!ok(r)) { fail(r, 'Could not save'); return null; }
+    var subs = t.subtasks;
+    TV.detail = r.task; TV.detail.subtasks = subs;
+    if (TV.detailId === t.id) renderDetail();
+    if (msg) toast('OK', msg);
+    loadTasks(); refreshMetaSoon();
+    if (typeof updateTasksBadge === 'function') updateTasksBadge();
+    return r.task;
+  }
+
+  // ── popovers ────────────────────────────────────────────────────────────
+  var popAnchor = null;
+  function showPop(anchor, html, after){
+    var p = $('tv2-pop'); popAnchor = anchor;
+    p.innerHTML = html; p.style.display = 'block';
+    var r = anchor.getBoundingClientRect(), pw = p.offsetWidth, ph = p.offsetHeight;
+    var left = Math.min(Math.max(8, r.left), window.innerWidth - pw - 8);
+    var top = r.bottom + 6; if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 6);
+    p.style.left = left + 'px'; p.style.top = top + 'px';
+    if (after) after(p);
+  }
+  function hidePop(){ var p = $('tv2-pop'); if (p) { p.style.display = 'none'; p.innerHTML = ''; } popAnchor = null; }
+
+  function duePop(anchor, cur, onPick){
+    var curD = cur ? cur.slice(0, 10) : '', curT = cur && cur.length > 10 ? cur.slice(11, 16) : '';
+    var nm = nextMonday();
+    var html = '<div class="tv2-ph">Due date</div><div class="tv2-pbody"><div class="tv2-qd">'
+      + '<button data-pd="' + todayIso() + '">Today<small>' + WD[(dOf(todayIso()).getDay() + 6) % 7] + '</small></button>'
+      + '<button data-pd="' + addDays(todayIso(), 1) + '">Tomorrow<small>' + WD[(dOf(addDays(todayIso(), 1)).getDay() + 6) % 7] + '</small></button>'
+      + '<button data-pd="' + nm + '">Next week<small>Mon ' + dOf(nm).getDate() + ' ' + MON[dOf(nm).getMonth()] + '</small></button>'
+      + '<button data-pd="">Someday<small>No date</small></button></div>'
+      + '<div class="tv2-row2"><input type="date" id="tv2-pd-date" value="' + h(curD) + '"><input type="time" id="tv2-pd-time" value="' + h(curT) + '" style="width:120px"></div>'
+      + '<div style="font-size:11px;color:var(--tv-muted)">Add a time to get a phone reminder at that time.</div>'
+      + '<div class="tv2-row2"><button class="tv2-btn o" data-pd-clear="1" style="flex:1">Clear time</button><button class="tv2-btn" data-pd-set="1" style="flex:1">Set</button></div></div>';
+    showPop(anchor, html, function(p){
+      p.querySelectorAll('[data-pd]').forEach(function(b){
+        b.onclick = function(){ var d = b.getAttribute('data-pd'); var t = $('tv2-pd-time').value; hidePop(); onPick(d ? (t ? d + 'T' + t : d) : ''); };
+      });
+      p.querySelector('[data-pd-clear]').onclick = function(){ $('tv2-pd-time').value = ''; };
+      p.querySelector('[data-pd-set]').onclick = function(){
+        var d = $('tv2-pd-date').value, t = $('tv2-pd-time').value;
+        if (!d && t) d = todayIso();
+        hidePop(); onPick(d ? (t ? d + 'T' + t : d) : '');
+      };
+    });
+  }
+  function listPop(anchor, cur, onPick){
+    var html = '<div class="tv2-ph">Move to list</div>'
+      + '<button class="tv2-pi' + (!cur ? ' on' : '') + '" data-pl="0">📥 No list (Inbox)</button>';
+    (TV.meta.lists || []).forEach(function(l){
+      html += '<button class="tv2-pi' + (cur === l.id ? ' on' : '') + '" data-pl="' + l.id + '"><span class="tv2-ldot" style="background:' + h(l.color) + '"></span>' + h(l.name)
+        + (l.is_shared ? '<span class="sub">team</span>' : '') + '</button>';
+    });
+    showPop(anchor, html, function(p){
+      p.querySelectorAll('[data-pl]').forEach(function(b){ b.onclick = function(){ hidePop(); onPick(+b.getAttribute('data-pl')); }; });
+    });
+  }
+  function prioPop(anchor, cur, onPick){
+    var html = '<div class="tv2-ph">Priority</div>' + PRIOS.slice().reverse().map(function(p){
+      return '<button class="tv2-pi' + (cur === p[0] ? ' on' : '') + '" data-pp="' + p[0] + '"><span style="color:' + p[2] + '">⚑</span>' + p[1] + '</button>';
+    }).join('');
+    showPop(anchor, html, function(pp){ pp.querySelectorAll('[data-pp]').forEach(function(b){ b.onclick = function(){ hidePop(); onPick(b.getAttribute('data-pp')); }; }); });
+  }
+  function assignPop(anchor, cur, onPick){
+    var html = '<div class="tv2-ph">Assign to</div><button class="tv2-pi' + (!cur ? ' on' : '') + '" data-pa="0">Unassigned</button>'
+      + ((TV.meta && TV.meta.team) || []).map(function(u){
+        return '<button class="tv2-pi' + (cur === u.id ? ' on' : '') + '" data-pa="' + u.id + '"><span class="tv2-av">' + h(initials(u.name)) + '</span>' + h(u.name) + (u.id === me() ? '<span class="sub">me</span>' : '') + '</button>';
+      }).join('');
+    showPop(anchor, html, function(p){ p.querySelectorAll('[data-pa]').forEach(function(b){ b.onclick = function(){ hidePop(); onPick(+b.getAttribute('data-pa')); }; }); });
+  }
+  function tagsPop(anchor){
+    var t = TV.detail; if (!t) return;
+    var cur = (t.tags || []).map(function(x){ return x.toLowerCase(); });
+    var names = ((TV.meta && TV.meta.tags) || []).map(function(x){ return x.name; });
+    (t.tags || []).forEach(function(x){ if (names.map(function(n){ return n.toLowerCase(); }).indexOf(x.toLowerCase()) < 0) names.push(x); });
+    var html = '<div class="tv2-pbody" style="padding-bottom:4px"><input id="tv2-tag-in" maxlength="40" placeholder="New tag + Enter"></div>'
+      + names.map(function(n){
+        var d = tagDef(n);
+        return '<button class="tv2-pi' + (cur.indexOf(n.toLowerCase()) >= 0 ? ' on' : '') + '" data-ptag="' + h(n) + '"><span style="color:' + h((d && d.color) || '#B7950B') + ';font-weight:700">#</span>' + h(n)
+          + (cur.indexOf(n.toLowerCase()) >= 0 ? '<span class="sub">✓</span>' : '') + '</button>';
+      }).join('');
+    showPop(anchor, html, function(p){
+      p.querySelectorAll('[data-ptag]').forEach(function(b){
+        b.onclick = async function(){
+          var n = b.getAttribute('data-ptag'), list = (TV.detail.tags || []).slice();
+          var i = list.map(function(x){ return x.toLowerCase(); }).indexOf(n.toLowerCase());
+          if (i >= 0) list.splice(i, 1); else list.push(n);
+          hidePop(); await patch({tags: list});
+        };
+      });
+      var inp = $('tv2-tag-in'); inp.focus();
+      inp.onkeydown = async function(e){
+        if (e.key !== 'Enter') return; e.preventDefault();
+        var v = inp.value.trim().replace(/^#/, ''); if (!v) return;
+        hidePop(); await patch({tags: (TV.detail.tags || []).concat([v])});
+      };
+    });
+  }
+  var _candT = null, _candRes = [];
+  function candPop(anchor){
+    var html = '<div class="tv2-pbody"><input id="tv2-cand-in" placeholder="Search candidate by name, phone, company"></div><div id="tv2-cand-res"></div>';
+    showPop(anchor, html, function(p){
+      var inp = $('tv2-cand-in'); inp.focus();
+      inp.oninput = function(){
+        clearTimeout(_candT);
+        var q = inp.value.trim(), box = $('tv2-cand-res');
+        if (q.length < 2) { box.innerHTML = ''; return; }
+        _candT = setTimeout(async function(){
+          var r = await req('GET', '/central-db/search?q=' + encodeURIComponent(q));
+          _candRes = ((r && (r.candidates || r.results)) || []).slice(0, 8);
+          if (!$('tv2-cand-res')) return;
+          box.innerHTML = _candRes.length ? _candRes.map(function(c){
+            var sub = [c.designation, c.company].filter(Boolean).join(' @ ') || (c.phone || '');
+            return '<button class="tv2-pi" data-pc="' + c.id + '"><span class="tv2-av">' + h(initials(c.name)) + '</span><span style="min-width:0"><b>' + h(c.name || 'Unnamed') + '</b><br><span style="font-size:11px;color:var(--tv-muted)">' + h(sub) + '</span></span></button>';
+          }).join('') : '<div class="tv2-pbody" style="color:var(--tv-muted)">No matches</div>';
+          box.querySelectorAll('[data-pc]').forEach(function(b){ b.onclick = async function(){ hidePop(); await patch({candidate_id: +b.getAttribute('data-pc')}, 'Candidate linked'); }; });
+        }, 240);
+      };
+    });
+  }
+
+  // ── modals ──────────────────────────────────────────────────────────────
+  function showModal(title, body, okLabel, onOk, extraBtn){
+    var m = $('tv2-modal');
+    m.innerHTML = '<div class="box"><div class="hd">' + h(title) + '</div><div class="bd">' + body + '</div><div class="ft">'
+      + (extraBtn ? '<button data-m="extra" style="color:var(--tv-red)">' + h(extraBtn.label) + '</button>' : '')
+      + '<button data-m="cancel">Cancel</button><button class="pri" data-m="ok">' + h(okLabel || 'Save') + '</button></div></div>';
+    m.style.display = 'flex';
+    m.onclick = function(e){ if (e.target === m) hideModal(); };
+    m.querySelector('[data-m=cancel]').onclick = hideModal;
+    m.querySelector('[data-m=ok]').onclick = function(){ onOk(m); };
+    if (extraBtn) m.querySelector('[data-m=extra]').onclick = function(){ extraBtn.fn(m); };
+    var f = m.querySelector('input[type=text]'); if (f) setTimeout(function(){ f.focus(); }, 40);
+  }
+  function hideModal(){ var m = $('tv2-modal'); if (m) { m.style.display = 'none'; m.innerHTML = ''; } }
+
+  function recurModal(){
+    var t = TV.detail; if (!t) return;
+    var r = t.recurrence || {freq: 'weekly', interval: 1, weekdays: [(dOf(t.due_at || todayIso()).getDay() + 6) % 7]};
+    var st = {freq: r.freq, interval: r.interval || 1, weekdays: (r.weekdays || []).slice(), until: r.until || ''};
+    function body(){
+      return '<div class="tv2-freq">' + ['daily', 'weekly', 'monthly', 'yearly'].map(function(f){
+          return '<button data-rf="' + f + '" class="' + (st.freq === f ? 'on' : '') + '">' + f.charAt(0).toUpperCase() + f.slice(1) + '</button>'; }).join('') + '</div>'
+        + '<div class="tv2-fr"><span>Repeat every</span><span><input type="number" id="tv2-ri" min="1" max="365" value="' + st.interval + '" style="width:70px"> '
+        + {daily: 'day(s)', weekly: 'week(s)', monthly: 'month(s)', yearly: 'year(s)'}[st.freq] + '</span></div>'
+        + (st.freq === 'weekly' ? '<div class="tv2-wd">' + WD.map(function(w, i){ return '<button data-rw="' + i + '" class="' + (st.weekdays.indexOf(i) >= 0 ? 'on' : '') + '">' + w + '</button>'; }).join('') + '</div>' : '')
+        + '<div class="tv2-fr"><span>Ends</span><span><input type="date" id="tv2-ru" value="' + h(st.until) + '"></span></div>'
+        + '<div style="font-size:11.5px;color:var(--tv-muted)">Leave the end date empty for a task that never ends. Starts from ' + h(t.due_at ? dueLbl(t.due_at) : 'today') + '.</div>';
+    }
+    function rebind(m){
+      var bd = m.querySelector('.bd');
+      bd.querySelectorAll('[data-rf]').forEach(function(b){ b.onclick = function(){ keep(); st.freq = b.getAttribute('data-rf'); bd.innerHTML = body(); rebind(m); }; });
+      bd.querySelectorAll('[data-rw]').forEach(function(b){ b.onclick = function(){
+        var i = +b.getAttribute('data-rw'), k = st.weekdays.indexOf(i);
+        if (k >= 0) st.weekdays.splice(k, 1); else st.weekdays.push(i);
+        b.classList.toggle('on'); }; });
+    }
+    function keep(){ var i = $('tv2-ri'), u = $('tv2-ru'); if (i) st.interval = Math.max(1, Math.min(365, +i.value || 1)); if (u) st.until = u.value; }
+    showModal('Recurring', body(), 'Set', async function(){
+      keep();
+      var rule = {freq: st.freq, interval: st.interval};
+      if (st.freq === 'weekly' && st.weekdays.length) rule.weekdays = st.weekdays.slice().sort();
+      if (st.until) rule.until = st.until;
+      var f = {recurrence: rule};
+      if (!t.due_at) f.due_at = todayIso();
+      hideModal(); await patch(f, 'Repeats: ' + recurLbl(rule));
+    }, t.recurrence ? {label: 'Remove', fn: async function(){ hideModal(); await patch({recurrence: null}, 'No longer repeats'); }} : null);
+    rebind($('tv2-modal'));
+  }
+  function colorBtns(cur){ return '<div class="tv2-colors">' + COLORS.map(function(c){ return '<button type="button" data-col="' + c + '" class="' + (c === cur ? 'on' : '') + '" style="background:' + c + '"></button>'; }).join('') + '</div>'; }
+  function bindColors(m, st){ m.querySelectorAll('[data-col]').forEach(function(b){ b.onclick = function(){ m.querySelectorAll('[data-col]').forEach(function(x){ x.classList.remove('on'); }); b.classList.add('on'); st.color = b.getAttribute('data-col'); }; }); }
+
+  function listModal(existing){
+    var st = {color: (existing && existing.color) || COLORS[(TV.meta.lists || []).length % COLORS.length]};
+    var admin = TV.meta && TV.meta.is_admin;
+    var body = '<input type="text" id="tv2-ln" maxlength="60" placeholder="List name" value="' + h(existing ? existing.name : '') + '">' + colorBtns(st.color)
+      + (admin ? '<label class="tv2-fr" style="justify-content:flex-start;gap:8px"><input type="checkbox" id="tv2-lsh"' + (existing && existing.is_shared ? ' checked' : '') + '> Shared with the whole team</label>' : '');
+    showModal(existing ? 'Edit list' : 'New list', body, existing ? 'Save' : 'Create', async function(){
+      var name = ($('tv2-ln').value || '').trim(); if (!name) { toast('ERR', 'List name required'); return; }
+      var payload = {name: name, color: st.color};
+      var sh = $('tv2-lsh'); if (sh) payload.is_shared = sh.checked;
+      var r = existing ? await api('PATCH', '/lists/' + existing.id, payload) : await api('POST', '/lists', payload);
+      if (!ok(r)) { fail(r); return; }
+      hideModal(); await loadMeta();
+      if (!existing && r.list) setView('list', r.list.id); else setTitle();
+    }, existing ? {label: 'Delete', fn: async function(){
+      if (!confirm('Delete list "' + existing.name + '"? Its tasks are kept and move to Inbox (no list).')) return;
+      var r = await api('DELETE', '/lists/' + existing.id);
+      if (!ok(r)) { fail(r); return; }
+      hideModal(); toast('OK', 'List deleted, ' + (r.tasks_moved || 0) + ' task(s) moved to Inbox');
+      await loadMeta(); setView('inbox');
+    }} : null);
+    bindColors($('tv2-modal'), st);
+  }
+  function tagModal(existing){
+    var st = {color: (existing && existing.color) || COLORS[2]};
+    var body = existing ? '<div style="font-weight:600">#' + h(existing.name) + '</div>' + colorBtns(st.color)
+                        : '<input type="text" id="tv2-tn" maxlength="40" placeholder="Tag name (e.g. Priority)">' + colorBtns(st.color);
+    showModal(existing ? 'Tag colour' : 'New tag', body, existing ? 'Save' : 'Create', async function(){
+      var r;
+      if (existing) r = await api('PATCH', '/tags/' + existing.id, {color: st.color});
+      else { var n = ($('tv2-tn').value || '').trim().replace(/^#/, ''); if (!n) { toast('ERR', 'Tag name required'); return; } r = await api('POST', '/tags', {name: n, color: st.color}); }
+      if (!ok(r)) { fail(r); return; }
+      hideModal(); await loadMeta(); renderList();
+    }, (existing && TV.meta.is_admin) ? {label: 'Delete', fn: async function(){
+      if (!confirm('Delete tag #' + existing.name + '? Tasks keep the tag text; only its colour definition is removed.')) return;
+      var r = await api('DELETE', '/tags/' + existing.id); if (!ok(r)) { fail(r); return; }
+      hideModal(); await loadMeta(); setView('all');
+    }} : null);
+    bindColors($('tv2-modal'), st);
+  }
+
+  // ── header menu, multi-select, bulk ─────────────────────────────────────
+  function menuPop(anchor){
+    var th = TV.themePref || 'light';
+    var html = '<div class="tv2-ph">Theme</div>'
+      + [['light', '☀ Light'], ['dark', '🌙 Dark'], ['system', '🖥 System']].map(function(x){
+        return '<button class="tv2-pi' + (th === x[0] ? ' on' : '') + '" data-mt="' + x[0] + '">' + x[1] + (th === x[0] ? '<span class="sub">✓</span>' : '') + '</button>'; }).join('')
+      + '<div class="tv2-psep"></div>';
+    if (TV.view !== 'followups' && TV.view !== 'board')
+      html += '<button class="tv2-pi" data-mm="select">☑ ' + (TV.selMode ? 'Stop selecting' : 'Select tasks') + '</button>';
+    html += '<button class="tv2-pi" data-mm="default">⭐ Open Tasks on this view</button>';
+    if (TV.view === 'list') { var l = listById(TV.listId); if (l && (l.mine || TV.meta.is_admin)) html += '<button class="tv2-pi" data-mm="edit-list">✎ Edit / delete list</button>'; }
+    if (TV.view === 'tag') { var tg = tagDef(TV.tag); if (tg) html += '<button class="tv2-pi" data-mm="edit-tag">✎ Tag colour' + (TV.meta.is_admin ? ' / delete' : '') + '</button>'; }
+    showPop(anchor, html, function(p){
+      p.querySelectorAll('[data-mt]').forEach(function(b){ b.onclick = function(){ hidePop(); setTheme(b.getAttribute('data-mt')); }; });
+      p.querySelectorAll('[data-mm]').forEach(function(b){ b.onclick = async function(){
+        var a = b.getAttribute('data-mm'); hidePop();
+        if (a === 'select') { TV.selMode = !TV.selMode; TV.sel = {}; renderBulk(); renderList(); }
+        else if (a === 'default') {
+          var v = VIEWS[TV.view] ? TV.view : 'all';
+          var r = await api('POST', '/prefs', {default_view: v === 'followups' || v === 'assigned' || v === 'completed' || v === 'inbox' ? 'all' : v});
+          if (ok(r)) toast('OK', 'Tasks will open on ' + (VIEWS[r.prefs.default_view] || {t: r.prefs.default_view}).t); else fail(r);
+        }
+        else if (a === 'edit-list') listModal(listById(TV.listId));
+        else if (a === 'edit-tag') tagModal(tagDef(TV.tag));
+      }; });
+    });
+  }
+  function selIds(){ return Object.keys(TV.sel).filter(function(k){ return TV.sel[k]; }).map(Number); }
+  function renderBulk(){
+    var el = $('tv2-bulk'); if (!el) return;
+    if (!TV.selMode) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    var n = selIds().length;
+    el.style.display = 'flex';
+    el.innerHTML = '<span class="n">' + n + ' selected</span>'
+      + '<button class="tv2-btn o" data-act="bulk" data-b="all">Select all</button>'
+      + '<button class="tv2-btn o" data-act="bulk" data-b="complete"' + (n ? '' : ' disabled') + '>✓ Complete</button>'
+      + '<button class="tv2-btn o" data-act="bulk" data-b="add_my_day"' + (n ? '' : ' disabled') + '>☀ My Day</button>'
+      + '<button class="tv2-btn o" data-act="bulk" data-b="due"' + (n ? '' : ' disabled') + '>⏰ Due</button>'
+      + '<button class="tv2-btn o" data-act="bulk" data-b="list"' + (n ? '' : ' disabled') + '>☰ Move</button>'
+      + '<button class="tv2-btn o" data-act="bulk" data-b="prio"' + (n ? '' : ' disabled') + '>⚑ Priority</button>'
+      + '<button class="tv2-btn o" data-act="bulk" data-b="assign"' + (n ? '' : ' disabled') + '>👤 Assign</button>'
+      + '<button class="tv2-btn red" data-act="bulk" data-b="delete"' + (n ? '' : ' disabled') + '>🗑 Delete</button>'
+      + '<button class="tv2-btn o" data-act="bulk" data-b="cancel" style="margin-left:auto">Done</button>';
+  }
+  async function bulk(action, value){
+    var ids = selIds(); if (!ids.length) return;
+    var r = await api('POST', '/tasks/bulk', {ids: ids, action: action, value: value});
+    if (!ok(r)) { fail(r); return; }
+    toast('OK', r.updated + ' task' + (r.updated === 1 ? '' : 's') + ' updated');
+    TV.sel = {}; renderBulk(); loadTasks(); refreshMetaSoon();
+    if (typeof updateTasksBadge === 'function') updateTasksBadge();
+  }
+  function bulkAct(b, anchor){
+    if (b === 'cancel') { TV.selMode = false; TV.sel = {}; renderBulk(); renderList(); return; }
+    if (b === 'all') { TV.tasks.forEach(function(t){ if (!t.done) TV.sel[t.id] = true; }); renderBulk(); renderList(); return; }
+    if (b === 'complete' || b === 'add_my_day') return bulk(b);
+    if (b === 'delete') { var n = selIds().length; if (confirm('Delete ' + n + ' task' + (n === 1 ? '' : 's') + '? This cannot be undone.')) bulk('delete'); return; }
+    if (b === 'due') return duePop(anchor, '', function(v){ bulk('set_due', v); });
+    if (b === 'list') return listPop(anchor, -1, function(v){ bulk('move_list', v); });
+    if (b === 'prio') return prioPop(anchor, '', function(v){ bulk('set_priority', v); });
+    if (b === 'assign') return assignPop(anchor, -1, function(v){ bulk('assign', v); });
+  }
+
+  // ── one delegated click handler for the whole page ──────────────────────
+  async function onClick(e){
+    var a = e.target.closest('[data-act]');
+    var pop = $('tv2-pop');
+    if (pop && pop.style.display === 'block' && !e.target.closest('#tv2-pop') && (!popAnchor || !popAnchor.contains(e.target))) hidePop();
+    var root = $('tv2');
+    if (root && root.classList.contains('side-open') && !e.target.closest('#tv2-side') && !(a && a.getAttribute('data-act') === 'side-toggle')) root.classList.remove('side-open');
+    if (!a || !$('tasks-view').contains(a)) return;
+    var act = a.getAttribute('data-act'), id = +a.getAttribute('data-id') || 0;
+    if (act === 'open') {
+      if (e.target.closest('a')) return;
+      if (TV.selMode) { TV.sel[id] = !TV.sel[id]; renderBulk(); renderList(); return; }
+      return openDetail(id);
+    }
+    e.preventDefault();
+    if (act === 'msel') { TV.sel[id] = !TV.sel[id]; renderBulk(); renderList(); return; }
+    if (act === 'view') {
+      var v = a.getAttribute('data-v');
+      return setView(v, v === 'list' ? a.getAttribute('data-id') : v === 'tag' ? a.getAttribute('data-tag') : '');
+    }
+    if (act === 'toggle') { e.stopPropagation(); return toggleDone(id); }
+    if (act === 'myday') { e.stopPropagation(); return setMyDay(id, a.getAttribute('data-on') === '1'); }
+    if (act === 'collapse') { var k = TV.view + ':' + a.getAttribute('data-g'); TV.collapsed[k] = !TV.collapsed[k]; a.parentNode.classList.toggle('closed'); return; }
+    if (act === 'scope') {
+      TV.scope = a.getAttribute('data-v');
+      document.querySelectorAll('#tv2-scope button').forEach(function(b){ b.classList.toggle('on', b === a); });
+      await loadMeta(); return show();
+    }
+    if (act === 'refresh') { await loadMeta(); if (typeof updateTasksBadge === 'function') updateTasksBadge(); return show(); }
+    if (act === 'menu') return menuPop(a);
+    if (act === 'side-toggle') { $('tv2').classList.toggle('side-open'); return; }
+    if (act === 'list-new') return listModal(null);
+    if (act === 'tag-new') return tagModal(null);
+    if (act === 'bulk') return bulkAct(a.getAttribute('data-b'), a);
+    if (act === 'close-detail') return closeDetail();
+
+    var t = TV.detail; if (!t) return;
+    if (act === 'pick-due') return duePop(a, t.due_at, function(v){ patch({due_at: v}); });
+    if (act === 'pick-recur') return recurModal();
+    if (act === 'pick-list') return listPop(a, t.list_id, function(v){ patch({list_id: v}); });
+    if (act === 'pick-prio') return prioPop(a, t.priority, function(v){ patch({priority: v}); });
+    if (act === 'pick-tags') return tagsPop(a);
+    if (act === 'pick-assign') return assignPop(a, t.assigned_to, function(v){ patch({assigned_to: v}, v ? 'Assigned' : 'Unassigned'); });
+    if (act === 'pick-cand') return candPop(a);
+    if (act === 'unlink-cand') return patch({candidate_id: 0}, 'Candidate unlinked');
+    if (act === 'open-cand') { if (typeof openProfileById === 'function') openProfileById(t.candidate_id, t.mandate_id || null); return; }
+    if (act === 'd-myday') return setMyDay(t.id, !t.my_day);
+    if (act === 'd-pin') return patch({pinned: !t.pinned}, t.pinned ? 'Unpinned' : 'Pinned to top');
+    if (act === 'd-delete') {
+      if (!confirm('Delete this task? This cannot be undone.')) return;
+      var r = await api('DELETE', '/tasks/' + t.id);
+      if (!ok(r)) { fail(r); return; }
+      toast('OK', 'Task deleted'); closeDetail(); loadTasks(); refreshMetaSoon();
+      if (typeof updateTasksBadge === 'function') updateTasksBadge();
+      return;
+    }
+    if (act === 'sub-toggle') {
+      var sid = +a.getAttribute('data-sid'), s = (t.subtasks || []).filter(function(x){ return x.id === sid; })[0]; if (!s) return;
+      s.done = !s.done; renderDetail();
+      var r2 = await api('PATCH', '/subtasks/' + sid, {done: s.done});
+      if (!ok(r2)) { s.done = !s.done; renderDetail(); fail(r2); } else loadTasks();
+      return;
+    }
+    if (act === 'sub-del') {
+      var sid2 = +a.getAttribute('data-sid');
+      var r3 = await api('DELETE', '/subtasks/' + sid2);
+      if (!ok(r3)) { fail(r3); return; }
+      t.subtasks = (t.subtasks || []).filter(function(x){ return x.id !== sid2; }); renderDetail(); loadTasks();
+    }
+  }
+
+  // text fields in the detail panel save on blur / Enter
+  async function onKey(e){
+    var el = e.target;
+    if (e.key === 'Escape') { if ($('tv2-pop').style.display === 'block') hidePop(); else if ($('tv2-modal').style.display === 'flex') hideModal(); else if (TV.detail && $('tasks-view').style.display !== 'none') closeDetail(); return; }
+    if (!el || !$('tasks-view').contains(el)) return;
+    if (el.id === 'tv2-dtitle' && e.key === 'Enter') { e.preventDefault(); el.blur(); }
+    if (el.id === 'tv2-subadd' && e.key === 'Enter') {
+      e.preventDefault(); var v = el.value.trim(); if (!v || !TV.detail) return;
+      el.value = '';
+      var r = await api('POST', '/tasks/' + TV.detail.id + '/subtasks', {text: v});
+      if (!ok(r)) { el.value = v; fail(r); return; }
+      TV.detail.subtasks = (TV.detail.subtasks || []).concat([r.subtask]); renderDetail();
+      var ni = $('tv2-subadd'); if (ni) ni.focus();
+      loadTasks();
+    }
+    if (el.classList && el.classList.contains('tv2-subtxt') && e.key === 'Enter') { e.preventDefault(); el.blur(); }
+  }
+  async function onBlur(e){
+    var el = e.target, t = TV.detail;
+    if (!t || !el || !el.id && !(el.classList && el.classList.contains('tv2-subtxt'))) return;
+    if (el.id === 'tv2-dtitle') {
+      var v = el.value.replace(/\s+/g, ' ').trim();
+      if (!v) { el.value = t.title; toast('ERR', 'Title cannot be empty'); return; }
+      if (v !== t.title) await patch({title: v});
+    } else if (el.id === 'tv2-dnotes') {
+      if (el.value !== (t.notes || '')) { var r = await api('PATCH', '/tasks/' + t.id, {notes: el.value}); if (ok(r)) { t.notes = el.value; loadTasks(); } else fail(r); }
+    } else if (el.classList.contains('tv2-subtxt')) {
+      var sid = +el.getAttribute('data-sid'), s = (t.subtasks || []).filter(function(x){ return x.id === sid; })[0];
+      var nv = el.value.trim();
+      if (!s || nv === s.text) return;
+      if (!nv) { el.value = s.text; return; }
+      var r2 = await api('PATCH', '/subtasks/' + sid, {text: nv}); if (ok(r2)) s.text = nv; else { el.value = s.text; fail(r2); }
+    }
+  }
+
+  function bindOnce(){
+    if (TV.bound) return;
+    TV.bound = true;
+    document.addEventListener('click', onClick);
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('focusout', onBlur);
+    document.addEventListener('input', function(e){ if (e.target && e.target.id === 'tv2-dtitle') autoGrow(e.target); });
+    $('tv2-add').addEventListener('submit', function(e){ e.preventDefault(); quickAdd(); });
+    var qt = null;
+    $('tv2-q').addEventListener('input', function(e){ clearTimeout(qt); qt = setTimeout(function(){ TV.q = e.target.value.trim(); TV.tasks = []; loadTasks(); }, 260); });
+    window.addEventListener('resize', hidePop);
+    $('tv2-list').addEventListener('scroll', hidePop);
+    if (window.matchMedia) {
+      try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(){ if (TV.themePref === 'system') applyTheme('system'); }); } catch (e) {}
+    }
+  }
+
+})();
+</script>
 </body></html>
