@@ -681,23 +681,60 @@ def _update_row(conn, rid, sets):
     conn.execute(f'UPDATE reminders SET {assign} WHERE id=? AND owner_id=?', list(sets.values()) + [rid, _cid()])
 
 
-def _complete(conn, row, done):
-    """Mark done / undone. A recurring task rolls forward instead of closing."""
-    rid = row['id']
+def complete_reminder(conn, rid, owner_id, done=True):
+    """THE single place a task is marked done / undone. Session-free, so the
+    mobile app (token auth), the legacy Tasks list, the Kanban board and the
+    new Tasks page all behave the same. A recurring task rolls forward to its
+    next occurrence instead of closing. Caller commits. Returns a dict."""
+    row = conn.execute('SELECT * FROM reminders WHERE id=? AND owner_id=?', (rid, owner_id)).fetchone()
+    if not row:
+        return {'ok': False}
+    cols = _reminder_columns(conn)
+
+    def upd(sets):
+        sets = {k: v for k, v in sets.items() if k in cols}
+        sets['updated_at'] = ts()
+        conn.execute('UPDATE reminders SET ' + ', '.join(f'{k}=?' for k in sets) + ' WHERE id=? AND owner_id=?',
+                     list(sets.values()) + [rid, owner_id])
+
     if not done:
-        _update_row(conn, rid, {'done': 0, 'stage': 'todo', 'completed_at': ''})
-        return {'rolled': False}
+        upd({'done': 0, 'stage': 'todo', 'completed_at': ''})
+        return {'ok': True, 'rolled': False}
     rec = row['recurrence'] if 'recurrence' in row.keys() else ''
     if rec:
         nxt = next_occurrence(rec, row['due_at'] or '')
         if nxt:
-            _update_row(conn, rid, {'due_at': nxt, 'done': 0, 'stage': 'todo', 'completed_at': ts(),
-                                    'my_day_date': '', 'notified_at': '', 'early_warned': 0,
-                                    'snoozed_until': '', 'notify_count': 0})
+            upd({'due_at': nxt, 'done': 0, 'stage': 'todo', 'completed_at': ts(),
+                 'my_day_date': '', 'notified_at': '', 'early_warned': 0,
+                 'snoozed_until': '', 'notify_count': 0})
             conn.execute('UPDATE task_subtasks SET done=0, updated_at=? WHERE reminder_id=?', (ts(), rid))
-            return {'rolled': True, 'next_due': nxt}
-    _update_row(conn, rid, {'done': 1, 'stage': 'done', 'completed_at': ts()})
-    return {'rolled': False}
+            return {'ok': True, 'rolled': True, 'next_due': nxt}
+    upd({'done': 1, 'stage': 'done', 'completed_at': ts()})
+    return {'ok': True, 'rolled': False}
+
+
+def push_targets(row):
+    """Which user(s) a task's phone reminder goes to. Phones register under
+    the real user id, while reminders.owner_id holds the COMPANY id — so the
+    old loop only reached a phone when those two ids happened to match.
+    Assignee first, else the creator; legacy rows with neither keep the old
+    behaviour (owner id) so nothing that works today stops working."""
+    keys = row.keys()
+    a = int((row['assigned_to'] if 'assigned_to' in keys else 0) or 0)
+    c = int((row['created_by'] if 'created_by' in keys else 0) or 0)
+    if a:
+        return [a]
+    if c:
+        return [c]
+    o = int((row['owner_id'] if 'owner_id' in keys else 0) or 0)
+    return [o] if o else []
+
+
+def _complete(conn, row, done):
+    """Mark done / undone for the caller's company (see complete_reminder)."""
+    res = complete_reminder(conn, row['id'], _cid(), done)
+    res.pop('ok', None)
+    return res
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -796,6 +833,15 @@ def todo_tasks():
         extra += ' AND COALESCE(r.list_id,0)=0 '
     elif view == 'tag':
         extra += " AND r.tags IS NOT NULL AND r.tags NOT IN ('', '[]') "   # exact match below
+    elif view == 'range':                               # calendar: due dates in [from, to]
+        frm = (request.args.get('from') or '')[:10]
+        to = (request.args.get('to') or '')[:10]
+        if not (_DATE_RX.match(frm) and _DATE_RX.match(to)):
+            return _err('from and to (YYYY-MM-DD) required')
+        if (datetime.date.fromisoformat(to) - datetime.date.fromisoformat(frm)).days > 62:
+            return _err('range too long (max 62 days)')
+        extra += " AND r.due_at!='' AND substr(r.due_at,1,10) BETWEEN ? AND ? "
+        params = params + [frm, to]
     elif view == 'assigned':
         aid = _int_or_none(request.args.get('assigned_to')) or _uid()
         extra += ' AND COALESCE(r.assigned_to,0)=? '
@@ -826,8 +872,47 @@ def todo_tasks():
     out = {'ok': True, 'view': view, 'tasks': tasks}
     if view == 'my_day':
         out['suggestions'] = _my_day_suggestions(conn, scope, now)
+        if request.args.get('ats') != '0':
+            in_day = {t['candidate_id'] for t in tasks if t['candidate_id'] and not t['done']}
+            out['ats_suggestions'] = _ats_suggestions(in_day)
     conn.close()
     return jsonify(out)
+
+
+ATS_KIND_LABEL = {
+    'stale': 'Stale candidate', 'promise': 'Promised follow-up', 'interview': 'Interview',
+    'updated': 'Updated CV received', 'submission': 'New application',
+}
+
+
+def _ats_suggestions(skip_candidates):
+    """Today's / overdue auto follow-ups from the ATS engine (/api/tasks:
+    stale candidates, promised call-backs, interviews, updated CVs, new
+    applications) — the same list the "ATS follow-ups" view shows, already
+    scoped to the caller. Manual reminders are left out (they are tasks) and
+    candidates that already have an open task in My Day are skipped."""
+    try:
+        resp = _core().get_tasks()
+        data = resp.get_json() if hasattr(resp, 'get_json') else {}
+    except Exception as e:                              # never break My Day
+        print(f'[todo] ats suggestions skipped: {e}')
+        return []
+    out = []
+    for t in (data or {}).get('tasks', []):
+        if t.get('type') == 'reminder' or t.get('section') not in ('overdue', 'today'):
+            continue
+        if t.get('candidate_id') and t['candidate_id'] in skip_candidates:
+            continue
+        out.append({
+            'key': f"{t.get('type')}-{t.get('ref_id')}", 'type': t.get('type'), 'ref_id': t.get('ref_id'),
+            'kind': ATS_KIND_LABEL.get(t.get('type'), t.get('type')), 'title': t.get('title') or '',
+            'subtitle': t.get('subtitle') or '', 'candidate_id': t.get('candidate_id') or 0,
+            'mandate_id': t.get('mandate_id'), 'phone': t.get('phone') or '', 'section': t.get('section'),
+            'due_at': t.get('due_at') or '',
+        })
+        if len(out) >= 25:
+            break
+    return out
 
 
 def _my_day_suggestions(conn, scope, now):
