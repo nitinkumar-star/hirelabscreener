@@ -20567,6 +20567,45 @@ async function _bdhDone(id, box){
 .tv2-colors button.on{border-color:var(--tv-text)}
 .tv2-only-m{display:none}
 .tv2-back{display:none}
+/* Wave 3: calendar + ATS suggestions */
+.tv2-ats{background:transparent;border-style:dashed;align-items:center}
+.tv2-calbar{display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.tv2-caltitle{font-size:16px;font-weight:700;margin-left:6px}
+.tv2-cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:0.5px solid var(--tv-line);border-radius:12px;overflow:hidden;background:var(--tv-line)}
+.tv2-cal>div{background:var(--tv-card)}
+.tv2-cwd{padding:7px 8px;font-size:11px;font-weight:700;color:var(--tv-muted);text-transform:uppercase;letter-spacing:.4px;background:var(--tv-panel) !important;border-bottom:0.5px solid var(--tv-line)}
+.tv2-ccell{min-height:104px;padding:5px 5px 6px;border-right:0.5px solid var(--tv-line2);border-bottom:0.5px solid var(--tv-line2);cursor:pointer;min-width:0;transition:background .1s}
+.tv2-cal.week .tv2-ccell{min-height:380px}
+.tv2-ccell:hover{background:var(--tv-hover) !important}
+.tv2-ccell.out{opacity:.45}
+.tv2-ccell.sel{box-shadow:inset 0 0 0 2px var(--tv-accent)}
+.tv2-ccell.drop{background:var(--tv-accent-soft) !important}
+.tv2-cnum{font-size:12px;font-weight:600;padding:2px 4px 4px;display:flex;align-items:center;gap:6px;color:var(--tv-text)}
+.tv2-ccell.today .tv2-cnum{color:var(--tv-accent)}
+.tv2-ccell.today .tv2-cnum::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--tv-accent)}
+.tv2-cdots{display:none;margin-left:auto;font-size:10px;background:var(--tv-accent-soft);color:var(--tv-accent-d);border-radius:8px;padding:0 6px}
+.tv2-cchips{display:flex;flex-direction:column;gap:3px}
+.tv2-cchip{font-size:11.5px;line-height:1.3;padding:3px 6px;border-radius:6px;background:var(--tv-chip);border-left:3px solid var(--tv-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;color:var(--tv-text)}
+.tv2-cchip[draggable=true]{cursor:grab}
+.tv2-cchip b{font-weight:600;color:var(--tv-muted)}
+.tv2-cchip.p-high{border-left-color:var(--tv-red)}
+.tv2-cchip.p-medium{border-left-color:var(--tv-amber)}
+.tv2-cchip.p-low{border-left-color:var(--tv-blue)}
+.tv2-cchip.done{text-decoration:line-through;opacity:.55}
+.tv2-cchip.late{color:var(--tv-red)}
+.tv2-cchip.ev{border-left-color:#7C5CC4;background:#EDE7FB;color:#3E2A87}
+.tv2-cchip.ev-appointment{border-left-color:#185FA5;background:#E6F1FB;color:#124476}
+#tasks-view[data-theme="dark"] .tv2-cchip.ev{background:#2C2440;color:#D6CCF5}
+#tasks-view[data-theme="dark"] .tv2-cchip.ev-appointment{background:#1C2B3D;color:#BCD6F5}
+.tv2-cmore{font-size:11px;color:var(--tv-muted);padding:1px 6px}
+@media (max-width:640px){
+  .tv2-ccell{min-height:52px;padding:3px}
+  .tv2-cal.week .tv2-ccell{min-height:70px}
+  .tv2-cchips{display:none}
+  .tv2-cdots{display:inline-block}
+  .tv2-cnum{flex-direction:column;align-items:flex-start;gap:2px;font-size:11.5px}
+  .tv2-cdots{margin-left:0}
+}
 
 /* responsive */
 @media (max-width:1180px){ .tv2-detail{width:340px} .tv2-search input{width:130px} }
@@ -20611,6 +20650,7 @@ async function _bdhDone(id, box){
   var VIEWS = {
     my_day:    {t: 'My Day',          ic: '☀️'},
     next7:     {t: 'Next 7 days',     ic: '📅'},
+    calendar:  {t: 'Calendar',        ic: '🗓️'},
     all:       {t: 'All tasks',       ic: '☰'},
     followups: {t: 'ATS follow-ups',  ic: '🔔'},
     board:     {t: 'Board',           ic: '▦'},
@@ -20722,6 +20762,7 @@ async function _bdhDone(id, box){
     return '?' + p.join('&');
   }
   async function loadTasks(){
+    if (TV.view === 'calendar') return loadCal();
     var seq = ++TV.loadSeq;
     var list = $('tv2-list');
     if (list && !TV.tasks.length) list.innerHTML = '<div class="loading"><div class="spinner"></div>Loading tasks...</div>';
@@ -20730,6 +20771,7 @@ async function _bdhDone(id, box){
     if (!ok(r)) { if (list) list.innerHTML = '<div class="tv2-empty">Could not load tasks.<br>' + esc((r && r.error) || '') + '</div>'; return; }
     TV.tasks = r.tasks || [];
     TV.sugg = r.suggestions || [];
+    TV.ats = r.ats_suggestions || [];
     renderList();
   }
 
@@ -20757,7 +20799,8 @@ async function _bdhDone(id, box){
     $('tasks-body').style.display = legacy ? '' : 'none';
     $('tv2-add').style.display = (TV.view === 'completed' || TV.view === 'board') ? 'none' : '';
     $('task-filter').style.display = TV.view === 'followups' ? '' : 'none';
-    $('tv2-q').parentNode.style.display = legacy ? 'none' : '';
+    $('tv2-q').parentNode.style.display = (legacy || TV.view === 'calendar') ? 'none' : '';
+    var ai = $('tv2-add-in'); if (ai && TV.view !== 'calendar') ai.placeholder = 'Add task (use #tag, !high)';
     var sc = $('tv2-scope'); if (sc) sc.style.display = (TV.meta && TV.meta.is_admin && !legacy) ? '' : 'none';
     renderBulk();
     setTitle();
@@ -20795,6 +20838,7 @@ async function _bdhDone(id, box){
     var html = '';
     html += navBtn('my_day', VIEWS.my_day.t, VIEWS.my_day.ic, c.my_day, '', v === 'my_day');
     html += navBtn('next7', VIEWS.next7.t, VIEWS.next7.ic, c.next7, '', v === 'next7');
+    html += navBtn('calendar', VIEWS.calendar.t, VIEWS.calendar.ic, '', '', v === 'calendar');
     html += navBtn('all', VIEWS.all.t, VIEWS.all.ic, c.all, '', v === 'all', false);
     html += navBtn('followups', VIEWS.followups.t, VIEWS.followups.ic, fcount, '', v === 'followups', true);
     html += navBtn('board', VIEWS.board.t, VIEWS.board.ic, '', '', v === 'board');
@@ -20870,6 +20914,7 @@ async function _bdhDone(id, box){
     return (hr < 12 ? 'Good Morning' : hr < 17 ? 'Good Afternoon' : 'Good Evening') + (nm ? ', <em>' + h(nm) + '</em>' : '') + '.';
   }
   function renderList(){
+    if (TV.view === 'calendar') return renderCal();
     var el = $('tv2-list'); if (!el) return;
     var tasks = TV.tasks, html = '';
     var open = tasks.filter(function(t){ return !t.done; });
@@ -20888,6 +20933,7 @@ async function _bdhDone(id, box){
         html += '<div class="tv2-sugg"><div class="tv2-gh" style="cursor:default">✨ Suggestions<span class="n">' + TV.sugg.length + '</span></div><div class="tv2-rows">'
           + TV.sugg.map(function(t){ return rowHtml(t, {sugg: true, why: t.reason}); }).join('') + '</div></div>';
       }
+      html += atsHtml();
     } else if (!tasks.length) {
       html = emptyHtml();
     } else if (TV.view === 'completed') {
@@ -20924,6 +20970,161 @@ async function _bdhDone(id, box){
     if (!ok(r)) { fail(r, 'Could not save order'); loadTasks(); }
   }
 
+  // ── Wave 3: ATS suggestions in My Day ───────────────────────────────────
+  var ATS_VERB = {stale: 'Follow up with ', promise: 'Call back ', interview: 'Interview: ',
+                  updated: 'Review updated CV: ', submission: 'Review application: '};
+  function atsHtml(){
+    var list = TV.ats || [];
+    if (!list.length) return '';
+    return '<div class="tv2-sugg"><div class="tv2-gh" style="cursor:default">🔔 From your ATS<span class="n">' + list.length + '</span>'
+      + '<span class="n" style="margin-left:auto;font-weight:400">stale candidates, call-backs, interviews, new CVs</span></div><div class="tv2-rows">'
+      + list.map(function(s, i){
+        return '<div class="tv2-row tv2-ats">'
+          + '<span class="tv2-av" style="width:30px;height:30px;font-size:11px">' + h(initials(s.title)) + '</span>'
+          + '<div class="tv2-rb" data-act="ats-open" data-i="' + i + '" style="cursor:pointer"><div class="tt">' + h(s.title) + '</div>'
+          + '<div class="tv2-meta"><span class="tv2-why' + (s.section === 'overdue' ? ' overdue' : '') + '">' + h(s.kind) + '</span><span>' + h(s.subtitle) + '</span></div></div>'
+          + '<div style="display:flex;gap:4px;align-items:center;flex-shrink:0">'
+          + (s.phone ? '<a class="tv2-ico" href="tel:' + h(s.phone) + '" title="Call">📞</a>' : '')
+          + '<button class="tv2-btn o" style="padding:4px 10px;font-size:11.5px" data-act="ats-add" data-i="' + i + '">+ My Day</button>'
+          + '<button class="tv2-ico" data-act="ats-done" data-i="' + i + '" title="Mark handled">✓</button>'
+          + '</div></div>';
+      }).join('') + '</div></div>';
+  }
+  async function atsAdd(i){
+    var s = (TV.ats || [])[i]; if (!s) return;
+    var body = {title: (ATS_VERB[s.type] || '') + s.title, notes: s.subtitle, due_at: todayIso(), my_day: true};
+    if (s.candidate_id) body.candidate_id = s.candidate_id;
+    var r = await api('POST', '/tasks', body);
+    if (!ok(r)) { fail(r, 'Could not add'); return; }
+    toast('☀', 'Added to My Day');
+    loadTasks(); refreshMetaSoon();
+  }
+  async function atsDone(i){
+    var s = (TV.ats || [])[i]; if (!s) return;
+    TV.ats.splice(i, 1); renderList();
+    var r = await req('POST', '/tasks/done', {type: s.type, ref_id: s.ref_id});
+    if (!ok(r)) { fail(r); loadTasks(); return; }
+    toast('OK', 'Marked handled');
+    if (typeof updateTasksBadge === 'function') updateTasksBadge();
+  }
+  function atsOpen(i){
+    var s = (TV.ats || [])[i]; if (!s) return;
+    if (s.candidate_id && typeof openProfileById === 'function') return openProfileById(s.candidate_id, s.mandate_id || null);
+    if (s.type === 'submission' && typeof openResponses === 'function') return openResponses();
+  }
+
+  // ── Wave 3: Calendar (month / week, drag a task to another day) ─────────
+  var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  function calInit(){ if (!TV.cal) TV.cal = {mode: 'month', anchor: todayIso(), sel: todayIso(), events: []}; }
+  function calRange(){
+    calInit();
+    var a = dOf(TV.cal.anchor);
+    if (TV.cal.mode === 'week') { var ws = addDays(TV.cal.anchor, -((a.getDay() + 6) % 7)); return [ws, addDays(ws, 6)]; }
+    var first = isoOf(new Date(a.getFullYear(), a.getMonth(), 1));
+    var ms = addDays(first, -((dOf(first).getDay() + 6) % 7));
+    return [ms, addDays(ms, 41)];
+  }
+  async function loadCal(){
+    calInit();
+    var seq = ++TV.loadSeq, rg = calRange();
+    var q = '?view=range&include_done=1&from=' + rg[0] + '&to=' + rg[1] + (TV.scope === 'team' ? '&scope=team' : '');
+    var res = await Promise.all([api('GET', '/tasks' + q), req('GET', '/scheduler/calendar?from=' + rg[0] + '&to=' + rg[1])]);
+    if (seq !== TV.loadSeq || TV.view !== 'calendar') return;
+    if (!ok(res[0])) { $('tv2-list').innerHTML = '<div class="tv2-empty">Could not load calendar.<br>' + esc((res[0] && res[0].error) || '') + '</div>'; return; }
+    TV.tasks = res[0].tasks || [];
+    // Reminders already come in as tasks; take only meetings + interviews from the scheduler.
+    TV.cal.events = ((res[1] && res[1].ok && res[1].events) || []).filter(function(e){ return e.kind !== 'reminder'; });
+    renderCal();
+  }
+  function dayTasks(iso){
+    return TV.tasks.filter(function(t){ return t.due_at && t.due_at.slice(0, 10) === iso; })
+      .sort(function(a, b){ return (a.done - b.done) || String(a.due_at).localeCompare(String(b.due_at)); });
+  }
+  function dayEvents(iso){ return (TV.cal.events || []).map(function(e, i){ e._i = i; return e; }).filter(function(e){ return String(e.when || '').slice(0, 10) === iso; }); }
+  function taskChip(t){
+    var tm = timeLbl(t.due_at);
+    return '<div class="tv2-cchip p-' + h(t.priority) + (t.done ? ' done' : '') + (t.late ? ' late' : '') + '" draggable="true" data-drag="' + t.id + '" data-act="open" data-id="' + t.id + '" title="' + h(t.title) + '">'
+      + (tm ? '<b>' + h(tm.replace(':00', '')) + '</b> ' : '') + h(t.title) + '</div>';
+  }
+  function eventChip(e){
+    var tm = timeLbl(String(e.when || '').slice(0, 16));
+    var ic = e.kind === 'interview' ? '🎤 ' : '📅 ';
+    return '<div class="tv2-cchip ev ev-' + h(e.kind) + '" data-act="cal-ev" data-i="' + e._i + '" title="' + h(e.title + ' — ' + (e.subtitle || '')) + '">'
+      + (tm ? '<b>' + h(tm.replace(':00', '')) + '</b> ' : '') + ic + h(e.title) + '</div>';
+  }
+  function renderCal(){
+    var el = $('tv2-list'); if (!el) return;
+    calInit();
+    var c = TV.cal, rg = calRange(), a = dOf(c.anchor), month = a.getMonth();
+    var title = c.mode === 'week'
+      ? (dOf(rg[0]).getDate() + ' ' + MON[dOf(rg[0]).getMonth()] + ' – ' + dOf(rg[1]).getDate() + ' ' + MON[dOf(rg[1]).getMonth()] + ' ' + dOf(rg[1]).getFullYear())
+      : (MONTHS[month] + ' ' + a.getFullYear());
+    $('tv2-title-count').textContent = '';
+    var html = '<div class="tv2-calbar">'
+      + '<button class="tv2-ico" data-act="cal-nav" data-d="-1" title="Previous">‹</button>'
+      + '<button class="tv2-btn o" data-act="cal-nav" data-d="0" style="padding:5px 12px">Today</button>'
+      + '<button class="tv2-ico" data-act="cal-nav" data-d="1" title="Next">›</button>'
+      + '<div class="tv2-caltitle">' + h(title) + '</div>'
+      + '<div class="tv2-seg" style="margin-left:auto"><button data-act="cal-mode" data-v="month" class="' + (c.mode === 'month' ? 'on' : '') + '">Month</button>'
+      + '<button data-act="cal-mode" data-v="week" class="' + (c.mode === 'week' ? 'on' : '') + '">Week</button></div></div>';
+    html += '<div class="tv2-cal ' + c.mode + '">' + WD.map(function(w){ return '<div class="tv2-cwd">' + w + '</div>'; }).join('');
+    var days = c.mode === 'week' ? 7 : 42, maxChips = c.mode === 'week' ? 99 : 3;
+    for (var i = 0; i < days; i++) {
+      var iso = addDays(rg[0], i), d = dOf(iso);
+      var items = dayEvents(iso).map(eventChip).concat(dayTasks(iso).map(taskChip));
+      var more = items.length - maxChips;
+      html += '<div class="tv2-ccell' + (c.mode === 'month' && d.getMonth() !== month ? ' out' : '') + (iso === todayIso() ? ' today' : '') + (iso === c.sel ? ' sel' : '')
+        + '" data-act="cal-day" data-day="' + iso + '">'
+        + '<div class="tv2-cnum">' + (c.mode === 'week' ? WD[(d.getDay() + 6) % 7] + ' ' : '') + d.getDate() + (items.length ? '<span class="tv2-cdots">' + items.length + '</span>' : '') + '</div>'
+        + '<div class="tv2-cchips">' + items.slice(0, more > 0 ? maxChips : items.length).join('') + (more > 0 ? '<div class="tv2-cmore">+' + more + ' more</div>' : '') + '</div></div>';
+    }
+    html += '</div>';
+    // agenda of the selected day (the main view on phones)
+    var st = dayTasks(c.sel), se = dayEvents(c.sel);
+    html += '<div class="tv2-grp" style="margin-top:16px"><div class="tv2-gh" style="cursor:default">' + h(dayLbl(c.sel)) + ' · ' + dOf(c.sel).getDate() + ' ' + MON[dOf(c.sel).getMonth()]
+      + '<span class="n">' + (st.length + se.length) + '</span></div><div class="tv2-rows">';
+    se.forEach(function(e){
+      html += '<div class="tv2-row" data-act="cal-ev" data-i="' + e._i + '"><span class="tv2-av" style="background:' + (e.kind === 'interview' ? '#EDE7FB;color:#5B3FB8' : '#E6F1FB;color:#185FA5') + '">' + (e.kind === 'interview' ? '🎤' : '📅') + '</span>'
+        + '<div class="tv2-rb"><div class="tt">' + h(e.title) + '</div><div class="tv2-meta"><span>' + h(timeLbl(String(e.when).slice(0, 16)) || 'All day') + '</span><span>' + h(e.subtitle || '') + '</span></div></div></div>';
+    });
+    html += st.map(function(t){ return rowHtml(t); }).join('');
+    if (!st.length && !se.length) html += '<div style="padding:10px 6px;color:var(--tv-muted);font-size:12.5px">Nothing on this day. Type below to add a task for it.</div>';
+    html += '</div></div>';
+    el.innerHTML = html;
+    var inp = $('tv2-add-in'); if (inp) inp.placeholder = 'Add task for ' + dayLbl(c.sel) + ' (use #tag, !high)';
+  }
+  async function calMove(id, iso){
+    var t = null; TV.tasks.forEach(function(x){ if (x.id === id) t = x; });
+    if (!t || !t.due_at || t.due_at.slice(0, 10) === iso) return;
+    var old = t.due_at, nd = iso + (t.due_at.length > 10 ? t.due_at.slice(10) : '');
+    t.due_at = nd; renderCal();
+    var r = await api('PATCH', '/tasks/' + id, {due_at: nd});
+    if (!ok(r)) { t.due_at = old; renderCal(); fail(r, 'Could not move task'); return; }
+    toast('📅', 'Moved to ' + esc(dueLbl(nd)));
+    if (TV.detail && TV.detail.id === id) openDetail(id, true);
+    refreshMetaSoon();
+    if (typeof updateTasksBadge === 'function') updateTasksBadge();
+  }
+  function calDnD(){
+    var list = $('tv2-list'), dragId = 0;
+    list.addEventListener('dragstart', function(e){
+      var c = e.target.closest && e.target.closest('[data-drag]'); if (!c || TV.view !== 'calendar') return;
+      dragId = +c.getAttribute('data-drag');
+      try { e.dataTransfer.setData('text/plain', String(dragId)); e.dataTransfer.effectAllowed = 'move'; } catch (x) {}
+    });
+    list.addEventListener('dragover', function(e){
+      var cell = e.target.closest && e.target.closest('.tv2-ccell'); if (!cell || !dragId) return;
+      e.preventDefault(); cell.classList.add('drop');
+    });
+    list.addEventListener('dragleave', function(e){ var cell = e.target.closest && e.target.closest('.tv2-ccell'); if (cell) cell.classList.remove('drop'); });
+    list.addEventListener('drop', function(e){
+      var cell = e.target.closest && e.target.closest('.tv2-ccell'); if (!cell || !dragId) return;
+      e.preventDefault(); cell.classList.remove('drop');
+      var id = dragId; dragId = 0; calMove(id, cell.getAttribute('data-day'));
+    });
+    list.addEventListener('dragend', function(){ dragId = 0; });
+  }
+
   // ── quick add ───────────────────────────────────────────────────────────
   function parseQuick(txt){
     var tags = [], prio = null;
@@ -20947,6 +21148,7 @@ async function _bdhDone(id, box){
     else if (v === 'inbox') body.list_id = 0;
     else if (v === 'tag') body.tags = (body.tags || []).concat([TV.tag]);
     if (v === 'next7' || v === 'all' || v === 'assigned' || v === 'followups' || v === 'my_day') body.due_at = todayIso();
+    if (v === 'calendar') { calInit(); body.due_at = TV.cal.sel; }
     inp.value = ''; inp.disabled = true;
     var r = await api('POST', '/tasks', body);
     inp.disabled = false; inp.focus();
@@ -21369,6 +21571,24 @@ async function _bdhDone(id, box){
     if (act === 'tag-new') return tagModal(null);
     if (act === 'bulk') return bulkAct(a.getAttribute('data-b'), a);
     if (act === 'close-detail') return closeDetail();
+    if (act === 'ats-add') return atsAdd(+a.getAttribute('data-i'));
+    if (act === 'ats-done') return atsDone(+a.getAttribute('data-i'));
+    if (act === 'ats-open') return atsOpen(+a.getAttribute('data-i'));
+    if (act === 'cal-nav') {
+      calInit(); var dd = +a.getAttribute('data-d');
+      if (!dd) { TV.cal.anchor = todayIso(); TV.cal.sel = todayIso(); }
+      else if (TV.cal.mode === 'week') TV.cal.anchor = addDays(TV.cal.anchor, 7 * dd);
+      else { var am = dOf(TV.cal.anchor); TV.cal.anchor = isoOf(new Date(am.getFullYear(), am.getMonth() + dd, 1)); }
+      return loadCal();
+    }
+    if (act === 'cal-mode') { calInit(); TV.cal.mode = a.getAttribute('data-v'); TV.cal.anchor = TV.cal.sel; return loadCal(); }
+    if (act === 'cal-day') { calInit(); TV.cal.sel = a.getAttribute('data-day'); return renderCal(); }
+    if (act === 'cal-ev') {
+      var ev = (TV.cal && TV.cal.events || [])[+a.getAttribute('data-i')];
+      if (ev && ev.candidate_id && typeof openProfileById === 'function') return openProfileById(ev.candidate_id, null);
+      if (ev) toast('\uD83D\uDCC5', esc(ev.title + ' \u2014 ' + (ev.subtitle || '')));
+      return;
+    }
 
     var t = TV.detail; if (!t) return;
     if (act === 'pick-due') return duePop(a, t.due_at, function(v){ patch({due_at: v}); });
@@ -21448,6 +21668,7 @@ async function _bdhDone(id, box){
     document.addEventListener('focusout', onBlur);
     document.addEventListener('input', function(e){ if (e.target && e.target.id === 'tv2-dtitle') autoGrow(e.target); });
     $('tv2-add').addEventListener('submit', function(e){ e.preventDefault(); quickAdd(); });
+    calDnD();
     var qt = null;
     $('tv2-q').addEventListener('input', function(e){ clearTimeout(qt); qt = setTimeout(function(){ TV.q = e.target.value.trim(); TV.tasks = []; loadTasks(); }, 260); });
     window.addEventListener('resize', hidePop);

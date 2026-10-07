@@ -1058,6 +1058,17 @@ def _reminder_candidate_details(conn, r):
     }
 
 
+def _push_targets(r):
+    """User ids whose phones get this reminder (assignee, else creator; legacy
+    rows fall back to the old owner id). See modules/todo.push_targets."""
+    try:
+        from modules.todo import push_targets
+        return push_targets(r) or []
+    except Exception:
+        _o = r['owner_id'] if ('owner_id' in r.keys()) else 0
+        return [_o] if _o else []
+
+
 def _reminder_scheduler_loop():
     """Background loop: every 60s, check for due reminders and send push
     notifications. Repeats every 5 min until the reminder is done or snoozed.
@@ -1119,7 +1130,8 @@ def _reminder_scheduler_loop():
                         payload = _reminder_candidate_details(conn, r)
                         payload['kind'] = 'early'
                         payload['title'] = 'Upcoming: ' + payload['name']
-                        _send_fcm_to_user(owner, payload)
+                        for _tgt in _push_targets(r):
+                            _send_fcm_to_user(_tgt, payload)
                         conn.execute('UPDATE reminders SET early_warned=1 WHERE id=?', (r['id'],))
                         conn.commit()
                         continue
@@ -1145,7 +1157,8 @@ def _reminder_scheduler_loop():
                             payload = _reminder_candidate_details(conn, r)
                             payload['kind'] = 'due'
                             payload['title'] = 'Reminder: ' + payload['name']
-                            _send_fcm_to_user(owner, payload)
+                            for _tgt in _push_targets(r):
+                                _send_fcm_to_user(_tgt, payload)
                             conn.execute('UPDATE reminders SET notified_at=?, notify_count=? WHERE id=?',
                                          (now_iso, ncount + 1, r['id']))
                             conn.commit()
@@ -4791,8 +4804,13 @@ def set_reminder_stage(rid):
     if not r or (r['owner_id'] or 0) != effective_user_id():
         conn.close()
         return jsonify({'error': 'not found'}), 404
-    done_flag = 1 if stage == 'done' else 0
-    conn.execute('UPDATE reminders SET stage=?, done=? WHERE id=?', (stage, done_flag, rid))
+    if stage == 'done':
+        from modules.todo import complete_reminder
+        res = complete_reminder(conn, rid, effective_user_id(), True)        # rolls recurring tasks
+        res.pop('ok', None)
+        conn.commit(); conn.close()
+        return jsonify(dict({'ok': True}, **res))
+    conn.execute("UPDATE reminders SET stage=?, done=0, completed_at='' WHERE id=?", (stage, rid))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
@@ -4866,9 +4884,16 @@ def mark_reminder_done(rid):
     if not _reminder_action_ok(rid):
         return jsonify({'error': 'unauthorized'}), 401
     conn = get_db()
-    conn.execute('UPDATE reminders SET done=1 WHERE id=?', (rid,))
+    # Tasks v2: one completion path everywhere, so a recurring task rolls to
+    # its next date instead of closing when "Done" is tapped on the phone.
+    _own = conn.execute('SELECT owner_id FROM reminders WHERE id=?', (rid,)).fetchone()
+    res = {}
+    if _own:
+        from modules.todo import complete_reminder
+        res = complete_reminder(conn, rid, _own['owner_id'], True)
+        res.pop('ok', None)
     conn.commit(); conn.close()
-    return jsonify({'ok': True})
+    return jsonify(dict({'ok': True}, **res))
 
 
 @app.route('/api/reminders/<int:rid>/snooze', methods=['POST', 'GET'])
@@ -5458,14 +5483,19 @@ def get_tasks():
         "ORDER BY r.due_at ASC", [uid] + _rp
     ).fetchall()
     for r in rem_rows:
-        try:
-            due = datetime.datetime.fromisoformat(r['due_at'])
-            # All-day task ('YYYY-MM-DD', Tasks v2): due at the END of that day,
-            # so it reads "Today" on its date instead of "Overdue" from midnight.
-            if len((r['due_at'] or '').strip()) == 10:
-                due = due.replace(hour=23, minute=59, second=59)
-        except Exception:
-            due = now
+        if not (r['due_at'] or '').strip():
+            # Someday task (no date): list it under Upcoming so it no longer
+            # inflates the Today/overdue badge and the Home "Due today" KPI.
+            due = now + datetime.timedelta(days=3650)
+        else:
+            try:
+                due = datetime.datetime.fromisoformat(r['due_at'])
+                # All-day task ('YYYY-MM-DD', Tasks v2): due at the END of that day,
+                # so it reads "Today" on its date instead of "Overdue" from midnight.
+                if len((r['due_at'] or '').strip()) == 10:
+                    due = due.replace(hour=23, minute=59, second=59)
+            except Exception:
+                due = now
         _standalone = not r['candidate_id']
         if _standalone:
             _title = r['note'] or 'Task'
@@ -5700,7 +5730,8 @@ def task_done():
         return jsonify({'error': 'type and ref_id required'}), 400
     conn = get_db()
     if ttype == 'reminder':
-        conn.execute('UPDATE reminders SET done=1 WHERE id=? AND owner_id=?', (ref_id, effective_company_id()))
+        from modules.todo import complete_reminder
+        complete_reminder(conn, int(ref_id), effective_company_id(), True)   # rolls recurring tasks
     elif ttype in ('stale', 'promise'):
         # Push the suppression window out by the relevant threshold so it
         # naturally resurfaces later if still untouched, rather than being

@@ -367,3 +367,106 @@ def test_push_scheduler_ignores_unscheduled_tasks(srv):
                 except Exception:
                     pass
             assert not parsed                                          # loop skips these rows
+
+
+# ── Wave 3: reminder engine + My Day ATS suggestions + calendar range ────
+def _recurring(a, title, due):
+    return a.post('/api/todo/tasks', json={'title': title, 'due_at': due,
+                                           'recurrence': {'freq': 'daily', 'interval': 1}}).get_json()['task']
+
+
+def test_every_done_path_rolls_recurring(srv):
+    a = cl(srv, ADMIN)
+    t0 = today(srv)
+    nxt = (t0 + datetime.timedelta(days=1)).isoformat() + 'T09:00:00'
+    # 1) phone notification "Done" — token only, no login session
+    t = _recurring(a, 'Daily standup notes', t0.isoformat() + 'T09:00')
+    anon = srv.app.test_client()
+    tok = srv._reminder_token(t['id'])
+    assert anon.post(f"/api/reminders/{t['id']}/done?token=bad").status_code == 401
+    r = anon.post(f"/api/reminders/{t['id']}/done?token={tok}").get_json()
+    assert r['ok'] and r['rolled'] and r['next_due'] == nxt
+    g = a.get(f"/api/todo/tasks/{t['id']}").get_json()['task']
+    assert g['done'] is False and g['due_at'] == nxt
+    # 2) old Tasks list ✓
+    t2 = _recurring(a, 'Daily Naukri refresh', t0.isoformat() + 'T09:00')
+    assert a.post('/api/tasks/done', json={'type': 'reminder', 'ref_id': t2['id']}).status_code == 200
+    assert a.get(f"/api/todo/tasks/{t2['id']}").get_json()['task']['due_at'] == nxt
+    # 3) Kanban: drag to Done
+    t3 = _recurring(a, 'Daily pipeline check', t0.isoformat() + 'T09:00')
+    r3 = a.post(f"/api/reminders/{t3['id']}/stage", json={'stage': 'done'}).get_json()
+    assert r3['rolled'] is True
+    # a plain task still closes, and dragging it back re-opens it
+    p = a.post('/api/todo/tasks', json={'title': 'One-off'}).get_json()['task']
+    a.post(f"/api/reminders/{p['id']}/stage", json={'stage': 'done'})
+    assert a.get(f"/api/todo/tasks/{p['id']}").get_json()['task']['done'] is True
+    a.post(f"/api/reminders/{p['id']}/stage", json={'stage': 'doing'})
+    g = a.get(f"/api/todo/tasks/{p['id']}").get_json()['task']
+    assert g['done'] is False and g['stage'] == 'doing' and g['completed_at'] == ''
+
+
+def test_push_goes_to_the_right_phone(srv):
+    from modules import todo
+    row = lambda **k: _Row(dict({'owner_id': CO, 'created_by': 0, 'assigned_to': 0}, **k))
+    assert todo.push_targets(row(created_by=RIYA)) == [RIYA]
+    assert todo.push_targets(row(created_by=ADMIN, assigned_to=RAJ)) == [RAJ]
+    assert todo.push_targets(row()) == [CO]                  # legacy row: unchanged behaviour
+    # and the scheduler really sends there
+    sent = []
+    orig = srv._send_fcm_to_user
+    srv._send_fcm_to_user = lambda uid, payload, notification=None: sent.append((uid, payload.get('kind')))
+    try:
+        r = row(id=1, created_by=RIYA, due_at='2026-01-01T00:00:00')
+        for tgt in srv._push_targets(r):
+            srv._send_fcm_to_user(tgt, {'kind': 'due'})
+    finally:
+        srv._send_fcm_to_user = orig
+    assert sent == [(RIYA, 'due')]
+
+
+class _Row(dict):
+    def keys(self):
+        return list(super().keys())
+
+
+def test_someday_task_not_counted_as_due_today(srv):
+    a = cl(srv, ADMIN)
+    before = a.get('/api/tasks').get_json()['counts']
+    s = a.post('/api/todo/tasks', json={'title': 'Someday: write SOP'}).get_json()['task']
+    after = a.get('/api/tasks').get_json()
+    row = [t for t in after['tasks'] if t['type'] == 'reminder' and t['ref_id'] == s['id']][0]
+    assert row['section'] == 'upcoming'
+    assert after['counts']['today'] == before['today'] and after['counts']['overdue'] == before['overdue']
+
+
+def test_calendar_range_view(srv):
+    a = cl(srv, ADMIN)
+    t0 = today(srv)
+    inr = a.post('/api/todo/tasks', json={'title': 'In range', 'due_at': (t0 + datetime.timedelta(days=3)).isoformat()}).get_json()['task']
+    out = a.post('/api/todo/tasks', json={'title': 'Out of range', 'due_at': (t0 + datetime.timedelta(days=40)).isoformat()}).get_json()['task']
+    frm, to = t0.isoformat(), (t0 + datetime.timedelta(days=6)).isoformat()
+    got = ids(a.get(f'/api/todo/tasks?view=range&from={frm}&to={to}&include_done=1'))
+    assert inr['id'] in got and out['id'] not in got
+    assert a.get('/api/todo/tasks?view=range&from=x&to=y').status_code == 400
+    assert a.get(f'/api/todo/tasks?view=range&from=2026-01-01&to=2026-12-31').status_code == 400
+
+
+def test_my_day_ats_suggestions(srv):
+    conn = srv.get_db()
+    old = (srv._ist_now() - datetime.timedelta(days=30)).isoformat(timespec='seconds')
+    conn.execute("UPDATE candidates SET updated_at=?, created_at=? WHERE id IN (?,?)", (old, old, C_ADMIN, C_RIYA))
+    conn.commit(); conn.close()
+    a, riya = cl(srv, ADMIN), cl(srv, RIYA)
+    md = a.get('/api/todo/tasks?view=my_day').get_json()
+    stale = [s for s in md['ats_suggestions'] if s['type'] == 'stale']
+    assert {s['candidate_id'] for s in stale} >= {C_ADMIN}
+    s0 = [s for s in stale if s['candidate_id'] == C_ADMIN][0]
+    assert s0['kind'] == 'Stale candidate' and s0['title'] == 'Admin Cand'
+    # turning it into a My Day task removes the duplicate suggestion
+    a.post('/api/todo/tasks', json={'title': 'Follow up Admin Cand', 'candidate_id': C_ADMIN, 'my_day': True})
+    md = a.get('/api/todo/tasks?view=my_day').get_json()
+    assert C_ADMIN not in {s['candidate_id'] for s in md['ats_suggestions']}
+    # recruiter only ever sees her own candidates
+    rs = {s['candidate_id'] for s in riya.get('/api/todo/tasks?view=my_day').get_json()['ats_suggestions']}
+    assert C_ADMIN not in rs and C_RIYA in rs
+    assert 'ats_suggestions' not in a.get('/api/todo/tasks?view=my_day&ats=0').get_json()
