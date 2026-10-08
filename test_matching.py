@@ -181,3 +181,64 @@ def test_scope_and_isolation(srv):
     for path in (f'/api/match/mandate/{M_A}/candidates', f'/api/match/candidate/{C1}/jobs'):
         assert other.get(path).status_code == 404
     assert other.post(f'/api/match/mandate/{M_O}/add', json={'candidate_ids': [C1]}).get_json()['added'] == 0
+
+
+# ── read-only diagnosis ──────────────────────────────────────────────────
+def test_diag_overview_and_job(srv):
+    a = cl(srv, ADMIN)
+    conn = srv.get_db()
+    conn.execute("UPDATE candidates SET embedding_text='Engineer\nResume:\nPV design' WHERE id=?", (C3,))
+    conn.commit(); conn.close()
+    o = a.get('/api/match/diag/overview').get_json()
+    c = o['candidates']
+    assert c['with_vector'] >= 6 and c['without_vector'] >= 1 and c['resume_text_in_vector'] == 1
+    assert c['cv_attached_but_not_in_vector'] >= 1               # C1 has asha.pdf, text has no Resume:
+    assert o['mixed_dimensions'] is False and o['embedding_call']['task_mode_used'] is False
+    assert o['jobs']['active_without_jd'] == 1                   # M_NOJD
+    j = a.get(f'/api/match/diag/job/{M_A}').get_json()
+    d = j['distribution']
+    assert d['count'] >= 6 and d['max'] >= d['p90'] >= d['median'] >= d['p10'] >= d['min']
+    assert j['top15'][0]['score'] == d['max'] and sum(h['n'] for h in j['histogram']) == d['count']
+    assert C_O not in [x['id'] for x in j['top15'] + j['bottom5']]  # own agency only
+
+
+def test_diag_compare_with_mocked_jina(srv, monkeypatch):
+    import requests
+    a = cl(srv, ADMIN)
+    calls = []
+
+    class R:
+        status_code = 200
+        def __init__(self, body): self._b = body; self.text = json.dumps(body)
+        def json(self): return self._b
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append((url, json))
+        if url.endswith('/rerank'):
+            n = len(json['documents'])
+            return R({'results': [{'index': i, 'relevance_score': (n - i) / n} for i in range(n)]})
+        k = len(json['input'])
+        return R({'data': [{'embedding': [1.0, float(i), 0.0]} for i in range(k)]})
+    monkeypatch.setattr(requests, 'post', fake_post)
+    orig = srv.get_setting
+    monkeypatch.setattr(srv, 'get_setting', lambda k, d='': 'jina-test' if k == 'embedding_api_key' else orig(k, d))
+    r = a.post(f'/api/match/diag/job/{M_A}/compare').get_json()
+    assert r['ok'], r
+    tasks = [c[1].get('task') for c in calls if c[0].endswith('/embeddings')]
+    assert tasks == ['retrieval.query', 'retrieval.passage']       # the fix being evaluated
+    rr = [c[1] for c in calls if c[0].endswith('/rerank')][0]
+    assert not any(doc.split('\n')[0].strip() in ('Asha Active', 'Pooja Pool') for doc in rr['documents'])  # name line removed
+    it = r['items'][0]
+    assert {'score', 'task_mode', 'rerank', 'score_rank', 'rerank_rank'} <= set(it)
+    assert set(r['spread']) == {'current', 'task_mode', 'rerank'}
+    # nothing was written
+    conn = srv.get_db()
+    assert conn.execute("SELECT COUNT(*) FROM candidates WHERE embedding_text LIKE '%retrieval%'").fetchone()[0] == 0
+    conn.close()
+
+
+def test_diag_admin_only(srv):
+    for path in ('/api/match/diag/overview', f'/api/match/diag/job/{M_R}'):
+        assert cl(srv, RIYA).get(path).status_code in (403, 404)
+    assert cl(srv, RIYA).post(f'/api/match/diag/job/{M_R}/compare').status_code in (403, 404)
+    assert cl(srv, OADMIN).get(f'/api/match/diag/job/{M_A}').status_code == 404

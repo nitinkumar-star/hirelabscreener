@@ -22186,7 +22186,9 @@ async function _bdhDone(id, box){
       + 'People already in this pipeline are not shown. Someone in another live job is <b>copied</b> here (they stay in that pipeline too); Central DB candidates are moved.</div></div>'
       + '<div class="mt-ctl"><select data-mt="min"><option value="0">Any match %</option>' + [40, 50, 60, 70].map(function(v){ return '<option value="' + v + '"' + (st.min == v ? ' selected' : '') + '>' + v + '%+ match</option>'; }).join('') + '</select>'
       + '<select data-mt="show"><option value="all">Everyone</option><option value="free"' + (st.show === 'free' ? ' selected' : '') + '>Free (Central DB, closed, rejected)</option><option value="active"' + (st.show === 'active' ? ' selected' : '') + '>In other live jobs</option></select>'
-      + '<button class="btn btn-o" data-mt="refresh" style="font-size:12px">&#8635; Refresh</button></div></div>';
+      + '<button class="btn btn-o" data-mt="refresh" style="font-size:12px">&#8635; Refresh</button>'
+      + (isAdm() ? '<button class="btn btn-o" data-mt="diag" style="font-size:12px" title="Read-only report on why these matches look the way they do">&#128300; Diagnose</button>' : '')
+      + '</div></div>';
     if (!r.ok) { el.innerHTML = '<div class="mt-wrap">' + head + '<div class="mt-empty"><b>Could not load matches</b>' + esc(r.error || '') + '</div></div>'; bind(el, m, st); return; }
     if (r.pending) { el.innerHTML = '<div class="mt-wrap">' + head + '<div class="mt-empty"><b>Not ready yet</b>' + esc(r.message || '') + '</div></div>'; bind(el, m, st); return; }
     var list = (r.results || []).filter(function(x){
@@ -22235,6 +22237,7 @@ async function _bdhDone(id, box){
         list.forEach(function(x){ st.sel[x.id] = b.checked; }); return paintMatching(el, m, st);
       }
       if (k === 'refresh') { st.sel = {}; return renderMatchingCandidates(el); }
+      if (k === 'diag') return renderMatchDiagnosis(el, m);
       if (k === 'more') { st.limit = Math.min(200, st.limit + 50); return renderMatchingCandidates(el); }
       if (k === 'open') { if (typeof openCandidateInNewTab === 'function') openCandidateInNewTab(id, +b.getAttribute('data-mid') || null); return; }
       if (k === 'call') { if (typeof pushCall === 'function') pushCall(b.getAttribute('data-phone'), b.getAttribute('data-name')); return; }
@@ -22266,6 +22269,121 @@ async function _bdhDone(id, box){
     paintMatching(el, m, st);
     try { if (typeof refreshMandateCounts === 'function') refreshMandateCounts(); } catch (x) {}
   }
+
+  // ───────────────────────── Matching diagnosis (admin, read-only) ─────────
+  function isAdm(){ return !!(S.currentUser && (S.currentUser.role === 'admin' || S.currentUser.is_company_admin)); }
+  function pctBar(n, max){ var w = max ? Math.round(n * 100 / max) : 0; return '<span style="display:inline-block;height:9px;width:' + Math.max(w, n ? 3 : 0) + '%;max-width:85%;background:var(--teal);border-radius:3px;vertical-align:middle"></span>'; }
+  function verdictLines(o, j){
+    var v = [], c = o.candidates;
+    if (j && j.distribution && j.distribution.count) {
+      var sp = j.spread_p10_p90;
+      v.push(sp < 12 ? ['bad', 'Scores are squeezed: 80% of all candidates sit inside a ' + sp + '-point band for this job. A plain vector score cannot separate good from bad here.']
+                     : ['ok', 'Scores are spread over ' + sp + ' points for this job.']);
+      var a60 = (j.above || {})['60'] || 0;
+      if (a60 > 30) v.push(['bad', a60 + ' candidates score 60%+ for this one job, which is why so many profiles show as matches.']);
+    }
+    if (!o.embedding_call.task_mode_used) v.push(['bad', 'JDs and profiles are embedded without Jina’s retrieval mode (no "task" sent), so the score measures "same topic", not "fits the job".']);
+    if (c.cv_attached_but_not_in_vector) v.push(['bad', c.cv_attached_but_not_in_vector + ' candidates have a CV attached but no resume text in their vector (scanned PDF, unreadable file, or embedded before resumes were included).']);
+    if (c.without_vector) v.push(['warn', c.without_vector + ' candidates have no vector at all and are never matched.']);
+    if (o.mixed_dimensions) v.push(['bad', 'Vectors of different sizes are mixed (different models). Those candidates are silently skipped.']);
+    if (o.jobs.active_without_jd) v.push(['warn', o.jobs.active_without_jd + ' active jobs have no JD or skills, so they cannot be matched.']);
+    return v;
+  }
+  function verdictHtml(v){
+    var col = {bad: '#A32D2D', warn: '#B5703F', ok: '#0F8A6B'}, ic = {bad: '✖', warn: '⚠', ok: '✔'};
+    return '<div style="display:flex;flex-direction:column;gap:6px">' + v.map(function(x){
+      return '<div style="font-size:12.5px;line-height:1.5;color:' + col[x[0]] + '">' + ic[x[0]] + ' ' + esc(x[1]) + '</div>'; }).join('') + '</div>';
+  }
+  function plainReport(o, j, cmp){
+    var L = [], c = o.candidates;
+    L.push('HIRELAB MATCHING DIAGNOSIS');
+    L.push('Candidates: ' + c.total + ' | with vector: ' + c.with_vector + ' | no vector: ' + c.without_vector + ' | failed: ' + c.failed);
+    L.push('CV attached: ' + c.with_cv + ' | resume text inside vector: ' + c.resume_text_in_vector + ' | CV attached but NOT in vector: ' + c.cv_attached_but_not_in_vector);
+    L.push('Vector models: ' + c.by_model.map(function(x){ return x.model + ' (' + x.dim + 'd) x' + x.n; }).join(', ') + ' | mixed sizes: ' + o.mixed_dimensions);
+    L.push('Text versions: ' + c.by_text_version.map(function(x){ return x.version + ' x' + x.n; }).join(', '));
+    L.push('Active jobs: ' + o.jobs.active + ' | without JD: ' + o.jobs.active_without_jd + ' | with CTC budget: ' + o.ctc_fields.jobs_with_budget);
+    L.push('Candidates with expected CTC: ' + o.ctc_fields.candidates_with_expected_ctc + ' | with current CTC: ' + o.ctc_fields.candidates_with_current_ctc);
+    if (j && j.distribution && j.distribution.count) {
+      var d = j.distribution;
+      L.push(''); L.push('JOB: ' + j.job.role + ' - ' + (j.job.client || ''));
+      L.push('Scores: min ' + d.min + ' | p10 ' + d.p10 + ' | median ' + d.median + ' | p90 ' + d.p90 + ' | max ' + d.max + ' | p10-p90 spread ' + j.spread_p10_p90);
+      L.push('Candidates at 50%+: ' + j.above['50'] + ' | 60%+: ' + j.above['60'] + ' | 70%+: ' + j.above['70']);
+      L.push('Top 15: ' + j.top15.map(function(x){ return x.name + ' (' + x.designation + ', ' + x.score + ')'; }).join('; '));
+    }
+    if (cmp && cmp.ok) {
+      L.push(''); L.push('AI COMPARISON (sorted by re-ranker). Spread current ' + cmp.spread.current + ' | retrieval mode ' + cmp.spread.task_mode + ' | re-ranker ' + cmp.spread.rerank);
+      cmp.items.forEach(function(x){ L.push((x.from_top ? 'TOP ' : 'RND ') + x.name + ' | ' + x.designation + ' @ ' + x.company + ' | now ' + x.score + ' (#' + x.score_rank + ') | retrieval ' + x.task_mode + ' | rerank ' + x.rerank + ' (#' + x.rerank_rank + ')'); });
+    }
+    return L.join('\n');
+  }
+  window.renderMatchDiagnosis = async function(el, m){
+    el.innerHTML = '<div class="mt-wrap"><div class="loading"><div class="spinner"></div>Reading your AI vectors…</div></div>';
+    var res = await Promise.all([req('GET', '/match/diag/overview'), req('GET', '/match/diag/job/' + m.id)]);
+    var o = res[0], j = res[1];
+    if (!o || !o.ok) { el.innerHTML = '<div class="mt-wrap"><div class="mt-empty"><b>Diagnosis unavailable</b>' + esc((o && o.error) || '') + '</div></div>'; return; }
+    var c = o.candidates, d = (j && j.distribution) || {};
+    var maxH = Math.max.apply(null, ((j && j.histogram) || [{n: 0}]).map(function(h){ return h.n; }).concat([1]));
+    var html = '<div class="mt-wrap"><div class="mt-head"><div><div class="mt-title">&#128300; Matching diagnosis</div>'
+      + '<div class="mt-sub">Read-only report on your live data. Nothing is changed. Use it to decide the matching fix.</div></div>'
+      + '<div class="mt-ctl"><button class="btn btn-o" data-dg="copy" style="font-size:12px">&#128203; Copy report</button>'
+      + '<button class="btn btn-o" data-dg="back" style="font-size:12px">← Back to matches</button></div></div>';
+    html += '<div class="cp-card2" style="margin-bottom:14px"><div class="cp-lbl2">What the data says</div>' + verdictHtml(verdictLines(o, j)) + '</div>';
+    html += '<div class="cp-card2" style="margin-bottom:14px"><div class="cp-lbl2">AI vectors (whole database)</div>'
+      + '<table style="width:100%;font-size:12.5px;border-collapse:collapse">'
+      + [['Candidates', c.total], ['With a vector', c.with_vector], ['No vector', c.without_vector], ['Embedding failed', c.failed],
+         ['CV attached', c.with_cv], ['Resume text inside the vector', c.resume_text_in_vector],
+         ['CV attached but NOT in the vector', c.cv_attached_but_not_in_vector],
+         ['Vector models', c.by_model.map(function(x){ return esc(x.model) + ' · ' + x.dim + ' dims · ' + x.n; }).join('<br>') || '-'],
+         ['Active jobs / without JD', o.jobs.active + ' / ' + o.jobs.active_without_jd],
+         ['Jobs with CTC budget', o.ctc_fields.jobs_with_budget + ' of ' + o.ctc_fields.active_jobs],
+         ['Candidates with expected CTC', o.ctc_fields.candidates_with_expected_ctc]]
+        .map(function(r){ return '<tr><td style="padding:5px 0;color:var(--muted);width:55%">' + r[0] + '</td><td style="padding:5px 0;font-weight:600">' + r[1] + '</td></tr>'; }).join('')
+      + '</table></div>';
+    if (j && j.ok && d.count) {
+      html += '<div class="cp-card2" style="margin-bottom:14px"><div class="cp-lbl2">This job: how all ' + d.count + ' candidates score today</div>'
+        + '<div style="font-size:12.5px;margin-bottom:8px">Lowest <b>' + d.min + '%</b> · 10th pct <b>' + d.p10 + '%</b> · median <b>' + d.median + '%</b> · 90th pct <b>' + d.p90 + '%</b> · highest <b>' + d.max + '%</b></div>'
+        + '<table style="width:100%;font-size:12px;border-collapse:collapse">' + j.histogram.map(function(h){
+          return '<tr><td style="width:70px;color:var(--muted);padding:2px 0">' + h.range + '</td><td>' + pctBar(h.n, maxH) + ' <span style="color:var(--muted)">' + h.n + '</span></td></tr>'; }).join('') + '</table>'
+        + '<div style="font-size:12px;color:var(--muted);margin-top:8px">At 50%+: <b>' + j.above['50'] + '</b> · 60%+: <b>' + j.above['60'] + '</b> · 70%+: <b>' + j.above['70'] + '</b></div>'
+        + '<div class="cp-lbl2" style="margin-top:14px">Today’s top 15</div><div style="font-size:12px;line-height:1.7">' + j.top15.map(function(x, i){
+          return (i + 1) + '. <b>' + esc(x.name) + '</b> — ' + esc(x.designation) + (x.company ? ' @ ' + esc(x.company) : '') + (x.experience ? ', ' + x.experience + ' yrs' : '') + ' <span style="color:var(--muted)">(' + x.score + '%)</span>'; }).join('<br>') + '</div>'
+        + '<div class="cp-lbl2" style="margin-top:14px">JD text this job’s vector was built from</div><pre style="white-space:pre-wrap;font-size:11.5px;background:#F7F6F2;border-radius:8px;padding:8px;max-height:160px;overflow:auto;margin:0">' + esc(j.jd_text_embedded || '(not stored)') + '</pre></div>';
+    } else {
+      html += '<div class="cp-card2" style="margin-bottom:14px">' + esc((j && (j.message || j.error)) || 'This job has no JD vector yet.') + '</div>';
+    }
+    html += '<div class="cp-card2"><div class="cp-lbl2">Side-by-side test on this job (uses your Jina key, ~3 API calls, saves nothing)</div>'
+      + '<div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:8px">Scores today’s top 30 plus 10 random candidates three ways: today’s vectors, Jina retrieval mode, and Jina’s AI re-ranker that reads the JD and profile together. If the re-ranker puts the right people on top and pushes the wrong ones down, that is the fix to build.</div>'
+      + '<button class="btn btn-g" data-dg="compare" style="font-size:12.5px">▶ Run side-by-side test</button><div id="dg-cmp" style="margin-top:12px"></div></div></div>';
+    el.innerHTML = html;
+    var cmp = null;
+    el.onclick = async function(e){
+      var b = e.target.closest('[data-dg]'); if (!b) return;
+      var k = b.getAttribute('data-dg');
+      if (k === 'back') return renderMatchingCandidates(el);
+      if (k === 'copy') {
+        var txt = plainReport(o, j, cmp);
+        try { await navigator.clipboard.writeText(txt); toast('OK', 'Report copied — paste it in the chat'); }
+        catch (x) { var w = window.open('', '_blank'); if (w) { w.document.write('<pre>' + esc(txt) + '</pre>'); } }
+        return;
+      }
+      if (k === 'compare') {
+        b.disabled = true; b.textContent = 'Running… (up to a minute)';
+        var box = document.getElementById('dg-cmp');
+        cmp = await req('POST', '/match/diag/job/' + m.id + '/compare', {});
+        b.disabled = false; b.textContent = '▶ Run again';
+        if (!cmp || !cmp.ok) { box.innerHTML = '<div style="color:#A32D2D;font-size:12.5px">' + esc((cmp && cmp.error) || 'Failed') + '</div>'; return; }
+        box.innerHTML = '<div style="font-size:12px;margin-bottom:8px">How far apart the best and worst of these 40 are: today <b>' + cmp.spread.current + '</b> pts · retrieval mode <b>' + cmp.spread.task_mode + '</b> pts · re-ranker <b>' + cmp.spread.rerank + '</b> pts. Bigger = sharper.</div>'
+          + '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse;min-width:640px"><tr style="text-align:left;color:var(--muted)"><th style="padding:6px 4px">Candidate</th><th>Today</th><th>Retrieval mode</th><th>AI re-ranker</th></tr>'
+          + cmp.items.map(function(x){
+            var mv = x.score_rank - x.rerank_rank, arrow = mv > 2 ? ' <span style="color:#0F8A6B">▲' + mv + '</span>' : (mv < -2 ? ' <span style="color:#A32D2D">▼' + (-mv) + '</span>' : '');
+            return '<tr style="border-top:0.5px solid var(--line)"><td style="padding:6px 4px"><b>' + esc(x.name) + '</b>' + (x.from_top ? '' : ' <span class="mt-b">random</span>') + '<br><span style="color:var(--muted)">' + esc(x.designation) + (x.company ? ' @ ' + esc(x.company) : '') + (x.experience ? ', ' + x.experience + ' yrs' : '') + '</span></td>'
+              + '<td>' + x.score + '% <span style="color:var(--muted)">#' + x.score_rank + '</span></td>'
+              + '<td>' + x.task_mode + '% <span style="color:var(--muted)">#' + x.task_mode_rank + '</span></td>'
+              + '<td><b>' + x.rerank + '</b> <span style="color:var(--muted)">#' + x.rerank_rank + '</span>' + arrow + '</td></tr>'; }).join('')
+          + '</table></div><div class="mt-note">' + esc(cmp.note) + ' Sorted by the re-ranker. ▲/▼ = how many places the re-ranker moved someone compared with today.</div>';
+      }
+    };
+  };
 
   // ───────────────────────── Candidate: Job Matching ──────────────────────
   window.cpLoadJobMatching = async function(cid){
