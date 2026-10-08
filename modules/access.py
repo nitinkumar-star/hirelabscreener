@@ -337,6 +337,8 @@ _OBJECT_ROUTES = [(re.compile(p), k) for p, k in [
     (r'^/api/scorecards/(\d+)(/|$)', 'feedback'),
     (r'^/api/reminders/(\d+)(/|$)', 'reminder'),
     (r'^/api/todo/tasks/(\d+)(/|$)', 'reminder'),
+    (r'^/api/match/candidate/(\d+)(/|$)', 'candidate'),
+    (r'^/api/match/mandate/(\d+)(/|$)', 'mandate'),
     (r'^/api/todo/subtasks/(\d+)(/|$)', 'todosub'),
     (r'^/api/submissions/(\d+)(/|$)', 'submission'),
     (r'^/api/submission-drafts/(\d+)(/|$)', 'draft'),
