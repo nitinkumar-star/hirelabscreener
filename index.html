@@ -1743,7 +1743,7 @@ function applyPipelineStages(){
   }
   PIPELINE_STAGES = base.concat(FIXED_STAGES.map(function(f){ return {id:f.id, color:f.color, fixed:true}; }));
 }
-const TABS = ['Mandate Setup','Pipeline','Candidate Profiles','Recruiter Pitch'];
+const TABS = ['Mandate Setup','Pipeline','Matching Candidates','Candidate Profiles','Recruiter Pitch'];
 let S = {
   currentUser:null, viewingAs:null,
   mandates:[],activeMandate:null,activeTab:'Mandate Setup',settingsOpen:false,settings:{},collapsedStages:{},
@@ -1866,6 +1866,7 @@ function writeHash() {
     if (tab === 'Pipeline') h += '/pipeline';
     else if (tab === 'Candidate Profiles') h += '/profiles';
     else if (tab === 'Recruiter Pitch') h += '/pitch';
+    else if (tab === 'Matching Candidates') h += '/matching';
     else h += '/setup';
     if (S.activeTab === 'Candidate Profiles' && S.selectedCandidateId) {
       h += '/' + S.selectedCandidateId;
@@ -1942,7 +1943,15 @@ async function readHash() {
       S.activeTab = sub === 'pipeline' ? 'Pipeline'
                   : sub === 'profiles' ? 'Candidate Profiles'
                   : sub === 'pitch' ? 'Recruiter Pitch'
+                  : sub === 'matching' ? 'Matching Candidates'
                   : 'Mandate Setup';
+      // Same view setup as selectMandate(): before this, a refreshed or
+      // shared #mandate/... link showed the tab's content under a "Home"
+      // header with the tab bar still hidden.
+      try { _hideAllViews(); } catch (e) {}
+      var _mv = document.getElementById('mandate-view'); if (_mv) _mv.style.display = 'flex';
+      try { updateTopbar(); renderSidebar(); } catch (e) {}
+      var _tb = document.getElementById('tabs'); if (_tb) _tb.style.display = 'flex';
       renderTabs();
       await renderContent();
       // If a specific candidate was open, restore it
@@ -1988,6 +1997,7 @@ async function restoreFromHash() {
       if (tabPart === 'pipeline') { S.activeTab = 'Pipeline'; }
       else if (tabPart === 'profiles') { S.activeTab = 'Candidate Profiles'; }
       else if (tabPart === 'pitch') { S.activeTab = 'Recruiter Pitch'; }
+      else if (tabPart === 'matching') { S.activeTab = 'Matching Candidates'; }
       else { S.activeTab = 'Mandate Setup'; }
       renderTabs();
       await renderContent();
@@ -3426,7 +3436,7 @@ function updateTopbar(){
 function renderTabs(){
   const bar=document.getElementById('tabs');
   var mid = S.activeMandate ? S.activeMandate.id : '';
-  var subOf = function(t){ return t==='Pipeline'?'pipeline':t==='Candidate Profiles'?'profiles':t==='Recruiter Pitch'?'pitch':'setup'; };
+  var subOf = function(t){ return t==='Pipeline'?'pipeline':t==='Matching Candidates'?'matching':t==='Candidate Profiles'?'profiles':t==='Recruiter Pitch'?'pitch':'setup'; };
   // The tab NAME is an internal key used for routing and state — never
   // translate it. Only what the user reads is swapped.
   var labelOf = function(t){ return t==='Mandate Setup' ? (T('mandate','Mandate')+' Setup') : t; };
@@ -3461,6 +3471,7 @@ async function renderContent(){
   else if(S.activeTab==='Pipeline')await renderPipeline(el);
   else if(S.activeTab==='Candidate Profiles')await renderProfiles(el);
   else if(S.activeTab==='Recruiter Pitch')await renderRecruiterPitch(el);
+  else if(S.activeTab==='Matching Candidates')await renderMatchingCandidates(el);
   writeHash();
 }
 
@@ -6488,11 +6499,13 @@ function renderProfileDetail(c){
 
   // Reminder popup hidden holder is not needed; reminders are inline.
   // Tab bar
-  var tabs=[['overview','Overview'],['pitch','&#127919; Pitch'],['ai','&#10024; AI Analysis'],['billing','&#128176; Placement &amp; Billing'],['resume','Resume'],['comms','Communications'],['call','Call Analysis']];
+  var tabs=[['overview','Overview'],['jobs','&#127919; Job Matching'],['pitch','&#127908; Pitch'],['ai','&#10024; AI Analysis'],['billing','&#128176; Placement &amp; Billing'],['resume','Resume'],['comms','Communications'],['call','Call Analysis']];
   html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
   html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+summary+aiReason+skillsCard+notesCard+historyCard+'</div><div>'+keyFacts+reminders+workCard+_cpOrgShell(c.id)+_cpInterviewShell(c.id)+'</div></div></div>';
+  // Job Matching (vector: this candidate's profile + resume vs every active JD)
+  html+='<div class="cp-pane" id="cp-pane-jobs" style="display:none"><div id="cp-jobs-'+c.id+'"></div></div>';
   // Pitch (candidate + position specific call script)
   html+='<div class="cp-pane" id="cp-pane-pitch" style="display:none"><div id="cp-pitch-'+c.id+'"></div></div>';
   // AI Analysis (capability-first hiring-manager evaluation)
@@ -6529,7 +6542,7 @@ function renderProfileDetail(c){
 }
 
 function cpTab(name){
-  ['overview','pitch','ai','billing','resume','comms','call'].forEach(function(t){
+  ['overview','jobs','pitch','ai','billing','resume','comms','call'].forEach(function(t){
     var p=document.getElementById('cp-pane-'+t); if(p) p.style.display=(t===name)?'block':'none';
     var b=document.getElementById('cp-tab-'+t); if(b) b.classList.toggle('active', t===name);
   });
@@ -6540,6 +6553,7 @@ function cpTab(name){
   if(name==='overview'){ try{ cpLoadHistory(cid); }catch(e){} }
   if(name==='ai'){ cpLoadDeepAnalysis(cid); }
   if(name==='pitch'){ cpLoadPitch(cid); }
+  if(name==='jobs'){ cpLoadJobMatching(cid); }
   if(name==='call'){ loadCallAnalysis(cid); }
   if(name==='billing'){ try{ cpLoadBilling(cid); }catch(e){} }
 }
@@ -22092,6 +22106,208 @@ async function _bdhDone(id, box){
     }
   }
 
+})();
+</script>
+<style id="match-style">
+/* ═══ Vector matching tabs ═══ */
+.mt-wrap{max-width:1100px;margin:0 auto;padding:4px 2px 30px}
+.mt-head{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.mt-title{font-size:17px;font-weight:700;color:var(--navy)}
+.mt-sub{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5;max-width:640px}
+.mt-ctl{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.mt-ctl select{font-size:12px;padding:6px 8px;border:0.5px solid var(--line);border-radius:8px;background:#fff}
+.mt-bar{display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--teal-soft);border-radius:10px;margin-bottom:10px;font-size:12.5px;flex-wrap:wrap}
+.mt-list{background:#fff;border:0.5px solid var(--line);border-radius:12px;overflow:hidden}
+.mt-row{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:0.5px solid var(--line)}
+.mt-row:last-child{border-bottom:none}
+.mt-row:hover{background:#FAFAF7}
+.mt-row input[type=checkbox]{width:16px;height:16px;accent-color:var(--teal);flex-shrink:0}
+.mt-main{flex:1;min-width:0}
+.mt-name{font-size:13.5px;font-weight:600;color:var(--navy);cursor:pointer}
+.mt-name:hover{text-decoration:underline}
+.mt-meta{font-size:11.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mt-badges{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
+.mt-b{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:10px;background:#F1EFE8;color:#5D6D7E;white-space:nowrap}
+.mt-b.pool{background:#E6F1FB;color:#185FA5}
+.mt-b.active{background:#FBEDE4;color:#B5703F}
+.mt-b.dead{background:#F1EFE8;color:#8A92A0}
+.mt-b.cv{background:#E6F6F1;color:#0F8A6B}
+.mt-b.nocv{background:#FDEEEE;color:#A32D2D}
+.mt-score{width:130px;flex-shrink:0;text-align:right}
+.mt-score b{font-size:15px;color:var(--navy)}
+.mt-score small{display:block;font-size:10.5px;color:var(--muted)}
+.mt-track{height:5px;background:#EEE;border-radius:4px;overflow:hidden;margin-top:4px}
+.mt-track i{display:block;height:100%;background:var(--teal);border-radius:4px}
+.mt-act{display:flex;gap:6px;align-items:center;flex-shrink:0}
+.mt-empty{padding:46px 20px;text-align:center;color:var(--muted);font-size:13px;background:#fff;border:0.5px solid var(--line);border-radius:12px}
+.mt-empty b{display:block;color:var(--navy);font-size:15px;margin-bottom:4px}
+.mt-note{font-size:11.5px;color:var(--muted);margin-top:10px;line-height:1.5}
+@media (max-width:760px){
+  .mt-row{flex-wrap:wrap}
+  .mt-score{width:auto;flex:1;text-align:left}
+  .mt-main{flex-basis:calc(100% - 70px)}
+  .mt-ctl{margin-left:0;width:100%}
+}
+</style>
+<script id="match-script">
+/* ═══ Vector matching: candidate "Job Matching" tab + mandate "Matching Candidates" tab.
+   Ranking is ONLY embedding similarity (profile + resume vector vs the JD vector),
+   served by modules/matching.py. No keyword matching. ═══ */
+(function(){
+  'use strict';
+  var MS = window._matchState = window._matchState || {};
+  function q(s){ return esc(s).replace(/'/g, '&#39;'); }
+  function scoreBox(sc, lo, hi){
+    var span = Math.max(1, hi - lo), w = Math.max(6, Math.round(((sc - lo) / span) * 100));
+    return '<div class="mt-score"><b>' + sc.toFixed(1) + '%</b><small>AI match</small><div class="mt-track"><i style="width:' + w + '%"></i></div></div>';
+  }
+  function whereBadge(x){
+    if (x.where === 'pool') return '<span class="mt-b pool">Central DB</span>';
+    var lbl = (x.current_job || 'Another job') + (x.current_stage ? ' · ' + x.current_stage : '');
+    if (x.where === 'active') return '<span class="mt-b active" title="Will be COPIED: stays in that pipeline too">In: ' + q(lbl) + '</span>';
+    if (x.where === 'closed') return '<span class="mt-b dead">Closed job: ' + q(lbl) + '</span>';
+    return '<span class="mt-b dead">' + q(lbl) + '</span>';
+  }
+
+  // ───────────────────────── Mandate: Matching Candidates ─────────────────
+  window.renderMatchingCandidates = async function(el){
+    var m = S.activeMandate; if (!m) return;
+    var st = MS[m.id] = MS[m.id] || {limit: 50, min: 0, show: 'all', sel: {}};
+    el.innerHTML = '<div class="mt-wrap"><div class="loading"><div class="spinner"></div>Finding matching candidates with AI…</div></div>';
+    var r = await req('GET', '/match/mandate/' + m.id + '/candidates?limit=' + st.limit + '&min=' + st.min);
+    if (S.activeTab !== 'Matching Candidates' || !S.activeMandate || S.activeMandate.id !== m.id) return;
+    st.data = r;
+    paintMatching(el, m, st);
+  };
+  function paintMatching(el, m, st){
+    var r = st.data || {};
+    var head = '<div class="mt-head"><div><div class="mt-title">&#127919; Matching Candidates</div>'
+      + '<div class="mt-sub">Ranked by AI from each candidate’s profile + resume vector against this job’s JD vector. No keyword matching. '
+      + 'People already in this pipeline are not shown. Someone in another live job is <b>copied</b> here (they stay in that pipeline too); Central DB candidates are moved.</div></div>'
+      + '<div class="mt-ctl"><select data-mt="min"><option value="0">Any match %</option>' + [40, 50, 60, 70].map(function(v){ return '<option value="' + v + '"' + (st.min == v ? ' selected' : '') + '>' + v + '%+ match</option>'; }).join('') + '</select>'
+      + '<select data-mt="show"><option value="all">Everyone</option><option value="free"' + (st.show === 'free' ? ' selected' : '') + '>Free (Central DB, closed, rejected)</option><option value="active"' + (st.show === 'active' ? ' selected' : '') + '>In other live jobs</option></select>'
+      + '<button class="btn btn-o" data-mt="refresh" style="font-size:12px">&#8635; Refresh</button></div></div>';
+    if (!r.ok) { el.innerHTML = '<div class="mt-wrap">' + head + '<div class="mt-empty"><b>Could not load matches</b>' + esc(r.error || '') + '</div></div>'; bind(el, m, st); return; }
+    if (r.pending) { el.innerHTML = '<div class="mt-wrap">' + head + '<div class="mt-empty"><b>Not ready yet</b>' + esc(r.message || '') + '</div></div>'; bind(el, m, st); return; }
+    var list = (r.results || []).filter(function(x){
+      return st.show === 'all' || (st.show === 'free' ? x.where !== 'active' : x.where === 'active'); });
+    var nSel = list.filter(function(x){ return st.sel[x.id]; }).length;
+    var lo = list.length ? list[list.length - 1].score : 0, hi = list.length ? list[0].score : 100;
+    var html = '<div class="mt-wrap">' + head;
+    if (!list.length) {
+      html += '<div class="mt-empty"><b>No matching candidates</b>' + (st.min ? 'Try a lower match %.' : 'Everyone suitable is already in this pipeline.') + '</div>';
+    } else {
+      html += '<div class="mt-bar"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-mt="all"' + (nSel && nSel === list.length ? ' checked' : '') + '> Select all ' + list.length + '</label>'
+        + '<span style="color:var(--muted)">' + nSel + ' selected</span>'
+        + '<button class="btn btn-g" data-mt="add-sel" style="font-size:12px;margin-left:auto"' + (nSel ? '' : ' disabled') + '>+ Add ' + (nSel || '') + ' to pipeline</button></div>';
+      html += '<div class="mt-list">' + list.map(function(x){
+        var meta = [x.designation && x.company ? x.designation + ' @ ' + x.company : (x.designation || x.company),
+                    x.experience ? x.experience + ' yrs' : '', x.location, x.ctc_current ? x.ctc_current + ' LPA' : '',
+                    (+x.notice_period > 0) ? 'NP ' + x.notice_period + 'd' : ''].filter(Boolean).join(' · ');
+        return '<div class="mt-row">'
+          + '<input type="checkbox" data-mt="sel" data-id="' + x.id + '"' + (st.sel[x.id] ? ' checked' : '') + '>'
+          + (typeof avatarHtml === 'function' ? avatarHtml(x.name, 34) : '')
+          + '<div class="mt-main"><div class="mt-name" data-mt="open" data-id="' + x.id + '" data-mid="' + (x.current_mandate_id || '') + '" title="Open profile in a new tab">' + q(x.name) + '</div>'
+          + '<div class="mt-meta">' + q(meta) + '</div>'
+          + '<div class="mt-badges">' + whereBadge(x)
+          + (x.resume_in_vector ? '<span class="mt-b cv" title="Resume text is part of this AI match">&#128196; Resume in AI</span>' : '<span class="mt-b nocv" title="Matched on profile only (no readable resume in the vector)">Profile only</span>')
+          + (x.also_in ? '<span class="mt-b">+' + x.also_in + ' more record' + (x.also_in > 1 ? 's' : '') + '</span>' : '') + '</div></div>'
+          + scoreBox(x.score, lo, hi)
+          + '<div class="mt-act">'
+          + (x.phone ? '<button class="btn btn-o" style="font-size:12px;padding:6px 9px" data-mt="call" data-phone="' + q(x.phone) + '" data-name="' + q(x.name) + '" title="Call on my phone">&#128222;</button>' : '')
+          + '<button class="btn btn-g" style="font-size:12px;padding:6px 11px" data-mt="add-one" data-id="' + x.id + '" title="' + (x.action === 'move' ? 'Move from Central DB' : 'Copy into this pipeline') + '">+ Add</button>'
+          + '</div></div>';
+      }).join('') + '</div>';
+      if (r.more) html += '<div style="text-align:center;margin-top:12px"><button class="btn btn-o" data-mt="more" style="font-size:12px">Show more</button></div>';
+    }
+    html += '<div class="mt-note">Ranked ' + (r.scanned || 0) + ' candidates with an AI profile.'
+      + (r.not_embedded ? ' ' + r.not_embedded + ' candidate' + (r.not_embedded > 1 ? 's are' : ' is') + ' still waiting for their AI profile and cannot be matched yet (this fills up automatically in the background).' : '') + '</div></div>';
+    el.innerHTML = html;
+    bind(el, m, st);
+  }
+  function bind(el, m, st){
+    el.onclick = async function(e){
+      var b = e.target.closest('[data-mt]'); if (!b) return;
+      var k = b.getAttribute('data-mt'), id = +b.getAttribute('data-id');
+      if (k === 'sel') { st.sel[id] = b.checked; return paintMatching(el, m, st); }
+      if (k === 'all') {
+        var list = (st.data.results || []).filter(function(x){ return st.show === 'all' || (st.show === 'free' ? x.where !== 'active' : x.where === 'active'); });
+        list.forEach(function(x){ st.sel[x.id] = b.checked; }); return paintMatching(el, m, st);
+      }
+      if (k === 'refresh') { st.sel = {}; return renderMatchingCandidates(el); }
+      if (k === 'more') { st.limit = Math.min(200, st.limit + 50); return renderMatchingCandidates(el); }
+      if (k === 'open') { if (typeof openCandidateInNewTab === 'function') openCandidateInNewTab(id, +b.getAttribute('data-mid') || null); return; }
+      if (k === 'call') { if (typeof pushCall === 'function') pushCall(b.getAttribute('data-phone'), b.getAttribute('data-name')); return; }
+      if (k === 'add-one') return addToJob(el, m, st, [id]);
+      if (k === 'add-sel') return addToJob(el, m, st, Object.keys(st.sel).filter(function(x){ return st.sel[x]; }).map(Number));
+    };
+    el.onchange = function(e){
+      var s2 = e.target.closest('select[data-mt]'); if (!s2) return;
+      if (s2.getAttribute('data-mt') === 'min') { st.min = +s2.value; st.sel = {}; renderMatchingCandidates(el); }
+      else { st.show = s2.value; paintMatching(el, m, st); }
+    };
+  }
+  async function addToJob(el, m, st, ids){
+    if (!ids.length) return;
+    var scores = {}, byId = {};
+    (st.data.results || []).forEach(function(x){ scores[x.id] = x.score; byId[x.id] = x; });
+    var copies = ids.filter(function(i){ return byId[i] && byId[i].where === 'active'; }).length;
+    if (ids.length > 1 && !confirm('Add ' + ids.length + ' candidate' + (ids.length > 1 ? 's' : '') + ' to "' + (m.role || 'this job') + '" at Screening?'
+        + (copies ? '\n\n' + copies + ' of them ' + (copies > 1 ? 'are' : 'is') + ' in another live job and will be COPIED (they stay there too).' : ''))) return;
+    var r = await req('POST', '/match/mandate/' + m.id + '/add', {candidate_ids: ids, scores: scores});
+    if (!r || !r.ok) { toast('ERR', esc((r && r.error) || 'Could not add')); return; }
+    var moved = r.results.filter(function(x){ return x.status === 'moved'; }).length;
+    var copied = r.results.filter(function(x){ return x.status === 'copied'; }).length;
+    var skip = r.results.length - moved - copied;
+    toast('OK', (moved + copied) + ' added to pipeline' + (copied ? ' (' + copied + ' copied)' : '') + (skip ? ', ' + skip + ' skipped' : ''));
+    var gone = {}; r.results.forEach(function(x){ gone[x.id] = 1; });
+    st.data.results = (st.data.results || []).filter(function(x){ return !gone[x.id]; });
+    ids.forEach(function(i){ delete st.sel[i]; });
+    paintMatching(el, m, st);
+    try { if (typeof refreshMandateCounts === 'function') refreshMandateCounts(); } catch (x) {}
+  }
+
+  // ───────────────────────── Candidate: Job Matching ──────────────────────
+  window.cpLoadJobMatching = async function(cid){
+    var box = document.getElementById('cp-jobs-' + cid); if (!box) return;
+    box.innerHTML = '<div class="loading" style="padding:20px"><div class="spinner"></div>Matching against all active jobs…</div>';
+    var r = await req('GET', '/match/candidate/' + cid + '/jobs');
+    if (!document.getElementById('cp-jobs-' + cid)) return;
+    var head = '<div class="cp-card2"><div style="font-size:14px;font-weight:700;color:var(--navy)">&#127919; Job Matching</div>'
+      + '<div style="font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5">Every active job, ranked by AI: this candidate’s profile + resume vector against each JD vector. No keyword matching.</div>';
+    if (!r || !r.ok) { box.innerHTML = head + '<div style="margin-top:12px;color:#A32D2D;font-size:12.5px">' + esc((r && r.error) || 'Could not load') + '</div></div>'; return; }
+    if (r.pending) { box.innerHTML = head + '<div class="mt-empty" style="margin-top:12px;border:none"><b>AI profile is being built</b>' + esc(r.message || '') + '</div></div>'; return; }
+    var res = r.results || [];
+    var lo = res.length ? res[res.length - 1].score : 0, hi = res.length ? res[0].score : 100;
+    var html = head + (r.resume_in_vector ? '' : '<div style="margin-top:8px;font-size:11.5px;color:#A32D2D">This candidate is matched on profile only: no readable resume is in their AI vector (none attached, a scanned PDF, or embedded before resumes were included).</div>') + '</div>';
+    if (!res.length) html += '<div class="mt-empty" style="margin-top:12px"><b>No active jobs to match</b>Jobs need a JD (or must-have skills) to be matched.</div>';
+    else {
+      html += '<div class="mt-list" style="margin-top:12px">' + res.map(function(j){
+        return '<div class="mt-row"><div class="mt-main"><div class="mt-name" data-cj="open" data-mid="' + j.mandate_id + '">' + q(j.role) + '</div>'
+          + '<div class="mt-meta">' + q([j.client, j.location].filter(Boolean).join(' · ')) + '</div></div>'
+          + scoreBox(j.score, lo, hi)
+          + '<div class="mt-act">' + (j.in_this_job ? '<span class="mt-b cv">&#10003; In this job</span>'
+              : '<button class="btn btn-g" style="font-size:12px;padding:6px 11px" data-cj="add" data-mid="' + j.mandate_id + '" data-score="' + j.score + '" data-role="' + q(j.role) + '">+ Add to this job</button>') + '</div></div>';
+      }).join('') + '</div>';
+    }
+    if (r.jobs_without_vector) html += '<div class="mt-note">' + r.jobs_without_vector + ' active job' + (r.jobs_without_vector > 1 ? 's are' : ' is') + ' not in this list yet (no JD, or the JD’s AI vector is still being built).</div>';
+    box.innerHTML = html;
+    box.onclick = async function(e){
+      var b = e.target.closest('[data-cj]'); if (!b) return;
+      var mid = +b.getAttribute('data-mid');
+      if (b.getAttribute('data-cj') === 'open') { if (typeof selectMandate === 'function') { await selectMandate(mid); if (typeof switchTab === 'function') switchTab('Pipeline'); } return; }
+      b.disabled = true; b.textContent = 'Adding…';
+      var sc = {}; sc[cid] = +b.getAttribute('data-score');
+      var rr = await req('POST', '/match/mandate/' + mid + '/add', {candidate_ids: [cid], scores: sc});
+      var res1 = rr && rr.ok && rr.results && rr.results[0];
+      if (!res1 || (res1.status !== 'copied' && res1.status !== 'moved')) {
+        toast('ERR', esc((rr && rr.error) || (res1 && res1.status === 'already_in_job' ? 'Already in this job' : 'Could not add')));
+        cpLoadJobMatching(cid); return;
+      }
+      toast('OK', 'Added to ' + esc(b.getAttribute('data-role')) + (res1.status === 'copied' ? ' (copied; stays in the current job too)' : ''));
+      cpLoadJobMatching(cid);
+    };
+  };
 })();
 </script>
 </body></html>
