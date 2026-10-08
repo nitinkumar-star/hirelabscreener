@@ -1085,6 +1085,16 @@ def _reminder_scheduler_loop():
             check_timers()
         except Exception as _ct_err:
             print(f'[reminder-scheduler] check_timers error: {_ct_err}')
+        # Tasks v2 auto-task rules: turn new stage changes into follow-up tasks.
+        try:
+            from modules.todo import run_auto_rules
+            _ac = get_db()
+            try:
+                run_auto_rules(_ac)
+            finally:
+                _ac.close()
+        except Exception as _ar_err:
+            print(f'[reminder-scheduler] auto-task rules error: {_ar_err}')
         try:
             now = _ist_now()
             now_iso = now.isoformat(timespec='seconds')

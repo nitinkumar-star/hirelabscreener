@@ -20567,6 +20567,25 @@ async function _bdhDone(id, box){
 .tv2-colors button.on{border-color:var(--tv-text)}
 .tv2-only-m{display:none}
 .tv2-back{display:none}
+/* Wave 4: team cards + rules editor */
+.tv2-team{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.tv2-tcard{border:0.5px solid var(--tv-line);background:var(--tv-card);border-radius:12px;padding:14px;cursor:pointer;text-align:left;display:flex;flex-direction:column;gap:12px}
+.tv2-tcard:hover{border-color:var(--tv-accent);background:var(--tv-hover)}
+.tv2-th{display:flex;align-items:center;gap:10px}
+.tv2-th .nm{font-weight:700;font-size:14px}
+.tv2-th .sb{font-size:11.5px;color:var(--tv-muted)}
+.tv2-tstats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.tv2-tstats div{background:var(--tv-chip);border-radius:8px;padding:6px 4px;text-align:center;font-size:10.5px;color:var(--tv-muted)}
+.tv2-tstats b{display:block;font-size:17px;color:var(--tv-text)}
+.tv2-tstats .red{background:var(--tv-red-soft)} .tv2-tstats .red b{color:var(--tv-red)}
+.tv2-tstats .grn b{color:var(--tv-accent)}
+.tv2-rule{border:0.5px solid var(--tv-line);border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;flex-direction:column;gap:8px;font-size:12.5px}
+.tv2-rule.off{opacity:.55}
+.tv2-rule select,.tv2-rule input[type=text],.tv2-rule input[type=number],.tv2-rule input[type=time]{font:inherit;font-size:12.5px;padding:5px 7px;border:0.5px solid var(--tv-line);border-radius:7px;background:var(--tv-input);color:var(--tv-text)}
+.tv2-rl1,.tv2-rl3{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.tv2-rl2{display:flex;align-items:center;gap:7px}
+.tv2-rl2 input{flex:1}
+.tv2-sw{display:inline-flex;align-items:center;gap:4px;font-weight:600}
 /* Wave 3: calendar + ATS suggestions */
 .tv2-ats{background:transparent;border-style:dashed;align-items:center}
 .tv2-calbar{display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap}
@@ -20656,7 +20675,9 @@ async function _bdhDone(id, box){
     board:     {t: 'Board',           ic: '▦'},
     assigned:  {t: 'Assigned to me',  ic: '👤'},
     completed: {t: 'Completed',       ic: '✔️'},
-    inbox:     {t: 'Inbox (no list)', ic: '📥'}
+    inbox:     {t: 'Inbox (no list)', ic: '📥'},
+    team:      {t: 'Team',            ic: '👥'},
+    person:    {t: 'Teammate',        ic: '👤'}
   };
   var GROUPS = [['overdue', 'Overdue'], ['today', 'Today'], ['tomorrow', 'Tomorrow'],
                 ['upcoming', 'Upcoming'], ['someday', 'Someday']];
@@ -20739,8 +20760,9 @@ async function _bdhDone(id, box){
       if (pv && VIEWS[pv]) TV.view = pv;
       else {
         try { var lv = JSON.parse(localStorage.getItem('tv2_last_view') || 'null');
-              if (lv && lv.v) { TV.view = lv.v; if (lv.v === 'list') TV.listId = +lv.x; if (lv.v === 'tag') TV.tag = String(lv.x || ''); } } catch (e) {}
+              if (lv && lv.v) { TV.view = lv.v; if (lv.v === 'list') TV.listId = +lv.x; if (lv.v === 'tag') TV.tag = String(lv.x || ''); if (lv.v === 'person') TV.personId = +lv.x; } } catch (e) {}
       }
+      if ((TV.view === 'team' || TV.view === 'person') && !r.is_admin) TV.view = 'all';
       if (!VIEWS[TV.view] && TV.view !== 'list' && TV.view !== 'tag') TV.view = 'my_day';
     }
     if (TV.view === 'list' && !listById(TV.listId)) TV.view = 'all';
@@ -20757,12 +20779,14 @@ async function _bdhDone(id, box){
     if (TV.view === 'list') p.push('list_id=' + TV.listId);
     if (TV.view === 'tag') p.push('tag=' + encodeURIComponent(TV.tag));
     if (TV.view === 'assigned') p.push('assigned_to=' + me());
+    if (TV.view === 'person') p.push('user_id=' + TV.personId);
     if (TV.scope === 'team') p.push('scope=team');
     if (TV.q) p.push('q=' + encodeURIComponent(TV.q));
     return '?' + p.join('&');
   }
   async function loadTasks(){
     if (TV.view === 'calendar') return loadCal();
+    if (TV.view === 'team') return loadTeam();
     var seq = ++TV.loadSeq;
     var list = $('tv2-list');
     if (list && !TV.tasks.length) list.innerHTML = '<div class="loading"><div class="spinner"></div>Loading tasks...</div>';
@@ -20786,6 +20810,7 @@ async function _bdhDone(id, box){
     TV.view = v;
     if (v === 'list') TV.listId = +extra;
     if (v === 'tag') TV.tag = String(extra || '');
+    if (v === 'person') TV.personId = +extra;
     TV.sel = {}; TV.selMode = false; TV.tasks = []; TV.sugg = [];
     var root = $('tv2'); if (root) root.classList.remove('side-open');
     closeDetail();
@@ -20797,11 +20822,11 @@ async function _bdhDone(id, box){
     var legacy = (TV.view === 'followups' || TV.view === 'board');
     $('tv2-list').style.display = legacy ? 'none' : '';
     $('tasks-body').style.display = legacy ? '' : 'none';
-    $('tv2-add').style.display = (TV.view === 'completed' || TV.view === 'board') ? 'none' : '';
+    $('tv2-add').style.display = (TV.view === 'completed' || TV.view === 'board' || TV.view === 'team') ? 'none' : '';
     $('task-filter').style.display = TV.view === 'followups' ? '' : 'none';
-    $('tv2-q').parentNode.style.display = (legacy || TV.view === 'calendar') ? 'none' : '';
+    $('tv2-q').parentNode.style.display = (legacy || TV.view === 'calendar' || TV.view === 'team') ? 'none' : '';
     var ai = $('tv2-add-in'); if (ai && TV.view !== 'calendar') ai.placeholder = 'Add task (use #tag, !high)';
-    var sc = $('tv2-scope'); if (sc) sc.style.display = (TV.meta && TV.meta.is_admin && !legacy) ? '' : 'none';
+    var sc = $('tv2-scope'); if (sc) sc.style.display = (TV.meta && TV.meta.is_admin && !legacy && TV.view !== 'team' && TV.view !== 'person') ? '' : 'none';
     renderBulk();
     setTitle();
     if (TV.view === 'followups') { S._tasksMode = 'list'; legacyList(); }
@@ -20812,6 +20837,7 @@ async function _bdhDone(id, box){
     var t = (VIEWS[TV.view] || {}).t || 'Tasks';
     if (TV.view === 'list') { var l = listById(TV.listId); t = l ? l.name : 'List'; }
     if (TV.view === 'tag') t = '#' + TV.tag;
+    if (TV.view === 'person') { var pm = ((TV.meta && TV.meta.team) || []).filter(function(u){ return u.id === TV.personId; })[0]; t = (pm ? pm.name : 'Teammate') + '\u2019s tasks'; }
     $('tv2-title-txt').textContent = t;
     $('tv2-title-count').textContent = '';
   }
@@ -20844,6 +20870,7 @@ async function _bdhDone(id, box){
     html += navBtn('board', VIEWS.board.t, VIEWS.board.ic, '', '', v === 'board');
     html += navBtn('assigned', VIEWS.assigned.t, VIEWS.assigned.ic, '', '', v === 'assigned');
     html += navBtn('completed', VIEWS.completed.t, VIEWS.completed.ic, '', '', v === 'completed');
+    if (TV.meta.is_admin) html += navBtn('team', VIEWS.team.t, VIEWS.team.ic, '', '', v === 'team' || v === 'person');
 
     html += '<div class="tv2-sh"><span>My lists</span><button data-act="list-new" title="New list">+</button></div>';
     if (c.inbox || v === 'inbox') html += navBtn('inbox', VIEWS.inbox.t, VIEWS.inbox.ic, c.inbox, '', v === 'inbox');
@@ -20915,6 +20942,7 @@ async function _bdhDone(id, box){
   }
   function renderList(){
     if (TV.view === 'calendar') return renderCal();
+    if (TV.view === 'team') return renderTeam();
     var el = $('tv2-list'); if (!el) return;
     var tasks = TV.tasks, html = '';
     var open = tasks.filter(function(t){ return !t.done; });
@@ -21125,6 +21153,179 @@ async function _bdhDone(id, box){
     list.addEventListener('dragend', function(){ dragId = 0; });
   }
 
+  // ── Wave 4: Team view (admins) ──────────────────────────────────────────
+  async function loadTeam(){
+    var seq = ++TV.loadSeq, el = $('tv2-list');
+    el.innerHTML = '<div class="loading"><div class="spinner"></div>Loading team...</div>';
+    var r = await api('GET', '/team');
+    if (seq !== TV.loadSeq) return;
+    if (!ok(r)) { el.innerHTML = '<div class="tv2-empty">' + esc((r && r.error) || 'Could not load team') + '</div>'; return; }
+    TV.team = r;
+    renderTeam();
+  }
+  function renderTeam(){
+    var el = $('tv2-list'), r = TV.team || {members: []};
+    $('tv2-title-count').textContent = r.members.length || '';
+    var html = '<div class="tv2-team">' + r.members.map(function(m){
+      var tot = m.open || 0;
+      return '<button class="tv2-tcard" data-act="person" data-id="' + m.id + '">'
+        + '<div class="tv2-th"><span class="tv2-av" style="width:36px;height:36px;font-size:13px">' + h(initials(m.name)) + '</span>'
+        + '<div style="min-width:0;text-align:left"><div class="nm">' + h(m.name) + (m.id === me() ? ' <span class="tv2-why">you</span>' : '') + '</div>'
+        + '<div class="sb">' + (m.is_admin ? 'Admin' : 'Recruiter') + ' · ' + tot + ' open</div></div></div>'
+        + '<div class="tv2-tstats">'
+        + '<div class="' + (m.overdue ? 'red' : '') + '"><b>' + m.overdue + '</b>Overdue</div>'
+        + '<div><b>' + m.today + '</b>Today</div>'
+        + '<div><b>' + m.upcoming + '</b>Upcoming</div>'
+        + '<div class="grn"><b>' + m.done_7d + '</b>Done 7d</div></div>'
+        + '</button>';
+    }).join('') + '</div>';
+    if (r.unowned_open) html += '<div style="margin-top:14px;font-size:12px;color:var(--tv-muted)">' + r.unowned_open
+      + ' older open task' + (r.unowned_open === 1 ? '' : 's') + ' have no owner recorded (made before Tasks v2). Open one and use Assign to give it an owner.</div>';
+    el.innerHTML = html;
+  }
+
+  // ── Wave 4: auto-task rules editor (admins) ─────────────────────────────
+  function stageOptions(cur){
+    var ids = (typeof PIPELINE_STAGES !== 'undefined' ? PIPELINE_STAGES : []).map(function(s){ return s.id; });
+    if (cur && ids.indexOf(cur) < 0) ids.unshift(cur);
+    return ids.map(function(id){
+      var lbl = (typeof stageLabel === 'function') ? stageLabel(id) : id;
+      return '<option value="' + h(id) + '"' + (id === cur ? ' selected' : '') + '>' + h(lbl) + '</option>'; }).join('');
+  }
+  function ruleRow(r){
+    var team = (TV.meta && TV.meta.team) || [];
+    return '<div class="tv2-rule' + (r.is_active ? '' : ' off') + '" data-rid="' + r.id + '">'
+      + '<div class="tv2-rl1"><label class="tv2-sw"><input type="checkbox" data-rf="is_active"' + (r.is_active ? ' checked' : '') + '> On</label>'
+      + '<span>When a candidate moves to</span><select data-rf="stage">' + stageOptions(r.stage) + '</select>'
+      + '<button class="tv2-ico" data-rdel="1" title="Delete rule" style="margin-left:auto">🗑</button></div>'
+      + '<div class="tv2-rl2"><span>create</span><input type="text" data-rf="title" maxlength="500" value="' + h(r.title) + '"></div>'
+      + '<div class="tv2-rl3"><span>due in</span><input type="number" data-rf="due_days" min="0" max="60" value="' + r.due_days + '" style="width:60px"><span>day(s) at</span>'
+      + '<input type="time" data-rf="due_time" value="' + h(r.due_time || '') + '" style="width:110px">'
+      + '<select data-rf="priority">' + PRIOS.map(function(p){ return '<option value="' + p[0] + '"' + (p[0] === r.priority ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('') + '</select>'
+      + '<select data-rf="assign_to"><option value="0">Job’s recruiter</option>' + team.map(function(u){ return '<option value="' + u.id + '"' + (u.id === r.assign_to ? ' selected' : '') + '>' + h(u.name) + '</option>'; }).join('') + '</select>'
+      + '</div></div>';
+  }
+  async function rulesModal(){
+    var r = await api('GET', '/auto-rules');
+    if (!ok(r)) { fail(r); return; }
+    TV.rules = r.rules || [];
+    var body = '<div style="font-size:12.5px;color:var(--tv-muted);line-height:1.5">When a candidate’s stage changes (from anywhere in the ATS), a follow-up task is created automatically within a minute. '
+      + 'Placeholders: <b>{name}</b> <b>{role}</b> <b>{client}</b> <b>{stage}</b>. Empty time = all-day task.</div>'
+      + '<div id="tv2-rules">' + TV.rules.map(ruleRow).join('') + '</div>'
+      + '<button class="tv2-btn o" id="tv2-rule-add" type="button">+ Add rule</button>';
+    showModal('Auto-task rules', body, 'Done', function(){ hideModal(); });
+    var box = $('tv2-modal').querySelector('.box'); box.style.width = '640px';
+    var m = $('tv2-modal');
+    m.querySelector('[data-m=cancel]').style.display = 'none';
+    function rowOf(el){ var x = el.closest('[data-rid]'); return x ? +x.getAttribute('data-rid') : 0; }
+    async function save(el){
+      var rid = rowOf(el), f = el.getAttribute('data-rf'); if (!rid || !f) return;
+      var v = el.type === 'checkbox' ? el.checked : el.value;
+      if (f === 'title' && !String(v).trim()) { toast('ERR', 'Task text cannot be empty'); return; }
+      var res = await api('PATCH', '/auto-rules/' + rid, (function(){ var o = {}; o[f] = v; return o; })());
+      if (!ok(res)) { fail(res); return; }
+      var row = el.closest('.tv2-rule'); if (row) row.classList.toggle('off', !res.rule.is_active);
+      toast('OK', 'Rule saved');
+    }
+    m.querySelector('#tv2-rules').addEventListener('change', function(e){ if (e.target.getAttribute('data-rf')) save(e.target); });
+    m.querySelector('#tv2-rules').addEventListener('click', async function(e){
+      var b = e.target.closest('[data-rdel]'); if (!b) return;
+      if (!confirm('Delete this rule? Tasks it already made are kept.')) return;
+      var rid = rowOf(b), res = await api('DELETE', '/auto-rules/' + rid);
+      if (!ok(res)) { fail(res); return; }
+      b.closest('.tv2-rule').remove(); toast('OK', 'Rule deleted');
+    });
+    $('tv2-rule-add').onclick = async function(){
+      var first = (typeof PIPELINE_STAGES !== 'undefined' && PIPELINE_STAGES[0]) ? PIPELINE_STAGES[0].id : 'Screening';
+      var res = await api('POST', '/auto-rules', {stage: first, title: 'Follow up: {name}', due_days: 1, due_time: '11:00', priority: 'none'});
+      if (!ok(res)) { fail(res); return; }
+      $('tv2-rules').insertAdjacentHTML('beforeend', ruleRow(res.rule));
+    };
+  }
+
+  // ── Wave 4: candidate profile "Reminders" card runs on Tasks v2 ─────────
+  // Same markup and element ids as before; the list now shows priority,
+  // assignee and repeat, Done rolls recurring tasks, and new tasks can be
+  // assigned. Date is optional (no date = Someday).
+  var _teamCache = null, _meCache = 0;
+  async function teamList(){
+    if (TV.meta && TV.meta.team) { _meCache = TV.meta.me; return TV.meta.team; }
+    if (_teamCache) return _teamCache;
+    var r = await api('GET', '/meta');                     // kept separate: TV.meta is the Tasks page's own first load
+    if (ok(r)) { _teamCache = r.team || []; _meCache = r.me; }
+    return _teamCache || [];
+  }
+  function meId(){ return (TV.meta && TV.meta.me) || _meCache || 0; }
+  window.tv2OpenTask = function(id){
+    if (typeof openTasks === 'function') openTasks();
+    setTimeout(function(){ openDetail(id); }, 350);
+  };
+  window.loadCandidateReminders = async function(cid){
+    var el = document.getElementById('reminder-list-' + cid);
+    if (!el) return;
+    var r = await api('GET', '/tasks?view=all&scope=team&candidate_id=' + cid);
+    if (!ok(r)) { el.innerHTML = '<div style="font-size:11px;color:#C0522B">' + esc((r && r.error) || 'Could not load tasks') + '</div>'; return; }
+    var rems = r.tasks || [];
+    var badge = document.getElementById('rem-count-' + cid);
+    if (badge) { if (rems.length) { badge.textContent = rems.length; badge.style.display = 'inline-flex'; } else badge.style.display = 'none'; }
+    // assignee picker next to the date (added once)
+    var dt = document.getElementById('rem-dt-' + cid);
+    if (dt && !document.getElementById('rem-asg-' + cid)) {
+      var team = await teamList();
+      var sel = document.createElement('select');
+      sel.id = 'rem-asg-' + cid; sel.className = 'inp'; sel.style.cssText = 'width:100%;font-size:12.5px;margin-bottom:7px';
+      sel.title = 'Assign to';
+      sel.innerHTML = '<option value="0">Assign to: me</option>' + team.filter(function(u){ return u.id !== meId(); })
+        .map(function(u){ return '<option value="' + u.id + '">Assign to: ' + h(u.name) + '</option>'; }).join('');
+      dt.parentNode.parentNode.insertBefore(sel, dt.parentNode);   // own line, above the date + Add row
+      dt.title = 'Due date & time (optional)';
+    }
+    if (!rems.length) { el.innerHTML = '<div style="font-size:11px;color:var(--muted);font-style:italic">No open tasks for this candidate</div>'; return; }
+    var pc = {high: '#D63B3B', medium: '#C77B12', low: '#2D6FB3'};
+    el.innerHTML = rems.map(function(t){
+      var late = t.late;
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:' + (late ? '#FFF0EC' : '#F3FBF8') + ';border-radius:6px;margin-bottom:5px;border:0.5px solid ' + (late ? '#FBCBB5' : '#C2EBD8') + '">'
+        + '<button onclick="doneReminder(' + t.id + ',' + cid + ')" title="Complete" style="width:18px;height:18px;border-radius:50%;border:1.6px solid ' + (pc[t.priority] || '#B7BCC4') + ';background:#fff;cursor:pointer;flex-shrink:0;padding:0"></button>'
+        + '<div style="flex:1;min-width:0;cursor:pointer" onclick="tv2OpenTask(' + t.id + ')" title="Open in Tasks">'
+        + '<div style="font-size:12px;color:#1B2B3A;font-weight:500">' + h(t.title) + '</div>'
+        + '<div style="font-size:10px;color:' + (late ? '#C0522B' : '#138A65') + ';margin-top:2px">'
+        + (t.due_at ? '&#9200; ' + h(dueLbl(t.due_at)) + (late ? ' — OVERDUE' : '') : 'No date')
+        + (t.recurrence ? ' · ↻ ' + h(recurLbl(t.recurrence)) : '')
+        + (t.assigned_to ? ' · → ' + h(t.assigned_to === meId() ? 'me' : t.assigned_name) : '')
+        + '</div></div>'
+        + '<button class="btn btn-o" style="font-size:10px;padding:3px 8px;flex-shrink:0;color:#E24B4A" onclick="deleteReminder(' + t.id + ',' + cid + ')" title="Delete">&#10005;</button>'
+        + '</div>';
+    }).join('');
+  };
+  window.addReminder = async function(cid){
+    var dtEl = document.getElementById('rem-dt-' + cid), noteEl = document.getElementById('rem-note-' + cid);
+    var asg = document.getElementById('rem-asg-' + cid);
+    var body = {candidate_id: cid, title: noteEl ? noteEl.value.trim() : ''};
+    if (dtEl && dtEl.value) body.due_at = dtEl.value;
+    if (asg && +asg.value) body.assigned_to = +asg.value;
+    if (!body.title) delete body.title;                     // server falls back to the candidate's name
+    var r = await api('POST', '/tasks', body);
+    if (!ok(r)) { toast('ERR', esc((r && r.error) || 'Failed to add task')); return; }
+    if (dtEl) dtEl.value = ''; if (noteEl) noteEl.value = ''; if (asg) asg.value = '0';
+    toast('OK', 'Task added');
+    window.loadCandidateReminders(cid);
+    if (typeof updateTasksBadge === 'function') updateTasksBadge();
+  };
+  window.doneReminder = async function(rid, cid){
+    var r = await api('POST', '/tasks/' + rid + '/complete', {done: true});
+    if (!ok(r)) { toast('ERR', esc((r && r.error) || 'Failed')); return; }
+    toast('OK', r.rolled ? 'Done — next on ' + esc(dueLbl(r.next_due)) : 'Marked done');
+    window.loadCandidateReminders(cid);
+    if (typeof updateTasksBadge === 'function') updateTasksBadge();
+  };
+  window.deleteReminder = async function(rid, cid){
+    if (!confirm('Delete this task?')) return;
+    var r = await api('DELETE', '/tasks/' + rid);
+    if (!ok(r)) { toast('ERR', esc((r && r.error) || 'Failed')); return; }
+    window.loadCandidateReminders(cid);
+    if (typeof updateTasksBadge === 'function') updateTasksBadge();
+  };
+
   // ── quick add ───────────────────────────────────────────────────────────
   function parseQuick(txt){
     var tags = [], prio = null;
@@ -21149,6 +21350,7 @@ async function _bdhDone(id, box){
     else if (v === 'tag') body.tags = (body.tags || []).concat([TV.tag]);
     if (v === 'next7' || v === 'all' || v === 'assigned' || v === 'followups' || v === 'my_day') body.due_at = todayIso();
     if (v === 'calendar') { calInit(); body.due_at = TV.cal.sel; }
+    if (v === 'person') { body.assigned_to = TV.personId; body.due_at = todayIso(); }
     inp.value = ''; inp.disabled = true;
     var r = await api('POST', '/tasks', body);
     inp.disabled = false; inp.focus();
@@ -21482,6 +21684,7 @@ async function _bdhDone(id, box){
       + '<div class="tv2-psep"></div>';
     if (TV.view !== 'followups' && TV.view !== 'board')
       html += '<button class="tv2-pi" data-mm="select">☑ ' + (TV.selMode ? 'Stop selecting' : 'Select tasks') + '</button>';
+    if (TV.meta && TV.meta.is_admin) html += '<button class="tv2-pi" data-mm="rules">\u2699 Auto-task rules</button>';
     html += '<button class="tv2-pi" data-mm="default">⭐ Open Tasks on this view</button>';
     if (TV.view === 'list') { var l = listById(TV.listId); if (l && (l.mine || TV.meta.is_admin)) html += '<button class="tv2-pi" data-mm="edit-list">✎ Edit / delete list</button>'; }
     if (TV.view === 'tag') { var tg = tagDef(TV.tag); if (tg) html += '<button class="tv2-pi" data-mm="edit-tag">✎ Tag colour' + (TV.meta.is_admin ? ' / delete' : '') + '</button>'; }
@@ -21492,9 +21695,10 @@ async function _bdhDone(id, box){
         if (a === 'select') { TV.selMode = !TV.selMode; TV.sel = {}; renderBulk(); renderList(); }
         else if (a === 'default') {
           var v = VIEWS[TV.view] ? TV.view : 'all';
-          var r = await api('POST', '/prefs', {default_view: v === 'followups' || v === 'assigned' || v === 'completed' || v === 'inbox' ? 'all' : v});
+          var r = await api('POST', '/prefs', {default_view: ['my_day', 'next7', 'all', 'board', 'calendar'].indexOf(v) >= 0 ? v : 'all'});
           if (ok(r)) toast('OK', 'Tasks will open on ' + (VIEWS[r.prefs.default_view] || {t: r.prefs.default_view}).t); else fail(r);
         }
+        else if (a === 'rules') rulesModal();
         else if (a === 'edit-list') listModal(listById(TV.listId));
         else if (a === 'edit-tag') tagModal(tagDef(TV.tag));
       }; });
@@ -21571,6 +21775,7 @@ async function _bdhDone(id, box){
     if (act === 'tag-new') return tagModal(null);
     if (act === 'bulk') return bulkAct(a.getAttribute('data-b'), a);
     if (act === 'close-detail') return closeDetail();
+    if (act === 'person') return setView('person', a.getAttribute('data-id'));
     if (act === 'ats-add') return atsAdd(+a.getAttribute('data-i'));
     if (act === 'ats-done') return atsDone(+a.getAttribute('data-i'));
     if (act === 'ats-open') return atsOpen(+a.getAttribute('data-i'));

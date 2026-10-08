@@ -470,3 +470,81 @@ def test_my_day_ats_suggestions(srv):
     rs = {s['candidate_id'] for s in riya.get('/api/todo/tasks?view=my_day').get_json()['ats_suggestions']}
     assert C_ADMIN not in rs and C_RIYA in rs
     assert 'ats_suggestions' not in a.get('/api/todo/tasks?view=my_day&ats=0').get_json()
+
+
+# ── Wave 4: team view, person view, auto-task rules ──────────────────────
+def test_team_and_person_views(srv):
+    a, riya = cl(srv, ADMIN), cl(srv, RIYA)
+    t0 = today(srv)
+    a.post('/api/todo/tasks', json={'title': 'For Riya overdue', 'assigned_to': RIYA,
+                                    'due_at': (t0 - datetime.timedelta(days=1)).isoformat()})
+    own = riya.post('/api/todo/tasks', json={'title': 'Riya own today', 'due_at': t0.isoformat()}).get_json()['task']
+    tm = a.get('/api/todo/team').get_json()
+    m = {x['id']: x for x in tm['members']}
+    assert m[RIYA]['overdue'] >= 1 and m[RIYA]['today'] >= 1 and m[RIYA]['name'] == 'Riya'
+    assert OTHER_ADMIN not in m                                        # other agency never listed
+    assert riya.get('/api/todo/team').status_code == 403
+    got = ids(a.get(f'/api/todo/tasks?view=person&user_id={RIYA}'))
+    assert own['id'] in got
+    assert riya.get(f'/api/todo/tasks?view=person&user_id={ADMIN}').status_code == 403
+
+
+def _stage(srv, cid, stage, created_at=None):
+    conn = srv.get_db()
+    conn.execute('UPDATE candidates SET stage=? WHERE id=?', (stage, cid))
+    conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
+                 (cid, 'Screening', stage, 'test', created_at or srv.ts()))
+    conn.commit(); conn.close()
+
+
+def _auto_tasks(srv, cid):
+    conn = srv.get_db()
+    rows = conn.execute("SELECT * FROM reminders WHERE candidate_id=? AND auto_rule!='' ORDER BY id", (cid,)).fetchall()
+    conn.close()
+    return rows
+
+
+def test_auto_task_rules(srv):
+    from modules import todo
+    a, riya = cl(srv, ADMIN), cl(srv, RIYA)
+    assert riya.get('/api/todo/auto-rules').status_code == 403
+    rules = a.get('/api/todo/auto-rules').get_json()['rules']
+    assert {r['stage'] for r in rules} == {'Shared with Client', 'Placed', 'Joined'}
+    conn = srv.get_db(); todo.run_auto_rules(conn); conn.close()      # make sure the watermark exists
+
+    # a real stage move by the recruiter through the normal ATS route
+    assert riya.post(f'/api/candidates/{C_RIYA}/stage', json={'stage': 'Shared with Client'}).status_code == 200
+    conn = srv.get_db(); todo.run_auto_rules(conn); todo.run_auto_rules(conn); conn.close()
+    made = _auto_tasks(srv, C_RIYA)
+    assert len(made) == 1
+    t = made[0]
+    d2 = (today(srv) + datetime.timedelta(days=2)).isoformat()
+    assert t['note'] == 'Get client feedback: Riya Cand' and t['due_at'] == d2 + 'T11:00:00'
+    assert t['assigned_to'] == RIYA and t['priority'] == 'medium' and json.loads(t['tags']) == ['Auto']
+    # it reaches Riya's task list and her phone
+    assert t['id'] in ids(riya.get('/api/todo/tasks?view=all'))
+    assert todo.push_targets(t) == [RIYA]
+    # moving away and back while the task is still open does not duplicate it
+    _stage(srv, C_RIYA, 'Interview Inprocess'); _stage(srv, C_RIYA, 'Shared with Client')
+    conn = srv.get_db(); todo.run_auto_rules(conn); conn.close()
+    assert len(_auto_tasks(srv, C_RIYA)) == 1
+    # old stage changes (imports) never create tasks
+    old = (srv._ist_now() - datetime.timedelta(days=5)).isoformat(timespec='seconds')
+    _stage(srv, C_ADMIN, 'Placed', created_at=old)
+    conn = srv.get_db(); todo.run_auto_rules(conn); conn.close()
+    assert _auto_tasks(srv, C_ADMIN) == []
+
+    # editing rules: custom rule, disable, delete
+    r = a.post('/api/todo/auto-rules', json={'stage': 'Interview Inprocess', 'title': 'Prep {name} for {client}',
+                                             'due_days': 0, 'due_time': '09:30', 'priority': 'high'}).get_json()['rule']
+    assert a.post('/api/todo/auto-rules', json={'stage': 'X', 'title': 'Y', 'due_days': 99}).status_code == 400
+    assert a.post('/api/todo/auto-rules', json={'stage': 'X', 'title': 'Y', 'due_time': '25:00'}).status_code == 400
+    assert a.post('/api/todo/auto-rules', json={'stage': 'X', 'title': 'Y', 'assign_to': OTHER_ADMIN}).status_code == 400
+    _stage(srv, C_ADMIN, 'Interview Inprocess')
+    conn = srv.get_db(); todo.run_auto_rules(conn); conn.close()
+    prep = [x for x in _auto_tasks(srv, C_ADMIN) if x['note'].startswith('Prep')]
+    assert prep and prep[0]['note'] == 'Prep Admin Cand for AdminClient' and prep[0]['assigned_to'] == ADMIN
+    assert a.patch(f"/api/todo/auto-rules/{r['id']}", json={'is_active': False}).get_json()['rule']['is_active'] is False
+    assert a.delete(f"/api/todo/auto-rules/{r['id']}").status_code == 200
+    assert r['id'] not in {x['id'] for x in a.get('/api/todo/auto-rules').get_json()['rules']}
+    assert cl(srv, OTHER_ADMIN).patch(f"/api/todo/auto-rules/{rules[0]['id']}", json={'title': 'x'}).status_code == 404
