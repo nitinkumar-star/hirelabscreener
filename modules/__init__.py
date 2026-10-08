@@ -43,6 +43,7 @@ _MODULE_NAMES = [
     'todo_ai',         # Tasks v2 Wave 5 — smart quick-add, daily plan, morning summary
     'matching',        # vector Job Matching (candidate) + Matching Candidates (mandate)
     'match_diag',      # read-only matching diagnosis for admins
+    'naukri_screen',   # Chrome extension: screen a Naukri search page with DeepSeek
 ]
 
 _MIGRATIONS = []
