@@ -548,3 +548,170 @@ def test_auto_task_rules(srv):
     assert a.delete(f"/api/todo/auto-rules/{r['id']}").status_code == 200
     assert r['id'] not in {x['id'] for x in a.get('/api/todo/auto-rules').get_json()['rules']}
     assert cl(srv, OTHER_ADMIN).patch(f"/api/todo/auto-rules/{rules[0]['id']}", json={'title': 'x'}).status_code == 404
+
+
+# ── Wave 5: smart quick-add, daily plan, morning push ────────────────────
+class _FakeResp:
+    def __init__(self, content):
+        self._c = content
+    def json(self):
+        return {'choices': [{'message': {'content': self._c}}], 'usage': {}}
+
+
+def _with_ai(srv, answer=None, boom=False):
+    """Patch DeepSeek: a key is 'set' and call_deepseek returns `answer`."""
+    calls = []
+    orig_call, orig_get = srv.call_deepseek, srv.get_setting
+
+    def fake_call(key, payload, timeout=60, endpoint='deepseek'):
+        calls.append(payload)
+        if boom:
+            raise RuntimeError('network down')
+        return _FakeResp(answer if isinstance(answer, str) else json.dumps(answer))
+
+    def fake_get(key, default=''):
+        return 'sk-test' if key == 'deepseek_api_key' else orig_get(key, default)
+    srv.call_deepseek, srv.get_setting = fake_call, fake_get
+    return calls, (lambda: (setattr(srv, 'call_deepseek', orig_call), setattr(srv, 'get_setting', orig_get)))
+
+
+def test_parse_rules_hinglish(srv):
+    from modules.todo_ai import parse_rules
+    T = datetime.date(2026, 10, 8)                                     # Thursday
+    r = parse_rules('kal 11 baje Rahul ko call L&T ke liye #urgent', T)
+    assert (r['date'], r['time'], r['priority'], r['tags']) == (datetime.date(2026, 10, 9), '11:00', 'high', ['urgent'])
+    assert r['title'] == 'Rahul ko call L&T ke liye'
+    r = parse_rules('Send shortlist to Resolven friday 5pm !high @Riya', T)
+    assert (r['date'], r['time'], r['priority'], r['assignee_hint']) == (datetime.date(2026, 10, 9), '17:00', 'high', 'Riya')
+    r = parse_rules('har somvar pipeline review', T)
+    assert r['recurrence'] == {'freq': 'weekly', 'interval': 1, 'weekdays': [0]} and r['date'] == datetime.date(2026, 10, 12)
+    assert parse_rules('parso shaam 6 baje interview confirm', T)['time'] == '18:00'
+    assert parse_rules('Call back at 3:30 pm', T)['time'] == '15:30'
+    assert parse_rules('3 baje call', T)['time'] == '15:00'              # 1-7 without am/pm = afternoon
+    assert parse_rules('subah 9 baje standup', T)['time'] == '09:00'
+    assert parse_rules('15 oct invoice', T)['date'] == datetime.date(2026, 10, 15)
+    assert parse_rules('5 jan renewal', T)['date'] == datetime.date(2027, 1, 5)   # past month -> next year
+    assert parse_rules('daily naukri refresh', T)['recurrence'] == {'freq': 'daily', 'interval': 1}
+    r = parse_rules('Call 10 SCADA profiles', T)                        # numbers alone are not times
+    assert r['date'] is None and r['time'] is None and r['title'] == 'Call 10 SCADA profiles'
+    assert parse_rules('urgent: share JD', T)['title'] == 'share JD'
+
+
+def test_parse_api_resolves_records(srv):
+    a, riya = cl(srv, ADMIN), cl(srv, RIYA)
+    r = a.post('/api/todo/parse', json={'text': 'kal 11 baje Admin Cand ko call @Riya !high'}).get_json()
+    d = r['draft']
+    assert r['source'] == 'rules' and d['candidate_id'] == C_ADMIN and d['mandate_id'] == M_ADMIN
+    assert d['assigned_to'] == RIYA and d['priority'] == 'high'
+    assert d['due_at'] == (today(srv) + datetime.timedelta(days=1)).isoformat() + 'T11:00'
+    assert {u['k'] for u in r['understood']} >= {'due', 'candidate', 'assignee', 'priority'}
+    # client name -> the active job, when no candidate is named
+    r = a.post('/api/todo/parse', json={'text': 'Send JD to AdminClient friday'}).get_json()
+    assert r['draft']['mandate_id'] == M_ADMIN and r['draft']['candidate_id'] == 0
+    # the recruiter can never resolve the admin's candidate or job
+    r = riya.post('/api/todo/parse', json={'text': 'call Admin Cand about AdminClient'}).get_json()
+    assert r['draft']['candidate_id'] == 0 and r['draft']['mandate_id'] is None
+    r = riya.post('/api/todo/parse', json={'text': 'call Riya Cand'}).get_json()
+    assert r['draft']['candidate_id'] == C_RIYA
+    # nothing is saved by /parse; the draft is created through the normal route
+    before = len(a.get('/api/todo/tasks?view=all&scope=team').get_json()['tasks'])
+    assert len(a.get('/api/todo/tasks?view=all&scope=team').get_json()['tasks']) == before
+    assert a.post('/api/todo/parse', json={'text': ''}).status_code == 400
+
+
+def test_parse_with_ai_and_fallbacks(srv):
+    a = cl(srv, ADMIN)
+    t1 = (today(srv) + datetime.timedelta(days=1)).isoformat()
+    calls, undo = _with_ai(srv, {'title': 'Call Admin Cand about CTC', 'date': t1, 'time': '16:00',
+                                 'priority': None, 'recurrence': None, 'person': 'Admin Cand',
+                                 'client': 'AdminClient', 'assignee': None})
+    try:
+        r = a.post('/api/todo/parse', json={'text': 'kal shaam 4 baje admin cand ko CTC ke liye phone', 'ai': True}).get_json()
+        assert r['source'] == 'ai' and len(calls) == 1
+        assert r['draft']['title'] == 'Call Admin Cand about CTC' and r['draft']['due_at'] == t1 + 'T16:00'
+        assert r['draft']['candidate_id'] == C_ADMIN
+        # without ai=true the model is never called
+        a.post('/api/todo/parse', json={'text': 'kal call'}); assert len(calls) == 1
+        # the user can switch AI off
+        a.post('/api/todo/prefs', json={'ai': False})
+        assert a.post('/api/todo/parse', json={'text': 'kal call', 'ai': True}).get_json()['source'] == 'rules'
+        a.post('/api/todo/prefs', json={'ai': True})
+    finally:
+        undo()
+    # AI invents a person / bad date -> nothing fake gets linked, rules date kept
+    calls, undo = _with_ai(srv, {'title': 'x', 'date': '1999-01-01', 'time': '99:99', 'person': 'Ghost Person',
+                                 'client': 'Nonexistent Ltd'})
+    try:
+        r = a.post('/api/todo/parse', json={'text': 'kal follow up', 'ai': True}).get_json()
+        assert r['draft']['candidate_id'] == 0 and r['draft']['mandate_id'] is None
+        assert r['draft']['due_at'] == t1                                 # from the rules parser
+    finally:
+        undo()
+    # network failure -> rules, with a note
+    calls, undo = _with_ai(srv, boom=True)
+    try:
+        r = a.post('/api/todo/parse', json={'text': 'kal 11 baje call', 'ai': True}).get_json()
+        assert r['ok'] and r['source'] == 'rules' and r['note'] and r['draft']['due_at'] == t1 + 'T11:00'
+    finally:
+        undo()
+
+
+def test_daily_plan(srv):
+    a = cl(srv, ADMIN)
+    t0 = today(srv)
+    od = a.post('/api/todo/tasks', json={'title': 'Plan: overdue invoice', 'priority': 'high',
+                                         'due_at': (t0 - datetime.timedelta(days=3)).isoformat()}).get_json()['task']
+    td = a.post('/api/todo/tasks', json={'title': 'Plan: today low', 'priority': 'low',
+                                         'due_at': t0.isoformat()}).get_json()['task']
+    later = a.post('/api/todo/tasks', json={'title': 'Plan: next month',
+                                            'due_at': (t0 + datetime.timedelta(days=30)).isoformat()}).get_json()['task']
+    p = a.get('/api/todo/plan').get_json()
+    ids_ = [i.get('id') for i in p['items'] if i['kind'] == 'task']
+    assert od['id'] in ids_ and td['id'] in ids_ and later['id'] not in ids_
+    assert ids_.index(od['id']) < ids_.index(td['id'])                  # overdue + high ranks first
+    assert p['source'] == 'rules' and p['summary']
+    # AI summary is cached for the day; refresh=1 regenerates
+    calls, undo = _with_ai(srv, 'Pehle overdue invoice nipta do, phir baaki calls.')
+    try:
+        assert a.get('/api/todo/plan').get_json()['source'] == 'rules' and not calls       # cached
+        r = a.get('/api/todo/plan?refresh=1').get_json()
+        assert r['source'] == 'ai' and r['summary'].startswith('Pehle') and len(calls) == 1
+        assert a.get('/api/todo/plan').get_json()['summary'].startswith('Pehle') and len(calls) == 1
+    finally:
+        undo()
+    assert cl(srv, RIYA).get('/api/todo/plan').get_json()['ok']
+
+
+def test_morning_push(srv):
+    from modules import todo_ai
+    a, riya = cl(srv, ADMIN), cl(srv, RIYA)
+    riya.post('/api/todo/tasks', json={'title': 'Riya morning item', 'due_at': today(srv).isoformat()})
+    sent = []
+    fake = lambda uid, payload, notification=None: sent.append((uid, payload['kind'], notification['body']))
+    now = srv._ist_now()
+    early = now.replace(hour=8, minute=0)
+    late = now.replace(hour=10, minute=0)
+    conn = srv.get_db()
+    assert todo_ai.run_morning_push(conn, late, fake) == 0                 # nobody opted in yet
+    riya.post('/api/todo/prefs', json={'morning_push': True})
+    assert todo_ai.run_morning_push(conn, early, fake) == 0                # before 09:30
+    assert todo_ai.run_morning_push(conn, late, fake) == 1
+    assert sent[0][0] == RIYA and sent[0][1] == 'morning' and 'due today' in sent[0][2]
+    assert todo_ai.run_morning_push(conn, late, fake) == 0                 # once per day
+    conn.close()
+
+
+def test_parse_reports_ai_configured_not_user_switch(srv):
+    """Regression: with AI switched off, the UI must still learn that AI exists,
+    otherwise switching it back on never re-enables the AI preview."""
+    a = cl(srv, ADMIN)
+    calls, undo = _with_ai(srv, {'title': 'x'})
+    try:
+        a.post('/api/todo/prefs', json={'ai': False})
+        r = a.post('/api/todo/parse', json={'text': 'kal call', 'ai': True}).get_json()
+        assert r['source'] == 'rules' and r['ai_available'] is True and not calls
+        a.post('/api/todo/prefs', json={'ai': True})
+        assert a.post('/api/todo/parse', json={'text': 'kal call', 'ai': True}).get_json()['source'] == 'ai'
+    finally:
+        undo()
+    assert a.post('/api/todo/parse', json={'text': 'kal call'}).get_json()['ai_available'] is False   # no key

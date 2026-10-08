@@ -1087,9 +1087,10 @@ body{font-size:14px !important; line-height:1.5}
         <div id="tv2-bulk" class="tv2-bulk" style="display:none"></div>
         <div id="tv2-list" class="tv2-list"></div>
         <div id="tasks-body" class="tv2-legacy" style="display:none"></div>
+        <div id="tv2-prev" class="tv2-prev" style="display:none"></div>
         <form id="tv2-add" class="tv2-add" autocomplete="off">
           <span class="tv2-add-plus">+</span>
-          <input id="tv2-add-in" maxlength="500" placeholder="Add task (use #tag, !high)">
+          <input id="tv2-add-in" maxlength="500" placeholder="Add task \u2014 e.g. kal 11 baje Rahul ko call #urgent">
           <button type="submit" class="tv2-btn">Add</button>
         </form>
       </section>
@@ -20567,6 +20568,30 @@ async function _bdhDone(id, box){
 .tv2-colors button.on{border-color:var(--tv-text)}
 .tv2-only-m{display:none}
 .tv2-back{display:none}
+/* Wave 5: smart quick-add preview + today's plan */
+.tv2-prev{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 16px 6px;padding:7px 10px;border-radius:10px;background:var(--tv-accent-soft);font-size:12px;flex-shrink:0}
+.tv2-qsrc{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--tv-muted)}
+.tv2-qsrc.ai{color:#7C5CC4}
+.tv2-qtitle{font-weight:600;color:var(--tv-text);margin-right:4px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tv2-qchip{display:inline-flex;align-items:center;gap:5px;background:var(--tv-card);border:0.5px solid var(--tv-line);border-radius:14px;padding:2px 9px;color:var(--tv-text)}
+.tv2-qchip b{cursor:pointer;color:var(--tv-muted);font-weight:400;font-size:10px}
+.tv2-qchip b:hover{color:var(--tv-red)}
+.tv2-qchip.k-candidate,.tv2-qchip.k-mandate{color:var(--tv-accent-d);border-color:var(--tv-accent)}
+.tv2-qchip.k-due{color:var(--tv-blue)}
+.tv2-qchip.k-priority{color:var(--tv-red)}
+.tv2-qchip.k-tag{color:var(--tv-amber)}
+.tv2-qhint{color:var(--tv-muted);font-size:11.5px}
+.tv2-qopt{border:0.5px solid var(--tv-accent);background:var(--tv-card);color:var(--tv-accent-d);border-radius:14px;padding:2px 9px;font-size:12px;cursor:pointer}
+.tv2-plan{border:0.5px solid var(--tv-line);background:var(--tv-card);border-radius:12px;padding:10px 14px 12px;margin:0 0 16px}
+.tv2-plan.closed{padding-bottom:10px}
+.tv2-plan-h{display:flex;align-items:center;gap:8px}
+.tv2-plan-t{font-weight:700;font-size:13.5px;margin-right:auto}
+.tv2-plan-s{font-size:13px;line-height:1.5;color:var(--tv-text);margin:6px 0 8px}
+.tv2-plan-l{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.tv2-pn{width:20px;height:20px;border-radius:50%;background:var(--tv-accent-soft);color:var(--tv-accent-d);font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.tv2-plan-l li{display:flex;align-items:center;gap:10px}
+.tv2-plan-l .tv2-btn.o{padding:4px 10px;font-size:11.5px;flex-shrink:0}
+@media (max-width:640px){ .tv2-prev{margin:0 10px 6px} .tv2-qtitle{max-width:100%} }
 /* Wave 4: team cards + rules editor */
 .tv2-team{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
 .tv2-tcard{border:0.5px solid var(--tv-line);background:var(--tv-card);border-radius:12px;padding:14px;cursor:pointer;text-align:left;display:flex;flex-direction:column;gap:12px}
@@ -20797,6 +20822,7 @@ async function _bdhDone(id, box){
     TV.sugg = r.suggestions || [];
     TV.ats = r.ats_suggestions || [];
     renderList();
+    if (TV.view === 'my_day') loadPlan(false);
   }
 
   // ── open / switch view ──────────────────────────────────────────────────
@@ -20825,7 +20851,7 @@ async function _bdhDone(id, box){
     $('tv2-add').style.display = (TV.view === 'completed' || TV.view === 'board' || TV.view === 'team') ? 'none' : '';
     $('task-filter').style.display = TV.view === 'followups' ? '' : 'none';
     $('tv2-q').parentNode.style.display = (legacy || TV.view === 'calendar' || TV.view === 'team') ? 'none' : '';
-    var ai = $('tv2-add-in'); if (ai && TV.view !== 'calendar') ai.placeholder = 'Add task (use #tag, !high)';
+    var ai = $('tv2-add-in'); if (ai && TV.view !== 'calendar') ai.placeholder = 'Add task \u2014 e.g. kal 11 baje Rahul ko call #urgent';
     var sc = $('tv2-scope'); if (sc) sc.style.display = (TV.meta && TV.meta.is_admin && !legacy && TV.view !== 'team' && TV.view !== 'person') ? '' : 'none';
     renderBulk();
     setTitle();
@@ -20955,6 +20981,7 @@ async function _bdhDone(id, box){
       html += '<div class="tv2-hello"><h2>' + greeting() + '</h2><p>' + WD[(d.getDay() + 6) % 7] + ', ' + d.getDate() + ' ' + MON[d.getMonth()]
         + (tasks.length ? ' · ' + done.length + ' of ' + tasks.length + ' done' : ' · What’s your plan for today?') + '</p>'
         + (tasks.length ? '<div class="tv2-prog"><i style="width:' + pct + '%"></i></div>' : '') + '</div>';
+      html += planHtml();
       html += open.length ? groupHtml('open', 'To do', open) : (tasks.length ? '' : emptyHtml());
       html += groupHtml('done', 'Completed today', done);
       if (TV.sugg.length) {
@@ -21119,7 +21146,7 @@ async function _bdhDone(id, box){
     if (!st.length && !se.length) html += '<div style="padding:10px 6px;color:var(--tv-muted);font-size:12.5px">Nothing on this day. Type below to add a task for it.</div>';
     html += '</div></div>';
     el.innerHTML = html;
-    var inp = $('tv2-add-in'); if (inp) inp.placeholder = 'Add task for ' + dayLbl(c.sel) + ' (use #tag, !high)';
+    var inp = $('tv2-add-in'); if (inp) inp.placeholder = 'Add task for ' + dayLbl(c.sel) + ' \u2014 e.g. 11 baje Rahul ko call';
   }
   async function calMove(id, iso){
     var t = null; TV.tasks.forEach(function(x){ if (x.id === id) t = x; });
@@ -21335,28 +21362,167 @@ async function _bdhDone(id, box){
                   .replace(/\s+/g, ' ').trim();
     return {title: rest, tags: tags, priority: prio};
   }
+  // ── Wave 5: Today's plan (My Day) ───────────────────────────────────────
+  async function loadPlan(refresh){
+    if (!refresh && TV.plan && TV.plan.date === todayIso()) return;
+    var r = await api('GET', '/plan' + (refresh ? '?refresh=1' : ''));
+    if (ok(r)) { TV.plan = r; if (TV.view === 'my_day') renderList(); }
+    else if (refresh) fail(r, 'Could not build the plan');
+  }
+  function planClosed(){ try { return localStorage.getItem('tv2_plan_closed') === todayIso(); } catch (e) { return false; } }
+  function planHtml(){
+    var p = TV.plan; if (!p) return '';
+    var closed = planClosed();
+    var top = (p.items || []).slice(0, 5);
+    var html = '<div class="tv2-plan' + (closed ? ' closed' : '') + '">'
+      + '<div class="tv2-plan-h"><span class="tv2-plan-t">🧭 Today’s plan</span>'
+      + (p.source === 'ai' ? '<span class="tv2-qsrc ai">✨ AI</span>' : '')
+      + '<button class="tv2-ico" data-act="plan-refresh" title="Rebuild plan">↻</button>'
+      + '<button class="tv2-ico" data-act="plan-toggle" title="' + (closed ? 'Show' : 'Hide') + '">' + (closed ? '▾' : '▴') + '</button></div>';
+    if (closed) return html + '</div>';
+    html += '<div class="tv2-plan-s">' + h(p.summary || '') + '</div>';
+    if (top.length) {
+      html += '<ol class="tv2-plan-l">' + top.map(function(it, i){
+        var act = it.kind === 'ats'
+          ? '<button class="tv2-btn o" data-act="plan-ats" data-i="' + i + '">+ My Day</button>'
+          : (it.my_day ? '<span class="tv2-why">in My Day</span>' : '<button class="tv2-btn o" data-act="myday" data-id="' + it.id + '" data-on="1">+ My Day</button>');
+        return '<li><span class="tv2-pn">' + (i + 1) + '</span><div class="tv2-rb" ' + (it.kind === 'task' ? 'data-act="open" data-id="' + it.id + '" style="cursor:pointer"' : '') + '>'
+          + '<div class="tt">' + h(it.title) + '</div><div class="tv2-meta"><span>' + h(it.why) + '</span></div></div>' + act + '</li>';
+      }).join('') + '</ol>';
+      var addable = top.filter(function(it){ return it.kind === 'ats' || !it.my_day; }).length;
+      if (addable > 1) html += '<button class="tv2-btn" data-act="plan-all" style="margin-top:6px">Add these ' + addable + ' to My Day</button>';
+    }
+    return html + '</div>';
+  }
+  async function planAdd(i){
+    var it = ((TV.plan && TV.plan.items) || [])[i]; if (!it) return;
+    if (it.kind === 'task') return setMyDay(it.id, true);
+    var body = {title: (ATS_VERB[it.type] || '') + it.title, notes: it.why, due_at: todayIso(), my_day: true};
+    if (it.candidate_id) body.candidate_id = it.candidate_id;
+    var r = await api('POST', '/tasks', body);
+    if (!ok(r)) { fail(r); return; }
+  }
+  async function planAll(){
+    var top = ((TV.plan && TV.plan.items) || []).slice(0, 5);
+    for (var i = 0; i < top.length; i++) {
+      if (top[i].kind === 'ats') await planAdd(i);
+      else if (!top[i].my_day) await api('POST', '/tasks/' + top[i].id + '/my-day', {on: true});
+    }
+    toast('☀', 'Plan added to My Day');
+    loadTasks(); refreshMetaSoon(); loadPlan(true);
+  }
+
+  // ── Wave 5: smart quick-add (server parser + optional DeepSeek) ─────────
+  // Typing shows what will be understood (rules: instant). After a short
+  // pause, AI reads the sentence too (if the company has a DeepSeek key and
+  // the user has AI on). Enter adds exactly what the preview shows.
+  var QA = {text: '', draft: null, understood: [], options: [], source: '', seq: 0, aiT: null, ruleT: null,
+            pending: null, unlinked: {}, aiAvail: true};
+  function qaReset(){
+    QA.text = ''; QA.draft = null; QA.understood = []; QA.options = []; QA.source = ''; QA.unlinked = {};
+    clearTimeout(QA.aiT); clearTimeout(QA.ruleT); QA.pending = null; QA.seq++;
+    renderPreview();
+  }
+  function aiOn(){ return QA.aiAvail && !(TV.meta && TV.meta.prefs && TV.meta.prefs.ai === false); }
+  async function qaParse(text, ai){
+    var seq = ++QA.seq;
+    var p = api('POST', '/parse', {text: text, ai: !!ai});
+    QA.pending = p;
+    var r = await p;
+    if (seq !== QA.seq || text !== ($('tv2-add-in').value || '').trim()) return null;   // stale
+    QA.pending = null;
+    if (!ok(r)) return null;
+    QA.text = text; QA.draft = r.draft; QA.understood = r.understood || []; QA.options = r.candidate_options || [];
+    QA.source = r.source; QA.aiAvail = r.ai_available !== false; QA.note = r.note || '';
+    renderPreview();
+    return r;
+  }
+  function onQaInput(){
+    var text = ($('tv2-add-in').value || '').trim();
+    clearTimeout(QA.aiT); clearTimeout(QA.ruleT);
+    if (text.length < 3) { qaReset(); return; }
+    QA.unlinked = {};
+    QA.ruleT = setTimeout(function(){ qaParse(text, false); }, 220);
+    if (text.length >= 8 && aiOn()) QA.aiT = setTimeout(function(){ qaParse(text, true); }, 1100);
+  }
+  function renderPreview(){
+    var el = $('tv2-prev'); if (!el) return;
+    if (!QA.draft || !QA.text) { el.innerHTML = ''; el.style.display = 'none'; return; }
+    var chips = QA.understood.filter(function(u){ return !QA.unlinked[u.k]; }).map(function(u){
+      var x = (u.k === 'due' || u.k === 'candidate' || u.k === 'mandate' || u.k === 'assignee' || u.k === 'repeat')
+        ? '<b data-qa-x="' + h(u.k) + '" title="Remove">✕</b>' : '';
+      return '<span class="tv2-qchip k-' + h(u.k) + '">' + h(u.label) + x + '</span>';
+    }).join('');
+    var opts = (QA.options.length && !QA.draft.candidate_id && !QA.unlinked.candidate)
+      ? '<span class="tv2-qhint">Which candidate?</span>' + QA.options.map(function(o){
+          return '<button type="button" class="tv2-qopt" data-qa-pick="' + o.id + '" title="' + h(o.mandate_label) + '">' + h(o.name) + '</button>'; }).join('')
+      : '';
+    var src = QA.source === 'ai' ? '<span class="tv2-qsrc ai">✨ AI</span>' : '<span class="tv2-qsrc">Understood</span>';
+    el.innerHTML = src + '<span class="tv2-qtitle">' + h(QA.draft.title) + '</span>' + chips + opts
+      + (QA.note ? '<span class="tv2-qhint">' + h(QA.note) + '</span>' : '');
+    el.style.display = 'flex';
+  }
+  function qaBind(){
+    var inp = $('tv2-add-in');
+    inp.addEventListener('input', onQaInput);
+    inp.addEventListener('keydown', function(e){ if (e.key === 'Escape') { inp.value = ''; qaReset(); } });
+    $('tv2-prev').addEventListener('click', function(e){
+      var x = e.target.closest('[data-qa-x]'), pk = e.target.closest('[data-qa-pick]');
+      if (x) {
+        var k = x.getAttribute('data-qa-x'); QA.unlinked[k] = true;
+        if (k === 'due') { QA.draft.due_at = ''; QA.draft.recurrence = null; QA.unlinked.repeat = true; }
+        if (k === 'repeat') QA.draft.recurrence = null;
+        if (k === 'candidate' || k === 'mandate') { QA.draft.candidate_id = 0; QA.draft.mandate_id = null; QA.unlinked.candidate = true; QA.unlinked.mandate = true; }
+        if (k === 'assignee') QA.draft.assigned_to = 0;
+        renderPreview(); inp.focus();
+      }
+      if (pk) {
+        var id = +pk.getAttribute('data-qa-pick'), o = QA.options.filter(function(z){ return z.id === id; })[0];
+        if (!o) return;
+        QA.draft.candidate_id = o.id; QA.draft.candidate_name = o.name;
+        QA.understood = QA.understood.filter(function(u){ return u.k !== 'mandate'; }).concat([{k: 'candidate', label: o.name}]);
+        QA.options = []; renderPreview(); inp.focus();
+      }
+    });
+  }
+
   async function quickAdd(){
     var inp = $('tv2-add-in'); var raw = (inp.value || '').trim();
     if (!raw) return;
-    var p = parseQuick(raw);
-    if (!p.title) { toast('ERR', 'Write the task text'); return; }
-    var body = {title: p.title};
-    if (p.tags.length) body.tags = p.tags;
-    if (p.priority) body.priority = p.priority;
+    if (QA.pending) { try { await QA.pending; } catch (e) {} }
+    if (!QA.draft || QA.text !== raw) {                       // typed fast / pasted: parse now (rules)
+      var pr = await qaParse(raw, false);
+      if (!pr) { var p0 = parseQuick(raw); QA.draft = {title: p0.title, tags: p0.tags, priority: p0.priority}; }
+    }
+    var d = QA.draft || {};
+    if (!d.title) { toast('ERR', 'Write the task text'); return; }
+    var body = {title: d.title};
+    if (d.tags && d.tags.length) body.tags = d.tags.slice();
+    if (d.priority) body.priority = d.priority;
+    if (d.due_at) body.due_at = d.due_at;
+    if (d.recurrence) body.recurrence = d.recurrence;
+    if (d.candidate_id) body.candidate_id = d.candidate_id;
+    else if (d.mandate_id) body.mandate_id = d.mandate_id;
+    if (d.assigned_to) body.assigned_to = d.assigned_to;
     var v = TV.view;
     if (v === 'my_day') body.my_day = true;
     else if (v === 'list') body.list_id = TV.listId;
     else if (v === 'inbox') body.list_id = 0;
     else if (v === 'tag') body.tags = (body.tags || []).concat([TV.tag]);
-    if (v === 'next7' || v === 'all' || v === 'assigned' || v === 'followups' || v === 'my_day') body.due_at = todayIso();
-    if (v === 'calendar') { calInit(); body.due_at = TV.cal.sel; }
-    if (v === 'person') { body.assigned_to = TV.personId; body.due_at = todayIso(); }
+    if (!body.due_at && !QA.unlinked.due) {
+      if (v === 'next7' || v === 'all' || v === 'assigned' || v === 'followups' || v === 'my_day') body.due_at = todayIso();
+      if (v === 'calendar') { calInit(); body.due_at = TV.cal.sel; }
+      if (v === 'person') body.due_at = todayIso();
+    }
+    if (v === 'person' && !body.assigned_to) body.assigned_to = TV.personId;
     inp.value = ''; inp.disabled = true;
+    var said = QA.understood.filter(function(u){ return !QA.unlinked[u.k]; }).map(function(u){ return u.label; });
+    qaReset();
     var r = await api('POST', '/tasks', body);
     inp.disabled = false; inp.focus();
-    if (!ok(r)) { inp.value = raw; fail(r, 'Could not add task'); return; }
-    if (v === 'followups') { toast('OK', 'Task added to Today'); }
-    else { TV.tasks.push(r.task); renderList(); loadTasks(); }
+    if (!ok(r)) { inp.value = raw; fail(r, 'Could not add task'); onQaInput(); return; }
+    toast('OK', 'Added' + (said.length ? ': ' + esc(said.join(' \u00B7 ')) : ''));
+    if (v !== 'followups') { TV.tasks.push(r.task); renderList(); loadTasks(); }
     refreshMetaSoon();
     if (typeof updateTasksBadge === 'function') updateTasksBadge();
   }
@@ -21684,6 +21850,10 @@ async function _bdhDone(id, box){
       + '<div class="tv2-psep"></div>';
     if (TV.view !== 'followups' && TV.view !== 'board')
       html += '<button class="tv2-pi" data-mm="select">☑ ' + (TV.selMode ? 'Stop selecting' : 'Select tasks') + '</button>';
+    var pf = (TV.meta && TV.meta.prefs) || {};
+    html += '<button class="tv2-pi" data-mm="ai">\u2728 AI assist (quick-add, plan)' + (pf.ai !== false ? '<span class="sub">\u2713 on</span>' : '<span class="sub">off</span>') + '</button>';
+    html += '<button class="tv2-pi" data-mm="morning">\uD83D\uDCF1 Morning summary on phone' + (pf.morning_push ? '<span class="sub">\u2713 on</span>' : '<span class="sub">off</span>') + '</button>';
+    html += '<div class="tv2-psep"></div>';
     if (TV.meta && TV.meta.is_admin) html += '<button class="tv2-pi" data-mm="rules">\u2699 Auto-task rules</button>';
     html += '<button class="tv2-pi" data-mm="default">⭐ Open Tasks on this view</button>';
     if (TV.view === 'list') { var l = listById(TV.listId); if (l && (l.mine || TV.meta.is_admin)) html += '<button class="tv2-pi" data-mm="edit-list">✎ Edit / delete list</button>'; }
@@ -21699,6 +21869,15 @@ async function _bdhDone(id, box){
           if (ok(r)) toast('OK', 'Tasks will open on ' + (VIEWS[r.prefs.default_view] || {t: r.prefs.default_view}).t); else fail(r);
         }
         else if (a === 'rules') rulesModal();
+        else if (a === 'ai' || a === 'morning') {
+          var key = a === 'ai' ? 'ai' : 'morning_push', pf2 = (TV.meta && TV.meta.prefs) || {};
+          var nv = a === 'ai' ? (pf2.ai === false) : !pf2.morning_push, o = {}; o[key] = nv;
+          var rr = await api('POST', '/prefs', o);
+          if (!ok(rr)) { fail(rr); return; }
+          if (TV.meta) TV.meta.prefs = rr.prefs;
+          toast('OK', (a === 'ai' ? 'AI assist ' : 'Morning summary ') + (nv ? 'on' : 'off')
+            + (a === 'morning' && nv ? ' \u2014 daily at 9:30 am on your phone (needs the RecruitOS app)' : ''));
+        }
         else if (a === 'edit-list') listModal(listById(TV.listId));
         else if (a === 'edit-tag') tagModal(tagDef(TV.tag));
       }; });
@@ -21776,6 +21955,10 @@ async function _bdhDone(id, box){
     if (act === 'bulk') return bulkAct(a.getAttribute('data-b'), a);
     if (act === 'close-detail') return closeDetail();
     if (act === 'person') return setView('person', a.getAttribute('data-id'));
+    if (act === 'plan-refresh') { toast('\uD83E\uDDED', 'Rebuilding your plan\u2026'); return loadPlan(true); }
+    if (act === 'plan-toggle') { try { localStorage.setItem('tv2_plan_closed', planClosed() ? '' : todayIso()); } catch (x) {} return renderList(); }
+    if (act === 'plan-ats') { await planAdd(+a.getAttribute('data-i')); toast('\u2600', 'Added to My Day'); loadTasks(); refreshMetaSoon(); return loadPlan(true); }
+    if (act === 'plan-all') return planAll();
     if (act === 'ats-add') return atsAdd(+a.getAttribute('data-i'));
     if (act === 'ats-done') return atsDone(+a.getAttribute('data-i'));
     if (act === 'ats-open') return atsOpen(+a.getAttribute('data-i'));
@@ -21873,6 +22056,7 @@ async function _bdhDone(id, box){
     document.addEventListener('focusout', onBlur);
     document.addEventListener('input', function(e){ if (e.target && e.target.id === 'tv2-dtitle') autoGrow(e.target); });
     $('tv2-add').addEventListener('submit', function(e){ e.preventDefault(); quickAdd(); });
+    qaBind();
     calDnD();
     var qt = null;
     $('tv2-q').addEventListener('input', function(e){ clearTimeout(qt); qt = setTimeout(function(){ TV.q = e.target.value.trim(); TV.tasks = []; loadTasks(); }, 260); });

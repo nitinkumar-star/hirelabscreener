@@ -1091,6 +1091,8 @@ def _reminder_scheduler_loop():
             _ac = get_db()
             try:
                 run_auto_rules(_ac)
+                from modules.todo_ai import run_morning_push
+                run_morning_push(_ac)                # opt-in 09:30 summary on the phone
             finally:
                 _ac.close()
         except Exception as _ar_err:
