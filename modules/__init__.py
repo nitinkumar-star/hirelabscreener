@@ -40,6 +40,7 @@ _MODULE_NAMES = [
     'pitch',
     'storage_health',
     'todo',            # Tasks v2 — Any.do-style to-do engine on the reminders table
+    'todo_ai',         # Tasks v2 Wave 5 — smart quick-add, daily plan, morning summary
 ]
 
 _MIGRATIONS = []

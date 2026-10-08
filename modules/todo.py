@@ -1437,6 +1437,8 @@ _PREF_KEYS = {
     'default_view': ('my_day', 'next7', 'all', 'board', 'calendar'),
     'layout': ('default', 'compact'),
     'show_completed': (True, False),
+    'ai': (True, False),               # Wave 5: AI quick-add + plan summary (per user)
+    'morning_push': (True, False),     # Wave 5: 09:30 summary notification on the phone
 }
 
 
