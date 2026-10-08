@@ -82,6 +82,7 @@ _REMINDER_COLS = [
     ('recurrence', "TEXT DEFAULT ''"),
     ('completed_at', "TEXT DEFAULT ''"),
     ('updated_at', "TEXT DEFAULT ''"),
+    ('auto_rule', "TEXT DEFAULT ''"),       # Wave 4: set on tasks made by an auto-task rule
 ]
 
 
@@ -133,6 +134,25 @@ def _migrate_todo(conn):
         created_by INTEGER DEFAULT 0,
         created_at TEXT DEFAULT ''
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS todo_auto_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER DEFAULT 0,
+        stage TEXT DEFAULT '',
+        title TEXT DEFAULT '',
+        due_days INTEGER DEFAULT 0,
+        due_time TEXT DEFAULT '',
+        priority TEXT DEFAULT 'none',
+        assign_to INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        is_deleted INTEGER DEFAULT 0,
+        created_by INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT ''
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS todo_auto_state (
+        key TEXT PRIMARY KEY,
+        value TEXT DEFAULT ''
+    )''')
     c.execute('''CREATE TABLE IF NOT EXISTS todo_prefs (
         user_id INTEGER PRIMARY KEY,
         company_id INTEGER DEFAULT 0,
@@ -145,6 +165,8 @@ def _migrate_todo(conn):
         'CREATE UNIQUE INDEX IF NOT EXISTS idx_task_tag_defs_name ON task_tag_defs(company_id, name)',
         'CREATE INDEX IF NOT EXISTS idx_reminders_owner_done ON reminders(owner_id, done)',
         'CREATE INDEX IF NOT EXISTS idx_reminders_assigned ON reminders(assigned_to)',
+        'CREATE INDEX IF NOT EXISTS idx_reminders_auto ON reminders(candidate_id, auto_rule, done)',
+        'CREATE INDEX IF NOT EXISTS idx_todo_rules_co ON todo_auto_rules(company_id)',
     ):
         try:
             c.execute(sql)
@@ -842,6 +864,13 @@ def todo_tasks():
             return _err('range too long (max 62 days)')
         extra += " AND r.due_at!='' AND substr(r.due_at,1,10) BETWEEN ? AND ? "
         params = params + [frm, to]
+    elif view == 'person':                              # admin: one teammate's tasks
+        if _scoped() or not is_company_admin():
+            return _err('Only an admin can open a teammate\'s tasks.', 403)
+        pid = _int_or_none(request.args.get('user_id')) or 0
+        where, params = _task_where('team')
+        extra = extra + (' AND (COALESCE(r.assigned_to,0)=? OR (COALESCE(r.assigned_to,0)=0 AND COALESCE(r.created_by,0)=?)) ')
+        params = params + [pid, pid]
     elif view == 'assigned':
         aid = _int_or_none(request.args.get('assigned_to')) or _uid()
         extra += ' AND COALESCE(r.assigned_to,0)=? '
@@ -1452,3 +1481,298 @@ def todo_prefs_set():
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'prefs': prefs})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  TEAM VIEW  (Wave 4 — admins: who has what, who is behind)
+# ══════════════════════════════════════════════════════════════════════════
+@bp.route('/team', methods=['GET'])
+@login_required
+def todo_team():
+    if _scoped() or not is_company_admin():
+        return _err('Only an admin can see the team view.', 403)
+    cid = _cid()
+    conn = get_db()
+    now = _now()
+    week_ago = (now - datetime.timedelta(days=7)).isoformat(timespec='seconds')
+    users = conn.execute("SELECT id, display_name, username, is_company_admin, role FROM users "
+                         "WHERE company_id=? AND COALESCE(status,'approved')='approved' ORDER BY id", (cid,)).fetchall()
+    rows = conn.execute("SELECT id, due_at, done, completed_at, COALESCE(assigned_to,0) a, COALESCE(created_by,0) c "
+                        "FROM reminders WHERE owner_id=?", (cid,)).fetchall()
+    stats = {}
+    unowned = 0
+    for r in rows:
+        who = r['a'] or r['c']
+        if not who:
+            if not r['done']:
+                unowned += 1
+            continue
+        s = stats.setdefault(who, {'open': 0, 'overdue': 0, 'today': 0, 'upcoming': 0, 'someday': 0, 'done_7d': 0})
+        if r['done']:
+            if (r['completed_at'] or '') >= week_ago:
+                s['done_7d'] += 1
+            continue
+        s['open'] += 1
+        g = group_for(r['due_at'] or '', now)
+        if g in ('overdue', 'today', 'someday'):
+            s[g] += 1
+        else:
+            s['upcoming'] += 1
+    out = []
+    for u in users:
+        s = stats.get(int(u['id']), {'open': 0, 'overdue': 0, 'today': 0, 'upcoming': 0, 'someday': 0, 'done_7d': 0})
+        out.append(dict(s, id=u['id'], name=u['display_name'] or u['username'] or '',
+                        is_admin=bool(u['is_company_admin']), role=u['role'] or ''))
+    out.sort(key=lambda x: (-x['overdue'], -x['today'], x['name'].lower()))
+    conn.close()
+    return jsonify({'ok': True, 'members': out, 'unowned_open': unowned})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  AUTO-TASK RULES  (Wave 4)
+#  "When a candidate moves to stage X, create task T due in N days."
+#  The stage can change from ~20 places in the ATS (pipeline drag, bulk move,
+#  WhatsApp agent, timers, imports …). Instead of patching each one, the 60s
+#  background loop reads NEW rows of stage_history (a watermark keeps its
+#  place), so every path is covered without touching any of them.
+# ══════════════════════════════════════════════════════════════════════════
+DEFAULT_AUTO_RULES = [
+    {'stage': 'Shared with Client', 'title': 'Get client feedback: {name}', 'due_days': 2,
+     'due_time': '11:00', 'priority': 'medium'},
+    {'stage': 'Placed', 'title': 'Confirm joining date: {name} ({client})', 'due_days': 1,
+     'due_time': '11:00', 'priority': 'high'},
+    {'stage': 'Joined', 'title': 'Raise invoice: {name} — {client}', 'due_days': 0,
+     'due_time': '', 'priority': 'high'},
+]
+_TIME_RX = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
+AUTO_MAX_AGE_H = 48            # stage changes older than this (e.g. imports) never create tasks
+
+
+def _rules_for(conn, company_id):
+    """Active rules for a company. A company that never edited its rules uses
+    the defaults; once edited, its own rows (deleted ones soft-deleted) rule."""
+    rows = conn.execute('SELECT * FROM todo_auto_rules WHERE company_id=?', (company_id,)).fetchall()
+    if not rows:
+        return [dict(r, id=0, is_active=1, assign_to=0) for r in DEFAULT_AUTO_RULES]
+    return [dict(r) for r in rows if r['is_active'] and not r['is_deleted']]
+
+
+def _materialize_rules(conn, company_id):
+    """First edit: copy the defaults into rows so they can be changed."""
+    n = conn.execute('SELECT COUNT(*) FROM todo_auto_rules WHERE company_id=?', (company_id,)).fetchone()[0]
+    if n:
+        return
+    for r in DEFAULT_AUTO_RULES:
+        conn.execute('INSERT INTO todo_auto_rules (company_id, stage, title, due_days, due_time, priority, assign_to, '
+                     'is_active, is_deleted, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,0,1,0,0,?,?)',
+                     (company_id, r['stage'], r['title'], r['due_days'], r['due_time'], r['priority'], ts(), ts()))
+
+
+def _fill(tpl, ctx):
+    out = str(tpl or '')
+    for k, v in ctx.items():
+        out = out.replace('{' + k + '}', str(v or ''))
+    return out.strip()[:MAX_TITLE]
+
+
+def run_auto_rules(conn, limit=500):
+    """Process new stage changes once. Safe to call repeatedly; returns the
+    number of tasks created. Called every 60s from the reminder loop."""
+    st = conn.execute("SELECT value FROM todo_auto_state WHERE key='stage_history_wm'").fetchone()
+    top = conn.execute('SELECT COALESCE(MAX(id),0) FROM stage_history').fetchone()[0]
+    if st is None:                                  # first run: start from now, never backfill
+        conn.execute("INSERT OR REPLACE INTO todo_auto_state (key, value) VALUES ('stage_history_wm', ?)", (str(top),))
+        conn.commit()
+        return 0
+    wm = int(st['value'] or 0)
+    rows = conn.execute('SELECT id, candidate_id, to_stage, created_at FROM stage_history WHERE id>? '
+                        'ORDER BY id LIMIT ?', (wm, limit)).fetchall()
+    if not rows:
+        return 0
+    now = _core()._ist_now()
+    oldest = (now - datetime.timedelta(hours=AUTO_MAX_AGE_H)).isoformat(timespec='seconds')
+    rule_cache, made = {}, 0
+    cols = _reminder_columns(conn)
+    for h in rows:
+        wm = h['id']
+        try:
+            if (h['created_at'] or '') < oldest:
+                continue
+            cand = conn.execute('SELECT c.id, c.name, c.owner_id, c.mandate_id, m.role, m.client, m.status, '
+                                'm.assigned_user_id FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id '
+                                'WHERE c.id=?', (h['candidate_id'],)).fetchone()
+            if not cand or not cand['owner_id'] or (cand['status'] or '') != 'active':
+                continue
+            co = int(cand['owner_id'])
+            if co not in rule_cache:
+                rule_cache[co] = _rules_for(conn, co)
+            stage = (h['to_stage'] or '').strip().lower()
+            for rule in rule_cache[co]:
+                if (rule['stage'] or '').strip().lower() != stage:
+                    continue
+                key = 'stage:' + stage
+                if conn.execute('SELECT 1 FROM reminders WHERE candidate_id=? AND auto_rule=? AND done=0 AND owner_id=?',
+                                (cand['id'], key, co)).fetchone():
+                    continue                          # an open task for this already exists
+                ctx = {'name': cand['name'] or 'Candidate', 'role': cand['role'] or '', 'client': cand['client'] or '',
+                       'stage': h['to_stage'] or ''}
+                due_d = (now.date() + datetime.timedelta(days=int(rule.get('due_days') or 0))).isoformat()
+                tm = rule.get('due_time') or ''
+                due = due_d + ('T' + tm + ':00' if _TIME_RX.match(tm) else '')
+                assignee = int(rule.get('assign_to') or 0) or int(cand['assigned_user_id'] or 0)
+                row = {
+                    'candidate_id': cand['id'], 'mandate_id': cand['mandate_id'], 'candidate_name': cand['name'] or '',
+                    'mandate_label': ((cand['role'] or '') + ' — ' + (cand['client'] or '')) if cand['role'] else '',
+                    'note': _fill(rule.get('title'), ctx) or ('Follow up: ' + ctx['name']),
+                    'notes': 'Auto-task: moved to "' + (h['to_stage'] or '') + '".',
+                    'due_at': due, 'done': 0, 'stage': 'todo', 'created_at': ts(), 'updated_at': ts(),
+                    'owner_id': co, 'created_by': 0, 'assigned_to': assignee,
+                    'priority': rule.get('priority') if rule.get('priority') in PRIORITIES else 'none',
+                    'tags': json.dumps(['Auto']), 'auto_rule': key, 'list_id': 0,
+                }
+                row = {k: v for k, v in row.items() if k in cols}
+                conn.execute(f"INSERT INTO reminders ({','.join(row)}) VALUES ({','.join('?' * len(row))})",
+                             list(row.values()))
+                try:
+                    conn.execute('INSERT OR IGNORE INTO task_tag_defs (company_id, name, color, created_by, created_at) '
+                                 "VALUES (?, 'Auto', '#5D6D7E', 0, ?)", (co, ts()))
+                except Exception:
+                    pass
+                made += 1
+        except Exception as e:                        # one bad row never blocks the rest
+            print(f'[todo-auto] row {h["id"]} skipped: {e}')
+    conn.execute("INSERT OR REPLACE INTO todo_auto_state (key, value) VALUES ('stage_history_wm', ?)", (str(wm),))
+    conn.commit()
+    return made
+
+
+def _rule_out(r):
+    return {'id': r['id'], 'stage': r['stage'], 'title': r['title'], 'due_days': r['due_days'],
+            'due_time': r['due_time'], 'priority': r['priority'], 'assign_to': r['assign_to'],
+            'is_active': bool(r['is_active'])}
+
+
+def _admin_only():
+    if _scoped() or not is_company_admin():
+        return _err('Only an admin can manage auto-task rules.', 403)
+    return None
+
+
+def _clean_rule(d, partial=False):
+    out = {}
+    if 'stage' in d or not partial:
+        stg = _clean_text(d.get('stage'), 80)
+        if not stg:
+            return None, 'stage required'
+        out['stage'] = stg
+    if 'title' in d or not partial:
+        t = _clean_text(d.get('title'), MAX_TITLE)
+        if not t:
+            return None, 'title required'
+        out['title'] = t
+    if 'due_days' in d or not partial:
+        try:
+            dd = int(d.get('due_days') or 0)
+        except (TypeError, ValueError):
+            return None, 'due_days must be a number'
+        if dd < 0 or dd > 60:
+            return None, 'due_days must be 0-60'
+        out['due_days'] = dd
+    if 'due_time' in d:
+        tm = str(d.get('due_time') or '').strip()
+        if tm and not _TIME_RX.match(tm):
+            return None, 'due_time must be HH:MM'
+        out['due_time'] = tm
+    if 'priority' in d:
+        p = str(d.get('priority') or 'none')
+        if p not in PRIORITIES:
+            return None, 'invalid priority'
+        out['priority'] = p
+    if 'assign_to' in d:
+        out['assign_to'] = _int_or_none(d.get('assign_to')) or 0
+    if 'is_active' in d:
+        out['is_active'] = 1 if _bool(d.get('is_active')) else 0
+    return out, None
+
+
+@bp.route('/auto-rules', methods=['GET'])
+@login_required
+def todo_rules_list():
+    deny = _admin_only()
+    if deny:
+        return deny
+    conn = get_db()
+    _materialize_rules(conn, _cid())
+    conn.commit()
+    rows = conn.execute('SELECT * FROM todo_auto_rules WHERE company_id=? AND is_deleted=0 ORDER BY id',
+                        (_cid(),)).fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'rules': [_rule_out(r) for r in rows],
+                    'help': 'Placeholders: {name} {role} {client} {stage}. Due in N days at HH:MM (empty = all day). '
+                            'Assign 0 = the job\'s primary recruiter.'})
+
+
+@bp.route('/auto-rules', methods=['POST'])
+@login_required
+def todo_rules_create():
+    deny = _admin_only()
+    if deny:
+        return deny
+    vals, e = _clean_rule(_body())
+    if e:
+        return _err(e)
+    conn = get_db()
+    if vals.get('assign_to') and vals['assign_to'] not in _company_user_ids(conn, _cid()):
+        conn.close()
+        return _err('assignee must be a user in your company')
+    _materialize_rules(conn, _cid())
+    rid = conn.execute('INSERT INTO todo_auto_rules (company_id, stage, title, due_days, due_time, priority, assign_to, '
+                       'is_active, is_deleted, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,0,?,?,?)',
+                       (_cid(), vals['stage'], vals['title'], vals['due_days'], vals.get('due_time', ''),
+                        vals.get('priority', 'none'), vals.get('assign_to', 0), vals.get('is_active', 1),
+                        _uid(), ts(), ts())).lastrowid
+    conn.commit()
+    r = conn.execute('SELECT * FROM todo_auto_rules WHERE id=?', (rid,)).fetchone()
+    conn.close()
+    return jsonify({'ok': True, 'rule': _rule_out(r)})
+
+
+@bp.route('/auto-rules/<int:rid>', methods=['PATCH', 'PUT', 'POST'])
+@login_required
+def todo_rules_update(rid):
+    deny = _admin_only()
+    if deny:
+        return deny
+    vals, e = _clean_rule(_body(), partial=True)
+    if e:
+        return _err(e)
+    conn = get_db()
+    if vals.get('assign_to') and vals['assign_to'] not in _company_user_ids(conn, _cid()):
+        conn.close()
+        return _err('assignee must be a user in your company')
+    if not conn.execute('SELECT 1 FROM todo_auto_rules WHERE id=? AND company_id=? AND is_deleted=0',
+                        (rid, _cid())).fetchone():
+        conn.close()
+        return _err('Not found', 404)
+    if vals:
+        vals['updated_at'] = ts()
+        conn.execute('UPDATE todo_auto_rules SET ' + ', '.join(f'{k}=?' for k in vals) + ' WHERE id=? AND company_id=?',
+                     list(vals.values()) + [rid, _cid()])
+        conn.commit()
+    r = conn.execute('SELECT * FROM todo_auto_rules WHERE id=?', (rid,)).fetchone()
+    conn.close()
+    return jsonify({'ok': True, 'rule': _rule_out(r)})
+
+
+@bp.route('/auto-rules/<int:rid>', methods=['DELETE'])
+@login_required
+def todo_rules_delete(rid):
+    deny = _admin_only()
+    if deny:
+        return deny
+    conn = get_db()
+    n = conn.execute('UPDATE todo_auto_rules SET is_deleted=1, is_active=0, updated_at=? WHERE id=? AND company_id=? '
+                     'AND is_deleted=0', (ts(), rid, _cid())).rowcount
+    conn.commit()
+    conn.close()
+    return (jsonify({'ok': True}) if n else _err('Not found', 404))

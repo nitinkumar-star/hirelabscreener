@@ -355,7 +355,7 @@ _NUMERIC_OK = [re.compile(p) for p in [
     r'^/api/scheduler/public/',
     r'^/api/public/',
     r'^/api/notifications(/|$)',
-    r'^/api/todo/(lists|tags)/',          # checked inside modules/todo.py (own/shared lists)
+    r'^/api/todo/(lists|tags|auto-rules)/',   # checked inside modules/todo.py (own/shared lists, admin rules)
 ]]
 _HAS_ID = re.compile(r'/\d+(/|$)')
 
