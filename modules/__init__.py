@@ -42,6 +42,7 @@ _MODULE_NAMES = [
     'todo',            # Tasks v2 — Any.do-style to-do engine on the reminders table
     'todo_ai',         # Tasks v2 Wave 5 — smart quick-add, daily plan, morning summary
     'matching',        # vector Job Matching (candidate) + Matching Candidates (mandate)
+    'match_diag',      # read-only matching diagnosis for admins
 ]
 
 _MIGRATIONS = []
