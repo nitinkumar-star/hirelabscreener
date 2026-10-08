@@ -715,3 +715,13 @@ def test_parse_reports_ai_configured_not_user_switch(srv):
     finally:
         undo()
     assert a.post('/api/todo/parse', json={'text': 'kal call'}).get_json()['ai_available'] is False   # no key
+
+
+def test_plan_items_carry_candidate_phone(srv):
+    """Today's plan shows the same 1-click call as the profile, so task items
+    linked to a candidate must carry that candidate's number."""
+    a = cl(srv, ADMIN)
+    t = a.post('/api/todo/tasks', json={'title': 'Call for CTC', 'candidate_id': C_ADMIN,
+                                        'due_at': today(srv).isoformat()}).get_json()['task']
+    it = [i for i in a.get('/api/todo/plan').get_json()['items'] if i.get('id') == t['id']][0]
+    assert it['phone'] == '9000000001'

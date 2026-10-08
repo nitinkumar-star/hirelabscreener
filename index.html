@@ -17495,7 +17495,7 @@ function _paintBoard(cols){
     if(t.due_at && !isDone){ try{ overdue=new Date(t.due_at)<new Date(); }catch(e){} }
     var titleTxt = t.candidate_id ? (t.candidate_name||'Candidate') : (t.note||'Task');
     var sub = t.candidate_id ? [t.note, t.mandate_label].filter(Boolean).join(' \u00b7 ') : '';
-    var callBtn = t.phone ? '<a href="tel:'+esc(t.phone)+'" onclick="event.stopPropagation()" class="btn btn-o" style="font-size:10.5px;padding:4px 8px;text-decoration:none">&#128222;</a>' : '';
+    var callBtn = t.phone ? '<button onclick="event.stopPropagation();pushCall(\''+esc(t.phone).replace(/'/g,'')+'\',\''+esc(t.candidate_name||t.note||'').replace(/'/g,'')+'\')" class="btn btn-o" style="font-size:10.5px;padding:4px 8px" title="Call on my phone">&#128222;</button>' : '';
     var openAttr = t.candidate_id ? ' onclick="openProfileById('+t.candidate_id+','+(t.mandate_id||'null')+')" style="cursor:pointer"' : ' style="cursor:default"';
     return '<div id="tcard-'+t.id+'" draggable="true" ondragstart="_taskDragStart(event,'+t.id+')" '
       +'style="background:#fff;border:0.5px solid #e6e6e6;border-left:3px solid '+(isDone?'#1D9E75':(overdue?'#E24B4A':'#cbd5e1'))+';border-radius:9px;padding:10px 11px;margin-bottom:9px;box-shadow:0 1px 2px rgba(0,0,0,.05)">'
@@ -17570,7 +17570,7 @@ async function renderTasksView() {
     else if (dueLabel) meta += ' &middot; <span style="color:#185FA5">'+dueLabel+'</span>';
 
     var callBtn = t.phone
-      ? '<a href="tel:'+esc(t.phone)+'" class="btn btn-o" style="font-size:11px;padding:6px 11px;text-decoration:none;display:flex;align-items:center;gap:4px" onclick="event.stopPropagation()">&#128222; Call</a>'
+      ? '<button class="btn btn-o" style="font-size:11px;padding:6px 11px;display:flex;align-items:center;gap:4px" title="Call on my phone" onclick="event.stopPropagation();pushCall(\''+esc(t.phone).replace(/'/g,'')+'\',\''+esc(t.title||'').replace(/'/g,'')+'\')">&#128222; Call</button>'
       : '';
     // edit only makes sense for reminders (has ref_id + editable time/note)
     var editBtn = (t.type==='reminder')
@@ -20568,6 +20568,9 @@ async function _bdhDone(id, box){
 .tv2-colors button.on{border-color:var(--tv-text)}
 .tv2-only-m{display:none}
 .tv2-back{display:none}
+/* Call on my phone */
+.tv2-call{color:var(--tv-accent-d) !important;flex-shrink:0}
+#tasks-view[data-theme="dark"] .tv2-call{color:var(--tv-accent) !important}
 /* Wave 5: smart quick-add preview + today's plan */
 .tv2-prev{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 16px 6px;padding:7px 10px;border-radius:10px;background:var(--tv-accent-soft);font-size:12px;flex-shrink:0}
 .tv2-qsrc{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--tv-muted)}
@@ -20745,6 +20748,19 @@ async function _bdhDone(id, box){
     var s = n === 1 ? ('Every ' + base) : ('Every ' + n + ' ' + base + 's');
     if (r.freq === 'weekly' && r.weekdays && r.weekdays.length) s += ' (' + r.weekdays.map(function(w){ return WD[w]; }).join(', ') + ')';
     return s;
+  }
+  // 📞 = same "1 click to call" as the candidate profile: the number is pushed
+  // to the user's phone (HireLab Dialer app) via /api/push-call -> pushCall().
+  var PHONE_RX = /(?:\+?91[\s-]?)?(?:0)?([6-9]\d{4}[\s-]?\d{5})(?!\d)/;
+  function phoneOf(t){
+    if (t.candidate_phone) return t.candidate_phone;
+    if (t.phone) return t.phone;
+    var m = PHONE_RX.exec((t.title || '') + ' ' + (t.notes || ''));
+    return m ? m[1].replace(/[\s-]/g, '') : '';
+  }
+  function callBtn(phone, name, big){
+    if (!phone) return '';
+    return '<button class="' + (big ? 'tv2-btn o tv2-call' : 'tv2-ico tv2-call') + '" data-act="push-call" data-phone="' + h(phone) + '" data-name="' + h(name || '') + '" title="Call on my phone (' + h(phone) + ')">\uD83D\uDCDE' + (big ? ' Call' : '') + '</button>';
   }
   function initials(n){
     var p = String(n || '').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim().split(/\s+/);
@@ -20941,6 +20957,7 @@ async function _bdhDone(id, box){
       + (TV.selMode ? '<input type="checkbox" class="tv2-msel" data-act="msel" data-id="' + t.id + '"' + (TV.sel[t.id] ? ' checked' : '') + '>' : '')
       + chk
       + '<div class="tv2-rb"><div class="tt">' + h(t.title) + '</div>' + (meta.length ? '<div class="tv2-meta">' + meta.join('') + '</div>' : '') + '</div>'
+      + callBtn(phoneOf(t), t.candidate_name || t.title)
       + '<div class="tv2-ra">' + ra + '</div>'
       + (t.assigned_to && t.assigned_to !== me() ? '<span class="tv2-av" title="' + h(t.assigned_name) + '">' + h(initials(t.assigned_name)) + '</span>' : '')
       + (t.pinned ? '<span class="tv2-pin" title="Pinned">📌</span>' : '')
@@ -21039,7 +21056,7 @@ async function _bdhDone(id, box){
           + '<div class="tv2-rb" data-act="ats-open" data-i="' + i + '" style="cursor:pointer"><div class="tt">' + h(s.title) + '</div>'
           + '<div class="tv2-meta"><span class="tv2-why' + (s.section === 'overdue' ? ' overdue' : '') + '">' + h(s.kind) + '</span><span>' + h(s.subtitle) + '</span></div></div>'
           + '<div style="display:flex;gap:4px;align-items:center;flex-shrink:0">'
-          + (s.phone ? '<a class="tv2-ico" href="tel:' + h(s.phone) + '" title="Call">📞</a>' : '')
+          + callBtn(s.phone, s.title)
           + '<button class="tv2-btn o" style="padding:4px 10px;font-size:11.5px" data-act="ats-add" data-i="' + i + '">+ My Day</button>'
           + '<button class="tv2-ico" data-act="ats-done" data-i="' + i + '" title="Mark handled">✓</button>'
           + '</div></div>';
@@ -21140,7 +21157,7 @@ async function _bdhDone(id, box){
       + '<span class="n">' + (st.length + se.length) + '</span></div><div class="tv2-rows">';
     se.forEach(function(e){
       html += '<div class="tv2-row" data-act="cal-ev" data-i="' + e._i + '"><span class="tv2-av" style="background:' + (e.kind === 'interview' ? '#EDE7FB;color:#5B3FB8' : '#E6F1FB;color:#185FA5') + '">' + (e.kind === 'interview' ? '🎤' : '📅') + '</span>'
-        + '<div class="tv2-rb"><div class="tt">' + h(e.title) + '</div><div class="tv2-meta"><span>' + h(timeLbl(String(e.when).slice(0, 16)) || 'All day') + '</span><span>' + h(e.subtitle || '') + '</span></div></div></div>';
+        + '<div class="tv2-rb"><div class="tt">' + h(e.title) + '</div><div class="tv2-meta"><span>' + h(timeLbl(String(e.when).slice(0, 16)) || 'All day') + '</span><span>' + h(e.subtitle || '') + '</span></div></div>' + callBtn(e.phone, e.title) + '</div>';
     });
     html += st.map(function(t){ return rowHtml(t); }).join('');
     if (!st.length && !se.length) html += '<div style="padding:10px 6px;color:var(--tv-muted);font-size:12.5px">Nothing on this day. Type below to add a task for it.</div>';
@@ -21386,6 +21403,7 @@ async function _bdhDone(id, box){
         var act = it.kind === 'ats'
           ? '<button class="tv2-btn o" data-act="plan-ats" data-i="' + i + '">+ My Day</button>'
           : (it.my_day ? '<span class="tv2-why">in My Day</span>' : '<button class="tv2-btn o" data-act="myday" data-id="' + it.id + '" data-on="1">+ My Day</button>');
+        act = callBtn(it.phone, it.candidate_name || it.title) + act;
         return '<li><span class="tv2-pn">' + (i + 1) + '</span><div class="tv2-rb" ' + (it.kind === 'task' ? 'data-act="open" data-id="' + it.id + '" style="cursor:pointer"' : '') + '>'
           + '<div class="tt">' + h(it.title) + '</div><div class="tv2-meta"><span>' + h(it.why) + '</span></div></div>' + act + '</li>';
       }).join('') + '</ol>';
@@ -21600,9 +21618,11 @@ async function _bdhDone(id, box){
       html += '<div class="tv2-cand"><span class="tv2-av" style="width:34px;height:34px;font-size:12px">' + h(initials(t.candidate_name)) + '</span>'
         + '<div style="flex:1;min-width:0"><div class="nm" data-act="open-cand">' + h(t.candidate_name || 'Candidate') + '</div>'
         + (t.mandate_label ? '<div class="sb">' + h(t.mandate_label) + '</div>' : '') + '</div>'
-        + (t.candidate_phone ? '<a class="tv2-ico" href="tel:' + h(t.candidate_phone) + '" title="Call">📞</a>' : '')
+        + callBtn(t.candidate_phone, t.candidate_name, true)
         + '<button class="tv2-ico" data-act="unlink-cand" title="Unlink">✕</button></div>';
     } else {
+      var ph = phoneOf(t);
+      if (ph) html += '<div class="tv2-cand"><div style="flex:1"><div class="sb">Number in this task</div><div>' + h(ph) + '</div></div>' + callBtn(ph, t.title, true) + '</div><div style="height:6px"></div>';
       html += (t.mandate_label ? '<div class="tv2-cand"><div style="flex:1"><div class="sb">Job</div><div>' + h(t.mandate_label) + '</div></div></div><div style="height:6px"></div>' : '')
         + '<button class="tv2-chipb" data-act="pick-cand">+ Link a candidate</button>';
     }
@@ -21928,6 +21948,11 @@ async function _bdhDone(id, box){
     if (root && root.classList.contains('side-open') && !e.target.closest('#tv2-side') && !(a && a.getAttribute('data-act') === 'side-toggle')) root.classList.remove('side-open');
     if (!a || !$('tasks-view').contains(a)) return;
     var act = a.getAttribute('data-act'), id = +a.getAttribute('data-id') || 0;
+    if (act === 'push-call') {
+      e.preventDefault(); e.stopPropagation();
+      if (typeof pushCall === 'function') pushCall(a.getAttribute('data-phone'), a.getAttribute('data-name') || 'Candidate');
+      return;
+    }
     if (act === 'open') {
       if (e.target.closest('a')) return;
       if (TV.selMode) { TV.sel[id] = !TV.sel[id]; renderBulk(); renderList(); return; }
