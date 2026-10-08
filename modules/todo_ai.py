@@ -517,6 +517,7 @@ def build_plan(tasks, ats, today_iso, now_hm):
             why.append(t['priority'] + ' priority')
         items.append({'kind': 'task', 'id': t['id'], 'title': t['title'], 'score': score, 'why': ', '.join(why),
                       'candidate_id': t['candidate_id'], 'candidate_name': t['candidate_name'],
+                      'phone': t.get('candidate_phone') or '',
                       'due_at': due, 'my_day': t['my_day'], 'priority': t['priority']})
     for a in ats:
         score = ATS_W.get(a['type'], 10) + (20 if a['section'] == 'overdue' else 0)
