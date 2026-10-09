@@ -114,6 +114,7 @@ _FL_ALLOW = [
     (('GET',),          r'^/api/extension/mandates/?$'),
     (('POST',),         r'^/api/extension/push/?$'),
     (('POST',),         r'^/api/extension/score-match/?$'),              # + assignment check below
+    (('POST',),         r'^/api/extension/explain/?$'),                  # AI review; same assignment check
     (('POST',),         r'^/api/candidates/\d+/cv/?$'),                   # + own-candidate check below
 ]
 _FL_ALLOW = [(m, _re.compile(p)) for m, p in _FL_ALLOW]
@@ -173,7 +174,7 @@ def _freelancer_api_guard():
             if not c or int(c['sourced_by'] or 0) != int(uid) or c['owner_id'] != u['company_id']:
                 print(f'[fl-guard] blocked CV upload uid={uid} cand={m.group(1)}')
                 return jsonify({'error': 'You can only attach CVs to candidates you uploaded'}), 403
-        elif path.startswith('/api/extension/score-match'):
+        elif path.startswith('/api/extension/score-match') or path.startswith('/api/extension/explain'):
             mid = (request.get_json(silent=True) or {}).get('mandate_id')
             try:
                 mid = int(mid)

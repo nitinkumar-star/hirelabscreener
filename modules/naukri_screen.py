@@ -227,6 +227,10 @@ The recruiter's rules OVERRIDE your general judgement whenever they apply.
 
 {budget}
 
+JOB BREAKDOWN (agreed with the recruiter; a card that clearly lacks a CORE item is at best "maybe", usually "skip";
+a card matching a NOT THIS look-alike is "skip"):
+{breakdown}
+
 RECRUITER'S RULES FOR THIS JOB:
 {rules}
 
@@ -459,7 +463,13 @@ def screen_profiles():
         if not _rate_ok('screen', uid, SCREEN_LIMIT):
             return _err('Too many analyses in the last 10 minutes. Wait a little and retry.', 429)
         rules, _chat, _a, _b = _get_state(conn, m['id'])
-        system = SCREEN_PROMPT.format(budget=budget_line(m), rules=_rules_text(rules), job=job_brief(core, m))
+        try:
+            from modules.job_profile import load_for_prompt
+            breakdown = load_for_prompt(conn, core, m) or '(not available)'
+        except ImportError:
+            breakdown = '(not available)'
+        system = SCREEN_PROMPT.format(budget=budget_line(m), rules=_rules_text(rules), job=job_brief(core, m),
+                                      breakdown=breakdown)
         user = 'CARDS:\n' + '\n\n'.join('[key: %s]\n%s' % (c['key'], c['text']) for c in clean)
         try:
             raw = _ask_deepseek(core, key, system, user, max_tokens=150 + 110 * len(clean),

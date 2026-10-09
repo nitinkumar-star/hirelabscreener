@@ -44,6 +44,7 @@ _MODULE_NAMES = [
     'matching',        # vector Job Matching (candidate) + Matching Candidates (mandate)
     'match_diag',      # read-only matching diagnosis for admins
     'naukri_screen',   # Chrome extension: screen a Naukri search page with DeepSeek
+    'job_profile',     # Job Breakdown (core/important/nice) + extension profile explanation
 ]
 
 _MIGRATIONS = []
