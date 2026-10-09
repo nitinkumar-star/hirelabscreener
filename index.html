@@ -1743,7 +1743,7 @@ function applyPipelineStages(){
   }
   PIPELINE_STAGES = base.concat(FIXED_STAGES.map(function(f){ return {id:f.id, color:f.color, fixed:true}; }));
 }
-const TABS = ['Mandate Setup','Pipeline','Matching Candidates','Candidate Profiles','Recruiter Pitch'];
+const TABS = ['Mandate Setup','Job Breakdown','Pipeline','Matching Candidates','Candidate Profiles','Recruiter Pitch'];
 let S = {
   currentUser:null, viewingAs:null,
   mandates:[],activeMandate:null,activeTab:'Mandate Setup',settingsOpen:false,settings:{},collapsedStages:{},
@@ -1867,6 +1867,7 @@ function writeHash() {
     else if (tab === 'Candidate Profiles') h += '/profiles';
     else if (tab === 'Recruiter Pitch') h += '/pitch';
     else if (tab === 'Matching Candidates') h += '/matching';
+    else if (tab === 'Job Breakdown') h += '/breakdown';
     else h += '/setup';
     if (S.activeTab === 'Candidate Profiles' && S.selectedCandidateId) {
       h += '/' + S.selectedCandidateId;
@@ -1944,6 +1945,7 @@ async function readHash() {
                   : sub === 'profiles' ? 'Candidate Profiles'
                   : sub === 'pitch' ? 'Recruiter Pitch'
                   : sub === 'matching' ? 'Matching Candidates'
+                  : sub === 'breakdown' ? 'Job Breakdown'
                   : 'Mandate Setup';
       // Same view setup as selectMandate(): before this, a refreshed or
       // shared #mandate/... link showed the tab's content under a "Home"
@@ -1998,6 +2000,7 @@ async function restoreFromHash() {
       else if (tabPart === 'profiles') { S.activeTab = 'Candidate Profiles'; }
       else if (tabPart === 'pitch') { S.activeTab = 'Recruiter Pitch'; }
       else if (tabPart === 'matching') { S.activeTab = 'Matching Candidates'; }
+      else if (tabPart === 'breakdown') { S.activeTab = 'Job Breakdown'; }
       else { S.activeTab = 'Mandate Setup'; }
       renderTabs();
       await renderContent();
@@ -3436,7 +3439,7 @@ function updateTopbar(){
 function renderTabs(){
   const bar=document.getElementById('tabs');
   var mid = S.activeMandate ? S.activeMandate.id : '';
-  var subOf = function(t){ return t==='Pipeline'?'pipeline':t==='Matching Candidates'?'matching':t==='Candidate Profiles'?'profiles':t==='Recruiter Pitch'?'pitch':'setup'; };
+  var subOf = function(t){ return t==='Pipeline'?'pipeline':t==='Matching Candidates'?'matching':t==='Job Breakdown'?'breakdown':t==='Candidate Profiles'?'profiles':t==='Recruiter Pitch'?'pitch':'setup'; };
   // The tab NAME is an internal key used for routing and state — never
   // translate it. Only what the user reads is swapped.
   var labelOf = function(t){ return t==='Mandate Setup' ? (T('mandate','Mandate')+' Setup') : t; };
@@ -3472,6 +3475,7 @@ async function renderContent(){
   else if(S.activeTab==='Candidate Profiles')await renderProfiles(el);
   else if(S.activeTab==='Recruiter Pitch')await renderRecruiterPitch(el);
   else if(S.activeTab==='Matching Candidates')await renderMatchingCandidates(el);
+  else if(S.activeTab==='Job Breakdown')await renderJobBreakdown(el);
   writeHash();
 }
 
@@ -22426,6 +22430,200 @@ async function _bdhDone(id, box){
       cpLoadJobMatching(cid);
     };
   };
+})();
+</script>
+<style id="jb-style">
+/* ═══ Job Breakdown tab (modules/job_profile.py) ═══ */
+.jb-wrap{max-width:1100px;margin:0 auto;padding:4px 2px 30px}
+.jb-head{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.jb-title{font-size:17px;font-weight:700;color:var(--navy)}
+.jb-sub{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5;max-width:640px}
+.jb-ctl{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.jb-st{font-size:11px;font-weight:600;padding:3px 9px;border-radius:10px;background:#E6F1FB;color:#185FA5}
+.jb-st.ed{background:#E6F6F1;color:#0F8A6B}
+.jb-warn{background:#FFF6E6;border:0.5px solid #F0C078;color:#8A5A18;border-radius:10px;padding:10px 14px;font-size:12.5px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.jb-sum{background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:14px 16px;font-size:13.5px;line-height:1.55;color:var(--navy);margin-bottom:12px}
+.jb-sum small{display:block;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.jb-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.jb-col{background:#fff;border:0.5px solid var(--line);border-radius:12px;overflow:hidden}
+.jb-ch{padding:10px 14px;font-size:12.5px;font-weight:700;display:flex;justify-content:space-between;align-items:center;border-bottom:0.5px solid var(--line)}
+.jb-ch small{font-weight:500;font-size:11px;color:var(--muted)}
+.jb-col.core .jb-ch{background:#FDEEEE;color:#A32D2D}
+.jb-col.imp .jb-ch{background:#FFF6E6;color:#9A6A1F}
+.jb-col.nice .jb-ch{background:#E6F6F1;color:#0F8A6B}
+.jb-it{padding:10px 14px;border-bottom:0.5px solid var(--line)}
+.jb-it:last-child{border-bottom:none}
+.jb-it b{font-size:13px;color:var(--navy);display:block}
+.jb-it p{font-size:11.5px;color:var(--muted);margin:3px 0 0;line-height:1.45}
+.jb-eq{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.jb-eq span{font-size:10.5px;background:#F1EFE8;color:#5D6D7E;padding:1px 7px;border-radius:9px}
+.jb-none{padding:14px;font-size:12px;color:var(--muted);font-style:italic}
+.jb-row2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-top:12px}
+.jb-box{background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:12px 16px;font-size:12.5px;line-height:1.6}
+.jb-box h4{margin:0 0 6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.jb-box ul{margin:0;padding-left:18px}
+.jb-empty{padding:46px 20px;text-align:center;color:var(--muted);font-size:13px;background:#fff;border:0.5px solid var(--line);border-radius:12px}
+.jb-empty b{display:block;color:var(--navy);font-size:15px;margin-bottom:4px}
+.jb-note{font-size:11.5px;color:var(--muted);margin-top:12px;line-height:1.5}
+.jb-ed textarea,.jb-ed input,.jb-ed select{font:inherit;font-size:12.5px;border:0.5px solid var(--line);border-radius:8px;padding:6px 8px;background:#fff;width:100%;box-sizing:border-box}
+.jb-ed textarea{resize:vertical}
+.jb-er{display:grid;grid-template-columns:120px minmax(0,1.3fr) minmax(0,1.5fr) minmax(0,1.2fr) 30px;gap:6px;align-items:start;padding:7px 0;border-bottom:0.5px dashed var(--line)}
+.jb-er button{border:none;background:none;color:#A32D2D;font-size:18px;cursor:pointer;line-height:1;padding:4px}
+.jb-eh{display:grid;grid-template-columns:120px minmax(0,1.3fr) minmax(0,1.5fr) minmax(0,1.2fr) 30px;gap:6px;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;padding-bottom:4px}
+.jb-lab{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:14px 0 5px}
+@media (max-width:860px){
+  .jb-grid,.jb-row2{grid-template-columns:1fr}
+  .jb-er,.jb-eh{grid-template-columns:1fr 1fr}
+  .jb-eh{display:none}
+  .jb-ctl{margin-left:0;width:100%}
+}
+</style>
+<script id="jb-script">
+/* Job Breakdown: how the AI understands a mandate — core / important / nice-to-have.
+   Shared by the extension's profile AI review and the Naukri search Screener. */
+(function(){
+  'use strict';
+  var JB = window._jbState = window._jbState || {};
+  function q(s){ return esc(s).replace(/'/g, '&#39;'); }
+  function fmtDate(s){ return s ? String(s).slice(0, 16).replace('T', ' ') : ''; }
+  var TIERS = [['core', 'Core — deal-breakers', 'Without these the person cannot do the job'],
+               ['important', 'Important', 'Strongly preferred; a gap can be trained'],
+               ['nice', 'Nice-to-have', 'Desirable; the job works without them']];
+
+  window.renderJobBreakdown = async function(el, opts){
+    var m = S.activeMandate; if (!m) return;
+    var st = JB[m.id] = JB[m.id] || {};
+    st.editing = false;
+    el.innerHTML = '<div class="jb-wrap"><div class="loading"><div class="spinner"></div>' +
+      ((opts && opts.regen) ? 'AI is re-reading the job…' : 'Loading the job breakdown (first time, the AI reads the JD — about 10 seconds)…') + '</div></div>';
+    var r = (opts && opts.regen) ? await req('POST', '/job-profile/' + m.id + '/generate')
+                                 : await req('GET', '/job-profile/' + m.id + '?ensure=1');
+    if (S.activeTab !== 'Job Breakdown' || !S.activeMandate || S.activeMandate.id !== m.id) return;
+    st.data = r;
+    paint(el, m, st);
+  };
+
+  function header(m, d, editing){
+    var badge = '';
+    if (d && d.status === 'edited') badge = '<span class="jb-st ed">Edited by you · ' + esc(fmtDate(d.edited_at)) + '</span>';
+    else if (d && d.status === 'ai') badge = '<span class="jb-st">AI-generated · ' + esc(fmtDate(d.generated_at)) + '</span>';
+    var ctl = editing
+      ? '<button class="btn btn-o" data-jb="cancel" style="font-size:12px">Cancel</button><button class="btn" data-jb="save" style="font-size:12px">Save breakdown</button>'
+      : (d && d.profile ? '<button class="btn btn-o" data-jb="regen" style="font-size:12px">&#8635; Regenerate with AI</button><button class="btn" data-jb="edit" style="font-size:12px">&#9998; Edit</button>' : '');
+    return '<div class="jb-head"><div><div class="jb-title">&#129517; Job Breakdown ' + badge + '</div>'
+      + '<div class="jb-sub">How the AI understands this job. It drives the AI review on Naukri profiles (Chrome extension) and the Naukri search Screener. '
+      + 'Correct it once here and every review uses your version. A missing <b>core</b> item stops a profile from being a Strong Match.</div></div>'
+      + '<div class="jb-ctl">' + ctl + '</div></div>';
+  }
+
+  function paint(el, m, st){
+    var d = st.data || {};
+    var h = '<div class="jb-wrap">' + header(m, d, false);
+    if (d.ok === false || d.error) {
+      h += '<div class="jb-empty"><b>Could not load the breakdown</b>' + esc(d.error || '') + '<br><br><button class="btn btn-o" data-jb="retry">Try again</button></div></div>';
+      el.innerHTML = h; bind(el, m, st); return;
+    }
+    if (!d.profile) {
+      h += d.has_job_content === false
+        ? '<div class="jb-empty"><b>Nothing to break down yet</b>Add a JD, a boolean or must-have skills in Mandate Setup, then come back.<br><br><button class="btn btn-o" data-jb="setup">Open Mandate Setup</button></div>'
+        : '<div class="jb-empty"><b>No breakdown yet</b>' + (d.ai_available === false ? 'Add the DeepSeek API key in Settings to let the AI read the JD.' : '') + '<br><br><button class="btn" data-jb="regen">Generate with AI</button></div>';
+      el.innerHTML = h + '</div>'; bind(el, m, st); return;
+    }
+    var p = d.profile;
+    if (d.stale) h += '<div class="jb-warn">&#9888; The job text changed after this breakdown was edited. Your version is still being used.'
+      + '<button class="btn btn-o" data-jb="regen" style="font-size:12px;margin-left:auto">Regenerate from the new JD</button></div>';
+    if (p.summary) h += '<div class="jb-sum"><small>What the job really is</small>' + esc(p.summary) + '</div>';
+    h += '<div class="jb-grid">' + TIERS.map(function(t){
+      var items = p[t[0]] || [];
+      var cls = t[0] === 'important' ? 'imp' : t[0];
+      return '<div class="jb-col ' + cls + '"><div class="jb-ch">' + esc(t[1]) + ' <small>' + items.length + '</small></div>'
+        + (items.length ? items.map(function(it){
+            return '<div class="jb-it"><b>' + esc(it.skill) + '</b>' + (it.why ? '<p>' + esc(it.why) + '</p>' : '')
+              + ((it.equivalents || []).length ? '<div class="jb-eq">' + it.equivalents.map(function(e){ return '<span>' + esc(e) + '</span>'; }).join('') + '</div>' : '')
+              + '</div>'; }).join('')
+          : '<div class="jb-none">' + esc(t[2]) + ' — none listed.</div>')
+        + '</div>';
+    }).join('') + '</div>';
+    var L = p.limits || {}, lim = [];
+    if (L.exp_min || L.exp_max) lim.push('<li>Experience: ' + (L.exp_min || '?') + '–' + (L.exp_max || '?') + ' years</li>');
+    if (L.ctc_max) lim.push('<li>CTC up to ' + L.ctc_max + ' LPA <span style="color:var(--muted)">(budget — hard filter)</span></li>');
+    if ((L.locations || []).length) lim.push('<li>Location: ' + L.locations.map(esc).join(', ') + '</li>');
+    if (L.notes) lim.push('<li>' + esc(L.notes) + '</li>');
+    h += '<div class="jb-row2"><div class="jb-box"><h4>Limits</h4>' + (lim.length ? '<ul>' + lim.join('') + '</ul>' : '<span style="color:var(--muted)">None set.</span>')
+      + '<div class="jb-note" style="margin-top:6px">Experience and CTC come from Mandate Setup.</div></div>'
+      + '<div class="jb-box"><h4>Not this — look-alikes to reject</h4>' + ((p.not_this || []).length ? '<ul>' + p.not_this.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '<span style="color:var(--muted)">None listed.</span>') + '</div></div>';
+    h += '</div>';
+    el.innerHTML = h; bind(el, m, st);
+  }
+
+  function edRow(tier, it){
+    return '<div class="jb-er" data-row="1"><select data-f="tier">' + TIERS.map(function(t){ return '<option value="' + t[0] + '"' + (t[0] === tier ? ' selected' : '') + '>' + (t[0] === 'core' ? 'Core' : t[0] === 'important' ? 'Important' : 'Nice-to-have') + '</option>'; }).join('') + '</select>'
+      + '<input data-f="skill" placeholder="Requirement, e.g. Utility-scale solar O&M" value="' + q(it.skill || '') + '">'
+      + '<input data-f="why" placeholder="Why it matters (optional)" value="' + q(it.why || '') + '">'
+      + '<input data-f="eq" placeholder="Also counts: comma separated" value="' + q((it.equivalents || []).join(', ')) + '">'
+      + '<button data-jb="del" title="Remove">&times;</button></div>';
+  }
+
+  function paintEdit(el, m, st){
+    var p = (st.data && st.data.profile) || {};
+    var rows = '';
+    TIERS.forEach(function(t){ (p[t[0]] || []).forEach(function(it){ rows += edRow(t[0], it); }); });
+    var L = p.limits || {};
+    el.innerHTML = '<div class="jb-wrap jb-ed">' + header(m, st.data, true)
+      + '<div class="jb-lab">What the job really is</div><textarea data-f="summary" rows="3">' + esc(p.summary || '') + '</textarea>'
+      + '<div class="jb-lab">Requirements</div><div class="jb-eh"><span>Tier</span><span>Requirement</span><span>Why</span><span>Also counts</span><span></span></div>'
+      + '<div data-rows="1">' + rows + '</div>'
+      + '<button class="btn btn-o" data-jb="add" style="font-size:12px;margin-top:8px">+ Add requirement</button>'
+      + '<div class="jb-lab">Locations (comma separated)</div><input data-f="locs" value="' + q((L.locations || []).join(', ')) + '">'
+      + '<div class="jb-lab">Other limits (shift, travel, licence…)</div><input data-f="notes" value="' + q(L.notes || '') + '">'
+      + '<div class="jb-lab">Not this — look-alikes to reject (one per line)</div><textarea data-f="not" rows="3">' + esc((p.not_this || []).join('\n')) + '</textarea>'
+      + '<div class="jb-note">Experience and CTC budget are taken from Mandate Setup — change them there.</div></div>';
+    bind(el, m, st);
+  }
+
+  function collect(el, st){
+    var p = {summary: el.querySelector('[data-f=summary]').value, core: [], important: [], nice: [],
+             limits: {locations: el.querySelector('[data-f=locs]').value.split(',').map(function(s){ return s.trim(); }).filter(Boolean),
+                      notes: el.querySelector('[data-f=notes]').value},
+             not_this: el.querySelector('[data-f=not]').value.split('\n').map(function(s){ return s.trim(); }).filter(Boolean)};
+    el.querySelectorAll('[data-row]').forEach(function(r){
+      var skill = r.querySelector('[data-f=skill]').value.trim();
+      if (!skill) return;
+      p[r.querySelector('[data-f=tier]').value].push({skill: skill, why: r.querySelector('[data-f=why]').value.trim(),
+        equivalents: r.querySelector('[data-f=eq]').value.split(',').map(function(s){ return s.trim(); }).filter(Boolean)});
+    });
+    return p;
+  }
+
+  function bind(el, m, st){
+    el.onclick = async function(e){
+      var b = e.target.closest('[data-jb]'); if (!b) return;
+      var k = b.getAttribute('data-jb');
+      if (k === 'retry') return renderJobBreakdown(el);
+      if (k === 'setup') return switchTab('Mandate Setup');
+      if (k === 'edit') { st.editing = true; return paintEdit(el, m, st); }
+      if (k === 'cancel') { st.editing = false; return paint(el, m, st); }
+      if (k === 'add') {
+        var box = el.querySelector('[data-rows]');
+        box.insertAdjacentHTML('beforeend', edRow('important', {}));
+        var ins = box.querySelectorAll('[data-f=skill]'); ins[ins.length - 1].focus();
+        return;
+      }
+      if (k === 'del') { b.closest('[data-row]').remove(); return; }
+      if (k === 'regen') {
+        if (st.data && st.data.status === 'edited' && !confirm('Replace your edited breakdown with a fresh AI version from the current JD?')) return;
+        return renderJobBreakdown(el, {regen: true});
+      }
+      if (k === 'save') {
+        var p = collect(el, st);
+        if (!p.core.length && !p.important.length && !p.nice.length) { toast('ERR', 'Add at least one requirement.'); return; }
+        b.disabled = true; b.textContent = 'Saving…';
+        var r = await req('PUT', '/job-profile/' + m.id, {profile: p});
+        if (r && r.ok) { st.data = Object.assign({}, st.data, r); st.editing = false; toast('OK', 'Job breakdown saved — every AI review now uses it.'); paint(el, m, st); }
+        else { b.disabled = false; b.textContent = 'Save breakdown'; toast('ERR', esc((r && r.error) || 'Could not save.')); }
+      }
+    };
+  }
 })();
 </script>
 </body></html>
