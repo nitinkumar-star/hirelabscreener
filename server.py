@@ -5777,6 +5777,18 @@ def _save_wh_for(conn, cid, items):
              1 if it.get('is_current') else 0, (it.get('description') or '').strip(), i)
         )
 
+def _save_naukri_ref(conn, cid, ref):
+    """Remember Naukri's profile reference so the search Screener can spot
+    this exact profile as a duplicate later. Best-effort: never blocks a push."""
+    ref = str(ref or '').strip()[:120]
+    if not ref:
+        return
+    try:
+        conn.execute('UPDATE candidates SET naukri_ref=? WHERE id=?', (ref, cid))
+    except sqlite3.OperationalError:
+        pass
+
+
 @app.route('/api/extension/push', methods=['POST', 'OPTIONS'])
 def extension_push():
     """Receive a candidate pushed from the Naukri Chrome extension.
@@ -5911,6 +5923,7 @@ def extension_push():
         conn.execute('UPDATE candidates SET qualification=?, specialization=?, preferred_location=?, linkedin_url=?, ai_insight_cv=? WHERE id=?',
                      (d.get('qualification',''), d.get('specialization',''), d.get('preferred_location',''),
                       d.get('linkedin_url',''), d.get('ai_insight_cv',''), existing['id']))
+        _save_naukri_ref(conn, existing['id'], d.get('naukri_ref'))
         conn.commit(); conn.close()
         return jsonify({'ok': True, 'action': 'updated', 'candidate_id': existing['id'],
                         'name': name, 'preserved': True,
@@ -5942,6 +5955,7 @@ def extension_push():
         c.execute("UPDATE candidates SET source_channel='naukri' WHERE id=?", (cid,))
     except sqlite3.OperationalError:
         pass
+    _save_naukri_ref(conn, cid, d.get('naukri_ref'))
     _save_wh_for(conn, cid, d.get('work_history'))
     conn.commit(); conn.close()
     _touch_mandate_usage(mid)
