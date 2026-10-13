@@ -114,7 +114,7 @@ _FL_ALLOW = [
     (('GET',),          r'^/api/extension/mandates/?$'),
     (('POST',),         r'^/api/extension/push/?$'),
     (('POST',),         r'^/api/extension/score-match/?$'),              # + assignment check below
-    (('POST',),         r'^/api/extension/explain/?$'),                  # AI review; same assignment check
+    (('POST',),         r'^/api/extension/explain(/chat)?/?$'),         # AI review + its chat; same assignment check
     (('POST',),         r'^/api/candidates/\d+/cv/?$'),                   # + own-candidate check below
 ]
 _FL_ALLOW = [(m, _re.compile(p)) for m, p in _FL_ALLOW]

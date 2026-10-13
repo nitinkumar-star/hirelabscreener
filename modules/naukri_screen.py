@@ -76,6 +76,12 @@ def _migrate_naukri_screen(conn):
         n_skip INTEGER DEFAULT 0,
         created_at TEXT DEFAULT ''
     )''')
+    # Naukri's own profile reference, saved when a profile is pushed from the
+    # extension, so a later search page can recognise that exact profile.
+    try:
+        conn.execute("ALTER TABLE candidates ADD COLUMN naukri_ref TEXT DEFAULT ''")
+    except Exception:
+        pass  # already exists
     conn.commit()
 
 
@@ -578,5 +584,133 @@ def screen_rules():
             chat = []
         _save_state(conn, m['id'], new_rules, chat)
         return jsonify({'ok': True, 'rules': new_rules, 'chat': chat[-MAX_CHAT_KEEP:]})
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  DUPLICATES — which cards on a search page are already in the ATS
+# ══════════════════════════════════════════════════════════════════════════
+# Search cards carry no phone or e-mail, so a duplicate is recognised by:
+#   exact   the card's Naukri profile reference equals one saved at push time
+#   strong  same name AND the card mentions the candidate's company (or role)
+#   name    same name only — shown as "check", never treated as certain
+_TITLES = re.compile(r'\b(mr|mrs|ms|miss|dr|er|eng|ca|cs)\.?\s+', re.I)
+
+
+def norm_name(n):
+    n = _TITLES.sub(' ', str(n or '').lower())
+    n = re.sub(r'[^a-z ]+', ' ', n)
+    return ' '.join(sorted(t for t in n.split() if len(t) > 1))
+
+
+def _words(t):
+    return set(w for w in re.findall(r'[a-z0-9&]+', str(t or '').lower()) if len(w) > 2)
+
+
+_GENERIC = {'pvt', 'ltd', 'limited', 'private', 'india', 'the', 'and', 'company', 'services', 'solutions',
+            'technologies', 'engineer', 'senior', 'manager', 'executive', 'assistant', 'junior', 'group'}
+
+
+def mentions(card_text, phrase):
+    """Does the card text carry this company / role (its distinctive words)?"""
+    want = _words(phrase) - _GENERIC
+    if not want:
+        return False
+    have = _words(card_text)
+    return len(want & have) / len(want) >= 0.6
+
+
+def match_level(card, cand):
+    if card.get('ref') and cand.get('naukri_ref') and card['ref'] == cand['naukri_ref']:
+        return 'exact'
+    if norm_name(card.get('name')) != norm_name(cand.get('name')) or not norm_name(card.get('name')):
+        return None
+    txt = card.get('text') or ''
+    if mentions(txt, cand.get('company')) or mentions(txt, cand.get('designation')):
+        return 'strong'
+    return 'name'
+
+
+@bp.route('/dupes', methods=['POST', 'OPTIONS'])
+@_ext_route
+def screen_dupes():
+    d = request.get_json(silent=True) or {}
+    cards = d.get('cards') or []
+    if not isinstance(cards, list) or not cards:
+        return _err('No cards were read from the page.', 400)
+    cards = [c for c in cards if isinstance(c, dict)][:60]
+    conn = get_db()
+    try:
+        m, err = _load_mandate(conn, d.get('mandate_id'))
+        if err:
+            return err
+        co = effective_company_id()
+        try:
+            from modules.access import allowed_mandate_ids, _pool_id
+            allowed = allowed_mandate_ids(conn)
+            pool_ok = _pool_id(conn)
+        except ImportError:
+            allowed, pool_ok = None, 0
+        try:
+            from modules.shared import central_mandate_id
+            pool = int(central_mandate_id() or 0)
+        except Exception:
+            pool = 0
+        mcache = {}
+
+        def mand(mid):
+            if mid not in mcache:
+                r = conn.execute('SELECT id, role, client, status FROM mandates WHERE id=? AND owner_id=?', (mid, co)).fetchone()
+                mcache[mid] = dict(r) if r else None
+            return mcache[mid]
+
+        has_ref = True
+        out = []
+        for c in cards:
+            key = str(c.get('key') or '')[:80]
+            card = {'name': str(c.get('name') or '')[:80], 'text': redact(c.get('text'))[:1200],
+                    'ref': str(c.get('ref') or '')[:120]}
+            nn = norm_name(card['name'])
+            if not key or (not nn and not card['ref']):
+                continue
+            rows = []
+            if card['ref'] and has_ref:
+                try:
+                    rows += conn.execute('SELECT id, name, company, designation, mandate_id, stage, naukri_ref FROM candidates '
+                                         'WHERE owner_id=? AND naukri_ref=? LIMIT 20', (co, card['ref'])).fetchall()
+                except Exception:
+                    has_ref = False
+            first = (nn.split() or [''])[0]
+            if first:
+                sel = 'SELECT id, name, company, designation, mandate_id, stage' + (', naukri_ref' if has_ref else '') + \
+                      ' FROM candidates WHERE owner_id=? AND LOWER(name) LIKE ? LIMIT 300'
+                rows += conn.execute(sel, (co, '%' + first + '%')).fetchall()
+            hits, seen = [], set()
+            for r in rows:
+                r = dict(r)
+                if r['id'] in seen:
+                    continue
+                seen.add(r['id'])
+                mid = int(r['mandate_id'] or 0)
+                if allowed is not None and mid not in allowed and not (mid == pool_ok and mid):
+                    continue
+                lvl = match_level(card, r)
+                if not lvl:
+                    continue
+                mm = mand(mid)
+                if not mm:
+                    continue
+                where = 'this_job' if mid == int(m['id']) else ('pool' if mid == pool else 'other_job')
+                hits.append({'candidate_id': r['id'], 'mandate_id': mid, 'where': where, 'level': lvl,
+                             'stage': r['stage'] or '', 'job': mm['role'] or '', 'client': mm['client'] or '',
+                             'job_status': mm['status'] or ''})
+            if not hits:
+                continue
+            rank = {'exact': 0, 'strong': 1, 'name': 2}
+            wrank = {'this_job': 0, 'other_job': 1, 'pool': 2}
+            hits.sort(key=lambda h: (wrank[h['where']], rank[h['level']]))
+            out.append({'key': key, 'best': hits[0], 'others': hits[1:5]})
+        return jsonify({'ok': True, 'dupes': out, 'mandate_id': m['id']})
     finally:
         conn.close()

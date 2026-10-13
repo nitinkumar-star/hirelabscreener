@@ -559,6 +559,46 @@ def _rate_ok(uid):
         return True
 
 
+
+def _req_lines(prof):
+    out = []
+    for i, it in enumerate(prof.get('core') or []):
+        out.append('C%d (core): %s%s' % (i + 1, it['skill'],
+                   (' [equivalents: ' + ', '.join(it['equivalents']) + ']') if it.get('equivalents') else ''))
+    for i, it in enumerate(prof.get('important') or []):
+        out.append('I%d (important): %s%s' % (i + 1, it['skill'],
+                   (' [equivalents: ' + ', '.join(it['equivalents']) + ']') if it.get('equivalents') else ''))
+    return out
+
+
+def job_rules(conn, mid):
+    """The recruiter's saved rules for this job (shared with the Screener)."""
+    try:
+        from modules.naukri_screen import _get_state
+        return _get_state(conn, mid)[0]
+    except Exception:
+        return []
+
+
+def job_context(conn, m, prof):
+    nice = ', '.join(n['skill'] for n in prof.get('nice') or []) or '(none)'
+    try:
+        intent = str(m['search_intent'] or '').strip()
+    except (IndexError, KeyError):
+        intent = ''
+    rules = job_rules(conn, m['id'])
+    return ('JOB: %s at %s\n%s\n\nREQUIREMENT IDS:\n%s\nNICE-TO-HAVE: %s\n%s%s' % (
+        m['role'], m['client'], profile_text(prof), '\n'.join(_req_lines(prof)), nice,
+        ('HIRING INTENT: ' + intent[:1500] + '\n') if intent else '',
+        ('RECRUITER\'S RULES FOR THIS JOB (they override your general judgement):\n' +
+         '\n'.join('- ' + r for r in rules) + '\n') if rules else ''))
+
+
+def candidate_block(resume, prof_txt):
+    return 'CANDIDATE\n%sNAUKRI PROFILE:\n%s' % (
+        ('RESUME:\n' + resume[:5500] + '\n\n') if resume else '(no resume text available)\n\n', prof_txt[:3500])
+
+
 @bp.route('/api/extension/explain', methods=['POST', 'OPTIONS'])
 def explain():
     if request.method == 'OPTIONS':
@@ -581,8 +621,10 @@ def _explain():
         mid = int(d.get('mandate_id'))
     except (TypeError, ValueError):
         return _err('Pick a mandate first.', 400)
-    resume = str(d.get('resume_text') or '').strip()
-    prof_txt = str(d.get('candidate_text') or '').strip()
+    # Phone numbers and e-mails never go to the AI (same rule as the Screener).
+    from modules.naukri_screen import redact
+    resume = redact(d.get('resume_text'))
+    prof_txt = redact(d.get('candidate_text'))
     if len(resume) + len(prof_txt) < 30:
         return _err('No candidate text was read from the page.', 400)
     conn = get_db()
@@ -605,24 +647,7 @@ def _explain():
             return _ai_err(exc)
         prof = (got or {}).get('profile') or {}
 
-        req_lines = []
-        for i, it in enumerate(prof.get('core') or []):
-            req_lines.append('C%d (core): %s%s' % (i + 1, it['skill'],
-                             (' [equivalents: ' + ', '.join(it['equivalents']) + ']') if it.get('equivalents') else ''))
-        for i, it in enumerate(prof.get('important') or []):
-            req_lines.append('I%d (important): %s%s' % (i + 1, it['skill'],
-                             (' [equivalents: ' + ', '.join(it['equivalents']) + ']') if it.get('equivalents') else ''))
-        nice = ', '.join(n['skill'] for n in prof.get('nice') or []) or '(none)'
-        intent = ''
-        try:
-            intent = str(m['search_intent'] or '').strip()
-        except (IndexError, KeyError):
-            pass
-        user = ('JOB: %s at %s\n%s\n\nREQUIREMENT IDS:\n%s\nNICE-TO-HAVE: %s\n%s\n\n---\nCANDIDATE\n%s\nNAUKRI PROFILE:\n%s' % (
-            m['role'], m['client'], profile_text(prof), '\n'.join(req_lines), nice,
-            ('HIRING INTENT: ' + intent[:1500]) if intent else '',
-            ('RESUME:\n' + resume[:5500] + '\n\n') if resume else '(no resume text available)\n\n',
-            prof_txt[:3500]))
+        user = job_context(conn, m, prof) + '\n\n---\n' + candidate_block(resume, prof_txt)
         try:
             raw = _ask(core, key, EXPLAIN_PROMPT, user, 1500, 'profile-explain', 45)
         except Exception as exc:
@@ -636,6 +661,160 @@ def _explain():
                 out['final'] = blend(float(d['base_score']), ex['fit'], ex['confidence'], ex['core_missing'])
             except (TypeError, ValueError):
                 pass
+        return jsonify(out)
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Discuss the review — the recruiter challenges a point, quoting the CV
+# ══════════════════════════════════════════════════════════════════════════
+CHAT_PROMPT = """You reviewed ONE candidate against the agreed job breakdown (below, with your current review).
+The recruiter now challenges or asks about a point, often quoting lines they selected on the profile page.
+Re-read the candidate text yourself before answering.
+- If the recruiter is right, correct your review. If they are wrong, say so politely and show the evidence.
+  Never agree just to please; never invent facts.
+- "reply": in the recruiter's own language style (Hinglish if they wrote Hinglish), max 80 words.
+Reply with ONLY a JSON object:
+{"reply": "...", "agree": true|false,
+ "updates": [{"id": "C2", "status": "cv|profile|missing", "evidence": "EXACT quote, max 20 words, from the resume or profile"}],
+ "fit": "strong|partial|weak|mismatch", "confidence": 0-100,
+ "summary": "updated 2-sentence summary, or \"\" if unchanged",
+ "rule": "a short GENERAL rule for this job that should apply to every candidate, or \"\""}
+"updates" lists only requirements whose verdict changes. Give a "rule" only when the recruiter corrected HOW a
+requirement should be judged in general (e.g. "Count substation commissioning as HT switchyard experience"),
+never for a fact about this one person."""
+
+
+def _raw_from_client(ex, prof):
+    """The review the panel is showing, back in the model's id format."""
+    reqs = []
+    for tier, pre in (('core', 'C'), ('important', 'I')):
+        shown = {str(r.get('skill', '')).lower(): r for r in (ex.get(tier) or []) if isinstance(r, dict)}
+        for i, it in enumerate(prof.get(tier) or []):
+            r = shown.get(it['skill'].lower()) or {}
+            reqs.append({'id': '%s%d' % (pre, i + 1), 'status': r.get('status') or 'unknown',
+                         'evidence': r.get('evidence') or ''})
+    return {'summary': ex.get('summary') or '', 'requirements': reqs,
+            'nice_found': ex.get('nice_found') or [], 'checks': ex.get('checks') or {},
+            'fit': ex.get('fit') or 'partial', 'confidence': ex.get('confidence', 70),
+            'risks': ex.get('risks') or [], 'questions': ex.get('questions') or []}
+
+
+def _is_freelancer():
+    try:
+        u = get_db()
+        try:
+            r = u.execute('SELECT role FROM users WHERE id=?', (int(real_user_id() or 0),)).fetchone()
+        finally:
+            u.close()
+        return bool(r and r['role'] == 'freelancer_sourcer')
+    except Exception:
+        return False
+
+
+@bp.route('/api/extension/explain/chat', methods=['POST', 'OPTIONS'])
+def explain_chat():
+    if request.method == 'OPTIONS':
+        return ('', 204)
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'auth_required',
+                        'message': 'Please log into HireLab in this browser first.'}), 401
+    try:
+        return _explain_chat()
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return _err('Chat failed on the server: %s: %s' % (type(exc).__name__, exc), 500)
+
+
+def _explain_chat():
+    core = _core()
+    d = request.get_json(silent=True) or {}
+    from modules.naukri_screen import redact
+    msg = str(d.get('message') or '').strip()[:1500]
+    quotes = [redact(q)[:700] for q in (d.get('quotes') or []) if str(q or '').strip()][:3]
+    if not msg and not quotes:
+        return _err('Type your point first.', 400)
+    try:
+        mid = int(d.get('mandate_id'))
+    except (TypeError, ValueError):
+        return _err('Pick a mandate first.', 400)
+    resume = redact(d.get('resume_text'))
+    prof_txt = redact(d.get('candidate_text'))
+    ex_in = d.get('explanation') if isinstance(d.get('explanation'), dict) else {}
+    conn = get_db()
+    try:
+        m = _mandate(conn, mid)
+        if not m:
+            return _err('Mandate not found, or it is not yours.', 404)
+        key = _key(core)
+        if not key:
+            return _err('DeepSeek is not set up in ATS Settings.', 400)
+        if not _rate_ok(int(real_user_id() or 0)):
+            return _err('Too many AI messages in the last 10 minutes. Wait a little.', 429)
+        got = ensure(conn, core, m, create=False)
+        prof = (got or {}).get('profile') or {}
+        if not prof:
+            return _err('This job has no breakdown yet. Re-score the profile first.', 400)
+        cur = _raw_from_client(ex_in, prof)
+        review = '\n'.join('%s: %s%s' % (r['id'], r['status'], (' — "' + r['evidence'] + '"') if r['evidence'] else '')
+                           for r in cur['requirements'])
+        hist = []
+        for h in (d.get('history') or [])[-8:]:
+            if isinstance(h, dict) and h.get('text'):
+                hist.append(('Recruiter: ' if h.get('role') == 'me' else 'You: ') + redact(h['text'])[:500])
+        user = (job_context(conn, m, prof) + '\n\nYOUR CURRENT REVIEW:\n' + review +
+                '\nfit: %s (confidence %s)\nsummary: %s\n\n---\n' % (cur['fit'], cur['confidence'], cur['summary']) +
+                candidate_block(resume, prof_txt) +
+                ('\n\n---\nCONVERSATION SO FAR:\n' + '\n'.join(hist) if hist else '') +
+                ('\n\nTHE RECRUITER QUOTES FROM THE PAGE:\n' + '\n'.join('> ' + q for q in quotes) if quotes else '') +
+                '\n\nRECRUITER: ' + (msg or '(see the quote)'))
+        try:
+            raw = _ask(core, key, CHAT_PROMPT, user, 900, 'profile-explain-chat', 45)
+        except Exception as exc:
+            return _ai_err(exc)
+
+        merged = dict(cur)
+        merged['requirements'] = [dict(r) for r in cur['requirements']]
+        changed = []
+        by_id = {r['id']: r for r in merged['requirements']}
+        for u in raw.get('updates') or []:
+            if not isinstance(u, dict):
+                continue
+            rid = str(u.get('id') or '').strip().upper()
+            if rid in by_id and str(u.get('status') or '').lower() in STATUSES:
+                by_id[rid]['status'] = str(u['status']).lower()
+                by_id[rid]['evidence'] = str(u.get('evidence') or '')
+                changed.append(rid)
+        if str(raw.get('fit') or '').lower() in FITS:
+            merged['fit'] = str(raw['fit']).lower()
+        try:
+            merged['confidence'] = int(raw.get('confidence', merged['confidence']))
+        except (TypeError, ValueError):
+            pass
+        if str(raw.get('summary') or '').strip():
+            merged['summary'] = raw['summary']
+        ex = normalize_explanation(merged, prof, resume, prof_txt)
+        out = {'ok': True, 'reply': _s(raw.get('reply'), 700) or 'OK.', 'agree': bool(raw.get('agree')),
+               'changed': changed, 'explanation': ex, 'rule_added': '', 'rules': None}
+        if d.get('base_score') is not None:
+            try:
+                out['final'] = blend(float(d['base_score']), ex['fit'], ex['confidence'], ex['core_missing'])
+            except (TypeError, ValueError):
+                pass
+        rule = _s(raw.get('rule'), 240)
+        if rule and out['agree'] and not _is_freelancer():
+            try:
+                from modules.naukri_screen import _get_state, _save_state, clean_rules
+                rules, chat, _a, _b = _get_state(conn, mid)
+                new = clean_rules(rules + [rule])
+                if len(new) > len(rules):
+                    _save_state(conn, mid, new, chat)
+                    out['rule_added'] = rule
+                out['rules'] = new
+            except Exception as e:
+                print('[job-profile] rule save failed: %s' % e)
         return jsonify(out)
     finally:
         conn.close()
