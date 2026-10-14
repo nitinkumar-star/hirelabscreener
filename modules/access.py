@@ -341,6 +341,7 @@ _OBJECT_ROUTES = [(re.compile(p), k) for p, k in [
     (r'^/api/match/candidate/(\d+)(/|$)', 'candidate'),
     (r'^/api/match/mandate/(\d+)(/|$)', 'mandate'),
     (r'^/api/job-profile/(\d+)(/|$)', 'mandate'),
+    (r'^/api/google/meetings/(\d+)(/|$)', 'meeting'),
     (r'^/api/todo/subtasks/(\d+)(/|$)', 'todosub'),
     (r'^/api/submissions/(\d+)(/|$)', 'submission'),
     (r'^/api/submission-drafts/(\d+)(/|$)', 'draft'),

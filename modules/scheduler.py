@@ -385,6 +385,21 @@ def _send_guest_confirmation(base_url, host_name, m):
         print('[scheduler] guest email failed: %s' % e)
 
 
+def _gmeet_sync(conn, meeting_id):
+    """Keep the host's Google Calendar event (with its Meet link) in step with
+    this meeting. No-op when modules/google_meet is absent, Google is not set
+    up, the host has not connected, or the meeting is not a Video one."""
+    try:
+        from modules.google_meet import sync_meeting, public_base
+    except Exception:
+        return {'state': 'skipped'}
+    try:
+        return sync_meeting(conn, meeting_id, public_base())
+    except Exception as e:
+        print('[scheduler] google sync failed: %s' % e)
+        return {'state': 'error'}
+
+
 def _existing_intervals(conn, host_user_id):
     rows = conn.execute(
         "SELECT start_at, end_at FROM meetings WHERE host_user_id=? AND status='confirmed' "
@@ -536,7 +551,7 @@ def create_meeting_manual():
     if d.get('candidate_id'):
         cand_id = int(d['candidate_id'])
     manage_token = secrets.token_urlsafe(24)
-    conn.execute(
+    cur = conn.execute(
         'INSERT INTO meetings (company_id,host_user_id,guest_kind,candidate_id,crm_client_id,'
         'crm_contact_id,guest_name,guest_phone,guest_email,mode,location,purpose,start_at,end_at,'
         'duration_minutes,status,manage_token,source,created_at,updated_at) '
@@ -546,7 +561,9 @@ def create_meeting_manual():
          (d.get('guest_email') or '').strip(), (d.get('mode') or '').strip(),
          (d.get('location') or av['default_location']).strip(), (d.get('purpose') or '').strip(),
          start_at, end_at, dur, 'confirmed', manage_token, 'manual', ts(), ts()))
+    new_id = cur.lastrowid
     conn.commit()
+    g = _gmeet_sync(conn, new_id)
     if cand_id:
         try:
             log_candidate_event(cand_id, 'note',
@@ -554,7 +571,7 @@ def create_meeting_manual():
         except Exception:
             pass
     conn.close()
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'meeting_id': new_id, 'google': g})
 
 
 @bp.route('/meetings/<int:mid>/status', methods=['POST'])
@@ -570,8 +587,10 @@ def set_meeting_status(mid):
     if not r:
         conn.close(); return jsonify({'error': 'Not found'}), 404
     conn.execute('UPDATE meetings SET status=?, updated_at=? WHERE id=?', (st, ts(), mid))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
+    conn.commit()
+    g = _gmeet_sync(conn, mid) if st in ('cancelled', 'confirmed') else {'state': 'skipped'}
+    conn.close()
+    return jsonify({'ok': True, 'google': g})
 
 
 @bp.route('/meetings/<int:mid>', methods=['DELETE'])
@@ -579,6 +598,11 @@ def set_meeting_status(mid):
 def delete_meeting(mid):
     cid = effective_company_id()
     conn = get_db()
+    # take the Google event (and its invite) down first, then the row
+    if conn.execute('SELECT 1 FROM meetings WHERE id=? AND company_id=?', (mid, cid)).fetchone():
+        conn.execute("UPDATE meetings SET status='cancelled' WHERE id=? AND company_id=?", (mid, cid))
+        conn.commit()
+        _gmeet_sync(conn, mid)
     conn.execute('DELETE FROM meetings WHERE id=? AND company_id=?', (mid, cid))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
@@ -780,16 +804,21 @@ def public_book(token):
                 'Booked a %s slot — %s' % (mode or 'meeting', _nice_dt(day + 'T' + hhmm)))
         except Exception:
             pass
+    g = _gmeet_sync(conn, mid)
     conn.close()
 
     m = {'guest_name': name, 'guest_email': (d.get('guest_email') or '').strip(),
-         'mode': mode, 'location': location, 'purpose': (d.get('purpose') or '').strip(),
+         'mode': mode, 'location': (g.get('meet_link') or location), 'purpose': (d.get('purpose') or '').strip(),
          'start_at': day + 'T' + hhmm, 'end_at': end_at, 'manage_token': manage_token}
-    _send_guest_confirmation(request.host_url, host_name, m)
+    # When Google already sent the host's own invite (with the Meet link and the
+    # reschedule/cancel link), a second confirmation mail would only duplicate it.
+    if not (g.get('state') == 'created' and g.get('invite_sent')):
+        _send_guest_confirmation(request.host_url, host_name, m)
 
     return jsonify({'ok': True, 'meeting_id': mid, 'manage_token': manage_token,
                     'host_name': host_name, 'when': _nice_dt(day + 'T' + hhmm),
-                    'gcal_url': _gcal_link(m)})
+                    'gcal_url': _gcal_link(m), 'meet_link': g.get('meet_link', ''),
+                    'google_invite_sent': bool(g.get('state') == 'created' and g.get('invite_sent'))})
 
 
 @bp.route('/public/manage/<manage_token>', methods=['GET'])
@@ -820,7 +849,9 @@ def public_cancel(manage_token):
     if m['status'] == 'cancelled':
         conn.close(); return jsonify({'ok': True, 'already': True})
     conn.execute('UPDATE meetings SET status=?, updated_at=? WHERE id=?', ('cancelled', ts(), m['id']))
-    conn.commit(); conn.close()
+    conn.commit()
+    _gmeet_sync(conn, m['id'])
+    conn.close()
     return jsonify({'ok': True})
 
 
@@ -850,6 +881,7 @@ def public_reschedule(manage_token):
     conn.execute('UPDATE meetings SET start_at=?, end_at=?, status=?, updated_at=? WHERE id=?',
                  (day + 'T' + hhmm, end_at, 'confirmed', ts(), m['id']))
     conn.commit()
+    _gmeet_sync(conn, m['id'])
     if m['candidate_id']:
         try:
             log_candidate_event(m['candidate_id'], 'note',
@@ -1022,11 +1054,12 @@ function submit(){
 function done(j){
   var manage=location.origin+"/book/manage/"+j.manage_token;
   el("root").innerHTML='<div class="card center"><div class="check">&#10003;</div>'
-    +'<h1>You\\'re booked!</h1><div class="muted" style="margin-bottom:16px">A confirmation has been emailed to you (if you shared an email).</div>'
+    +'<h1>You\\'re booked!</h1><div class="muted" style="margin-bottom:16px">'+(j.google_invite_sent?"A Google Calendar invite with the Meet link has been sent to your email.":"A confirmation has been emailed to you (if you shared an email).")+'</div>'
     +'<div style="text-align:left"><div class="detail"><span class="k">With</span><span class="v">'+esc(j.host_name)+'</span></div>'
     +'<div class="detail"><span class="k">When</span><span class="v">'+esc(j.when)+' IST</span></div>'
-    +(sel.mode?'<div class="detail"><span class="k">Type</span><span class="v">'+esc(sel.mode)+'</span></div>':'')+'</div>'
-    +'<a class="btn" href="'+j.gcal_url+'" target="_blank" rel="noopener" style="margin-top:18px;text-decoration:none">Add to Google Calendar</a>'
+    +(sel.mode?'<div class="detail"><span class="k">Type</span><span class="v">'+esc(sel.mode)+'</span></div>':'')
+    +(j.meet_link?'<div class="detail"><span class="k">Google Meet</span><span class="v"><a href="'+esc(j.meet_link)+'" target="_blank" rel="noopener">'+esc(j.meet_link.replace("https://",""))+'</a></span></div>':'')+'</div>'
+    +(j.google_invite_sent?'':'<a class="btn" href="'+j.gcal_url+'" target="_blank" rel="noopener" style="margin-top:18px;text-decoration:none">Add to Google Calendar</a>')
     +'<a class="btn ghost" href="'+manage+'" style="margin-top:10px;text-decoration:none">Reschedule or cancel</a></div>';
   window.scrollTo(0,0);
 }
@@ -1352,6 +1385,8 @@ function renderMeetings(){var box=el("mlist");if(!box)return;
     return '<div class="mtg"><div class="when">'+whenFmt(m.start_at)+'</div>'
       +'<div class="who">'+esc(m.guest_name||"Guest")+(m.guest_phone?" &middot; "+esc(m.guest_phone):"")+'</div>'
       +'<div class="meta">'+st+link+(m.mode?'<span>'+esc(m.mode)+'</span>':"")+(m.purpose?'<span>&middot; '+esc(m.purpose)+'</span>':"")+'</div>'
+      +(m.meet_link&&m.status==="confirmed"?'<div class="meta"><a href="'+esc(m.meet_link)+'" target="_blank" rel="noopener" style="color:#1A73E8;font-weight:600">Join Google Meet</a><span>&middot; calendar invite emailed to the guest</span></div>':"")
+      +(m.google_error&&m.status==="confirmed"?'<div class="meta" style="color:#B4541F">Google invite not sent: '+esc(m.google_error.slice(0,90))+'</div>':"")
       +(acts?'<div class="acts">'+acts+'</div>':"")+'</div>';}).join("");
 }
 function waConfirm(id){var m=null;for(var i=0;i<MEET.length;i++){if(MEET[i].id===id){m=MEET[i];break;}}if(!m)return;

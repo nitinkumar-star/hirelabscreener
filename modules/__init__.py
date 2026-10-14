@@ -45,6 +45,7 @@ _MODULE_NAMES = [
     'match_diag',      # read-only matching diagnosis for admins
     'naukri_screen',   # Chrome extension: screen a Naukri search page with DeepSeek
     'job_profile',     # Job Breakdown (core/important/nice) + extension profile explanation
+    'google_meet',     # Google Calendar + Meet invites for Video bookings
 ]
 
 _MIGRATIONS = []
