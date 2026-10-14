@@ -22678,4 +22678,349 @@ async function _bdhDone(id, box){
   }
 })();
 </script>
+<!-- ═══ Mobile layer (phones ≤760px). Additive: desktop is untouched. ═══ -->
+<style id="mob-style">
+#mob-nav,#mob-brand,#mob-pl-chips,#mob-cp-bar,#mob-scrim{display:none}
+@media (max-width:760px){
+  html,body{overscroll-behavior-y:none}
+  #app{height:100vh;height:100dvh}
+  body.mob #main{padding-bottom:calc(60px + env(safe-area-inset-bottom))}
+  body.mob .btn,body.mob .cp-hbtn,body.mob .tv2-btn{white-space:nowrap}
+  body.mob .btn{min-height:40px}
+
+  /* ── App header: brand · bell · avatar (one menu = bottom "More") ── */
+  #data-bar{padding:6px 12px 6px 14px !important;min-height:52px;gap:6px !important;flex-wrap:nowrap}
+  #data-bar > *:not(#user-bar):not(#mob-brand):not(#db-status){display:none !important}
+  #db-status{font-size:11px !important;max-width:30vw;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  #mob-brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;color:var(--navy,#0E2A47);letter-spacing:-.2px;cursor:pointer}
+  #mob-brand i{width:28px;height:28px;border-radius:8px;background:#0F6E56;color:#fff;font-style:normal;font-size:14px;display:flex;align-items:center;justify-content:center}
+  #user-bar{gap:6px !important;min-width:0}
+  #user-bar > div:last-child > div:not(:first-child),#user-bar > div:last-child > button{display:none !important}
+  #user-bar > div:last-child{cursor:pointer;padding:6px}
+  #user-bar .btn{min-height:32px}
+  #ntf-bell-slot button{min-width:40px;min-height:40px}
+  #hamburger-btn,#sb-resizer{display:none !important}
+
+  /* ── Bottom navigation ── */
+  #mob-nav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:38;background:#fff;border-top:1px solid var(--line,#e6e3da);
+    padding:4px 4px calc(4px + env(safe-area-inset-bottom));box-shadow:0 -4px 18px rgba(14,42,71,.06)}
+  #mob-nav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:50px;
+    text-decoration:none;color:#77736A;font-size:11px;font-weight:600;border-radius:12px;position:relative;-webkit-tap-highlight-color:transparent}
+  #mob-nav a svg{width:22px;height:22px}
+  #mob-nav a.on{color:#0F6E56}
+  #mob-nav a.on::before{content:"";position:absolute;top:2px;width:34px;height:3px;border-radius:2px;background:#0F6E56}
+  #mob-nav .mn-badge{position:absolute;top:4px;left:calc(50% + 6px);background:#C0522B;color:#fff;font-size:10px;line-height:16px;min-width:16px;padding:0 4px;border-radius:8px;text-align:center}
+  body.mob-cp #mob-nav,body.mob-cp #topbar,body.mob-cp #tabs{display:none !important}
+  body.mob-cp #main{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
+
+  /* ── Drawer: wider, bigger rows; a scrim that works on every page ── */
+  #mob-scrim{position:fixed;inset:0;background:rgba(14,42,71,.4);z-index:39}
+  body:has(#sidebar.mobile-open) #mob-scrim{display:block}
+  #sidebar{width:min(300px,86vw) !important}
+  #sidebar .sb-nav-title{font-size:15px}
+  #sidebar .sb-nav-sub{font-size:12px}
+  .sb-user button{min-width:44px;min-height:44px;font-size:18px !important}
+
+  /* ── Page header (Home / mandate) ── */
+  #topbar{padding:10px 14px !important;flex-wrap:wrap;gap:8px !important}
+  #topbar > div:first-child{min-width:0;flex:1 1 100%}
+  #topbar-title{font-size:18px !important;max-width:100% !important}
+  #topbar-sub{font-size:12.5px !important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #topbar > div:last-child{margin-left:0 !important;flex:1 1 100%}
+  #topbar > div:last-child > div{flex:1}
+  #universal-search{width:100% !important;padding:10px 14px !important;font-size:16px !important}
+  #universal-results{left:10px !important;right:10px !important;width:auto !important}
+  #tabs{padding:0 14px !important;gap:0 !important;-webkit-overflow-scrolling:touch}
+  .tab-btn{padding:13px 2px !important;margin-right:20px !important;font-size:14px !important;flex-shrink:0}
+
+  /* ── Section headers of Jobs / CRM / Talent / AI / Settings… ── */
+  #main > [id$="-view"] > div:first-child[style*="padding:9px 16px"]{padding:10px 12px 10px 14px !important;gap:8px !important;min-height:56px}
+  #main > [id$="-view"] > div:first-child[style*="padding:9px 16px"] div[style*="width:28px;height:28px"]{display:none !important}
+  #main > [id$="-view"] > div:first-child[style*="padding:9px 16px"] div[style*="font-size:11px"]{display:none !important}
+  #main > [id$="-view"] > div:first-child[style*="padding:9px 16px"] div[style*="font-size:14px"]{font-size:18px !important;font-weight:700 !important;white-space:nowrap}
+  #main > [id$="-view"] > div:first-child button[onclick^="close"],#main > [id$="-view"] > div:first-child button[onclick^="toggleSettings"]{display:none !important}
+  #main > [id$="-view"] > div:first-child > div:last-child{gap:6px !important;flex-wrap:nowrap !important;min-width:0;overflow-x:auto;scrollbar-width:none}
+  #main > [id$="-view"] > div:first-child > div:last-child > *{flex-shrink:0}
+  #ai-index-badge{display:none}
+  .cdb-subtab-bar{padding:0 10px !important;overflow-x:auto;scrollbar-width:none}
+  .cdb-subtab{padding:12px 12px !important;font-size:13.5px !important;white-space:nowrap}
+  #ai-view > div:nth-child(3){overflow-x:auto;scrollbar-width:none;padding:6px 10px 0 !important}
+  .ai-tab-btn{white-space:nowrap;font-size:13px !important;padding:10px 10px !important}
+  #ai-body,#crm-body,#cdb-results{padding:12px !important}
+
+  /* ── Readability: lift the tiniest inline font sizes ── */
+  #main [style*="font-size:9px"],#main [style*="font-size:9.5px"],#main [style*="font-size:10px"]{font-size:11px !important}
+  #main [style*="font-size:10.5px"]{font-size:11.5px !important}
+  #main .pending-badge,#main .sb-nav-badge{font-size:9px !important}
+
+  /* ── Pipeline: one stage at a time ── */
+  .mob-pl-bar{flex-wrap:nowrap !important;overflow-x:auto;scrollbar-width:none;padding:8px 12px !important}
+  .mob-pl-bar::-webkit-scrollbar,#mob-pl-chips::-webkit-scrollbar,.cdb-subtab-bar::-webkit-scrollbar{display:none}
+  .mob-pl-bar > div:last-child{flex-wrap:nowrap !important;margin-left:8px !important}
+  .mob-pl-bar button{flex-shrink:0;min-height:36px}
+  #mob-pl-chips{display:flex;gap:8px;overflow-x:auto;padding:10px 12px;background:#fff;border-bottom:1px solid var(--line,#e6e3da);scrollbar-width:none;flex-shrink:0}
+  #mob-pl-chips button{flex-shrink:0;display:flex;align-items:center;gap:7px;border:1px solid var(--line,#e6e3da);background:#fff;border-radius:20px;
+    padding:8px 13px;font-size:13.5px;font-weight:600;color:#3d3a33;min-height:40px;font-family:inherit}
+  #mob-pl-chips button i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  #mob-pl-chips button b{font-weight:600;font-size:12px;background:#F2F0EA;border-radius:10px;padding:1px 7px;color:#6b675e}
+  #mob-pl-chips button.on{background:#0E2A47;border-color:#0E2A47;color:#fff}
+  #mob-pl-chips button.on b{background:rgba(255,255,255,.18);color:#fff}
+  body.mob .pl-wrap{overflow-x:hidden !important;padding:12px !important}
+  body.mob .pl-cols{display:block !important;min-width:0 !important;width:auto !important}
+  body.mob .pl-col{display:none !important;width:auto !important;min-width:0 !important;max-width:none !important;background:transparent !important;border:none !important;padding:0 !important}
+  body.mob .pl-col.mob-on{display:block !important}
+  body.mob .pl-col.mob-on .pl-col-head{display:none !important}
+  body.mob .pl-col.mob-on .pl-cards{display:block !important;max-height:none !important;overflow:visible !important;padding:0 !important;min-height:120px}
+  body.mob .pl-card{margin-bottom:10px !important;padding:14px !important;border-radius:14px !important}
+  body.mob .pl-card .pl-del-btn{display:none !important}
+  .mob-empty{padding:40px 16px;text-align:center;color:#8a867c;font-size:14px}
+
+  /* ── Candidate profiles: list OR detail, full screen ── */
+  body.mob .prof-wrap{height:100% !important;overflow:hidden !important}
+  body.mob .prof-list{width:100% !important;max-height:none !important;flex:1 1 auto;border:none !important}
+  body.mob .prof-list-item{padding:14px 16px !important;min-height:64px}
+  body.mob .prof-wrap.mob-detail .prof-list{display:none !important}
+  body.mob .prof-wrap:not(.mob-detail) .prof-detail{display:none !important}
+  body.mob .prof-wrap.mob-detail .prof-detail{height:100%;overflow-y:auto}
+  body.mob .cp-back{display:inline-flex !important;align-items:center;gap:6px;font-size:15px !important;font-weight:600;padding:10px 4px !important;margin:-4px 0 4px;min-height:40px;cursor:pointer}
+  body.mob .cp-head > div:last-child{gap:10px !important}
+  body.mob .cp-head > div:last-child > div:last-child{flex:1 1 100%;flex-wrap:nowrap !important;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+  body.mob .cp-head > div:last-child > div:last-child > *{flex-shrink:0}
+  body.mob .cp-tabbar{scrollbar-width:none}
+  body.mob .cp-tab{padding:12px 2px !important;font-size:14px !important}
+  #mob-cp-bar{position:fixed;left:0;right:0;bottom:0;z-index:38;background:#fff;border-top:1px solid var(--line,#e6e3da);
+    padding:8px 10px calc(8px + env(safe-area-inset-bottom));gap:8px;box-shadow:0 -4px 18px rgba(14,42,71,.08)}
+  body.mob-cp #mob-cp-bar{display:flex}
+  #mob-cp-bar a,#mob-cp-bar button{flex:1;min-height:46px;border-radius:12px;border:1px solid var(--line,#e6e3da);background:#fff;font-size:14px;font-weight:600;
+    display:flex;align-items:center;justify-content:center;gap:6px;color:#2a2823;text-decoration:none;font-family:inherit}
+  #mob-cp-bar .call{background:#0F6E56;border-color:#0F6E56;color:#fff}
+  #mob-cp-bar .wa{background:#25D366;border-color:#25D366;color:#fff}
+  #mob-cp-bar .off{opacity:.45;pointer-events:none}
+
+  /* ── Talent search filters: tidy grid ── */
+  div:has(> #tf-company){display:grid !important;grid-template-columns:34px 1fr 12px 1fr 16px;gap:8px !important;align-items:center}
+  div:has(> #tf-company) > *{width:auto !important;min-width:0}
+  #tf-company,#tf-loc{grid-column:1 / -1}
+  #tf-notice{grid-column:1 / 4}
+  div:has(> #tf-company) > button{grid-column:4 / 6}
+  #cdb-view input[style*="width:7"],#cdb-view input[style*="width:6"]{width:64px !important}
+
+  /* ── Settings / modals ── */
+  .modal{width:100vw !important;max-width:100vw !important;max-height:92dvh !important;border-radius:16px 16px 0 0 !important;margin-top:auto}
+  .modal-bg{align-items:flex-end !important}
+  #modal-mandate.modal-bg .modal{border-radius:0 !important;max-height:none !important}
+  .set-savebar{bottom:0;padding:10px 4px calc(10px + env(safe-area-inset-bottom))}
+}
+</style>
+<script id="mob-script">
+(function(){
+  var MQ = window.matchMedia('(max-width:760px)');
+  var M = { stage: null, wantDetail: false, from: null, cand: null };
+  function $(id){ return document.getElementById(id); }
+  function vis(id){ var v = $(id); return !!(v && v.style.display !== 'none' && v.offsetParent !== null); }
+  var IC = {
+    home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>',
+    jobs:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>',
+    tasks:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
+    cal:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+    more:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 7h16M4 12h16M4 17h16"/></svg>'
+  };
+
+  function build(){
+    if ($('mob-nav')) return;
+    var nav = document.createElement('nav'); nav.id = 'mob-nav'; nav.setAttribute('aria-label', 'Main');
+    nav.innerHTML =
+        '<a href="#" data-mn="home">' + IC.home + '<span>Home</span></a>'
+      + '<a href="#jobs" data-mn="jobs">' + IC.jobs + '<span>Jobs</span></a>'
+      + '<a href="#tasks" data-mn="tasks">' + IC.tasks + '<span>Tasks</span><span class="mn-badge" id="mn-tasks-badge" style="display:none"></span></a>'
+      + '<a href="/schedule" data-mn="schedule">' + IC.cal + '<span>Schedule</span></a>'
+      + '<a href="#" data-mn="more">' + IC.more + '<span>More</span></a>';
+    document.body.appendChild(nav);
+    nav.addEventListener('click', function(e){
+      var a = e.target.closest('a[data-mn]'); if (!a) return;
+      var k = a.getAttribute('data-mn');
+      if (k === 'schedule') return;                       // real page
+      e.preventDefault();
+      if (k !== 'more') { try { closeSidebarOnMobile(); } catch (x) {} }
+      M.wantDetail = false;
+      if (k === 'home') goHome();
+      else if (k === 'jobs') openJobs();
+      else if (k === 'tasks') openTasks();
+      else if (k === 'more') toggleSidebar();
+      setTimeout(sync, 60);
+    });
+
+    var bar = document.createElement('div'); bar.id = 'mob-cp-bar';
+    bar.innerHTML = '<button type="button" data-cp="back">&#8592; Back</button>'
+      + '<a class="call" data-cp="call" href="#">&#128222; Call</a>'
+      + '<button type="button" class="wa" data-cp="wa">WhatsApp</button>'
+      + '<button type="button" data-cp="stage">Stage</button>';
+    document.body.appendChild(bar);
+    bar.addEventListener('click', function(e){
+      var b = e.target.closest('[data-cp]'); if (!b) return;
+      var k = b.getAttribute('data-cp');
+      if (k === 'call') { if (b.getAttribute('href') === '#') e.preventDefault(); return; }
+      e.preventDefault();
+      if (k === 'back') profBack();
+      else if (k === 'wa') { try { cpTab('comms'); } catch (x) {} var p = $('cp-pane-comms'); if (p) p.scrollIntoView({block:'start'}); }
+      else if (k === 'stage') { var s = $('prof-stage-sel'); if (s) { s.scrollIntoView({block:'center'}); s.focus(); try { s.showPicker && s.showPicker(); } catch (x) {} } }
+    });
+
+    var scrim = document.createElement('div'); scrim.id = 'mob-scrim';
+    scrim.addEventListener('click', function(){ try { closeSidebarOnMobile(); } catch (x) {} });
+    document.body.appendChild(scrim);
+
+    var db = $('data-bar');
+    if (db && !$('mob-brand')) {
+      var br = document.createElement('div'); br.id = 'mob-brand';
+      br.innerHTML = '<i>H</i><span>HireLab</span>';
+      br.onclick = function(){ M.wantDetail = false; goHome(); };
+      db.insertBefore(br, db.firstChild);
+    }
+    var ub = $('user-bar');
+    if (ub) ub.addEventListener('click', function(e){
+      if (!MQ.matches) return;
+      var av = ub.querySelector(':scope > div:last-child');
+      if (av && av.contains(e.target) && !e.target.closest('button')) toggleSidebar();
+    });
+  }
+
+  // ── which tab is "on" ──
+  function syncNav(){
+    var k = 'home';
+    if (vis('tasks-view')) k = 'tasks';
+    else if (vis('jobs-view') || (vis('mandate-view') && typeof S !== 'undefined' && S && S.activeMandate)) k = 'jobs';
+    else if (!vis('mandate-view')) k = 'more';
+    document.querySelectorAll('#mob-nav a').forEach(function(a){ a.classList.toggle('on', a.getAttribute('data-mn') === k); });
+    var src = $('nav-tasks-badge') || document.querySelector('#sb-tasks .sb-nav-badge');
+    var tb = $('mn-tasks-badge');
+    if (tb) {
+      var t = src && src.style.display !== 'none' ? (src.textContent || '').trim() : '';
+      tb.textContent = t; tb.style.display = t ? '' : 'none';
+    }
+  }
+
+  // ── Pipeline board → stage chips + one column ──
+  function syncPipeline(){
+    var cols = $('pl-cols'); if (!cols) return;
+    var wrap = cols.closest('.pl-wrap'); if (!wrap) return;
+    var head = wrap.previousElementSibling;
+    if (head && !head.classList.contains('mob-pl-bar')) head.classList.add('mob-pl-bar');
+    var list = Array.prototype.slice.call(cols.querySelectorAll(':scope > .pl-col'));
+    if (!list.length) return;
+    var data = list.map(function(c){
+      var cards = c.querySelector('.pl-cards');
+      var dot = c.querySelector('.pl-col-head span span');
+      return { el: c, id: cards ? cards.getAttribute('data-stage') : '', n: c.querySelectorAll('.pl-card').length,
+               name: ((c.querySelector('.pl-col-name') || {}).textContent || ''), color: dot ? dot.style.background : '#999' };
+    });
+    if (!M.stage || !data.some(function(d){ return d.id === M.stage; })) {
+      var first = data.filter(function(d){ return d.n; })[0] || data[0];
+      M.stage = first.id;
+    }
+    var chips = $('mob-pl-chips');
+    if (!chips || chips.nextElementSibling !== wrap) {
+      if (chips) chips.remove();
+      chips = document.createElement('div'); chips.id = 'mob-pl-chips';
+      wrap.parentNode.insertBefore(chips, wrap);
+      chips.addEventListener('click', function(e){
+        var b = e.target.closest('button[data-st]'); if (!b) return;
+        M.stage = b.getAttribute('data-st'); syncPipeline();
+        wrap.scrollTop = 0;
+      });
+    }
+    var sig = data.map(function(d){ return d.id + ':' + d.n; }).join('|') + '#' + M.stage;
+    if (chips.getAttribute('data-sig') !== sig) {
+      chips.setAttribute('data-sig', sig);
+      chips.innerHTML = data.filter(function(d){ return d.n || d.id === M.stage; }).map(function(d){
+        return '<button type="button" data-st="' + d.id.replace(/"/g, '&quot;') + '" class="' + (d.id === M.stage ? 'on' : '') + '"><i style="background:' + d.color + '"></i>'
+          + d.name.replace(/</g, '&lt;') + '<b>' + d.n + '</b></button>';
+      }).join('');
+      var on = chips.querySelector('.on'); if (on && on.scrollIntoView) on.scrollIntoView({inline:'center', block:'nearest'});
+    }
+    data.forEach(function(d){
+      d.el.classList.toggle('mob-on', d.id === M.stage);
+      var cards = d.el.querySelector('.pl-cards');
+      if (cards && window.Sortable && Sortable.get) { var s = Sortable.get(cards); if (s && !s.option('disabled')) s.option('disabled', true); }
+      if (cards && d.id === M.stage && !d.n && !cards.querySelector('.mob-empty'))
+        cards.insertAdjacentHTML('beforeend', '<div class="mob-empty">No candidates in this stage</div>');
+    });
+  }
+
+  // ── Profiles: list ↔ detail ──
+  function syncProfiles(){
+    var pw = document.querySelector('#content .prof-wrap');
+    var detailOn = false;
+    if (pw) {
+      if (M.wantDetail) pw.classList.add('mob-detail');
+      detailOn = pw.classList.contains('mob-detail') && !!document.querySelector('#prof-detail .cp-head');
+    }
+    document.body.classList.toggle('mob-cp', detailOn && vis('mandate-view'));
+    if (detailOn) {
+      var c = M.cand || {};
+      var call = document.querySelector('#mob-cp-bar [data-cp="call"]');
+      var ph = String(c.phone || '').replace(/[^\d+]/g, '');
+      if (call) { call.setAttribute('href', ph ? 'tel:' + ph : '#'); call.classList.toggle('off', !ph); }
+    }
+  }
+  function profBack(){
+    M.wantDetail = false;
+    var pw = document.querySelector('#content .prof-wrap');
+    if (M.from === 'pipeline') { M.from = null; try { switchTab('Pipeline'); } catch (x) {} }
+    else if (pw) { pw.classList.remove('mob-detail'); try { writeHash(); } catch (x) {} }
+    document.body.classList.remove('mob-cp');
+    var c = $('content'); if (c) c.scrollTop = 0;
+  }
+
+  function sync(){
+    if (!MQ.matches) { document.body.classList.remove('mob', 'mob-cp'); return; }
+    document.body.classList.add('mob');
+    build(); syncNav(); syncPipeline(); syncProfiles();
+  }
+
+  // Wrap a few app functions (global function declarations) — behaviour on desktop is unchanged.
+  function wrap(name, before, after){
+    var f = window[name]; if (typeof f !== 'function' || f.__mob) return;
+    var g = function(){
+      if (MQ.matches && before) before.apply(this, arguments);
+      var r = f.apply(this, arguments);
+      if (MQ.matches && after) { if (r && r.then) r.then(function(){ after(); }); else after(); }
+      return r;
+    };
+    g.__mob = true; window[name] = g;
+  }
+  function hook(){
+    wrap('openProfile', function(){ M.wantDetail = true; M.from = (typeof S !== 'undefined' && S && S.activeTab === 'Pipeline') ? 'pipeline' : null; }, sync);
+    wrap('selectProfile', function(){ M.wantDetail = true; M.from = null; }, sync);
+    wrap('renderProfileDetail', function(c){ M.cand = c || null; }, sync);
+    wrap('switchTab', function(t){ if (t !== 'Candidate Profiles') M.wantDetail = false; }, sync);
+    wrap('selectMandate', function(){ M.stage = null; }, sync);
+    wrap('openProfileById', function(){ M.wantDetail = true; M.from = null; }, sync);
+    ['goHome', 'openJobs', 'openTasks', 'openCentralDB', 'openAI', 'openCrm'].forEach(function(n){
+      wrap(n, function(){ M.wantDetail = false; }, sync);
+    });
+  }
+
+  // The profile page's own "← Back" uses history.back(), which can leave the app on a phone.
+  document.addEventListener('click', function(e){
+    if (!MQ.matches) return;
+    var b = e.target.closest && e.target.closest('.cp-back');
+    if (b && b.closest('#prof-detail')) { e.preventDefault(); e.stopPropagation(); profBack(); }
+  }, true);
+
+  var t = null;
+  function soon(){ clearTimeout(t); t = setTimeout(sync, 40); }
+  function start(){
+    hook();
+    // Deep link straight to a candidate (#mandate/1/profiles/77) opens the detail.
+    if (/^#mandate\/\d+\/profiles\/\d+/.test(location.hash)) M.wantDetail = true;
+    sync();
+    var main = $('main');
+    if (main && window.MutationObserver) new MutationObserver(soon).observe(main, {childList: true, subtree: true, attributes: true, attributeFilter: ['style']});
+    if (MQ.addEventListener) MQ.addEventListener('change', sync); else if (MQ.addListener) MQ.addListener(sync);
+    window.addEventListener('hashchange', soon);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
+</script>
 </body></html>
