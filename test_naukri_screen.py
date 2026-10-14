@@ -217,3 +217,77 @@ def test_ai_failure_is_reported_not_crashed(srv, ds):
     j = r.get_json()
     # a non-object answer maps every key to "unknown" rather than inventing a verdict
     assert r.status_code == 200 and j['results'][0]['verdict'] == 'unknown'
+
+
+# ── duplicates on a search page ──────────────────────────────────────────
+def _seed_dupes(srv):
+    conn = srv.get_db(); now = srv.ts()
+    conn.execute("INSERT OR REPLACE INTO mandates (id, role, client, status, owner_id, assigned_user_id, created_at) "
+                 "VALUES (97109, 'Old Wind Job', 'Suzlon', 'closed', ?, ?, ?)", (CO, ADMIN, now))
+    rows = [(97201, M_A, 'Asha Verma', 'Azure Power', 'Solar O&M Engineer', 'Interested', CO),
+            (97202, 97109, 'Ravi Kumar', 'L&T Construction', 'Site Engineer', 'Rejected', CO),
+            (97203, M_A, 'Rahul Mehta', 'Tata Power', 'Engineer', 'Screening', CO),
+            (97204, M_R, 'Neha Gupta', 'Mahindra Susten', 'O&M Engineer', 'Screening', CO),
+            (97205, M_O, 'Meena Joshi', 'Sterling Wilson', 'Senior Engineer', 'Screening', OTHER)]
+    for cid, mid, name, comp, des, stage, co in rows:
+        conn.execute("INSERT OR REPLACE INTO candidates (id, mandate_id, name, company, designation, stage, owner_id, created_at) "
+                     "VALUES (?,?,?,?,?,?,?,?)", (cid, mid, name, comp, des, stage, co, now))
+    conn.execute("UPDATE candidates SET naukri_ref='ref-xyz' WHERE id=97203")
+    conn.commit(); conn.close()
+
+
+def test_dupes_found_by_name_and_company_and_ref(srv):
+    _seed_dupes(srv)
+    c = cl(srv, ADMIN)
+    cards = [{'key': 'a', 'name': 'Asha  Verma', 'text': 'Solar O&M Engineer at Azure Power 8 yrs 12 Lacs'},
+             {'key': 'b', 'name': 'Ravi Kumar', 'text': 'Site Engineer at L&T Construction'},
+             {'key': 'c', 'name': 'R. Mehta', 'text': 'something', 'ref': 'ref-xyz'},
+             {'key': 'd', 'name': 'Asha Verma', 'text': 'Accountant at Infosys'},
+             {'key': 'e', 'name': 'Meena Joshi', 'text': 'Senior Engineer at Sterling Wilson'},
+             {'key': 'f', 'name': 'Nobody Here', 'text': 'x'}]
+    j = c.post('/api/extension/screen/dupes', json={'mandate_id': M_A, 'cards': cards}).get_json()
+    got = {x['key']: x['best'] for x in j['dupes']}
+    assert got['a']['where'] == 'this_job' and got['a']['level'] == 'strong' and got['a']['stage'] == 'Interested'
+    assert got['b']['where'] == 'other_job' and got['b']['job'] == 'Old Wind Job'
+    assert got['c']['level'] == 'exact' and got['c']['candidate_id'] == 97203
+    assert got['d']['level'] == 'name'                      # same name, different company: only "check"
+    assert 'e' not in got and 'f' not in got                # other company's candidate is invisible
+
+
+def test_dupes_respect_recruiter_scope(srv):
+    _seed_dupes(srv)
+    j = cl(srv, RIYA).post('/api/extension/screen/dupes', json={'mandate_id': M_R, 'cards': [
+        {'key': 'a', 'name': 'Asha Verma', 'text': 'Azure Power'},
+        {'key': 'n', 'name': 'Neha Gupta', 'text': 'O&M Engineer at Mahindra Susten'}]}).get_json()
+    got = {x['key']: x['best'] for x in j['dupes']}
+    assert 'a' not in got                                   # Riya is not on M_A
+    assert got['n']['where'] == 'this_job'
+
+
+def test_push_saves_naukri_ref(srv):
+    c = cl(srv, ADMIN)
+    r = c.post('/api/extension/push', json={'mandate_id': M_A, 'name': 'Pushed Person', 'phone': '9811177777',
+                                            'company': 'X', 'naukri_ref': 'abc123'}).get_json()
+    assert r.get('ok'), r
+    conn = srv.get_db()
+    assert conn.execute('SELECT naukri_ref FROM candidates WHERE id=?', (r['candidate_id'],)).fetchone()[0] == 'abc123'
+    conn.close()
+
+
+def test_dupes_no_false_positives(srv):
+    """A different person must not be called "already in this job":
+    same name + a role word, scattered company words, or a shared/reused profile ref."""
+    _seed_dupes(srv)
+    c = cl(srv, ADMIN)
+    cards = [{'key': 'role', 'name': 'Asha Verma', 'text': 'Solar O&M Engineer at Adani Green Energy 5 yrs'},
+             {'key': 'scat', 'name': 'Rahul Mehta', 'text': 'Engineer at Adani Power, earlier with Tata Projects'},
+             {'key': 'ref', 'name': 'Kavita Rao', 'text': 'Sales Manager at Waaree', 'ref': 'ref-xyz'},
+             {'key': 'ok', 'name': 'Rahul Mehta', 'text': 'Engineer at Tata Power Delhi', 'ref': ''},
+             {'key': 'ok2', 'name': 'R Mehta', 'text': 'x', 'ref': 'ref-xyz'}]
+    j = c.post('/api/extension/screen/dupes', json={'mandate_id': M_A, 'cards': cards}).get_json()
+    got = {x['key']: x['best'] for x in j['dupes']}
+    assert got['role']['level'] == 'name'                   # same name + same role word is NOT proof
+    assert got['scat']['level'] == 'name'                   # "Tata" and "Power" in different places
+    assert 'ref' not in got                                 # a ref on a different name is not a match
+    assert got['ok']['level'] == 'strong'
+    assert got['ok2']['level'] == 'exact'
