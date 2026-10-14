@@ -593,7 +593,7 @@ def screen_rules():
 # ══════════════════════════════════════════════════════════════════════════
 # Search cards carry no phone or e-mail, so a duplicate is recognised by:
 #   exact   the card's Naukri profile reference equals one saved at push time
-#   strong  same name AND the card mentions the candidate's company (or role)
+#   strong  same name AND the card names the candidate's company as a phrase
 #   name    same name only — shown as "check", never treated as certain
 _TITLES = re.compile(r'\b(mr|mrs|ms|miss|dr|er|eng|ca|cs)\.?\s+', re.I)
 
@@ -621,13 +621,44 @@ def mentions(card_text, phrase):
     return len(want & have) / len(want) >= 0.6
 
 
+_CORP_TAIL = {'pvt', 'private', 'ltd', 'limited', 'llp', 'inc', 'co', 'corp', 'corporation', 'company', 'india', 'the'}
+
+
+def _seq(t):
+    return re.findall(r'[a-z0-9&]+', str(t or '').lower())
+
+
+def company_in(card_text, company):
+    """True only when the company's name appears as one phrase in the card
+    ("Tata Power" — not "Tata Projects … Adani Power")."""
+    want = _seq(company)
+    while want and want[-1] in _CORP_TAIL:
+        want.pop()
+    while want and want[0] in _CORP_TAIL:
+        want.pop(0)
+    if not want or not any(len(w) >= 3 for w in want):
+        return False
+    have, n = _seq(card_text), len(want)
+    return any(have[i:i + n] == want for i in range(len(have) - n + 1))
+
+
+def names_compatible(a, b):
+    """Two names could be the same person: they share a word ("R Mehta" / "Rahul Mehta")."""
+    ta, tb = set(norm_name(a).split()), set(norm_name(b).split())
+    return not ta or not tb or bool(ta & tb)
+
+
 def match_level(card, cand):
-    if card.get('ref') and cand.get('naukri_ref') and card['ref'] == cand['naukri_ref']:
+    # exact  the same Naukri profile reference AND a compatible name
+    #        (a reference that turns up on a different name is not trusted)
+    if card.get('ref') and cand.get('naukri_ref') and card['ref'] == cand['naukri_ref'] \
+            and names_compatible(card.get('name'), cand.get('name')):
         return 'exact'
     if norm_name(card.get('name')) != norm_name(cand.get('name')) or not norm_name(card.get('name')):
         return None
-    txt = card.get('text') or ''
-    if mentions(txt, cand.get('company')) or mentions(txt, cand.get('designation')):
+    # strong  same name AND the card names the candidate's company as a phrase.
+    #         The role is NOT used: every card in a search shares the role words.
+    if company_in(card.get('text') or '', cand.get('company')):
         return 'strong'
     return 'name'
 
@@ -702,6 +733,8 @@ def screen_dupes():
                 if not mm:
                     continue
                 where = 'this_job' if mid == int(m['id']) else ('pool' if mid == pool else 'other_job')
+                if lvl == 'name' and where != 'this_job':
+                    continue                                # same name elsewhere is just noise
                 hits.append({'candidate_id': r['id'], 'mandate_id': mid, 'where': where, 'level': lvl,
                              'stage': r['stage'] or '', 'job': mm['role'] or '', 'client': mm['client'] or '',
                              'job_status': mm['status'] or ''})

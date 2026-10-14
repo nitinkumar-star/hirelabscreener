@@ -46,6 +46,7 @@ _MODULE_NAMES = [
     'naukri_screen',   # Chrome extension: screen a Naukri search page with DeepSeek
     'job_profile',     # Job Breakdown (core/important/nice) + extension profile explanation
     'google_meet',     # Google Calendar + Meet invites for Video bookings
+    'assistant',       # HireLab Assistant side panel (paste / CV, never reads Naukri)
 ]
 
 _MIGRATIONS = []
