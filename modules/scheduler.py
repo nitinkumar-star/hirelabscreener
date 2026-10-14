@@ -1261,6 +1261,7 @@ input[type=checkbox]{width:auto}
 .kdot{display:inline-block;width:8px;height:8px;border-radius:3px;margin-right:5px;vertical-align:middle}
 .kdot.ap{background:#0f6e56}.kdot.rm{background:#c47a1a}.kdot.iv{background:#3a5bd0}
 @media(max-width:600px){.cell{min-height:68px}.cell .chip{font-size:9px;padding:1px 4px}}
+@media(max-width:600px){.top .back{display:inline-flex;align-items:center;min-height:40px;padding:8px 10px 8px 0;font-size:14px}.cell .chip{font-size:10px}}
 """
 
 _CONSOLE_HTML = """<!doctype html><html lang="en"><head>
