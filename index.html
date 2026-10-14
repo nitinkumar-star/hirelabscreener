@@ -7632,6 +7632,8 @@ function renderSettings(){
           + '</div></div>')
       + (admin ? '' : _sec('sec-mymail', 'account', 'My Email (send from my own Gmail)', 'gmail email app password smtp mailbox sender my email',
           '<div id="my-mail-card">' + myMailCardHTML() + '</div>'))
+      + _sec('sec-gmeet', 'account', 'Google Meet for Video bookings', 'google meet link invite video booking appointment scheduler calendar',
+          '<div id="my-gcal-card">' + gcalCardHTML() + '</div>')
       + _setSaveBar('account')
     + '</div>'
     + (_rsOnly ? myTemplatesPaneHTML(s) : '')
@@ -7859,6 +7861,7 @@ async function saveSettingsTab(tab){
     } else if(tab === 'account'){
       await saveMyProfile();
       if(document.getElementById('mm-email') && _myMailDirty()) await saveMyMail(true);
+      if(document.getElementById('gc-link') && _gcalDirty()) await saveGcal();
     } else if(tab === 'workspace'){
       await saveVocab();
       if(_setIsAdmin() && Array.isArray(_pipeEdit) && _pipeEdit.length) await savePipelineStages();
@@ -8049,6 +8052,7 @@ async function loadMyProfile(){
   e('mp-designation', p.profile_designation);
   e('mp-email', p.profile_email);
   if(document.getElementById('mm-email')) await loadMyMail();
+  if(document.getElementById('gc-status')) loadGcal();
   if(typeof _setSnapshot === 'function') _setSnapshot('account');
   loadMyBillingCard();
   renderPipelineEditor();
@@ -8221,6 +8225,54 @@ async function removeMyMail(){
   if(!confirm('Stop sending from your own Gmail? Your emails will go out from the company mailbox again.')) return;
   var r = await req('DELETE', '/me/mail');
   if(r && r.ok){ toast('OK','Switched back to the company mailbox'); loadMyMail(); }
+}
+
+// ── Google Meet: one permanent Meet link; Video bookings get a calendar invite ──
+function gcalCardHTML(){
+  return '<div class="card" style="margin-bottom:14px;border-top:2px solid #1A73E8"><div class="card-head"><span style="font-weight:500">&#127909; Google Meet for Video bookings</span></div><div class="card-body">'
+    + '<div id="gc-status" style="font-size:11.5px;margin-bottom:10px;padding:8px 11px;border-radius:8px;background:#F4F3EF;color:var(--muted)">Loading&hellip;</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.55">When someone books a <b>Video</b> slot with you, HireLab emails them a calendar invite from your email with this Meet link (they get Yes / No buttons and it lands in their calendar). Reschedule and cancel send an updated invite. Phone and In-person bookings are not affected.<br>'
+    + '<b>Get a permanent link:</b> open <b>meet.google.com</b> &rarr; <b>New meeting</b> &rarr; <b>Create a meeting for later</b> &rarr; copy the link and paste it here.</div>'
+    + '<div class="fg-row"><label>My Google Meet link</label><input class="inp" id="gc-link" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:4px">'
+    + '<button class="btn btn-g" style="font-size:11px" onclick="saveGcal()">&#128190; Save Meet link</button>'
+    + '<button class="btn btn-o" id="gc-test" style="font-size:11px;display:none" onclick="testGcal()">&#9993; Send me a test invite</button>'
+    + '<span id="gc-msg" style="font-size:11px;color:#888"></span></div>'
+    + '</div></div>';
+}
+var _gcalSaved = '';
+function _gcalDirty(){ var el = document.getElementById('gc-link'); return !!el && el.value.trim() !== _gcalSaved; }
+async function loadGcal(){
+  var r = await req('GET', '/me/meet-link');
+  var st = document.getElementById('gc-status'); if(!st || !r || !r.ok) return;
+  var inp = document.getElementById('gc-link'); if(inp) inp.value = r.meet_link || '';
+  _gcalSaved = r.meet_link || '';
+  if(typeof _setSnapshot === 'function') _setSnapshot('account');
+  var te = document.getElementById('gc-test');
+  if(r.meet_link && r.sender){
+    st.style.background = '#E6F6F1'; st.style.color = '#0F6E56';
+    st.innerHTML = '&#10003; Video bookings get an invite with <b>' + esc(r.meet_link.replace('https://','')) + '</b>, sent from <b>' + esc(r.sender) + '</b>';
+    te.style.display = '';
+  } else if(r.meet_link){
+    st.style.background = '#FCEBEB'; st.style.color = '#A32D2D';
+    st.innerHTML = '&#9888; Meet link saved, but there is no mailbox to send invites from. Set <b>My Email</b> above (or the company Email Configuration).';
+    te.style.display = 'none';
+  } else {
+    st.style.background = '#FFF6E6'; st.style.color = '#8A5A0B';
+    st.innerHTML = 'No Meet link yet &mdash; Video bookings get the usual email confirmation, without a Meet link.';
+    te.style.display = 'none';
+  }
+}
+async function saveGcal(){
+  var m = document.getElementById('gc-msg');
+  var r = await req('PUT', '/me/meet-link', {meet_link: (document.getElementById('gc-link').value || '').trim()});
+  if(r && r.ok){ if(m){ m.style.color = '#0F8A6B'; m.textContent = '✓ Saved'; setTimeout(function(){ m.textContent = ''; }, 2500); } loadGcal(); }
+  else if(m){ m.style.color = '#C0522B'; m.textContent = (r && r.error) || 'Could not save'; }
+}
+async function testGcal(){
+  var m = document.getElementById('gc-msg'); if(m){ m.style.color = '#888'; m.textContent = 'Sending…'; }
+  var r = await req('POST', '/me/meet-link/test');
+  if(m){ m.style.color = (r && r.ok) ? '#0F8A6B' : '#C0522B'; m.textContent = (r && (r.message || r.error)) || 'Could not send'; }
 }
 
 // ── Admin: edit a team member (name, login id, email, own Gmail) ──────────
