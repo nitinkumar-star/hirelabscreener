@@ -386,9 +386,21 @@ def _send_guest_confirmation(base_url, host_name, m):
 
 
 def _gmeet_sync(conn, meeting_id):
-    """Keep the host's Google Calendar event (with its Meet link) in step with
-    this meeting. No-op when modules/google_meet is absent, Google is not set
-    up, the host has not connected, or the meeting is not a Video one."""
+    """Keep the meeting's Google Meet invite and the host's task in step with
+    this meeting (create / reschedule / cancel). Returns the invite result."""
+    res = _gmeet_invite(conn, meeting_id)
+    try:
+        from modules.meeting_tasks import sync_meeting_task
+        sync_meeting_task(conn, meeting_id)
+    except Exception as e:
+        print('[scheduler] task sync failed: %s' % e)
+    return res
+
+
+def _gmeet_invite(conn, meeting_id):
+    """Send / update / cancel the Google Meet calendar invite. No-op when
+    modules/google_meet is absent, the host has no Meet link, or the meeting
+    is not a Video one."""
     try:
         from modules.google_meet import sync_meeting, public_base
     except Exception:

@@ -47,6 +47,7 @@ _MODULE_NAMES = [
     'job_profile',     # Job Breakdown (core/important/nice) + extension profile explanation
     'google_meet',     # Google Calendar + Meet invites for Video bookings
     'assistant',       # HireLab Assistant side panel (paste / CV, never reads Naukri)
+    'meeting_tasks',   # scheduler meetings -> Tasks, and 10-minute task alerts
 ]
 
 _MIGRATIONS = []

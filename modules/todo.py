@@ -549,6 +549,8 @@ def _serialize(r, lists_by_id=None, users=None, subtask_counts=None, now=None):
         'candidate_phone': g('cand_phone', '') or '',
         'mandate_id': g('mandate_id'),
         'mandate_label': g('mandate_label', '') or '',
+        'meeting_id': int(g('meeting_id', 0) or 0),
+        'join_url': g('join_url', '') or '',
         'subtasks_total': sc[0],
         'subtasks_done': sc[1],
         'created_at': g('created_at', '') or '',
