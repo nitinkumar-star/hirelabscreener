@@ -20640,6 +20640,9 @@ async function _bdhDone(id, box){
 .tv2-back{display:none}
 /* Call on my phone */
 .tv2-call{color:var(--tv-accent-d) !important;flex-shrink:0}
+.tv2-join{flex-shrink:0;text-decoration:none;padding:4px 10px !important;font-size:11.5px !important;color:#1a73e8 !important;border-color:#c6dafc !important}
+.tv2-joinbig{display:flex;flex-direction:column;gap:2px;margin:12px 0 4px;padding:11px 14px;border-radius:12px;background:#1a73e8;color:#fff !important;text-decoration:none;font-weight:700;font-size:14px}
+.tv2-joinbig span{font-weight:500;font-size:11.5px;opacity:.85;word-break:break-all}
 #tasks-view[data-theme="dark"] .tv2-call{color:var(--tv-accent) !important}
 /* Wave 5: smart quick-add preview + today's plan */
 .tv2-prev{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 16px 6px;padding:7px 10px;border-radius:10px;background:var(--tv-accent-soft);font-size:12px;flex-shrink:0}
@@ -20828,6 +20831,7 @@ async function _bdhDone(id, box){
     var m = PHONE_RX.exec((t.title || '') + ' ' + (t.notes || ''));
     return m ? m[1].replace(/[\s-]/g, '') : '';
   }
+  function joinLbl(u){ return /meet\.google\.com/i.test(u || '') ? 'Join Google Meet' : 'Open meeting link'; }
   function callBtn(phone, name, big){
     if (!phone) return '';
     return '<button class="' + (big ? 'tv2-btn o tv2-call' : 'tv2-ico tv2-call') + '" data-act="push-call" data-phone="' + h(phone) + '" data-name="' + h(name || '') + '" title="Call on my phone (' + h(phone) + ')">\uD83D\uDCDE' + (big ? ' Call' : '') + '</button>';
@@ -21013,6 +21017,7 @@ async function _bdhDone(id, box){
     if (t.subtasks_total) meta.push('<span>☑ ' + t.subtasks_done + '/' + t.subtasks_total + '</span>');
     if (t.notes) meta.push('<span title="Has notes">📝</span>');
     if (t.candidate_id) meta.push('<span class="cand">👤 ' + h(t.candidate_name) + '</span>');
+    if (t.meeting_id) meta.push('<span title="From your Scheduler">📅 Meeting</span>');
     (t.tags || []).forEach(function(g){ var d = tagDef(g); meta.push('<span class="tv2-tag"' + (d ? ' style="color:' + h(d.color) + '"' : '') + '>#' + h(g) + '</span>'); });
     if (t.assigned_to && t.assigned_to !== me()) meta.push('<span title="Assigned">→ ' + h(t.assigned_name || 'Teammate') + '</span>');
     if (t.assigned_to === me() && t.created_by && t.created_by !== me()) meta.push('<span title="Assigned to you">← from ' + h(t.created_by_name || 'admin') + '</span>');
@@ -21027,6 +21032,7 @@ async function _bdhDone(id, box){
       + (TV.selMode ? '<input type="checkbox" class="tv2-msel" data-act="msel" data-id="' + t.id + '"' + (TV.sel[t.id] ? ' checked' : '') + '>' : '')
       + chk
       + '<div class="tv2-rb"><div class="tt">' + h(t.title) + '</div>' + (meta.length ? '<div class="tv2-meta">' + meta.join('') + '</div>' : '') + '</div>'
+      + (t.join_url ? '<a class="tv2-btn o tv2-join" href="' + h(t.join_url) + '" target="_blank" rel="noopener" title="' + h(joinLbl(t.join_url)) + '">\uD83C\uDFA5 Join</a>' : '')
       + callBtn(phoneOf(t), t.candidate_name || t.title)
       + '<div class="tv2-ra">' + ra + '</div>'
       + (t.assigned_to && t.assigned_to !== me() ? '<span class="tv2-av" title="' + h(t.assigned_name) + '">' + h(initials(t.assigned_name)) + '</span>' : '')
@@ -21683,6 +21689,8 @@ async function _bdhDone(id, box){
       + chip('pick-assign', '👤', t.assigned_to ? (t.assigned_to === me() ? 'Me' : (t.assigned_name || 'Assigned')) : 'Assign', !!t.assigned_to)
       + chip('d-myday', '☀', t.my_day ? 'In My Day' : 'Add to My Day', t.my_day)
       + '</div>';
+    if (t.join_url) html += '<a class="tv2-joinbig" href="' + h(t.join_url) + '" target="_blank" rel="noopener">\uD83C\uDFA5 ' + h(joinLbl(t.join_url))
+      + '<span>' + h(t.join_url.replace(/^https?:\/\//, '')) + '</span></a>';
     html += '<div class="tv2-lbl">Linked candidate</div>';
     if (t.candidate_id) {
       html += '<div class="tv2-cand"><span class="tv2-av" style="width:34px;height:34px;font-size:12px">' + h(initials(t.candidate_name)) + '</span>'
@@ -23021,6 +23029,85 @@ async function _bdhDone(id, box){
     window.addEventListener('hashchange', soon);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
+</script>
+
+<!-- ═══ Task alerts: a browser notification 10 minutes before a timed task ═══ -->
+<script id="task-alerts-script">
+(function(){
+  var LEAD = 10 * 60 * 1000, POLL = 60 * 1000, timers = {}, skew = 0;
+  function canNotify(){ return typeof Notification !== 'undefined' && Notification.permission === 'granted'; }
+  function fmt(ms){ try { return new Date(ms).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}); } catch(e){ return ''; } }
+  async function api(method, path, body){
+    try {
+      var r = await fetch('/api/task-alerts' + path, {method: method, credentials: 'same-origin',
+        headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+      return r.ok ? await r.json() : null;
+    } catch(e){ return null; }
+  }
+  async function fire(t){
+    delete timers[t.id + '|' + t.due_at];
+    var c = await api('POST', '/' + t.id + '/claim', {due_at: t.due_at});
+    if (!c || !c.ok) return;                         // already shown (other tab / Assistant) or changed
+    var mins = Math.max(1, Math.round((t.due_ms - (Date.now() + skew)) / 60000));
+    var title = (t.join_url ? '🎥 ' : '⏰ ') + 'In ' + mins + ' min · ' + fmt(t.due_ms);
+    var body = t.title + (t.join_url ? '\nClick to join the meeting' : '\nClick to open the task');
+    try { if (typeof toast === 'function') toast('OK', t.title + ' — at ' + fmt(t.due_ms)); } catch(e){}
+    if (!canNotify()) return;
+    try {
+      var n = new Notification(title, {body: body, tag: 'hl-task-' + t.id, requireInteraction: true, icon: '/icon-192.png'});
+      n.onclick = function(){
+        if (t.join_url) window.open(t.join_url, '_blank', 'noopener');
+        else { window.focus(); try { if (typeof openTasks === 'function') openTasks(); } catch(e){} }
+        n.close();
+      };
+    } catch(e){}
+  }
+  async function poll(){
+    if (!document.getElementById('user-bar') || !document.getElementById('user-bar').innerHTML) return;   // not signed in yet
+    var r = await api('GET', '/upcoming?within=30');
+    if (!r || !r.ok) return;
+    skew = (r.now_ms || Date.now()) - Date.now();
+    var keep = {};
+    (r.tasks || []).forEach(function(t){
+      if (!t.due_ms || t.alerted) return;
+      var k = t.id + '|' + t.due_at; keep[k] = 1;
+      if (timers[k]) return;
+      var wait = t.due_ms - LEAD - (Date.now() + skew);
+      if (wait < -LEAD) return;                       // already due — no "in 10 min" alert
+      timers[k] = setTimeout(function(){ fire(t); }, Math.max(0, wait));
+    });
+    Object.keys(timers).forEach(function(k){ if (!keep[k]) { clearTimeout(timers[k]); delete timers[k]; } });
+  }
+  // A one-time bar on the Tasks page to switch browser alerts on.
+  function offerPermission(){
+    if (typeof Notification === 'undefined' || Notification.permission !== 'default') return;
+    try { if (localStorage.getItem('hl_task_alert_ask') === 'no') return; } catch(e){}
+    var main = document.getElementById('tv2-main');
+    if (!main || document.getElementById('ta-ask')) return;
+    var bar = document.createElement('div');
+    bar.id = 'ta-ask';
+    bar.style.cssText = 'margin:10px 16px 0;padding:10px 12px;border-radius:10px;background:#EEF4FB;color:#185FA5;font-size:12.5px;display:flex;gap:10px;align-items:center;flex-wrap:wrap';
+    bar.innerHTML = '<span style="flex:1;min-width:180px">🔔 Get a browser alert 10 minutes before each task and meeting.</span>'
+      + '<button class="tv2-btn" id="ta-on">Turn on</button><button class="tv2-btn o" id="ta-no">Not now</button>';
+    var head = main.querySelector('.tv2-head');
+    if (head && head.nextSibling) main.insertBefore(bar, head.nextSibling); else main.insertBefore(bar, main.firstChild);
+    document.getElementById('ta-on').onclick = async function(){
+      var p = await Notification.requestPermission();
+      bar.remove();
+      if (p === 'granted') { try { localStorage.setItem('hl_notif_enabled', '1'); } catch(e){} if (typeof toast === 'function') toast('OK', 'Task alerts on'); poll(); }
+      else if (typeof toast === 'function') toast('ERR', 'Allow notifications for this site in Chrome settings to get alerts');
+    };
+    document.getElementById('ta-no').onclick = function(){ bar.remove(); try { localStorage.setItem('hl_task_alert_ask', 'no'); } catch(e){} };
+  }
+  function start(){
+    setTimeout(poll, 4000);
+    setInterval(poll, POLL);
+    setInterval(offerPermission, 3000);
+    document.addEventListener('visibilitychange', function(){ if (!document.hidden) poll(); });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+  window.hlTaskAlertsPoll = poll;
 })();
 </script>
 </body></html>
