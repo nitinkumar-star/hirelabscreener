@@ -1220,7 +1220,7 @@ body{font-size:14px !important; line-height:1.5}
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <button class="btn" onclick="openModal('modal-mandate')" style="background:#2D6FB3;color:#fff;border:none;font-size:12px">&#43; New Job</button>
-        <button class="btn btn-o" onclick="renderJobs()" style="font-size:11px">&#8635;</button>
+        <button class="btn btn-o" onclick="jobsRefresh()" style="font-size:11px" title="Refresh pipeline counts">&#8635;</button>
         <button class="btn btn-o" onclick="closeJobs()">&#10005; Close</button>
       </div>
     </div>
@@ -16061,8 +16061,15 @@ var _crmMeta = { industries:[], cities:[], statuses:[] };
 // ═══════════════════════════════════════════════════════════════════════
 //  JOBS — all mandates in one tab
 // ═══════════════════════════════════════════════════════════════════════
-var _jobsFilter='all';
+var _jobsFilter='active';
 var _jobsSearch='';
+// Jobs table view state (v2). Card view is kept as an option.
+var _jobsView = (function(){ try{ return localStorage.getItem('jobs_view')||'table'; }catch(e){ return 'table'; } })();
+var _jobsClient = '';      // '' = all clients
+var _jobsRecruiter = '';   // '' = everyone
+var _jobsSort = 'attention';
+var _jobsAttnOnly = false;
+var _jobsSummary = null, _jobsSummaryAt = 0, _jobsSummaryLoading = false;
 function setJobsSearch(v){ _jobsSearch=v; renderJobs(); }
 function openJobs(){
   closeSidebarOnMobile();
@@ -16070,6 +16077,7 @@ function openJobs(){
   document.getElementById('jobs-view').style.display='flex';
   var _sbj=document.getElementById('sb-jobs'); if(_sbj) _sbj.className='sb-gear active';
   S.settingsOpen=false;
+  _jobsSummaryAt = 0;   // always pull fresh pipeline counts when the tab opens
   renderJobs();
   writeHash();
 }
@@ -16080,21 +16088,192 @@ function closeJobs(){
 }
 function setJobsFilter(f){ _jobsFilter=f; renderJobs(); }
 function openJobCard(id){ closeJobs(); selectMandate(id); }
-function renderJobs(){
-  var body=document.getElementById('jobs-body'); if(!body) return;
-  var list=(S.mandates||[]);
-  if(!list.length){ body.innerHTML='<div style="padding:50px 20px;text-align:center;color:#888;font-size:13px">No jobs yet. Click <b>+ New Job</b> to create your first mandate.</div>'; return; }
-  var f=_jobsFilter||'all';
-  var counts={all:list.length,active:0,hold:0,closed:0};
-  list.forEach(function(m){ var s=m.status||'active'; if(s==='active')counts.active++; else if(s==='hold')counts.hold++; else if(s==='closed')counts.closed++; });
-  var filtered = f==='all' ? list : list.filter(function(m){ return (m.status||'active')===f; });
-  var q=(_jobsSearch||'').toLowerCase().trim();
-  if(q){ filtered = filtered.filter(function(m){ return ((m.role||'')+' '+(m.client||'')+' '+(m.location||'')+' '+(m.division||'')).toLowerCase().indexOf(q)>=0; }); }
-  var chips=[['all','All'],['active','Active'],['hold','On Hold'],['closed','Closed']].map(function(c){
-    var on=f===c[0];
-    return '<button onclick="setJobsFilter(\''+c[0]+'\')" style="border:0.5px solid '+(on?'#1D9E75':'#ddd')+';background:'+(on?'#E7F6EF':'#fff')+';color:'+(on?'#0F6E56':'#555')+';border-radius:8px;font-size:12px;padding:6px 13px;cursor:pointer;font-weight:'+(on?'600':'500')+'">'+c[1]+' ('+counts[c[0]]+')</button>';
-  }).join(' ');
-  var cards=filtered.map(function(m){
+// ── Jobs v2: table view with live pipeline health ──────────────────────────
+// Buckets come from GET /api/mandates/pipeline-summary (same grouping as the
+// Analytics funnel). "Needs attention" = an ACTIVE job open 14+ days with
+// nobody at the client / in interview / placed, or a job with no candidates.
+var JOBS_ATTN_DAYS = 14;
+var JOBS_SEGS = [
+  {k:'sourced',   c:'#CBD5E1', n:'Sourced / screening'},
+  {k:'engaged',   c:'#3B82F6', n:'Called · follow-up · interested'},
+  {k:'client',    c:'#0D9488', n:'Shared with client'},
+  {k:'interview', c:'#D97706', n:'Interview'},
+  {k:'placed',    c:'#15803D', n:'Placed / joined'},
+  {k:'dropped',   c:'#ECEEF2', n:'Dropped (not suitable / not interested / rejected)'}
+];
+function _jobsCss(){
+  if(document.getElementById('jt-css')) return;
+  var st=document.createElement('style'); st.id='jt-css';
+  st.textContent=''
+   +'.jt-wrap{max-width:1400px;margin:0 auto;padding:18px 20px 40px;display:flex;flex-direction:column;gap:14px}'
+   +'.jt-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}'
+   +'.jt-kpi{background:#fff;border:1px solid #E4E7EC;border-radius:12px;padding:12px 14px;text-align:left;font:inherit;color:#101828}'
+   +'.jt-kpi .l{font-size:12px;color:#5B6475;display:flex;align-items:center;gap:6px}'
+   +'.jt-kpi .v{font-size:24px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}'
+   +'.jt-kpi .s{font-size:11.5px;color:#5B6475;margin-top:1px}'
+   +'.jt-kpi.attn{background:#FFF7ED;border-color:#FED7AA;cursor:pointer}'
+   +'.jt-kpi.attn .l,.jt-kpi.attn .v,.jt-kpi.attn .s{color:#9A3412}'
+   +'.jt-kpi.attn.on{border:2px solid #EA580C;padding:11px 13px}'
+   +'.jt-kpi.attn:hover{border-color:#FB923C}'
+   +'.jt-dot{width:8px;height:8px;border-radius:2px;display:inline-block}'
+   +'.jt-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid #E4E7EC;border-radius:12px;padding:8px 10px}'
+   +'.jt-search{flex:1 1 240px;min-width:200px;font-size:13px;padding:8px 12px;border:1px solid #D0D5DD;border-radius:9px;outline:none;background:#fff}'
+   +'.jt-search:focus,.jt-sel:focus{border-color:#2D6FB3;box-shadow:0 0 0 3px rgba(45,111,179,.12)}'
+   +'.jt-seg{display:flex;gap:3px;padding:3px;background:#EEF0F3;border-radius:9px}'
+   +'.jt-seg button{border:0;background:transparent;border-radius:7px;font:inherit;font-size:12px;padding:6px 11px;color:#475063;cursor:pointer;white-space:nowrap}'
+   +'.jt-seg button.on{background:#fff;color:#101828;font-weight:600;box-shadow:0 1px 2px rgba(16,24,40,.08)}'
+   +'.jt-chip{border:1px solid #E4E7EC;background:#fff;border-radius:8px;font:inherit;font-size:12px;font-weight:600;padding:6px 10px;color:#101828;cursor:pointer;white-space:nowrap}'
+   +'.jt-chip:hover{border-color:#98A2B3}'
+   +'.jt-chip.on{background:#101828;border-color:#101828;color:#fff}'
+   +'.jt-chip span{opacity:.65;font-weight:500;margin-left:3px}'
+   +'.jt-sel{font:inherit;font-size:12px;padding:7px 9px;border:1px solid #D0D5DD;border-radius:8px;background:#fff;color:#344054;cursor:pointer;outline:none;max-width:200px}'
+   +'.jt-vt{display:flex;border:1px solid #D0D5DD;border-radius:8px;overflow:hidden}'
+   +'.jt-vt button{border:0;background:#fff;color:#667085;width:34px;height:30px;cursor:pointer;display:flex;align-items:center;justify-content:center}'
+   +'.jt-vt button+button{border-left:1px solid #D0D5DD}'
+   +'.jt-vt button.on{background:#EEF4FB;color:#2D6FB3}'
+   +'.jt-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:#475063;padding:0 2px}'
+   +'.jt-legend span{display:flex;align-items:center;gap:5px}'
+   +'.jt-tw{background:#fff;border:1px solid #E4E7EC;border-radius:12px;overflow-x:auto}'
+   +'.jt-t{width:100%;border-collapse:collapse;font-size:13px;min-width:1040px}'
+   +'.jt-t th{padding:9px 12px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px;background:#F9FAFB;border-bottom:1px solid #E4E7EC;white-space:nowrap}'
+   +'.jt-t th.r,.jt-t td.r{text-align:right}'
+   +'.jt-t td{padding:10px 12px;border-bottom:1px solid #F0F1F4;vertical-align:middle}'
+   +'.jt-row{cursor:pointer;transition:background .1s}'
+   +'.jt-row:hover{background:#F8FAFC}'
+   +'.jt-row:focus{outline:2px solid #2D6FB3;outline-offset:-2px}'
+   +'.jt-grp td{background:#fff;padding:14px 12px 8px;border-bottom:1px solid #E4E7EC}'
+   +'.jt-gb{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:7px;font-size:11px;font-weight:700;margin-right:8px;vertical-align:middle}'
+   +'.jt-role{font-weight:600;color:#101828;max-width:340px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+   +'.jt-sub{font-size:11.5px;color:#667085;margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}'
+   +'.jt-st{border:0;border-radius:5px;font:inherit;font-size:10.5px;font-weight:600;padding:1px 6px;cursor:pointer}'
+   +'.jt-av{width:26px;height:26px;border-radius:50%;color:#fff;font-size:10.5px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;border:2px solid #fff;margin-left:-7px}'
+   +'.jt-av:first-child{margin-left:0}'
+   +'.jt-pb{display:flex;align-items:center;gap:8px;min-width:180px}'
+   +'.jt-pb b{font-size:12.5px;width:26px;text-align:right;flex:none;font-variant-numeric:tabular-nums}'
+   +'.jt-pbar{flex:1;display:flex;gap:2px;height:9px;border-radius:5px;overflow:hidden}'
+   +'.jt-pbar.empty{border:1px dashed #C4C9D2}'
+   +'.jt-pbar.loading{background:linear-gradient(90deg,#EEF0F3,#F7F8FA,#EEF0F3);background-size:200% 100%;animation:jtsh 1.2s infinite}'
+   +'@keyframes jtsh{0%{background-position:200% 0}100%{background-position:-200% 0}}'
+   +'.jt-n{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}'
+   +'.jt-flag{display:inline-block;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}'
+   +'.jt-f-risk{background:#FFEDD5;color:#9A3412}.jt-f-good{background:#FEF3C7;color:#78350F}.jt-f-client{background:#CCFBF1;color:#134E4A}'
+   +'.jt-f-fresh{background:#DBEAFE;color:#1E3A8A}.jt-f-plain{background:#F1F5F9;color:#334155}.jt-f-won{background:#DCFCE7;color:#14532D}'
+   +'@media (max-width:720px){.jt-wrap{padding:12px 10px 30px}.jt-hide-sm{display:none}.jt-t{min-width:640px}.jt-role{max-width:200px}}';
+  document.head.appendChild(st);
+}
+function _jobsLoadSummary(){
+  if(_jobsSummaryLoading) return;
+  _jobsSummaryLoading = true;
+  req('GET','/mandates/pipeline-summary').then(function(r){
+    _jobsSummaryLoading = false;
+    _jobsSummaryAt = Date.now();
+    _jobsSummary = (r && r.ok && r.summary) ? r.summary : (_jobsSummary || {});
+    var jv=document.getElementById('jobs-view');
+    if(jv && jv.style.display!=='none') renderJobs();
+  });
+}
+function jobsRefresh(){ _jobsSummaryAt = 0; renderJobs(); }
+function setJobsView(v){ _jobsView=v; try{ localStorage.setItem('jobs_view', v); }catch(e){} renderJobs(); }
+function setJobsClient(v){ _jobsClient=v; renderJobs(); }
+function setJobsRecruiter(v){ _jobsRecruiter=v; renderJobs(); }
+function setJobsSort(v){ _jobsSort=v; renderJobs(); }
+function toggleJobsAttn(){ _jobsAttnOnly=!_jobsAttnOnly; renderJobs(); }
+function _jobsAge(m){
+  // Calendar days (created 4 Oct, today 18 Oct = 14d), not elapsed 24h blocks.
+  var raw = String(m.created_at||'').slice(0,10);
+  var p = raw.split('-');
+  if(p.length!==3) return null;
+  var c0 = new Date(+p[0], +p[1]-1, +p[2]);
+  if(isNaN(c0.getTime())) return null;
+  var n = new Date(Date.now()); var n0 = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+  return Math.max(0, Math.round((n0-c0)/86400000));
+}
+function _jobsInitials(name){
+  var p=String(name||'').trim().split(/\s+/).filter(Boolean);
+  if(!p.length) return '?';
+  return ((p[0][0]||'')+(p.length>1?(p[p.length-1][0]||''):'')).toUpperCase();
+}
+function _jobsAvColor(name){
+  var pal=['#C2410C','#7C3AED','#0E7490','#B45309','#15803D','#BE185D','#1D4ED8','#4D7C0F'];
+  var h=0, s=String(name||''); for(var i=0;i<s.length;i++){ h=(h*31+s.charCodeAt(i))|0; }
+  return pal[Math.abs(h)%pal.length];
+}
+function _jobsClientBadge(name){
+  var w=String(name||'').replace(/\(.*?\)/g,' ').replace(/[^A-Za-z0-9& ]/g,' ').trim().split(/\s+/).filter(Boolean);
+  var amp = w.indexOf('&');
+  if(amp>0 && w[amp+1]) return (w[amp-1][0]+'&'+w[amp+1][0]).toUpperCase();
+  var stop={pvt:1,ltd:1,private:1,limited:1,india:1,the:1,inc:1,llp:1};
+  w=w.filter(function(x){ return !stop[x.toLowerCase()]; });
+  if(!w.length) return '?';
+  return (w.length>1 ? w[0][0]+w[1][0] : w[0].slice(0,2)).toUpperCase();
+}
+function _jobsBadgeColor(name){
+  var pal=[['#DBEAFE','#1E3A8A'],['#DCFCE7','#14532D'],['#FFEDD5','#7C2D12'],['#F3E8FF','#581C87'],['#FCE7F3','#831843'],['#E0F2FE','#0C4A6E']];
+  var h=0, s=String(name||''); for(var i=0;i<s.length;i++){ h=(h*31+s.charCodeAt(i))|0; }
+  return pal[Math.abs(h)%pal.length];
+}
+// Decorate one mandate with its pipeline numbers + health flag.
+function _jobsDecorate(m){
+  var st=m.status||'active';
+  var sm = _jobsSummary ? (_jobsSummary[String(m.id)] || {sourced:0,engaged:0,client:0,interview:0,placed:0,dropped:0,total:0}) : null;
+  var age=_jobsAge(m);
+  var d={m:m, st:st, sm:sm, age:age, attn:false, flag:'', kind:'plain'};
+  if(!sm){ d.flag='Loading…'; return d; }
+  var ahead = sm.client + sm.interview + sm.placed;
+  if(st==='active'){
+    if(sm.total===0){ d.attn=true; d.kind='risk'; d.flag='No candidates yet'; }
+    else if(age!==null && age>=JOBS_ATTN_DAYS && ahead===0){ d.attn=true; d.kind='risk'; d.flag='Nothing at '+T('client','client').toLowerCase()+' · '+age+'d'; }
+    else if(sm.placed>0){ d.kind='won'; d.flag=sm.placed+' placed'; }
+    else if(sm.interview>0){ d.kind='good'; d.flag=sm.interview+' in interview'; }
+    else if(sm.client>0){ d.kind='client'; d.flag=sm.client+' awaiting feedback'; }
+    else if(age!==null && age<=7){ d.kind='fresh'; d.flag='New · sourcing'; }
+    else { d.flag='Sourcing'; }
+  } else {
+    d.flag = st==='hold' ? 'On hold' : 'Closed';
+    if(sm.placed>0) { d.kind='won'; d.flag += ' · '+sm.placed+' placed'; }
+  }
+  return d;
+}
+function _jobsBarHtml(d){
+  if(!d.sm) return '<div class="jt-pb"><b>&nbsp;</b><div class="jt-pbar loading"></div></div>';
+  if(!d.sm.total) return '<div class="jt-pb"><b>0</b><div class="jt-pbar empty" title="No candidates in this pipeline"></div></div>';
+  var segs=JOBS_SEGS.map(function(s){
+    var n=d.sm[s.k]||0; if(!n) return '';
+    return '<span title="'+esc(s.n)+': '+n+'" style="flex:'+n+' 0 0;background:'+s.c+(s.k==='dropped'?';box-shadow:inset 0 0 0 1px #D5D9E0':'')+'"></span>';
+  }).join('');
+  return '<div class="jt-pb"><b>'+d.sm.total+'</b><div class="jt-pbar">'+segs+'</div></div>';
+}
+function _jobsStatusPill(m){
+  var st=m.status||'active';
+  var bg=st==='active'?'#E7F6EF':st==='hold'?'#FEF0D9':'#EEF0F3';
+  var fg=st==='active'?'#0F6E56':st==='hold'?'#93580F':'#555';
+  var lb=st==='active'?'Active':st==='hold'?'On Hold':'Closed';
+  return '<button class="jt-st" onclick="event.stopPropagation();openStatusModal('+m.id+')" title="Change status (Active / Hold / Closed)" style="background:'+bg+';color:'+fg+'">'+lb+' &#9662;</button>';
+}
+function _jobsRowHtml(d){
+  var m=d.m;
+  var ctc=(m.ctc_min||m.ctc_max)?(m.ctc_min||0)+'&ndash;'+(m.ctc_max||0):'&mdash;';
+  var sub=[]; if(m.division) sub.push(esc(m.division)); sub.push('#'+m.id);
+  var team=(m.assignees||[]).map(function(a){
+    return '<span class="jt-av" title="'+esc(a.name)+(a.is_primary&&m.assignees.length>1?' (primary)':'')+'" style="background:'+_jobsAvColor(a.name)+'">'+esc(_jobsInitials(a.name))+'</span>';
+  }).join('') || '<span style="color:#98A2B3;font-size:12px">&mdash;</span>';
+  var ageTxt = d.age===null ? '&mdash;' : d.age+'d';
+  var ageStyle = (d.st==='active' && d.age!==null && d.age>=30) ? 'color:#9A3412;font-weight:600' : 'color:#344054';
+  var cl = d.sm ? d.sm.client : '', iv = d.sm ? d.sm.interview : '';
+  return '<tr class="jt-row" tabindex="0" onclick="openJobCard('+m.id+')" onkeydown="if(event.key===\'Enter\')openJobCard('+m.id+')">'
+    +'<td><div class="jt-role" title="'+esc(m.role||'')+'">'+esc(m.role||'Untitled')+'</div><div class="jt-sub">'+sub.join(' &middot; ')+' '+_jobsStatusPill(m)+'</div></td>'
+    +'<td class="jt-hide-sm" style="color:#344054;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(m.location||'')+'">'+(m.location?esc(m.location):'&mdash;')+'</td>'
+    +'<td class="jt-hide-sm" style="color:#344054;white-space:nowrap;font-variant-numeric:tabular-nums">'+ctc+'</td>'
+    +'<td style="white-space:nowrap;font-variant-numeric:tabular-nums;'+ageStyle+'">'+ageTxt+'</td>'
+    +'<td class="jt-hide-sm"><div style="display:flex">'+team+'</div></td>'
+    +'<td>'+_jobsBarHtml(d)+'</td>'
+    +'<td class="r"><span class="jt-n" style="color:'+(cl?'#0F766E':'#C4C9D2')+'">'+(d.sm?cl:'')+'</span></td>'
+    +'<td class="r"><span class="jt-n" style="color:'+(iv?'#B45309':'#C4C9D2')+'">'+(d.sm?iv:'')+'</span></td>'
+    +'<td><span class="jt-flag jt-f-'+d.kind+'">'+esc(d.flag)+'</span></td>'
+    +'</tr>';
+}
+function _jobsCardsHtml(filtered){
+  return filtered.map(function(m){
     var st=m.status||'active';
     var dotC=st==='active'?'#1D9E75':st==='hold'?'#EF9F27':'#888';
     var statusLabel=st==='active'?'Active':st==='hold'?'On Hold':'Closed';
@@ -16108,12 +16287,139 @@ function renderJobs(){
       +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'
       +'<button onclick="event.stopPropagation();openStatusModal('+m.id+')" title="Change status (Active / Hold / Closed)" class="pill" style="background:'+dotC+'22;color:'+dotC+';border:none;cursor:pointer;font:inherit;display:inline-flex;align-items:center;gap:4px">'+statusLabel+' &#9662;</button>'
       +((m.ctc_min||m.ctc_max)?'<span style="font-size:10px;color:#aaa">&#8377;'+(m.ctc_min||0)+'&ndash;'+(m.ctc_max||0)+'L</span>':'')
-      +'</div></div></div>';
+      +'</div></div>'
+      +(function(){ var d=_jobsDecorate(m); return d.sm ? '<div style="padding:0 16px 12px">'+_jobsBarHtml(d)+'<div style="margin-top:8px"><span class="jt-flag jt-f-'+d.kind+'">'+esc(d.flag)+'</span></div></div>' : ''; })()
+      +'</div>';
   }).join('');
-  body.innerHTML='<div style="padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-bottom:0.5px solid #e8e8e8;background:#fff;position:sticky;top:0;z-index:1">'
-    +'<input id="jobs-search" value="'+esc(_jobsSearch||'')+'" oninput="setJobsSearch(this.value)" placeholder="&#128269; Search jobs by role, client, location..." style="flex:1;min-width:220px;font-size:12.5px;padding:8px 14px;border:0.5px solid #ddd;border-radius:20px;background:#FAFAF9;outline:none">'
-    +'<div style="display:flex;gap:8px;flex-wrap:wrap">'+chips+'</div></div>'
-    +'<div style="padding:16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">'+(cards||'<div style="color:#888;font-size:13px;padding:20px">'+(q?'No jobs match &ldquo;'+esc(_jobsSearch)+'&rdquo;.':'No jobs in this status.')+'</div>')+'</div>';
+}
+function renderJobs(){
+  var body=document.getElementById('jobs-body'); if(!body) return;
+  _jobsCss();
+  // Pipeline counts: refresh when stale (30s) — rows render immediately and fill in.
+  if(!_jobsSummary || Date.now()-_jobsSummaryAt > 30000) _jobsLoadSummary();
+  var list=(S.mandates||[]);
+  if(!list.length){ body.innerHTML='<div style="padding:50px 20px;text-align:center;color:#888;font-size:13px">No jobs yet. Click <b>+ New Job</b> to create your first mandate.</div>'; return; }
+  var f=_jobsFilter||'active';
+  var counts={all:list.length,active:0,hold:0,closed:0};
+  list.forEach(function(m){ var s=m.status||'active'; if(s==='active')counts.active++; else if(s==='hold')counts.hold++; else if(s==='closed')counts.closed++; });
+  var byStatus = f==='all' ? list : list.filter(function(m){ return (m.status||'active')===f; });
+
+  // Client + recruiter option lists come from the status-filtered set.
+  var clientCount={}, recruiters={};
+  byStatus.forEach(function(m){
+    var c=(m.client||'—').trim(); clientCount[c]=(clientCount[c]||0)+1;
+    (m.assignees||[]).forEach(function(a){ if(a && a.name) recruiters[a.name]=1; });
+  });
+  if(_jobsClient && !clientCount[_jobsClient]) _jobsClient='';
+  var clientNames=Object.keys(clientCount).sort(function(a,b){ return clientCount[b]-clientCount[a] || a.localeCompare(b); });
+
+  var q=(_jobsSearch||'').toLowerCase().trim();
+  var filtered = byStatus.filter(function(m){
+    if(_jobsClient && (m.client||'—').trim()!==_jobsClient) return false;
+    if(_jobsRecruiter && !(m.assignees||[]).some(function(a){ return a.name===_jobsRecruiter; })) return false;
+    if(q && ((m.role||'')+' '+(m.client||'')+' '+(m.location||'')+' '+(m.division||'')).toLowerCase().indexOf(q)<0) return false;
+    return true;
+  });
+  var decorated = filtered.map(_jobsDecorate);
+
+  // KPIs reflect status + client + recruiter + search (not the attention toggle).
+  var k={jobs:decorated.length,total:0,live:0,client:0,interview:0,placed:0,attn:0,withInt:0};
+  decorated.forEach(function(d){
+    if(d.sm){ k.total+=d.sm.total; k.live+=d.sm.total-d.sm.dropped; k.client+=d.sm.client; k.interview+=d.sm.interview; k.placed+=d.sm.placed; if(d.sm.interview) k.withInt++; }
+    if(d.attn) k.attn++;
+  });
+  if(_jobsAttnOnly && (f==='active'||f==='all')) decorated = decorated.filter(function(d){ return d.attn; });
+
+  var sorters={
+    attention:function(a,b){ return (b.attn-a.attn) || String(b.m.created_at||'').localeCompare(String(a.m.created_at||'')); },
+    newest:function(a,b){ return String(b.m.created_at||'').localeCompare(String(a.m.created_at||'')); },
+    oldest:function(a,b){ return String(a.m.created_at||'').localeCompare(String(b.m.created_at||'')); },
+    pipeline:function(a,b){ return ((b.sm&&b.sm.total)||0)-((a.sm&&a.sm.total)||0); },
+    client:function(a,b){ return (((b.sm&&(b.sm.client+b.sm.interview))||0)-((a.sm&&(a.sm.client+a.sm.interview))||0)); }
+  };
+  decorated.sort(sorters[_jobsSort]||sorters.attention);
+
+  var cWord=T('client','Client');
+  var dash=function(v){ return _jobsSummary ? v : '&hellip;'; };
+  var stLabel={all:'All jobs',active:'Active jobs',hold:'On-hold jobs',closed:'Closed jobs'}[f];
+  var html='<div class="jt-wrap">';
+
+  // KPI strip
+  html+='<div class="jt-kpis">'
+    +'<div class="jt-kpi"><div class="l">'+stLabel+'</div><div class="v">'+k.jobs+'</div><div class="s">'+Object.keys(clientCount).length+' '+esc(cWord.toLowerCase())+(Object.keys(clientCount).length===1?'':'s')+'</div></div>'
+    +'<div class="jt-kpi"><div class="l">Candidates in pipelines</div><div class="v">'+dash(k.total)+'</div><div class="s">'+dash(k.live)+' still live</div></div>'
+    +'<div class="jt-kpi"><div class="l"><span class="jt-dot" style="background:#0D9488"></span>With '+esc(cWord.toLowerCase())+' now</div><div class="v">'+dash(k.client)+'</div><div class="s">CVs shared, awaiting feedback</div></div>'
+    +'<div class="jt-kpi"><div class="l"><span class="jt-dot" style="background:#D97706"></span>In interview</div><div class="v">'+dash(k.interview)+'</div><div class="s">across '+dash(k.withInt)+' job'+(k.withInt===1?'':'s')+(k.placed?' &middot; '+k.placed+' placed':'')+'</div></div>'
+    +(f==='active'||f==='all'
+      ? '<button class="jt-kpi attn'+(_jobsAttnOnly?' on':'')+'" onclick="toggleJobsAttn()" aria-pressed="'+(_jobsAttnOnly?'true':'false')+'"><div class="l">&#9888; Need attention</div><div class="v">'+dash(k.attn)+'</div><div class="s">'+(_jobsAttnOnly?'Showing only these &middot; click to clear':'No one at '+esc(cWord.toLowerCase())+' after '+JOBS_ATTN_DAYS+'+ days')+'</div></button>'
+      : '')
+    +'</div>';
+
+  // Toolbar
+  var seg='<div class="jt-seg" role="tablist" aria-label="Job status">'+[['active','Active'],['hold','On hold'],['closed','Closed'],['all','All']].map(function(c){
+    return '<button role="tab" aria-selected="'+(f===c[0])+'" class="'+(f===c[0]?'on':'')+'" onclick="setJobsFilter(\''+c[0]+'\')">'+c[1]+' '+counts[c[0]]+'</button>';
+  }).join('')+'</div>';
+  var clientCtl;
+  if(clientNames.length<=6){
+    clientCtl='<div style="display:flex;gap:5px;flex-wrap:wrap"><button class="jt-chip'+(!_jobsClient?' on':'')+'" onclick="setJobsClient(\'\')">All '+esc(cWord.toLowerCase())+'s<span>'+byStatus.length+'</span></button>'
+      +clientNames.map(function(c){
+        return '<button class="jt-chip'+(_jobsClient===c?' on':'')+'" data-c="'+esc(c)+'" onclick="setJobsClient(this.getAttribute(\'data-c\'))">'+esc(c)+'<span>'+clientCount[c]+'</span></button>';
+      }).join('')+'</div>';
+  } else {
+    clientCtl='<select class="jt-sel" aria-label="'+esc(cWord)+'" onchange="setJobsClient(this.value)"><option value="">All '+esc(cWord.toLowerCase())+'s ('+byStatus.length+')</option>'
+      +clientNames.map(function(c){ return '<option value="'+esc(c)+'"'+(_jobsClient===c?' selected':'')+'>'+esc(c)+' ('+clientCount[c]+')</option>'; }).join('')+'</select>';
+  }
+  var recNames=Object.keys(recruiters).sort();
+  var recCtl = recNames.length>1 ? '<select class="jt-sel" aria-label="Recruiter" onchange="setJobsRecruiter(this.value)"><option value="">Recruiter: All</option>'
+      +recNames.map(function(n){ return '<option value="'+esc(n)+'"'+(_jobsRecruiter===n?' selected':'')+'>'+esc(n)+'</option>'; }).join('')+'</select>' : '';
+  var sortCtl='<select class="jt-sel" aria-label="Sort" onchange="setJobsSort(this.value)">'
+    +[['attention','Sort: Needs attention'],['newest','Sort: Newest'],['oldest','Sort: Oldest open'],['pipeline','Sort: Most candidates'],['client','Sort: Most with '+cWord.toLowerCase()]].map(function(o){
+      return '<option value="'+o[0]+'"'+(_jobsSort===o[0]?' selected':'')+'>'+esc(o[1])+'</option>';
+    }).join('')+'</select>';
+  var viewCtl='<div class="jt-vt" role="group" aria-label="View">'
+    +'<button class="'+(_jobsView!=='cards'?'on':'')+'" aria-label="Table view" aria-pressed="'+(_jobsView!=='cards')+'" onclick="setJobsView(\'table\')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>'
+    +'<button class="'+(_jobsView==='cards'?'on':'')+'" aria-label="Card view" aria-pressed="'+(_jobsView==='cards')+'" onclick="setJobsView(\'cards\')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></button></div>';
+  html+='<div class="jt-bar">'
+    +'<input id="jobs-search" class="jt-search" value="'+esc(_jobsSearch||'')+'" oninput="setJobsSearch(this.value)" placeholder="&#128269; Search role, '+esc(cWord.toLowerCase())+', location..." aria-label="Search jobs">'
+    +seg+clientCtl
+    +'<div style="display:flex;gap:6px;margin-left:auto;align-items:center;flex-wrap:wrap">'+recCtl+sortCtl+viewCtl+'</div>'
+    +'</div>';
+
+  var emptyMsg='<div style="color:#667085;font-size:13px;padding:30px 20px;text-align:center">'
+    +(_jobsAttnOnly?'Nothing needs attention here &#127881;':q?'No jobs match &ldquo;'+esc(_jobsSearch)+'&rdquo;.':'No jobs match these filters.')+'</div>';
+
+  if(_jobsView==='cards'){
+    var cards=_jobsCardsHtml(decorated.map(function(d){ return d.m; }));
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">'+(cards||emptyMsg)+'</div>';
+  } else {
+    html+='<div class="jt-legend">'+JOBS_SEGS.map(function(s){
+      return '<span><span class="jt-dot" style="width:10px;height:10px;border-radius:3px;background:'+s.c+(s.k==='dropped'?';box-shadow:inset 0 0 0 1px #D5D9E0':'')+'"></span>'+esc(s.k==='client'?'Shared with '+cWord.toLowerCase():s.n)+'</span>';
+    }).join('')+'</div>';
+    html+='<div class="jt-tw"><table class="jt-t"><thead><tr>'
+      +'<th>Role</th><th class="jt-hide-sm">Location</th><th class="jt-hide-sm">CTC (&#8377;L)</th><th title="Days since the job was created">Open</th><th class="jt-hide-sm">Team</th><th>Pipeline</th>'
+      +'<th class="r">At '+esc(cWord.toLowerCase())+'</th><th class="r">Interview</th><th>Status</th></tr></thead><tbody>';
+    if(!decorated.length){
+      html+='<tr><td colspan="9">'+emptyMsg+'</td></tr>';
+    } else {
+      // Group by client; groups ordered by job count, rows keep the chosen sort.
+      var groups={}, order=[];
+      decorated.forEach(function(d){ var c=(d.m.client||'—').trim(); if(!groups[c]){ groups[c]=[]; order.push(c); } groups[c].push(d); });
+      order.sort(function(a,b){ return groups[b].length-groups[a].length || a.localeCompare(b); });
+      order.forEach(function(c){
+        var rows=groups[c], gt=0, gc=0, gi=0;
+        rows.forEach(function(d){ if(d.sm){ gt+=d.sm.total; gc+=d.sm.client; gi+=d.sm.interview; } });
+        var bc=_jobsBadgeColor(c);
+        html+='<tr class="jt-grp"><td colspan="9"><span class="jt-gb" style="background:'+bc[0]+';color:'+bc[1]+'">'+esc(_jobsClientBadge(c))+'</span>'
+          +'<span style="font-size:14px;font-weight:700;color:#101828;vertical-align:middle">'+esc(c)+'</span>'
+          +'<span style="font-size:12px;color:#667085;margin-left:10px;vertical-align:middle">'+rows.length+' job'+(rows.length===1?'':'s')
+          +(_jobsSummary?' &middot; '+gt+' candidates &middot; '+gc+' with '+esc(cWord.toLowerCase())+' &middot; '+gi+' in interview':'')+'</span></td></tr>';
+        html+=rows.map(_jobsRowHtml).join('');
+      });
+    }
+    html+='</tbody></table></div>';
+  }
+  html+='</div>';
+  body.innerHTML=html;
   var _si=document.getElementById('jobs-search'); if(_si && _jobsSearch){ _si.focus(); try{_si.setSelectionRange(_si.value.length,_si.value.length);}catch(e){} }
 }
 

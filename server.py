@@ -12206,6 +12206,86 @@ def list_mandates():
         out.append(d)
     return jsonify(out)
 
+
+# ── Jobs page: per-mandate pipeline summary ────────────────────────────────
+# Read-only. Groups each mandate's candidates into the same buckets the
+# analytics funnel uses, so the Jobs table and Analytics never disagree.
+# Tenants can rename / add their own stages, so anything not recognised is
+# classified by keyword, and still-unknown stages count as "engaged" (live).
+JOB_SUMMARY_BUCKETS = {
+    'Screening': 'sourced',
+    'Not Contacted': 'engaged', 'Called': 'engaged',
+    'Follow Up 1': 'engaged', 'Follow Up 2': 'engaged',
+    'Interested': 'engaged', 'Updated CV awaited': 'engaged',
+    'Shared with Client': 'client',
+    'Interview Inprocess': 'interview',
+    'Placed': 'placed', 'Joined': 'placed',
+    'Not Interested': 'dropped', 'Not Suitable': 'dropped',
+    'Client Rejected on Paper': 'dropped', 'Client Rejected After Interview': 'dropped',
+}
+_JOB_SUMMARY_DROP_WORDS = ('reject', 'not interested', 'not suitable', 'backout',
+                           'back out', 'drop', 'declin', 'withdrew', 'withdrawn')
+
+
+def job_summary_bucket(stage):
+    """Bucket for one stored stage value. Never raises."""
+    s = (stage or '').strip()
+    if s in JOB_SUMMARY_BUCKETS:
+        return JOB_SUMMARY_BUCKETS[s]
+    low = s.lower()
+    if not low:
+        return 'sourced'
+    if any(w in low for w in _JOB_SUMMARY_DROP_WORDS):
+        return 'dropped'
+    if 'interview' in low:
+        return 'interview'
+    if 'shared' in low or 'submitted' in low:
+        return 'client'
+    if 'placed' in low or 'joined' in low or 'offer' in low:
+        return 'placed'
+    if 'screen' in low or 'sourced' in low or 'new' == low:
+        return 'sourced'
+    return 'engaged'
+
+
+@app.route('/api/mandates/pipeline-summary', methods=['GET'])
+@login_required
+def mandates_pipeline_summary():
+    """{mandate_id: {sourced, engaged, client, interview, placed, dropped,
+    total, last_activity}} for every mandate the caller can see.
+    Same visibility rule as list_mandates (admin: whole company; recruiter:
+    only assigned jobs). One grouped query, no per-mandate round trips."""
+    conn = get_db()
+    try:
+        cid = effective_company_id()
+        if is_company_admin():
+            scope_sql = ("SELECT id FROM mandates WHERE owner_id=? "
+                         "AND COALESCE(status,'')!='central'")
+            scope_args = [cid]
+        else:
+            scope_sql = ("SELECT id FROM mandates WHERE owner_id=? AND COALESCE(status,'')!='central' "
+                         "AND id IN (SELECT mandate_id FROM mandate_assignees WHERE user_id=? AND is_active=1)")
+            scope_args = [cid, real_user_id()]
+        rows = conn.execute(
+            'SELECT mandate_id, stage, COUNT(*) AS n, MAX(COALESCE(updated_at, created_at)) AS last_at '
+            'FROM candidates WHERE mandate_id IN (' + scope_sql + ') '
+            'GROUP BY mandate_id, stage', scope_args).fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        mid = r['mandate_id']
+        if mid is None:
+            continue
+        s = out.setdefault(str(mid), {'sourced': 0, 'engaged': 0, 'client': 0, 'interview': 0,
+                                      'placed': 0, 'dropped': 0, 'total': 0, 'last_activity': None})
+        n = int(r['n'] or 0)
+        s[job_summary_bucket(r['stage'])] += n
+        s['total'] += n
+        if r['last_at'] and (not s['last_activity'] or r['last_at'] > s['last_activity']):
+            s['last_activity'] = r['last_at']
+    return jsonify({'ok': True, 'summary': out})
+
 @app.route('/api/mandates/<int:mid>/client-notes', methods=['GET'])
 @login_required
 def get_client_notes(mid):
