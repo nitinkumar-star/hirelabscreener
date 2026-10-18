@@ -20020,6 +20020,21 @@ def add_candidate_note(cid):
     return jsonify({'ok': True})
 
 
+def _journey_stage_text(frm, to, note):
+    """(text, icon, colour) for one stage_history row in the candidate journey."""
+    frm = (frm or '').strip()
+    to = (to or '').strip()
+    note = (note or '').strip()
+    if not to or (frm and frm == to):
+        if note:
+            return note, 'note', 'blue'
+        return (f'Stage: {to}' if to else 'Updated'), 'arrow-right', 'purple'
+    text = f'Stage changed — {frm} → {to}' if frm else f'Stage set to {to}'
+    if note:
+        text += f' · {note}'
+    return text, 'arrow-right', 'purple'
+
+
 @app.route('/api/candidates/<int:cid>/journey')
 @login_required
 def candidate_journey(cid):
@@ -20038,9 +20053,12 @@ def candidate_journey(cid):
     # Sourced / created
     add(c['created_at'], 'Candidate added to pipeline', 'user-plus', 'gray')
     # Stage changes
+    # stage_history doubles as an activity log: some writers store a note
+    # with empty or unchanged stages (CV uploaded, moved between jobs, a
+    # comment). Those used to render as "Stage changed — — to". Show what
+    # actually happened instead.
     for h in conn.execute('SELECT * FROM stage_history WHERE candidate_id=? ORDER BY created_at', (cid,)).fetchall():
-        frm = h['from_stage'] or '—'
-        add(h['created_at'], f"Stage changed — {frm} to {h['to_stage']}", 'arrow-right', 'purple')
+        add(h['created_at'], *_journey_stage_text(h['from_stage'], h['to_stage'], h['note']))
     # WhatsApp sends
     add(c['msg1_sent_at'], 'WhatsApp intro sent', 'brand-whatsapp', 'green')
     add(c['fu1_sent_at'], 'WhatsApp follow up 1 sent', 'brand-whatsapp', 'green')
