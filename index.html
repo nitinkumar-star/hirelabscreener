@@ -936,8 +936,8 @@ body{font-size:14px !important; line-height:1.5}
     </div>
     <!-- Sub-tabs: Search / AI Insights / Responses (moved in from sidebar) -->
     <div class="cdb-subtab-bar">
-      <button class="cdb-subtab active" onclick="openAI()">&#10024; AI Search</button>
-      <button class="cdb-subtab" onclick="openResponses()">&#9993; Responses</button>
+      <button class="cdb-subtab active" onclick="openAI()">AI Search &amp; Insights</button>
+      <button class="cdb-subtab" onclick="openResponses()">Responses</button>
     </div>
     <!-- Search form -->
     <div style="padding:12px 16px;background:#fff;border-bottom:0.5px solid #e8e8e8;flex-shrink:0">
@@ -999,18 +999,18 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:28px;height:28px;border-radius:6px;background:#E1F5EE;display:flex;align-items:center;justify-content:center;font-size:14px">&#128235;</div>
-        <div><div style="font-size:14px;font-weight:500">Candidate Responses</div><div style="font-size:11px;color:#888;margin-top:1px">Submission form &amp; incoming leads</div></div>
+        <div><div style="font-size:14px;font-weight:600">Talent</div><div style="font-size:11px;color:#888;margin-top:1px">Responses &mdash; your application form and incoming applicants</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px">
-        <button class="btn btn-o" style="font-size:11px" onclick="switchRespTab('responses',this)">&#128235; Responses</button>
-        <button class="btn btn-o" style="font-size:11px" onclick="switchRespTab('form',this)">&#9998; Form Design</button>
+        <button class="btn btn-o" style="font-size:11px" onclick="switchRespTab('responses',this)">Applicants</button>
+        <button class="btn btn-o" style="font-size:11px" onclick="switchRespTab('form',this)">Form design</button>
         <button class="btn btn-o" onclick="closeResponses()">&#10005; Close</button>
       </div>
     </div>
     <!-- Sub-tabs: Search / AI Insights / Responses (shared Central Database bar) -->
     <div class="cdb-subtab-bar">
-      <button class="cdb-subtab" onclick="openAI()">&#10024; AI Search</button>
-      <button class="cdb-subtab active" onclick="openResponses()">&#9993; Responses</button>
+      <button class="cdb-subtab" onclick="openAI()">AI Search &amp; Insights</button>
+      <button class="cdb-subtab active" onclick="openResponses()">Responses</button>
     </div>
     <div id="resp-body" style="flex:1;overflow:auto;background:#f5f5f5"></div>
   </div>
@@ -1036,7 +1036,7 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:28px;height:28px;border-radius:6px;background:#EEE9F8;display:flex;align-items:center;justify-content:center;font-size:14px">&#10024;</div>
-        <div><div style="font-size:14px;font-weight:600">AI Search</div><div style="font-size:11px;color:#888;margin-top:1px">Filter the full database, or search by meaning with AI</div></div>
+        <div><div style="font-size:14px;font-weight:600">Talent</div><div style="font-size:11px;color:#888;margin-top:1px">Every candidate across your jobs and Central Database &mdash; filter, or search by meaning with AI</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <span id="ai-index-badge" style="font-size:10px;color:#888"></span>
@@ -1045,18 +1045,18 @@ body{font-size:14px !important; line-height:1.5}
     </div>
     <!-- Sub-tabs: Search / AI Insights / Responses (shared Central Database bar) -->
     <div class="cdb-subtab-bar">
-      <button class="cdb-subtab active" onclick="openAI()">&#10024; AI Search</button>
-      <button class="cdb-subtab" onclick="openResponses()">&#9993; Responses</button>
+      <button class="cdb-subtab active" onclick="openAI()">AI Search &amp; Insights</button>
+      <button class="cdb-subtab" onclick="openResponses()">Responses</button>
     </div>
     <div style="display:flex;gap:4px;padding:10px 16px 0;background:#fff;flex-shrink:0">
-      <button class="ai-tab-btn ai-tab-active" id="ai-tab-search" onclick="switchAITab('search')">&#128269; Talent Search</button>
-      <button class="ai-tab-btn" id="ai-tab-stats" onclick="switchAITab('stats')">&#128202; Data Questions</button>
-      <button class="ai-tab-btn" id="ai-tab-jd" onclick="switchAITab('jd')">&#128203; JD Intelligence</button>
-      <button class="ai-tab-btn" id="ai-tab-companies" onclick="switchAITab('companies')">&#127970; Companies</button>
-      <button class="ai-tab-btn" id="ai-tab-movement" onclick="switchAITab('movement')">&#128260; Movement</button>
-      <button class="ai-tab-btn" id="ai-tab-market" onclick="switchAITab('market')">&#128202; Market</button>
-      <button class="ai-tab-btn" id="ai-tab-outreach" onclick="switchAITab('outreach')">&#128227; Outreach</button>
-      <button class="ai-tab-btn" id="ai-tab-agent" onclick="switchAITab('agent')" style="color:#5B3FA0">&#129302; Agent</button>
+      <button class="ai-tab-btn ai-tab-active" id="ai-tab-search" onclick="switchAITab('search')">Talent Search</button>
+      <button class="ai-tab-btn" id="ai-tab-stats" onclick="switchAITab('stats')">Data Questions</button>
+      <button class="ai-tab-btn" id="ai-tab-jd" onclick="switchAITab('jd')">JD Intelligence</button>
+      <button class="ai-tab-btn" id="ai-tab-companies" onclick="switchAITab('companies')">Companies</button>
+      <button class="ai-tab-btn" id="ai-tab-movement" onclick="switchAITab('movement')">Movement</button>
+      <button class="ai-tab-btn" id="ai-tab-market" onclick="switchAITab('market')">Market</button>
+      <button class="ai-tab-btn" id="ai-tab-outreach" onclick="switchAITab('outreach')">Outreach</button>
+      <button class="ai-tab-btn" id="ai-tab-agent" onclick="switchAITab('agent')">Agent</button>
     </div>
     <div id="ai-body" style="flex:1;overflow:auto;background:#f5f5f5;padding:16px"></div>
   </div>
@@ -5615,15 +5615,26 @@ async function reindexVectors(btn){
 function _ccInp(id,lbl,val){ return '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">'+lbl+'</label>'
   +'<input id="'+id+'" class="inp" type="number" value="'+(val!=null&&val!==''?val:'')+'" style="width:100%"></div>'; }
 window._emailFolder='';
+// Wave 2: one header for Mailbox / Campaigns / Email Agent with every tool kept
+function _ebHeader(active){
+  var t=function(k,l,f){ return '<button role="tab" aria-selected="'+(active===k)+'" class="'+(active===k?'on':'')+'" onclick="window._emailFolder=\''+f+'\';renderEmailBox()">'+l+'</button>'; };
+  return '<div class="w2-ebhead"><div><h1>Email</h1><p>Inbox, sent mail, campaigns and the email agent</p></div>'
+    +'<div class="w2-ebtabs" role="tablist" aria-label="Email section">'+t('mail','Mailbox','')+t('camp','Campaigns','__campaigns')+t('agent','Email Agent','__agent')+'</div>'
+    +'<div class="w2-ebtools"><button class="w1-btn" onclick="syncEmail(this)" title="Pull new mail now">&#8635; Sync</button>'
+    +'<div class="w1-acct"><button class="w1-btn ic" aria-label="More email tools" aria-haspopup="menu" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle(\'open\')">&#8943;</button>'
+    +'<div class="w1-acct-menu w2-ebmenu" role="menu">'
+    +'<button role="menuitem" onclick="this.parentElement.classList.remove(\'open\');openSignatureEditor()">Signature</button>'
+    +'<button role="menuitem" title="Test email sending, receiving, threading and attachments" onclick="this.parentElement.classList.remove(\'open\');openEmailSelfTest()">Self-Test</button>'
+    +'<button role="menuitem" title="Regroup existing emails into conversations" onclick="this.parentElement.classList.remove(\'open\');ebRethread(this)">Fix threads</button>'
+    +'</div></div></div></div>';
+}
 async function renderEmailBox(){
   var el=document.getElementById('emailbox-body'); if(!el) return;
   // Mass email campaigns (lives inside the Email Box)
   if(window._emailFolder==='__campaigns'){
-    el.innerHTML='<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">'
-      +'<button class="btn btn-o" style="font-size:12px" onclick="window._emailFolder=\'\';renderEmailBox()">&#8592; Inbox</button>'
-      +'<button class="btn" style="font-size:12px;background:#B4530A;color:#fff;border:none">&#128227; Campaigns</button>'
-      +'<button class="btn btn-o" style="font-size:12px;margin-left:auto" onclick="campScanInbox(this)">&#8635; Check replies &amp; bounces</button>'
-      +'<button class="btn btn-o" style="font-size:12px" onclick="campNew()">&#10133; New campaign</button></div>'
+    el.innerHTML=_ebHeader('camp')+'<div class="w2-ebbar"><span class="w2-ebtitle">Campaigns</span>'
+      +'<button class="w1-btn" style="margin-left:auto" onclick="campScanInbox(this)">Check replies &amp; bounces</button>'
+      +'<button class="w1-btn pri" onclick="campNew()">+ New campaign</button></div>'
       +'<div id="camp-quota" style="font-size:11px;color:#777;margin-bottom:10px"></div>'
       +'<div id="camp-body"></div>';
     loadCampaigns();
@@ -5631,9 +5642,7 @@ async function renderEmailBox(){
   }
   // Email Agent view (lives inside the Email Box)
   if(window._emailFolder==='__agent'){
-    el.innerHTML='<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">'
-      +'<button class="btn btn-o" style="font-size:12px" onclick="window._emailFolder=\'\';renderEmailBox()">&#8592; Inbox</button>'
-      +'<button class="btn" style="font-size:12px;background:#0F6E56;color:#fff;border:none">&#129302; Email Agent</button></div>'
+    el.innerHTML=_ebHeader('agent')
       +'<div style="background:linear-gradient(135deg,#EAF6F1,#fff);border:0.5px solid #BFE3D5;border-radius:10px;padding:16px;margin-bottom:14px">'
       +'<div style="font-size:11px;color:#555;line-height:1.5">Watches replies to your emails and drafts follow-ups so <b>no candidate goes silent</b>. It only <b>drafts</b> &mdash; you approve every send. <b>OFF by default</b>: turn on a job below.</div>'
       +'<div id="ea-status" style="font-size:11px;color:#777;margin-top:8px"></div>'
@@ -5647,12 +5656,13 @@ async function renderEmailBox(){
   var r={};
   try{ r=await req('GET','/emailbox/list'+(window._emailFolder?('?folder='+window._emailFolder):'')); }catch(e){}
   var emails=(r&&r.emails)||[];
-  function tab(id,label){ var on=window._emailFolder===id; return '<button class="btn'+(on?'':' btn-o')+'" style="font-size:12px'+(on?';background:#534AB7;color:#fff;border:none':'')+'" onclick="window._emailFolder=\''+id+'\';renderEmailBox()">'+label+'</button>'; }
+  function tab(id,label){ var on=window._emailFolder===id; return '<button class="w1-chip'+(on?' on':'')+'" aria-pressed="'+on+'" onclick="window._emailFolder=\''+id+'\';renderEmailBox()">'+label+'</button>'; }
   window._ebEmails=emails;
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
+  el.innerHTML=_ebHeader('mail')+'<div class="w2-ebbar">'
     +'<div style="display:flex;gap:6px;flex-wrap:wrap">'+tab('','All')+tab('Inbox','Inbox')+tab('Unread','Unread')+tab('Sent','Sent')+tab('Drafts','Drafts')+'</div>'
-    +'<div style="display:flex;gap:6px;align-items:center"><input class="inp" id="eb-search" placeholder="Search mail" style="font-size:12px;width:160px;padding:5px 9px" oninput="renderEmailList()"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="openCompose()">&#9998; Compose</button><button class="btn btn-o" style="font-size:12px" onclick="openSignatureEditor()">&#9997; Signature</button><button class="btn btn-o" style="font-size:12px" title="Regroup existing emails into conversations" onclick="ebRethread(this)">&#128260; Fix threads</button><button class="btn btn-o" style="font-size:12px" title="Test email sending, receiving, threading and attachments" onclick="openEmailSelfTest()">&#129658; Self-Test</button><button class="btn btn-o" style="font-size:12px;color:#0F6E56;border-color:#BFE3D5" onclick="window._emailFolder=\'__agent\';renderEmailBox()">&#129302; Email Agent</button><button class="btn btn-o" style="font-size:12px;color:#B4530A;border-color:#F0CBA8" title="Send a personalised email to many candidates" onclick="window._emailFolder=\'__campaigns\';renderEmailBox()">&#128227; Campaigns</button><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="syncEmail(this)">&#8635; Sync</button></div></div>'
-    +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:hidden" id="eb-list"></div>';
+    +'<input class="inp" id="eb-search" placeholder="Search mail" aria-label="Search mail" style="margin-left:auto;font-size:13px;width:220px;padding:7px 11px" oninput="renderEmailList()">'
+    +'<button class="w1-btn pri" onclick="openCompose()">Compose</button></div>'
+    +'<div class="w2-eblist" id="eb-list"></div>';
   renderEmailList();
 }
 function _ebRow(e, count, unread){
@@ -14466,31 +14476,26 @@ async function loadAIIndexStatus() {
 function renderAITab() {
   var body = document.getElementById('ai-body');
   if (aiActiveTab === 'search') {
+    // Wave 2: full-width search panel, labelled fields, same ids + handlers
     body.innerHTML =
-      '<div style="max-width:760px;margin:0 auto">'
-      + '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:16px;box-shadow:var(--shadow-sm)">'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'
-      +   '<div style="font-size:13px;font-weight:600;color:var(--navy)">Search Talent</div>'
-      +   '<button class="btn" style="background:#534AB7;color:#fff;font-size:11px" onclick="openAddCandidateModal()">+ Add Candidate</button>'
+      '<div class="w2-ts">'
+      + '<section class="w2-ts-card">'
+      + '<div class="w2-ts-head"><div><h2>Search talent</h2><p>Type a query for <b>AI semantic ranking</b>, or leave it blank and use the filters to browse the <b>whole database</b>.</p></div>'
+      +   '<button class="w1-btn pri" onclick="openAddCandidateModal()">+ Add candidate</button></div>'
+      + '<div class="w2-ts-q"><label class="w1-sr" for="ai-search-q">Search query</label><input class="inp" id="ai-search-q" placeholder="e.g. BMS commissioning engineer  (blank = filter only)" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()">'
+      +   '<button class="w1-btn pri" style="height:42px;padding:0 20px" onclick="runTalentSearch()">Search</button></div>'
+      + '<div class="w2-ts-f">'
+      +   '<label>Company<input class="inp" id="tf-company" placeholder="e.g. ABB"></label>'
+      +   '<label>Location<input class="inp" id="tf-loc" placeholder="City"></label>'
+      +   '<label>Experience (yrs)<span class="w2-rng"><input class="inp" id="tf-emin" type="number" placeholder="Min" aria-label="Experience min"><i>–</i><input class="inp" id="tf-emax" type="number" placeholder="Max" aria-label="Experience max"></span></label>'
+      +   '<label>CTC (LPA)<span class="w2-rng"><input class="inp" id="tf-cmin" type="number" placeholder="Min" aria-label="CTC min"><i>–</i><input class="inp" id="tf-cmax" type="number" placeholder="Max" aria-label="CTC max"></span></label>'
+      +   '<label>Notice (days &#8804;)<input class="inp" id="tf-notice" type="number" placeholder="Any"></label>'
+      +   '<button class="w1-btn" style="align-self:flex-end" onclick="clearTalentFilters()">Clear</button>'
       + '</div>'
-      + '<div style="font-size:11px;color:var(--muted);margin-bottom:12px">Type a query for <b>AI semantic ranking</b>, or leave it blank and use the filters to browse the <b>whole database</b>.</div>'
-      + '<div style="display:flex;gap:8px">'
-      + '<input class="inp" id="ai-search-q" placeholder="e.g. BMS commissioning engineer  (blank = filter only)" style="flex:1" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()">'
-      + '<button class="btn btn-g" onclick="runTalentSearch()" style="background:#8B6FCB">Search</button>'
-      + '</div>'
-      + '<div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-top:10px">'
-      +   '<input class="inp" id="tf-company" placeholder="Company (e.g. ABB)" style="width:150px">'
-      +   '<input class="inp" id="tf-loc" placeholder="Location" style="width:120px">'
-      +   '<span style="font-size:11px;color:#888">Exp</span><input class="inp" id="tf-emin" type="number" placeholder="Min" style="width:58px"><span style="color:#bbb">-</span><input class="inp" id="tf-emax" type="number" placeholder="Max" style="width:58px"><span style="font-size:10px;color:#888">y</span>'
-      +   '<span style="font-size:11px;color:#888">CTC</span><input class="inp" id="tf-cmin" type="number" placeholder="Min" style="width:58px"><span style="color:#bbb">-</span><input class="inp" id="tf-cmax" type="number" placeholder="Max" style="width:58px"><span style="font-size:10px;color:#888">L</span>'
-      +   '<input class="inp" id="tf-notice" type="number" placeholder="Notice days &#8804;" style="width:110px">'
-      +   '<button class="btn btn-o" style="font-size:11px" onclick="clearTalentFilters()">Clear</button>'
-      + '</div>'
-      + '<label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11px;color:var(--muted);cursor:pointer">'
-      + '<input type="checkbox" id="ai-explain" checked> Add AI reasoning (only for text queries)</label>'
-      + (_isRecruiterScoped() ? '' : '<div style="margin-top:10px"><button class="btn btn-o" style="font-size:11px" onclick="runReindex(false)">&#8635; Index new candidates</button> '
-      + '<button class="btn btn-o" style="font-size:11px" onclick="runReindex(true)">Re-index all</button></div>')
-      + '</div>'
+      + '<div class="w2-ts-foot"><label><input type="checkbox" id="ai-explain" checked> Add AI reasoning (only for text queries)</label>'
+      + (_isRecruiterScoped() ? '' : '<span style="margin-left:auto;display:flex;gap:6px"><button class="w1-btn" onclick="runReindex(false)">&#8635; Index new candidates</button>'
+      + '<button class="w1-btn" onclick="runReindex(true)">Re-index all</button></span>')
+      + '</div></section>'
       + '<div id="ai-search-results" style="margin-top:16px"></div>'
       + '</div>';
   } else if (aiActiveTab === 'jd') {
@@ -15268,23 +15273,39 @@ function runTalentSearch() {
   if (!q) { return talentFilterSearch(f); }   // no text → structured search over ALL candidates
   return runAISearch(f);                        // text → AI semantic ranking, narrowed by filters
 }
+// Wave 2: results as a table (candidate · location · job · exp · CTC · stage · phone · open)
 function talentRow(c) {
-  var sk = ((c.key_skills || []).slice(0, 4)).map(esc).join(' \u00b7 ');
-  return '<div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:9px;margin-bottom:7px;background:#fff;border:0.5px solid var(--line);box-shadow:var(--shadow-sm);cursor:pointer" onclick="openProfileById(' + c.id + ',' + (c.mandate_id||'null') + ')">'
-    + avatarHtml(c.name, 34)
-    + '<div style="flex:1;min-width:0">'
-    + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(c.name||'') + '</div>'
-    + '<div style="font-size:11px;color:var(--muted)">' + esc(c.designation||c.company||'') + (c.location?' \u00b7 '+esc(c.location):'') + (c.experience?' \u00b7 '+c.experience+'y':'') + '</div>'
-    + (sk ? '<div style="font-size:10px;color:#A99;margin-top:2px">' + sk + '</div>' : '')
-    + '</div>'
-    + (c.ctc ? '<div style="font-size:11px;color:#888;white-space:nowrap">' + esc(String(c.ctc)) + ' LPA</div>' : '')
-    + '</div>';
+  var phone=(c.phone||'').replace(/\D/g,''), dp=phone.length>=10?phone.slice(-10).replace(/(\d{5})(\d{5})/,'$1 $2'):'';
+  var cur=c.ctc_current||c.ctc, ex=c.ctc_expected;
+  var open='onclick="openProfileById(' + c.id + ',' + (c.mandate_id||'null') + ')" style="cursor:pointer"';
+  var dash='<span class="mu">&mdash;</span>';
+  var job=c.mandate_role ? ('<div>'+esc(c.mandate_role)+'</div>'+(c.mandate_client?'<div class="mu sm">'+esc(c.mandate_client)+'</div>':'')) : '<span class="mu">Central DB</span>';
+  return '<tr>'
+    + '<td '+open+'><div class="nm">' + esc(c.name||'') + '</div><div class="mu sm">' + esc([c.designation,c.company].filter(Boolean).join(' · ')) + '</div></td>'
+    + '<td '+open+'>' + (c.location?esc(c.location):dash) + '</td>'
+    + '<td '+open+'>' + job + '</td>'
+    + '<td '+open+'>' + (c.experience?esc(String(c.experience))+'y':dash) + '</td>'
+    + '<td '+open+'>' + (cur?esc(String(cur))+' L':dash) + '</td>'
+    + '<td '+open+'>' + (ex?esc(String(ex))+' L':dash) + '</td>'
+    + '<td>' + (c.stage?'<span class="w2-stg">'+esc(stageLabel(c.stage))+'</span>':dash) + '</td>'
+    + '<td>' + (dp?'<a href="tel:'+esc(phone)+'">'+dp+'</a>':dash) + '</td>'
+    + '<td style="white-space:nowrap"><a href="#" onclick="event.preventDefault();openCandidateInNewTab(' + c.id + ',' + (c.mandate_id||'null') + ')">Profile &#8599;</a>'
+    + (c.cv_path?' &middot; <a href="#" onclick="event.preventDefault();openCvWindow(\''+esc(c.cv_path).replace(/'/g,'')+'\')">CV &#8599;</a>':' &middot; <span class="mu">no CV</span>') + '</td>'
+    + '</tr>';
 }
-async function talentFilterSearch(f) {
+function _talentTable(rows){
+  return '<div class="w1-pltable w2-tt"><table><thead><tr><th><button type="button">Candidate</button></th><th><button type="button">Location</button></th><th><button type="button">Job / pool</button></th><th><button type="button">Exp</button></th><th><button type="button">Current</button></th><th><button type="button">Expected</button></th><th><button type="button">Stage</button></th><th><button type="button">Phone</button></th><th><button type="button">Open</button></th></tr></thead><tbody>'
+    + rows.map(talentRow).join('') + '</tbody></table></div>';
+}
+var _talentPage = 1, _talentLastF = null;
+function talentPage(d){ _talentPage = Math.max(1, _talentPage + d); talentFilterSearch(_talentLastF || readTalentFilters(), true); }
+async function talentFilterSearch(f, keepPage) {
   var res = document.getElementById('ai-search-results');
   if (!res) return;
+  if (!keepPage) _talentPage = 1;
+  _talentLastF = f;
   res.innerHTML = '<div class="loading"><div class="spinner"></div>Searching your database...</div>';
-  var qs = 'page=1';
+  var qs = 'page=' + _talentPage;
   if (f.company) qs += '&company='  + encodeURIComponent(f.company);
   if (f.loc)    qs += '&location=' + encodeURIComponent(f.loc);
   if (f.emin)   qs += '&exp_min='  + encodeURIComponent(f.emin);
@@ -15296,8 +15317,14 @@ async function talentFilterSearch(f) {
   if (!r || r.error) { res.innerHTML = '<div style="color:#C0522B;padding:12px">' + esc((r&&r.error)||'Search failed') + '</div>'; return; }
   var cands = r.candidates || [];
   if (!cands.length) { res.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">No candidates match these filters.</div>'; return; }
-  var html = '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Showing ' + cands.length + ' of ' + (r.total||cands.length) + ' candidates &middot; full database</div>';
-  cands.forEach(function(c){ html += talentRow(c); });
+  window._cdbResults = cands;
+  var total = r.total || cands.length, per = Math.max(cands.length, 30), pages = Math.max(1, Math.ceil(total / per));
+  var from = (_talentPage - 1) * per + 1, to = from + cands.length - 1;
+  var html = '<div class="w2-tt-bar"><span>Showing ' + from + '–' + to + ' of ' + total + ' candidates &middot; full database</span>'
+    + '<span style="display:flex;gap:6px;align-items:center"><button class="w1-btn" onclick="talentPage(-1)"' + (_talentPage<=1?' disabled':'') + '>&larr; Prev</button>'
+    + '<span>' + _talentPage + ' / ' + pages + '</span><button class="w1-btn" onclick="talentPage(1)"' + (_talentPage>=pages?' disabled':'') + '>Next &rarr;</button></span></div>';
+  html += _talentTable(cands);
+  html += '<p class="w1-plnote">&ldquo;Profile &#8599;&rdquo; opens the full profile in a new tab; &ldquo;CV &#8599;&rdquo; opens only the CV.</p>';
   res.innerHTML = html;
 }
 
@@ -23748,6 +23775,83 @@ input:focus,textarea:focus,select:focus{border-color:#0f766e !important}
 #topbar-crumb a{color:var(--muted);text-decoration:none}
 .w1-tcnt{font-size:12px;color:var(--muted);margin-left:6px;font-weight:500}
 .w1-tdot{width:6px;height:6px;border-radius:50%;background:#0d9488;display:inline-block;margin-left:6px;vertical-align:middle}
+
+/* ════ WAVE 2: shared page header + tabs for full pages (Talent, Comms,
+   Tasks, Email, Admin, CRM…). CSS only — markup and handlers unchanged. ════ */
+@media (min-width:761px){
+  #main > [id$="-view"] > div:first-child[style*="padding:9px 16px"]{padding:16px 24px 12px !important;border-bottom:0 !important;background:#fff !important;gap:12px !important;flex-wrap:wrap}
+  #main > [id$="-view"] > div:first-child[style*="padding:9px 16px"] div[style*="width:28px;height:28px"]{display:none !important}
+  #main > [id$="-view"] > div:first-child[style*="padding:9px 16px"] div[style*="font-size:14px"]{font-size:21px !important;font-weight:700 !important;color:var(--ink) !important;letter-spacing:-.2px}
+  #main > [id$="-view"] > div:first-child[style*="padding:9px 16px"] div[style*="font-size:11px"]{font-size:13px !important;color:var(--muted) !important;margin-top:2px !important}
+  #main > [id$="-view"] > div:first-child[style*="padding:9px 16px"] .btn{padding:8px 13px !important;font-size:13px !important}
+}
+.cdb-subtab-bar{background:#fff !important;border-bottom:1px solid var(--line) !important;padding:0 24px !important;display:flex;gap:22px}
+.cdb-subtab{padding:10px 0 !important;font-size:14px !important;color:#475063 !important;background:none !important;border:0 !important;border-bottom:2px solid transparent !important;border-radius:0 !important;font-weight:500 !important;cursor:pointer}
+.cdb-subtab.active{color:var(--ink) !important;font-weight:600 !important;border-bottom-color:#0f766e !important}
+#ai-view > div:nth-child(3){padding:10px 24px 0 !important;gap:18px !important;border-bottom:1px solid var(--line);overflow-x:auto}
+.ai-tab-btn{padding:9px 0 !important;font-size:13.5px !important;color:#475063 !important;border-bottom:2px solid transparent !important;white-space:nowrap}
+.ai-tab-btn:hover{color:var(--ink) !important}
+.ai-tab-active{color:var(--ink) !important;border-bottom-color:#534ab7 !important;font-weight:600 !important}
+#ai-body,#resp-body,#waai-body,#admin-body{background:var(--paper) !important}
+.an-scope-btn{background:#fff;color:#475063}
+.an-scope-btn.active{background:#ecfdf5 !important;color:#0f766e !important;font-weight:600}
+/* Email */
+#emailbox-body{background:var(--paper);padding:0 !important}
+.w2-ebhead{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#fff;border-bottom:1px solid var(--line);padding:16px 24px 0}
+.w2-ebhead h1{margin:0;font-size:21px;font-weight:700;color:var(--ink)}
+.w2-ebhead p{margin:2px 0 10px;font-size:13px;color:var(--muted)}
+.w2-ebtabs{display:flex;gap:22px;align-self:flex-end;order:3;flex-basis:100%}
+.w2-ebtabs button{border:0;background:none;padding:10px 0;font-size:14px;color:#475063;border-bottom:2px solid transparent;cursor:pointer}
+.w2-ebtabs button.on{color:var(--ink);font-weight:600;border-bottom-color:#0f766e}
+.w2-ebtools{margin-left:auto;display:flex;gap:6px;align-items:center}
+.w2-ebmenu{top:40px;bottom:auto !important}
+.w2-ebmenu.open{display:block}
+.w2-ebbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:14px 24px 10px}
+.w2-ebtitle{font-size:15px;font-weight:700;color:var(--ink)}
+.w2-eblist{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:0 24px 24px}
+#emailbox-body > :not(.w2-ebhead):not(.w2-ebbar):not(.w2-eblist){margin-left:24px;margin-right:24px}
+@media(max-width:760px){.w2-ebhead,.w2-ebbar{padding-left:12px;padding-right:12px}.w2-eblist{margin:0 12px 16px}#emailbox-body > :not(.w2-ebhead):not(.w2-ebbar):not(.w2-eblist){margin-left:12px;margin-right:12px}}
+
+/* Wave 2: Talent search */
+.w2-ts{max-width:1180px;margin:0 auto}
+.w2-ts-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.w2-ts-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.w2-ts-head h2{margin:0;font-size:16px;font-weight:700;color:var(--ink)}
+.w2-ts-head p{margin:3px 0 0;font-size:13px;color:var(--muted)}
+.w2-ts-q{display:flex;gap:8px;margin-top:12px}
+.w2-ts-q .inp{flex:1;height:42px;font-size:14px !important}
+.w2-ts-f{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:flex-start}
+.w2-ts-f > label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:#475063;flex:1 1 150px;min-width:0}
+.w2-ts-f .inp{height:38px;padding:0 10px !important}
+.w2-rng{display:flex;align-items:center;gap:6px}.w2-rng .inp{min-width:0;width:100%}.w2-rng i{color:var(--muted);font-style:normal}
+.w2-ts-foot{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.w2-ts-foot label{display:flex;align-items:center;gap:6px;cursor:pointer}
+#ai-body{padding:18px 24px !important}
+.w2-tt-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-bottom:8px}
+.w2-tt .nm{font-weight:600;color:#1d4ed8}
+.w2-stg{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:#f1f5f9;color:#334155;white-space:nowrap}
+.w2-tt td:nth-child(3){white-space:normal;min-width:180px;max-width:260px}
+.w2-tt td:first-child{white-space:normal;min-width:170px}
+/* Wave 2: Add candidate — wider, paste on the left, form on the right */
+#modal-add-candidate .modal{width:min(1040px,94vw) !important;max-width:none !important}
+@media(min-width:900px){
+  #ac-tab-single:not([style*="display: none"]):not([style*="display:none"]){display:grid !important;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);align-items:start}
+  #ac-tab-single > div:first-child{border-bottom:0 !important;border-right:1px solid var(--line);padding:16px 18px !important;height:100%;box-sizing:border-box}
+  #ac-tab-single > div:first-child .ta{min-height:220px}
+  #ac-tab-single > div:nth-child(2){max-height:58vh !important;padding:16px 18px !important}
+  #ac-tab-single > div:nth-child(n+3){grid-column:1 / -1}
+}
+/* Wave 2: Tasks — same light palette as the rest of the app (dark theme untouched) */
+#tasks-view:not([data-theme="dark"]){
+  --tv-bg:#f5f6f8; --tv-line:#e4e7ec; --tv-line2:#eef0f3; --tv-text:#0f172a; --tv-muted:#5b6475; --tv-faint:#94a3b8;
+  --tv-hover:#f1f5f9; --tv-sel:#ecfdf5; --tv-chip:#f1f5f9; --tv-accent:#0f766e; --tv-accent-d:#115e59; --tv-accent-soft:#ecfdf5;
+  --tv-red:#b91c1c; --tv-red-soft:#fee2e2; --tv-amber:#b45309; --tv-blue:#1d4ed8;
+}
+.w2-ebtools .w1-acct{position:relative}
+.w2-ebmenu{display:none;position:absolute;right:0;top:40px;z-index:60;min-width:170px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.14);padding:4px}
+.w2-ebmenu.open{display:block}
+.w2-ebmenu > *{display:block;width:100%;text-align:left;padding:8px 10px;border:0;background:none;font-size:13px;color:var(--ink);cursor:pointer;border-radius:7px}
+.w2-ebmenu > *:hover{background:#f1f5f9}
 /* floating search (used when the page has no header search visible) */
 #w1-search-pop{position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:9500;display:none;align-items:flex-start;justify-content:center;padding-top:12vh}
 #w1-search-pop > div{background:#fff;border-radius:14px;padding:12px;box-shadow:0 20px 50px rgba(15,23,42,.25);width:min(560px,92vw)}
@@ -23794,6 +23898,9 @@ function w1CloseAcct(){ var m=document.getElementById('w1-acct-menu'); if(m) m.c
 document.addEventListener('mousedown',function(e){
   var m=document.getElementById('w1-acct-menu');
   if(m && m.classList.contains('open') && !m.parentElement.contains(e.target)) w1CloseAcct();
+});
+document.addEventListener('mousedown',function(e){
+  document.querySelectorAll('.w2-ebmenu.open').forEach(function(m){ if(!m.parentElement.contains(e.target)) m.classList.remove('open'); });
 });
 </script>
 

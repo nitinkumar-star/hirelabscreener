@@ -6,7 +6,7 @@
 <title>Org Map — RecruitOS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -208,6 +208,26 @@ input,select,textarea{font-family:inherit}
 .store-warn{position:fixed;bottom:14px;right:14px;background:rgba(245,179,1,.1);border:1px solid var(--gold);color:var(--gold);padding:8px 12px;border-radius:9px;font-size:11px;z-index:70;max-width:260px;display:none}
 
 @media(max-width:860px){.body{grid-template-columns:1fr}.sidebar{display:none}.searchbox{display:none}.drawer{width:100%}}
+
+/* ════ WAVE 2 (Oct 2026): light theme to match the main app. Only the colour
+   tokens + fonts change; every control, layout and export stays the same. ════ */
+:root{
+  --ink-900:#f5f6f8; --ink-850:#ffffff; --ink-800:#ffffff; --ink-700:#f8fafc;
+  --ink-650:#eef0f3; --ink-600:#e9ecf1; --line:#e4e7ec; --line-soft:#eef0f3;
+  --text:#0f172a; --dim:#475063; --mute:#5b6475;
+  --emerald:#0f766e; --emerald-d:#115e59; --emerald-glow:rgba(15,118,110,.18);
+  --iris:#534ab7; --iris-d:#463ea0; --gold:#d97706;
+  --font-d:'DM Sans',system-ui,sans-serif;
+  --font-b:'DM Sans',system-ui,sans-serif;
+}
+.btn.prim{color:#fff}
+.toggle.collapsed text{fill:#fff}
+.btn.danger{border-color:#fecaca;color:#b42318}
+.banner .btn.gold{color:#fff}
+.statbar{background:rgba(255,255,255,.92) !important;box-shadow:0 4px 16px rgba(15,23,42,.08)}
+.drawer:not(.open){box-shadow:none !important}
+.drawer.open{box-shadow:-12px 0 30px rgba(15,23,42,.12) !important}
+.overlay{background:rgba(15,23,42,.35) !important}
 </style>
 </head>
 <body>
