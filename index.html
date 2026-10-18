@@ -10616,15 +10616,16 @@ async function loadEmailPanelTemplates(){
     }catch(e){}
   }
   var opts = '<option value="">— Select template —</option>';
+  // Settings templates always load their LATEST text. A job's own copy is a
+  // separate, clearly-labelled option — it no longer silently replaces the
+  // Settings template (that hid every later Settings edit for that job).
   (S._globalTpls || []).forEach(function(t, i){
-    var ov = _findJobOverride(t);
-    opts += '<option value="g' + i + '">' + esc(t.title || ('Template ' + (i + 1)))
-          + (ov ? ' • this job' : '') + '</option>';
+    opts += '<option value="g' + i + '">' + esc(t.title || ('Template ' + (i + 1))) + '</option>';
   });
   (S._mandTemplates || []).forEach(function(t, i){
-    if(!t || t.src_id) return;   // copies of Settings templates are shown above
+    if(!t) return;
     opts += '<option value="m' + i + '">' + esc(t.name || ('Job template ' + (i + 1)))
-          + ' • this job</option>';
+          + (t.src_id ? ' — this job\'s copy' : ' • this job') + '</option>';
   });
   sel.innerHTML = opts;
   if(!(S._globalTpls || []).length && !(S._mandTemplates || []).length){
@@ -10660,10 +10661,7 @@ function _resolveEmailTpl(val){
   var kind = val.charAt(0), i = parseInt(val.slice(1), 10);
   if(isNaN(i)) return null;
   if(kind === 'm') return (S._mandTemplates || [])[i] || null;
-  var g = (S._globalTpls || [])[i];
-  if(!g) return null;
-  var ov = _findJobOverride(g);
-  return ov ? {name: g.title || '', subject: ov.subject, body: ov.body} : g;
+  return (S._globalTpls || [])[i] || null;   // always the latest Settings text
 }
 
 // Candidate + mandate context, fetched once per open panel, used to fill {tags}.
@@ -10765,11 +10763,12 @@ async function updateEmailTemplate(){
     else S._mandTemplates.push(copy);
   }
   var keep = sel.value;
+  var savedCopy = (kind === 'm') ? null : S._mandTemplates.indexOf(copy);
   await _saveMandTemplates();
-  toast('OK', 'Is job ke liye template save ho gaya');
+  toast('OK', 'Is job ke liye template ki copy save ho gayi — Settings wala template alag rahega');
   await loadEmailPanelTemplates();
   sel = document.getElementById('email-tpl');
-  if(sel) sel.value = keep;
+  if(sel) sel.value = (savedCopy != null && savedCopy >= 0) ? ('m' + savedCopy) : keep;
 }
 
 async function loadEmailThread(cid){
