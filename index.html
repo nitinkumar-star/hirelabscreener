@@ -23477,6 +23477,12 @@ input:focus,textarea:focus,select:focus{border-color:#0f766e !important}
   /* ── Page header (Home / job) ────────────────────────────── */
   #topbar{padding:14px 24px 4px !important;align-items:flex-start !important;box-shadow:none !important;border-bottom:0 !important;background:#fff}
   #topbar #hamburger-btn{display:none !important}
+  /* Collapsed sidebar: no 20px sliver, and a clear way back (the inline
+     display:none on #sb-reopen used to beat the old rule, and the top-bar
+     ☰ buttons are gone on desktop). */
+  #app.sb-collapsed #sidebar{padding:0 !important;border:0 !important}
+  #app.sb-collapsed #sb-reopen{display:flex !important;align-items:center;gap:8px;top:auto !important;bottom:16px;left:12px !important;width:auto !important;height:38px !important;padding:0 14px 0 12px;border-radius:19px !important;font-size:13px !important;font-weight:600;box-shadow:0 4px 14px rgba(15,23,42,.25) !important}
+  #app.sb-collapsed #sb-reopen::after{content:"Menu"}
   #topbar-crumb{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center}
   #topbar-crumb a{color:var(--muted);text-decoration:none}
   #topbar-crumb a:hover{color:var(--ink)}
