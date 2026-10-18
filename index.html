@@ -864,12 +864,14 @@ body{font-size:14px !important; line-height:1.5}
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
     <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab</div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J34</div></div>
+    <button class="w1-sb-collapse" onclick="toggleSidebar()" title="Collapse sidebar (drag the edge to resize)" aria-label="Collapse sidebar"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4h16v16H4zM9 4v16"/></svg></button>
   </div>
+  <button class="w1-sb-search" type="button" onclick="w1FocusSearch()" title="Search candidates by name, email or phone (press /)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span style="flex:1">Search everything</span><kbd>/</kbd></button>
 
   <div style="padding:6px 0 2px">
     <a href="#" class="sb-gear" id="sb-home" onclick="return navClick(event,goHome)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Home</span><span class="sb-nav-sub">Today&#39;s focus &middot; insights</span></span></a>
     <!-- Command Center retired Oct 2026 -->
-    <a href="#jobs" class="sb-gear" id="sb-jobs" onclick="return navClick(event,openJobs)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Jobs</span><span class="sb-nav-sub">All mandates &middot; pipeline</span></span></a>
+    <a href="#jobs" class="sb-gear" id="sb-jobs" onclick="return navClick(event,openJobs)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Jobs</span><span class="sb-nav-sub">All mandates &middot; pipeline</span></span><span class="sb-nav-count w1-only" id="nav-jobs-count"></span></a>
     <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12l3 3 5-6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Tasks</span><span class="sb-nav-sub">Reminders &middot; interviews &middot; follow-ups</span></span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
     <!-- Analytics merged into Home (Oct 2026) -->
     <a href="#waai" class="sb-gear" id="sb-waai" onclick="return navClick(event,openWaAi)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.5 8.5 0 01-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1121 11.5z"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Communications</span><span class="sb-nav-sub">WhatsApp AI &middot; escalations</span></span><span class="sb-nav-badge" id="nav-waai-badge" style="display:none"></span></a>
@@ -892,8 +894,18 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-user" id="sb-user">
     <div class="sb-user-av" id="sb-user-av">NK</div>
     <div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;line-height:1.1;color:var(--ink)" id="sb-user-name"></div><div style="font-size:11px;color:#A8A498;margin-top:2px" id="sb-user-role">HireLab Talent</div></div>
-    <button onclick="doLogout()" title="Log out" style="border:none;background:transparent;color:#B4B0A6;font-size:13px;cursor:pointer;padding:4px">&#9211;</button>
+    <span id="sb-bell-slot" class="w1-only"></span>
+    <div class="w1-acct w1-only">
+      <button type="button" class="w1-ic-btn" onclick="w1ToggleAcct(event)" aria-label="Account menu: Export JSON, Import JSON, Log out" aria-haspopup="menu" title="Account">&#8943;</button>
+      <div class="w1-acct-menu" id="w1-acct-menu" role="menu">
+        <button type="button" role="menuitem" class="rs-hide" onclick="w1CloseAcct();exportAll()">&#8595; Export JSON</button>
+        <label role="menuitem" class="rs-hide">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="w1CloseAcct();importAll(this)"></label>
+        <button type="button" role="menuitem" onclick="doLogout()">Log out</button>
+      </div>
+    </div>
+    <button class="w1-hide" onclick="doLogout()" title="Log out" style="border:none;background:transparent;color:#B4B0A6;font-size:13px;cursor:pointer;padding:4px">&#9211;</button>
   </div>
+  <div id="sb-viewas" class="w1-only" style="display:none"></div>
 </div>
 <div id="sb-resizer" title="Drag to resize"></div>
 <div id="main">
@@ -1233,7 +1245,7 @@ body{font-size:14px !important; line-height:1.5}
         <button id="hamburger-btn" onclick="toggleSidebar()" aria-label="Menu">
           <span></span><span></span><span></span>
         </button>
-        <div><div id="topbar-title">Home</div><div id="topbar-sub">Today&rsquo;s focus &amp; business insights</div></div>
+        <div style="min-width:0"><div id="topbar-crumb" class="w1-only" style="display:none"></div><div class="w1-title-row"><div id="topbar-title">Home</div><button type="button" id="topbar-status" class="w1-only" style="display:none"></button></div><div id="topbar-sub">Today&rsquo;s focus &amp; business insights</div></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
         <span class="sop-pill" id="sop-pill" style="display:none"></span>
