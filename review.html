@@ -4,55 +4,80 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Candidate Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
 <style>
+:root{--ink:#0f172a;--muted:#5b6475;--sub:#475063;--line:#e4e7ec;--border:#d0d5dd;--paper:#f5f6f8;--teal:#0f766e;--teal-d:#115e59;--teal-s:#ecfdf5;--red:#b42318}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,"Segoe UI",sans-serif;background:#f5f5f5;color:#1a1a1a;min-height:100vh}
-.header{background:#0a2540;padding:22px 20px;text-align:center;color:#fff}
-.header h1{font-size:18px;font-weight:700;color:#1D9E75}
-.header p{font-size:12.5px;opacity:.75;margin-top:5px}
-.container{max-width:760px;margin:22px auto;padding:0 16px 48px}
-.note{background:#EEF4FB;border:1px solid #C6DAF0;color:#2A5580;font-size:12px;line-height:1.5;
-  padding:10px 14px;border-radius:9px;margin-bottom:16px}
-.card{background:#fff;border-radius:11px;padding:18px 20px;margin-bottom:13px;box-shadow:0 1px 6px rgba(0,0,0,.06)}
-.top{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
-.nm{font-size:16px;font-weight:650;color:#0a2540}
-.sub{font-size:12.5px;color:#666;margin-top:3px}
-.chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
-.chip{font-size:10.5px;background:#F1F0EC;color:#555;border-radius:20px;padding:3px 9px}
-.sum{font-size:12.5px;color:#555;line-height:1.55;margin-top:10px}
-.done{background:#EDF6EE;border:1px solid #C6E0CB;color:#2C6B39;font-size:12px;
-  padding:8px 12px;border-radius:8px;margin-top:11px}
-.given{background:#FAFAFC;border-left:2px solid #ccc;border-radius:0 7px 7px 0;padding:7px 11px;
-  margin-top:7px;font-size:12px;color:#444}
-.btn{border:none;border-radius:7px;padding:8px 18px;font-size:12.5px;font-weight:600;
-  cursor:pointer;font-family:inherit}
-.btn-p{background:#1D9E75;color:#fff}
-.btn-p:hover{background:#178A65}
-.btn-o{background:#fff;color:#555;border:1px solid #ddd}
-.form{border-top:0.5px solid #eee;margin-top:13px;padding-top:13px}
-.g2{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:9px}
-input,select,textarea{width:100%;padding:8px 11px;border:1px solid #ddd;border-radius:7px;
-  font-size:12.5px;font-family:inherit;outline:none}
-input:focus,select:focus,textarea:focus{border-color:#1D9E75}
-.state{background:#fff;border-radius:11px;padding:44px 24px;text-align:center;box-shadow:0 1px 6px rgba(0,0,0,.06)}
-.state .ic{font-size:32px;margin-bottom:10px}
-.state h3{font-size:15px;font-weight:600;margin-bottom:6px}
-.state p{font-size:13px;color:#888;line-height:1.55}
-.foot{text-align:center;font-size:11px;color:#aaa;margin-top:26px}
-@media(max-width:520px){.g2{grid-template-columns:1fr}}
+body{font-family:'DM Sans',system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--paper);color:var(--ink);min-height:100vh;font-size:14.5px;line-height:1.5;-webkit-font-smoothing:antialiased}
+a{color:var(--teal)}
+.topbar{background:#fff;border-bottom:1px solid var(--line)}
+.topbar .in{max-width:880px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:10px}
+.mark{width:34px;height:34px;border-radius:9px;background:var(--teal);color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;flex:none}
+.brand{font-weight:700;font-size:15.5px}
+.brand small{display:block;font-weight:500;font-size:12.5px;color:var(--muted)}
+.hero{background:#fff;border-bottom:1px solid var(--line)}
+.hero .in{max-width:880px;margin:0 auto;padding:28px 20px 26px}
+.hero h1{font-size:28px;font-weight:700;letter-spacing:-.4px;line-height:1.2}
+.hero p{font-size:15px;color:var(--sub);margin-top:8px;max-width:620px}
+.wrap{max-width:880px;margin:22px auto;padding:0 20px 56px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:42px;padding:0 18px;border:0;border-radius:10px;background:var(--teal);color:#fff;font:inherit;font-size:14.5px;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap}
+.btn:hover{background:var(--teal-d)}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+.btn.o{background:#fff;color:var(--ink);border:1px solid var(--border)}
+.btn.o:hover{background:#f8fafc}
+.btn.block{width:100%;height:48px;font-size:15.5px}
+.fld{display:block;margin-bottom:14px}
+.fld > span{display:block;font-size:13px;font-weight:600;color:#344054;margin-bottom:6px}
+.fld > span i{font-style:normal;font-weight:400;color:var(--muted)}
+.fld input,.fld select,.fld textarea,.inp{width:100%;height:44px;padding:0 12px;border:1px solid var(--border);border-radius:10px;font:inherit;font-size:15px;background:#fff;color:var(--ink);outline:none}
+.fld textarea,textarea.inp{height:auto;padding:10px 12px;line-height:1.5;resize:vertical}
+.fld input:focus,.fld select:focus,.fld textarea:focus,.inp:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(15,118,110,.14)}
+.fld.bad input,.fld.bad .tags{border-color:var(--red);box-shadow:0 0 0 3px rgba(180,35,24,.1)}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.sec{font-size:12px;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.06em;margin:22px 0 12px}
+.state{padding:48px 24px;text-align:center}
+.state .ic{width:52px;height:52px;border-radius:50%;background:var(--teal-s);color:var(--teal);display:inline-flex;align-items:center;justify-content:center;margin-bottom:14px}
+.state.warn .ic{background:#fef3f2;color:var(--red)}
+.state h3{font-size:17px;font-weight:700}
+.state p{font-size:14px;color:var(--muted);margin-top:6px;max-width:420px;margin-left:auto;margin-right:auto}
+.err{color:var(--red);font-size:13.5px;margin-top:10px;min-height:18px}
+.foot{text-align:center;font-size:12.5px;color:#98a2b3;margin-top:30px}
+.spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--teal);border-radius:50%;margin:0 auto 12px;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(max-width:560px){.g2{grid-template-columns:1fr}.hero h1{font-size:23px}.hero .in{padding:22px 16px}.wrap{padding:0 14px 48px;margin-top:16px}.topbar .in{padding:12px 16px}}
+
+.note{background:#f0fdfa;border:1px solid #b6dcd6;color:#134e4a;font-size:14px;line-height:1.55;padding:12px 16px;border-radius:12px;margin-bottom:16px}
+.rc{padding:18px 20px;margin-bottom:12px}
+.top{display:flex;align-items:flex-start;gap:12px}
+.av{width:42px;height:42px;border-radius:50%;background:var(--teal-s);color:var(--teal);font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+.nm{font-size:17px;font-weight:700}
+.sub{font-size:14px;color:var(--sub);margin-top:1px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{font-size:12.5px;background:#f2f4f7;color:#344054;border-radius:999px;padding:3px 10px}
+.sum{font-size:14px;color:var(--sub);line-height:1.6;margin-top:10px}
+.done{background:var(--teal-s);border:1px solid #a6e3c8;color:var(--teal);font-size:14px;font-weight:600;padding:10px 12px;border-radius:10px;margin-top:12px}
+.given{background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:0 8px 8px 0;padding:8px 12px;margin-top:8px;font-size:13.5px;color:#344054}
+.form{border-top:1px solid var(--line);margin-top:14px;padding-top:14px}
+.form .g2{gap:10px;margin-bottom:10px}
+.form .inp{margin-bottom:10px}
+.form .g2 .inp{margin-bottom:0}
+.recs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.acts{display:flex;gap:8px;flex-wrap:wrap}
+.acts .btn{height:40px}
 </style>
 </head>
 <body>
-
-<div class="header">
-  <h1 id="role">Candidate Review</h1>
+<header class="topbar"><div class="in"><span class="mark" aria-hidden="true">H</span><span class="brand">Candidate review<small>Shortlist shared with you</small></span></div></header>
+<section class="hero"><div class="in">
+  <h1 id="role">Candidate review</h1>
   <p id="sub"></p>
-</div>
+</div></section>
 
-<div class="container">
-  <div id="list"><div class="state"><div class="ic">&#8987;</div><h3>Loading…</h3></div></div>
+<main class="wrap">
+  <div id="list"><div class="card state"><div class="spin" aria-hidden="true"></div><h3>Loading…</h3></div></div>
   <div class="foot">Powered by HireLab</div>
-</div>
+</main>
 
 <script>
 // Token-gated review page. No login: the link itself is the credential, and it
@@ -69,9 +94,22 @@ function esc(s){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
   });
 }
+var ICON = {
+  wait:'<div class="spin" aria-hidden="true"></div>',
+  search:'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-5-5',
+  warn:'M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+  lock:'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4',
+  bag:'M3 8h18v12H3zM8 8V5h8v3',
+  ok:'M5 12l5 5L20 7',
+  user:'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0'
+};
+function iconHtml(k){
+  if (k === 'wait') return ICON.wait;
+  return '<span class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="'+(ICON[k]||ICON.ok)+'"/></svg></span>';
+}
 function state(ic,t,m){
   document.getElementById('list').innerHTML =
-    '<div class="state"><div class="ic">'+ic+'</div><h3>'+esc(t)+'</h3>'+(m?'<p>'+esc(m)+'</p>':'')+'</div>';
+    '<div class="card state'+(ic==='warn'?' warn':'')+'">'+iconHtml(ic)+'<h3>'+esc(t)+'</h3>'+(m?'<p>'+esc(m)+'</p>':'')+'</div>';
 }
 
 var REC = {strong_yes:'Strong yes', yes:'Yes', hold:'Hold', no:'No'};
@@ -79,7 +117,7 @@ var REC = {strong_yes:'Strong yes', yes:'Yes', hold:'Hold', no:'No'};
 function card(c){
   var chips = '';
   if (c.experience) chips += '<span class="chip">'+esc(c.experience)+' yrs</span>';
-  if (c.location)   chips += '<span class="chip">&#128205; '+esc(c.location)+'</span>';
+  if (c.location)   chips += '<span class="chip">'+esc(c.location)+'</span>';
   if (c.qualification) chips += '<span class="chip">'+esc(c.qualification)+'</span>';
   (c.skills||[]).forEach(function(s){ chips += '<span class="chip">'+esc(s)+'</span>'; });
 
@@ -91,14 +129,15 @@ function card(c){
 
   var body;
   if (SENT[c.id]) {
-    body = '<div class="done">&#10004; Thank you — your feedback has been recorded.</div>';
+    body = '<div class="done" role="status">Thank you — your feedback has been recorded.</div>';
   } else {
-    body = '<button class="btn btn-p" style="margin-top:12px" onclick="openForm('+c.id+')">Give feedback</button>'
+    body = '<button class="btn" style="margin-top:14px" onclick="openForm('+c.id+')">Give feedback</button>'
          + '<div id="f-'+c.id+'"></div>';
   }
 
-  return '<div class="card">'
-    + '<div class="top"><div style="flex:1;min-width:200px">'
+  var ini = String(c.name||'?').trim().split(/\s+/).slice(0,2).map(function(w){ return w.charAt(0).toUpperCase(); }).join('');
+  return '<article class="card rc">'
+    + '<div class="top"><span class="av" aria-hidden="true">'+esc(ini)+'</span><div style="flex:1;min-width:0">'
       + '<div class="nm">'+esc(c.name)+'</div>'
       + '<div class="sub">'+esc(c.designation||'')+(c.company?(' at '+esc(c.company)):'')+'</div>'
     + '</div></div>'
@@ -106,7 +145,7 @@ function card(c){
     + (c.summary ? '<div class="sum">'+esc(c.summary)+'</div>' : '')
     + given
     + body
-    + '</div>';
+    + '</article>';
 }
 
 function render(){
@@ -119,20 +158,20 @@ function openForm(cid){
   if (box.innerHTML){ box.innerHTML=''; return; }
   box.innerHTML = '<div class="form">'
     + '<div class="g2">'
-      + '<input id="n-'+cid+'" placeholder="Your name" autocomplete="name">'
-      + '<select id="r-'+cid+'"><option value="">Your recommendation…</option>'
+      + '<input class="inp" id="n-'+cid+'" placeholder="Your name" aria-label="Your name" autocomplete="name">'
+      + '<select class="inp" id="r-'+cid+'" aria-label="Your recommendation"><option value="">Your recommendation…</option>'
         + '<option value="strong_yes">Strong yes</option><option value="yes">Yes</option>'
         + '<option value="hold">Hold</option><option value="no">No</option></select>'
     + '</div>'
-    + '<select id="rt-'+cid+'" style="margin-bottom:9px"><option value="0">Rating (optional)</option>'
+    + '<select class="inp" id="rt-'+cid+'" aria-label="Rating"><option value="0">Rating (optional)</option>'
       + '<option value="5">5 — Outstanding</option><option value="4">4 — Strong</option>'
       + '<option value="3">3 — Adequate</option><option value="2">2 — Weak</option>'
       + '<option value="1">1 — Poor</option></select>'
-    + '<textarea id="s-'+cid+'" rows="2" placeholder="What stood out" style="margin-bottom:9px"></textarea>'
-    + '<textarea id="c-'+cid+'" rows="2" placeholder="Any concerns" style="margin-bottom:10px"></textarea>'
-    + '<button class="btn btn-p" onclick="send('+cid+')">Submit feedback</button>'
-    + '<button class="btn btn-o" style="margin-left:7px" onclick="openForm('+cid+')">Cancel</button>'
-    + '<div id="e-'+cid+'" style="font-size:12px;color:#A32D2D;margin-top:8px"></div>'
+    + '<textarea class="inp" id="s-'+cid+'" rows="2" placeholder="What stood out" aria-label="What stood out"></textarea>'
+    + '<textarea class="inp" id="c-'+cid+'" rows="2" placeholder="Any concerns" aria-label="Any concerns"></textarea>'
+    + '<div class="acts"><button class="btn" onclick="send('+cid+')">Submit feedback</button>'
+    + '<button class="btn o" onclick="openForm('+cid+')">Cancel</button></div>'
+    + '<div id="e-'+cid+'" class="err" role="alert"></div>'
     + '</div>';
   var n = document.getElementById('n-'+cid);
   // Panelists usually review several people in one sitting, so carry the name.
@@ -144,7 +183,7 @@ async function send(cid){
   var err = document.getElementById('e-'+cid);
   if (!g('n')){ err.textContent='Please enter your name.'; return; }
   if (!g('r')){ err.textContent='Please pick a recommendation.'; return; }
-  err.textContent = 'Sending…'; err.style.color = '#888';
+  err.textContent = 'Sending…'; err.style.color = '#5b6475';
   window._lastName = g('n');
   var res;
   try {
@@ -154,24 +193,24 @@ async function send(cid){
         rating: parseInt(g('rt'))||0, strengths:g('s'), concerns:g('c')})
     });
     res = await q.json();
-  } catch(e){ err.style.color='#A32D2D'; err.textContent='Could not send. Please try again.'; return; }
+  } catch(e){ err.style.color='#b42318'; err.textContent='Could not send. Please try again.'; return; }
   if (!res || !res.ok){
-    err.style.color='#A32D2D'; err.textContent=(res && res.error) || 'Could not send. Please try again.'; return;
+    err.style.color='#b42318'; err.textContent=(res && res.error) || 'Could not send. Please try again.'; return;
   }
   SENT[cid] = true;
   render();
 }
 
 (async function(){
-  if (!MID || !TOK){ state('&#128274;','This link is incomplete','Please use the full link you were sent.'); return; }
+  if (!MID || !TOK){ state('lock','This link is incomplete','Please use the full link you were sent.'); return; }
   var r;
   try {
     var q = await fetch('/api/review/'+encodeURIComponent(MID)+'?t='+encodeURIComponent(TOK));
     r = await q.json();
-  } catch(e){ state('&#9888;&#65039;','Could not load','Please refresh in a moment.'); return; }
+  } catch(e){ state('warn','Could not load','Please refresh in a moment.'); return; }
 
   if (!r || !r.ok){
-    state('&#128274;','This link is not valid', (r && r.error) || 'It may have expired. Ask the recruiter for a fresh link.');
+    state('lock','This link is not valid', (r && r.error) || 'It may have expired. Ask the recruiter for a fresh link.');
     return;
   }
   DATA = r;
@@ -180,7 +219,7 @@ async function send(cid){
     (r.label || 'Requisition') + (r.location ? (' · ' + r.location) : '');
 
   if (!(r.candidates||[]).length){
-    state('&#128100;','No candidates to review yet','The recruiter will share profiles here as they are shortlisted.');
+    state('user','No candidates to review yet','The recruiter will share profiles here as they are shortlisted.');
     return;
   }
   document.getElementById('list').innerHTML =

@@ -1231,7 +1231,7 @@ body{font-size:14px !important; line-height:1.5}
         <div><div style="font-size:14px;font-weight:600">Jobs</div><div style="font-size:11px;color:#888;margin-top:1px">All mandates across clients</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-        <button class="btn" onclick="openModal('modal-mandate')" style="background:#2D6FB3;color:#fff;border:none;font-size:12px">&#43; New Job</button>
+        <button class="btn" onclick="openModal('modal-mandate')" style="background:#0f766e;color:#fff;border:none;font-size:12px">&#43; New Job</button>
         <button class="btn btn-o" onclick="jobsRefresh()" style="font-size:11px" title="Refresh pipeline counts">&#8635;</button>
         <button class="btn btn-o" onclick="closeJobs()">&#10005; Close</button>
       </div>
@@ -1687,27 +1687,27 @@ body{font-size:14px !important; line-height:1.5}
      Completely separate from the main ATS. Shown only for
      role === 'freelancer_sourcer'.
 ═══════════════════════════════════════════════════════════════════ -->
-<div id="fl-app" style="display:none;min-height:100vh;background:#F5F6F8;font-family:inherit">
+<div id="fl-app" style="display:none;min-height:100vh;background:#f5f6f8;font-family:inherit">
   <!-- Top bar -->
-  <div style="background:#0A2540;color:#fff;padding:0 24px;height:56px;display:flex;align-items:center;gap:14px">
-    <div style="width:30px;height:30px;border-radius:8px;background:#0F6E56;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800">H</div>
-    <div style="font-size:15px;font-weight:700;letter-spacing:-.01em">HireLab <span style="font-weight:400;color:#9BB0C5">Sourcing</span></div>
-    <div style="margin-left:auto;display:flex;align-items:center;gap:16px">
-      <span id="ntf-bell-slot" data-dark="1"></span>
-      <span id="fl-username" style="font-size:13px;color:#C9D6E3"></span>
-      <button onclick="flLogout()" style="background:rgba(255,255,255,.1);border:none;color:#fff;font-size:12.5px;padding:6px 14px;border-radius:7px;cursor:pointer">Logout</button>
+  <header class="w5-flbar">
+    <span class="lg" aria-hidden="true">HL</span>
+    <div class="nm">HireLab <span>Sourcing</span></div>
+    <div class="r">
+      <span id="ntf-bell-slot"></span>
+      <span id="fl-username" class="u"></span>
+      <button class="w1-btn" onclick="flLogout()">Log out</button>
     </div>
-  </div>
+  </header>
 
   <!-- Tabs -->
-  <div style="background:#fff;border-bottom:1px solid #E4E7EC;padding:0 24px;display:flex;gap:4px">
-    <button id="fl-tab-dash" onclick="flShowTab('dash')" class="fl-tab" style="border:none;background:none;font-size:13.5px;font-weight:600;padding:14px 16px;cursor:pointer;color:#0F6E56;border-bottom:2px solid #0F6E56">Dashboard</button>
-    <button id="fl-tab-cands" onclick="flShowTab('cands')" class="fl-tab" style="border:none;background:none;font-size:13.5px;font-weight:600;padding:14px 16px;cursor:pointer;color:#667085;border-bottom:2px solid transparent">My Candidates</button>
-    <button id="fl-tab-mandates" onclick="flShowTab('mandates')" class="fl-tab" style="border:none;background:none;font-size:13.5px;font-weight:600;padding:14px 16px;cursor:pointer;color:#667085;border-bottom:2px solid transparent">My Mandates</button>
-  </div>
+  <nav class="w5-fltabs" aria-label="Sourcing sections">
+    <button id="fl-tab-dash" onclick="flShowTab('dash')" class="fl-tab on" aria-current="page">Dashboard</button>
+    <button id="fl-tab-cands" onclick="flShowTab('cands')" class="fl-tab">My candidates</button>
+    <button id="fl-tab-mandates" onclick="flShowTab('mandates')" class="fl-tab">My mandates</button>
+  </nav>
 
   <!-- Body -->
-  <div id="fl-body" style="padding:24px;max-width:1100px;margin:0 auto"></div>
+  <main id="fl-body" class="w5-flbody"></main>
 </div>
 
 <script>
@@ -2322,16 +2322,18 @@ function flLogout(){
   req('POST','/auth/logout').then(function(){ location.reload(); });
 }
 
-function flShowTab(tab){
-  _flTab=tab;
+function _flMarkTab(tab){
   ['dash','cands','mandates'].forEach(function(t){
     var b=document.getElementById('fl-tab-'+t);
-    if(b){
-      var on=(t===tab);
-      b.style.color=on?'#0F6E56':'#667085';
-      b.style.borderBottom=on?'2px solid #0F6E56':'2px solid transparent';
-    }
+    if(!b) return;
+    var on=(t===tab);
+    b.classList.toggle('on', on);
+    if(on) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current');
   });
+}
+function flShowTab(tab){
+  _flTab=tab;
+  _flMarkTab(tab);
   if(tab==='dash') flRenderDash();
   else if(tab==='cands') flRenderCands();
   else if(tab==='mandates') flRenderMandates();
@@ -2345,38 +2347,21 @@ async function flRenderDash(){
   if(!r.ok){ body.innerHTML='<div style="color:#D92D20;padding:20px">Failed to load</div>'; return; }
   var s=r.stats||{};
   var u=S.currentUser||{};
-
-  var card=function(label,val,color,bg){
-    return '<div style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;padding:20px 22px">'
-      +'<div style="font-size:12px;color:#667085;font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">'+label+'</div>'
-      +'<div style="font-size:32px;font-weight:800;color:'+color+';line-height:1">'+val+'</div></div>';
-  };
-
-  var html='<div style="margin-bottom:22px">'
-    +'<div style="font-size:22px;font-weight:800;color:#101828;letter-spacing:-.02em">Hello, '+esc(u.display_name||u.username||'')+' &#128075;</div>'
-    +'<div style="font-size:13.5px;color:#667085;margin-top:3px">Your sourcing overview</div></div>';
-
-  html+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px">';
-  html+=card('Total Uploaded', s.uploaded||0, '#101828');
-  html+=card('In Screening', s.screening||0, '#2D6FB3');
-  html+=card('Interested / Shared', s.interested||0, '#0F6E56');
-  html+=card('Placed', s.placed||0, '#8A5A0B');
-  html+='</div>';
-
-  // Assigned mandates count + quick action
-  html+='<div style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;padding:20px 22px;display:flex;align-items:center;gap:16px">'
-    +'<div style="width:44px;height:44px;border-radius:11px;background:#EEF4FF;display:flex;align-items:center;justify-content:center;font-size:20px">&#128188;</div>'
-    +'<div style="flex:1"><div style="font-size:15px;font-weight:700;color:#101828">'+(r.mandate_count||0)+' mandate'+((r.mandate_count||0)!==1?'s':'')+' assigned</div>'
-    +'<div style="font-size:12.5px;color:#667085">You can source candidates on these</div></div>'
-    +'<button onclick="flShowTab(\'mandates\')" class="btn" style="background:#0F6E56;color:#fff;border:none;font-size:12.5px">View Mandates &#8594;</button>'
+  var h=new Date().getHours(), g=h<12?'Good morning':h<17?'Good afternoon':'Good evening';
+  var html='<div class="w5-flhead"><h1>'+g+', '+esc(String(u.display_name||u.username||'').split(' ')[0])+'</h1><p>Your sourcing overview</p></div>';
+  html+='<div class="w3-kpis">'
+    +'<div class="w3-kpi"><div class="l">Total uploaded</div><div class="v">'+(s.uploaded||0)+'</div></div>'
+    +'<div class="w3-kpi"><div class="l">In screening</div><div class="v" style="color:#175cd3">'+(s.screening||0)+'</div></div>'
+    +'<div class="w3-kpi"><div class="l">Interested / shared</div><div class="v" style="color:#0f766e">'+(s.interested||0)+'</div></div>'
+    +'<div class="w3-kpi"><div class="l">Placed</div><div class="v" style="color:#b54708">'+(s.placed||0)+'</div></div>'
     +'</div>';
-
-  // How-to hint
-  html+='<div style="background:#F0F6FF;border:1px solid #D3E4FB;border-radius:12px;padding:16px 18px;margin-top:18px;font-size:12.5px;color:#2D5B8E;line-height:1.6">'
-    +'<b>How to source</b><br>'
-    +'1. Open the Naukri Chrome extension &nbsp; 2. Select your assigned mandate &nbsp; 3. Upload the candidate&#39;s CV.<br>'
-    +'The extension will warn you if the candidate is already on that mandate (duplicate).</div>';
-
+  html+='<section class="w3-card w3-pad w5-flcta"><span class="ic" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 8h18v12H3zM8 8V5h8v3"/></svg></span>'
+    +'<div class="m"><div class="t">'+(r.mandate_count||0)+' mandate'+((r.mandate_count||0)!==1?'s':'')+' assigned</div>'
+    +'<div class="s">You can source candidates on these</div></div>'
+    +'<button class="w1-btn pri" onclick="flShowTab(\'mandates\')">View mandates &#8594;</button></section>';
+  html+='<section class="w5-flhow"><h2>How to source</h2><ol>'
+    +'<li>Open the Naukri Chrome extension.</li><li>Select your assigned mandate.</li><li>Upload the candidate&#39;s CV.</li></ol>'
+    +'<p>The extension warns you if the candidate is already on that mandate (duplicate).</p></section>';
   body.innerHTML=html;
 }
 
@@ -2393,10 +2378,8 @@ async function flRenderCands(){
   if(!r.ok){ body.innerHTML='<div style="color:#D92D20;padding:20px">Failed to load</div>'; return; }
   var cands=r.candidates||[];
 
-  var html='<div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">'
-    +'<div style="font-size:20px;font-weight:800;color:#101828">My Candidates</div>'
-    +'<span style="font-size:12.5px;color:#667085">'+cands.length+' total</span>'
-    +'<select onchange="_flCandMandate=this.value;flRenderCands()" style="margin-left:auto;font-size:12.5px;padding:7px 10px;border:1px solid #D0D5DD;border-radius:8px;background:#fff;color:#344054">'
+  var html='<div class="w5-flhead row"><div><h1>My candidates</h1><p>'+cands.length+' total</p></div>'
+    +'<select class="w3-sel" aria-label="Filter by mandate" onchange="_flCandMandate=this.value;flRenderCands()">'
     +'<option value="">All mandates</option>';
   mandates.forEach(function(m){
     html+='<option value="'+m.id+'"'+(_flCandMandate==String(m.id)?' selected':'')+'>'+esc(m.role)+' @ '+esc(m.client)+'</option>';
@@ -2404,33 +2387,20 @@ async function flRenderCands(){
   html+='</select></div>';
 
   if(!cands.length){
-    html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
-      +'<div style="font-size:32px;margin-bottom:10px">&#128203;</div>'
-      +'<div style="font-size:15px;font-weight:600;color:#101828">No candidates yet</div>'
-      +'<div style="font-size:13px;margin-top:6px;color:#667085">Upload CVs via the Naukri extension.</div></div>';
+    html+='<div class="w3-empty"><div class="t">No candidates yet</div><div class="s">Upload CVs with the Naukri extension and they show up here.</div></div>';
     body.innerHTML=html; return;
   }
 
-  html+='<div style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;overflow:hidden">';
-  html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
-  html+='<thead><tr style="background:#F9FAFB;border-bottom:1px solid #E4E7EC">'
-    +'<th style="padding:11px 14px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Candidate</th>'
-    +'<th style="padding:11px 14px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Contact</th>'
-    +'<th style="padding:11px 14px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Mandate</th>'
-    +'<th style="padding:11px 14px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Stage</th>'
-    +'</tr></thead><tbody>';
+  html+='<div class="w3-card"><div style="overflow-x:auto"><table class="w3-table"><thead><tr><th>Candidate</th><th>Contact</th><th>Mandate</th><th>Stage</th></tr></thead><tbody>';
   cands.forEach(function(c){
-    var stg=_flStageBadge(c.stage);
-    html+='<tr style="border-bottom:1px solid #F2F4F7">'
-      +'<td style="padding:12px 14px"><div style="font-size:13px;font-weight:600;color:#101828">'+esc(c.name)+'</div>'
-      +(c.designation||c.company?'<div style="font-size:11px;color:#667085">'+esc(c.designation||'')+(c.company?' &middot; '+esc(c.company):'')+'</div>':'')
-      +(c.experience?'<div style="font-size:11px;color:#98A2B3">'+c.experience+' yrs exp</div>':'')+'</td>'
-      +'<td style="padding:12px 14px;font-size:12px;color:#475467">'
-      +(c.phone?'&#128222; '+esc(c.phone)+'<br>':'')
-      +(c.email?'<span style="color:#667085">&#9993; '+esc(c.email)+'</span>':'')+'</td>'
-      +'<td style="padding:12px 14px;font-size:12px;color:#475467">'+esc(c.mandate_role||'')+(c.mandate_client?'<br><span style="color:#98A2B3">'+esc(c.mandate_client)+'</span>':'')+'</td>'
-      +'<td style="padding:12px 14px">'+stg+'</td>'
-      +'</tr>';
+    html+='<tr>'
+      +'<td><div style="font-weight:600">'+esc(c.name)+'</div>'
+      +(c.designation||c.company?'<div class="sub">'+esc(c.designation||'')+(c.company?' &middot; '+esc(c.company):'')+'</div>':'')
+      +(c.experience?'<div class="sub">'+c.experience+' yrs exp</div>':'')+'</td>'
+      +'<td class="mu">'+(c.phone?'<a href="tel:'+esc(String(c.phone).replace(/[^\d+]/g,''))+'" style="color:inherit;text-decoration:none">'+esc(c.phone)+'</a>':'')
+      +(c.email?'<div class="sub">'+esc(c.email)+'</div>':'')+'</td>'
+      +'<td class="mu">'+esc(c.mandate_role||'')+(c.mandate_client?'<div class="sub">'+esc(c.mandate_client)+'</div>':'')+'</td>'
+      +'<td>'+_flStageBadge(c.stage)+'</td></tr>';
   });
   html+='</tbody></table></div></div>';
   body.innerHTML=html;
@@ -2440,6 +2410,9 @@ function _flStageBadge(stage){
   var s=stage||'';
   var map={
     'Placed':['#ECFDF3','#0F6E56'],
+    'Joined':['#ECFDF3','#0F6E56'],
+    'Offer Accepted':['#ECFDF3','#0F6E56'],
+    'Called':['#FFFAEB','#B54708'],
     'Interested':['#ECFDF3','#0F6E56'],
     'Shared with Client':['#EEF4FF','#2D6FB3'],
     'Interview Inprocess':['#EEF4FF','#2D6FB3'],
@@ -2452,7 +2425,7 @@ function _flStageBadge(stage){
     'Follow Up 2':['#FFFAEB','#B54708']
   };
   var c=map[s]||['#F2F4F7','#475467'];
-  return '<span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:6px;background:'+c[0]+';color:'+c[1]+'">'+esc(s||'—')+'</span>';
+  return '<span class="w3-pill" style="background:'+c[0]+';color:'+c[1]+'">'+esc(s||'—')+'</span>';
 }
 
 // ─── My Mandates ───────────────────────────────────────────────────────
@@ -2462,37 +2435,20 @@ async function flRenderMandates(){
   var r=await req('GET','/freelancer/my-mandates');
   if(!r.ok){ body.innerHTML='<div style="color:#D92D20;padding:20px">Failed to load</div>'; return; }
   var mandates=r.mandates||[];
-
-  var html='<div style="font-size:20px;font-weight:800;color:#101828;margin-bottom:6px">My Assigned Mandates</div>'
-    +'<div style="font-size:13px;color:#667085;margin-bottom:18px">You can only source candidates on these mandates</div>';
-
+  var html='<div class="w5-flhead"><h1>My assigned mandates</h1><p>You can only source candidates on these mandates</p></div>';
   if(!mandates.length){
-    html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
-      +'<div style="font-size:32px;margin-bottom:10px">&#128188;</div>'
-      +'<div style="font-size:15px;font-weight:600;color:#101828">No mandates assigned yet</div>'
-      +'<div style="font-size:13px;margin-top:6px;color:#667085">The admin will assign mandates to you, and they will appear here.</div></div>';
+    html+='<div class="w3-empty"><div class="t">No mandates assigned yet</div><div class="s">The admin assigns mandates to you, and they appear here.</div></div>';
     body.innerHTML=html; return;
   }
-
-  html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px">';
+  html+='<div class="w5-flgrid">';
   mandates.forEach(function(m){
-    var stC=m.status==='active'?'#0F6E56':'#98A2B3';
-    var stBg=m.status==='active'?'#ECFDF3':'#F2F4F7';
-    html+='<div onclick="flOpenPipeline('+m.id+')" style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;padding:18px;cursor:pointer;transition:box-shadow .12s,transform .12s" '
-      +'onmouseover="this.style.boxShadow=\'0 4px 14px rgba(16,24,40,.08)\';this.style.transform=\'translateY(-1px)\'" '
-      +'onmouseout="this.style.boxShadow=\'\';this.style.transform=\'\'">'
-      +'<div style="display:flex;align-items:flex-start;gap:12px">'
-      +'<div style="width:40px;height:40px;border-radius:10px;background:#EEF4FF;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">&#128188;</div>'
-      +'<div style="flex:1;min-width:0"><div style="font-size:14.5px;font-weight:700;color:#101828">'+esc(m.role)+'</div>'
-      +'<div style="font-size:12.5px;color:#667085;margin-top:1px">'+esc(m.client)+(m.location?' &middot; '+esc(m.location):'')+'</div></div>'
-      +'<span style="font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:6px;background:'+stBg+';color:'+stC+'">'+esc(m.status||'active')+'</span>'
-      +'</div>'
-      +'<div style="margin-top:14px;padding-top:14px;border-top:1px solid #F2F4F7;display:flex;align-items:center;justify-content:space-between">'
-      +'<span style="font-size:12.5px;color:#667085">Sourced by you</span>'
-      +'<span style="font-size:20px;font-weight:800;color:#0F6E56">'+(m.my_sourced||0)+'</span>'
-      +'</div>'
-      +'<div style="margin-top:10px;font-size:11.5px;color:#2D6FB3;font-weight:600">View pipeline &#8594;</div>'
-      +'</div>';
+    var act=(m.status||'active')==='active';
+    html+='<button class="w3-card w5-flm" onclick="flOpenPipeline('+m.id+')">'
+      +'<div class="h"><div class="m"><div class="t">'+esc(m.role)+'</div>'
+      +'<div class="s">'+esc(m.client||'')+(m.location?' &middot; '+esc(m.location):'')+'</div></div>'
+      +'<span class="w3-pill '+(act?'paid':'draft')+'">'+esc(m.status||'active')+'</span></div>'
+      +'<div class="f"><span>Sourced by you</span><b>'+(m.my_sourced||0)+'</b></div>'
+      +'<div class="go">View pipeline &#8594;</div></button>';
   });
   html+='</div>';
   body.innerHTML=html;
@@ -2500,6 +2456,7 @@ async function flRenderMandates(){
 
 // ─── Freelancer Pipeline (Kanban) — own candidates only ────────────────
 async function flOpenPipeline(mandateId){
+  _flTab='mandates'; _flMarkTab('mandates');   // was left on Dashboard
   var body=document.getElementById('fl-body');
   body.innerHTML='<div class="loading"><div class="spinner"></div>Loading pipeline...</div>';
   // Load this mandate's info + my candidates on it
@@ -2520,21 +2477,15 @@ async function flOpenPipeline(mandateId){
   });
 
   // Header
-  var html='<div style="margin-bottom:18px">'
-    +'<button onclick="flShowTab(\'mandates\')" style="background:none;border:none;color:#2D6FB3;font-size:12.5px;cursor:pointer;padding:0;margin-bottom:8px">&#8592; My Mandates</button>'
-    +'<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
-    +'<div style="font-size:20px;font-weight:800;color:#101828">'+(mandate?esc(mandate.role):'Pipeline')+'</div>'
-    +(mandate?'<span style="font-size:13px;color:#667085">'+esc(mandate.client||'')+(mandate.location?' &middot; '+esc(mandate.location):'')+'</span>':'')
-    +(mandate&&mandate.jd?'<button onclick="flViewJD('+mandateId+')" class="btn btn-o" style="font-size:11.5px;margin-left:auto">&#128196; View JD</button>':'')
-    +'</div>'
-    +'<div style="font-size:12.5px;color:#667085;margin-top:3px">'+cands.length+' candidate'+(cands.length!==1?'s':'')+' sourced by you &middot; showing your candidates only</div>'
-    +'</div>';
+  var html='<div class="w5-flhead">'
+    +'<nav class="w3-crumb" aria-label="Breadcrumb"><a href="#" onclick="event.preventDefault();flShowTab(\'mandates\')">My mandates</a><span>/</span><b>'+(mandate?esc(mandate.role):'Pipeline')+'</b></nav>'
+    +'<div class="row"><div><h1>'+(mandate?esc(mandate.role):'Pipeline')+'</h1>'
+    +'<p>'+(mandate?esc(mandate.client||'')+(mandate.location?' &middot; '+esc(mandate.location):'')+' &middot; ':'')+cands.length+' candidate'+(cands.length!==1?'s':'')+' sourced by you (only yours are shown)</p></div>'
+    +(mandate&&mandate.jd?'<button onclick="flViewJD('+mandateId+')" class="w1-btn">View JD</button>':'')
+    +'</div></div>';
 
   if(!cands.length){
-    html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
-      +'<div style="font-size:32px;margin-bottom:10px">&#128203;</div>'
-      +'<div style="font-size:15px;font-weight:600;color:#101828">No candidates yet</div>'
-      +'<div style="font-size:13px;margin-top:6px;color:#667085">Upload CVs for this mandate via the Naukri extension.</div></div>';
+    html+='<div class="w3-empty"><div class="t">No candidates yet</div><div class="s">Upload CVs for this mandate with the Naukri extension.</div></div>';
     body.innerHTML=html; return;
   }
 
@@ -2557,8 +2508,8 @@ async function flOpenPipeline(mandateId){
         +(c.designation||c.company?'<div style="font-size:11px;color:#667085;margin-top:2px">'+esc(c.designation||'')+(c.company?' &middot; '+esc(c.company):'')+'</div>':'')
         +(c.experience?'<div style="font-size:11px;color:#98A2B3;margin-top:1px">'+c.experience+' yrs exp</div>':'')
         +'<div style="font-size:11.5px;color:#475467;margin-top:8px;padding-top:8px;border-top:1px solid #F2F4F7">'
-        +(c.phone?'&#128222; '+esc(c.phone):'')
-        +(c.email?'<br><span style="color:#667085">&#9993; '+esc(c.email)+'</span>':'')+'</div>'
+        +(c.phone?esc(c.phone):'')
+        +(c.email?'<br><span style="color:#667085">'+esc(c.email)+'</span>':'')+'</div>'
         +'</div>';
     });
     html+='</div></div>';
@@ -17129,7 +17080,7 @@ async function openClientForm(clientId){
     +'<div><label class="la-lbl">Notes</label><textarea id="cf-notes" class="inp" rows="2" style="width:100%">'+esc(client.notes||'')+'</textarea></div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
     +'<button class="btn btn-o" onclick="_waCloseModal()" style="font-size:11px">Cancel</button>'
-    +'<button class="btn" onclick="saveClient('+(clientId||'null')+')" style="background:#2D6FB3;color:#fff;border:none;font-size:11px">'+(isEdit?'Save Changes':'Add '+esc(T('client','Client')))+'</button>'
+    +'<button class="btn" onclick="saveClient('+(clientId||'null')+')" style="background:#0f766e;color:#fff;border:none;font-size:11px">'+(isEdit?'Save Changes':'Add '+esc(T('client','Client')))+'</button>'
     +'</div></div>';
   _waOpenModal(isEdit?('Edit '+T('client','Client')):('Add New '+T('client','Client')), inner);
   cfLoadGstRows(clientId, client);
@@ -17691,7 +17642,7 @@ async function openContactForm(clientId, contactId){
     +'<div><label class="la-lbl">Notes</label><textarea id="ctf-notes" class="inp" rows="2" style="width:100%">'+esc(ct.notes||'')+'</textarea></div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
     +'<button class="btn btn-o" onclick="_waCloseModal()" style="font-size:11px">Cancel</button>'
-    +'<button class="btn" onclick="saveContact('+clientId+','+(contactId||'null')+')" style="background:#2D6FB3;color:#fff;border:none;font-size:11px">'+(isEdit?'Save':'Add Contact')+'</button>'
+    +'<button class="btn" onclick="saveContact('+clientId+','+(contactId||'null')+')" style="background:#0f766e;color:#fff;border:none;font-size:11px">'+(isEdit?'Save':'Add Contact')+'</button>'
     +'</div></div>';
   _waOpenModal(isEdit?'Edit Contact':'Add Contact', inner);
 }
@@ -24325,6 +24276,45 @@ document.addEventListener('mousedown',function(e){
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', go); else go();
 })();
 </script>
+<style id="w5-style">
+/* ═══ Wave 5: freelancer sourcing app (+ mobile pass rules) ═══ */
+.w5-flbar{display:flex;align-items:center;gap:10px;height:60px;padding:0 24px;background:#fff;border-bottom:1px solid var(--line)}
+.w5-flbar .lg{width:34px;height:34px;border-radius:9px;background:#0f766e;color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;flex:none}
+.w5-flbar .nm{font-size:15.5px;font-weight:700;color:var(--ink)}.w5-flbar .nm span{font-weight:500;color:var(--muted)}
+.w5-flbar .r{margin-left:auto;display:flex;align-items:center;gap:12px}
+.w5-flbar .u{font-size:13.5px;color:#334155;font-weight:500}
+.w5-fltabs{display:flex;gap:22px;padding:0 24px;background:#fff;border-bottom:1px solid var(--line);overflow-x:auto}
+.w5-fltabs .fl-tab{border:0;background:none;padding:12px 0;font-size:14px;color:#475063;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;font-family:inherit}
+.w5-fltabs .fl-tab.on{color:var(--ink);font-weight:600;border-bottom-color:#0f766e}
+.w5-flbody{padding:22px 24px 48px;max-width:1100px;margin:0 auto;box-sizing:border-box}
+.w5-flhead{margin-bottom:16px}
+.w5-flhead h1{margin:0;font-size:22px;font-weight:700;color:var(--ink);letter-spacing:-.2px}
+.w5-flhead p{margin:3px 0 0;font-size:13.5px;color:var(--muted)}
+.w5-flhead.row,.w5-flhead .row{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;justify-content:space-between}
+.w5-flcta{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.w5-flcta .ic{width:42px;height:42px;border-radius:11px;background:#ecfdf5;color:#0f766e;display:flex;align-items:center;justify-content:center;flex:none}
+.w5-flcta .m{flex:1;min-width:180px}.w5-flcta .t{font-size:15px;font-weight:700;color:var(--ink)}.w5-flcta .s{font-size:13px;color:var(--muted)}
+.w5-flhow{background:#f0fdfa;border:1px solid #b6dcd6;border-radius:14px;padding:14px 18px;color:#134e4a;font-size:14px;line-height:1.6}
+.w5-flhow h2{margin:0 0 4px;font-size:14.5px;font-weight:700}
+.w5-flhow ol{margin:0 0 4px;padding-left:20px}
+.w5-flhow p{margin:0}
+.w5-flgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.w5-flm{text-align:left;padding:16px 18px;cursor:pointer;font-family:inherit;display:block;width:100%;transition:border-color .15s,box-shadow .15s}
+.w5-flm:hover{border-color:#99d5cc;box-shadow:0 6px 18px rgba(15,23,42,.06)}
+.w5-flm .h{display:flex;gap:10px;align-items:flex-start}.w5-flm .m{flex:1;min-width:0}
+.w5-flm .t{font-size:15px;font-weight:700;color:var(--ink)}.w5-flm .s{font-size:13px;color:var(--muted);margin-top:1px}
+.w5-flm .f{display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid #f2f4f7;font-size:13px;color:var(--muted)}
+.w5-flm .f b{font-size:20px;color:#0f766e}
+.w5-flm .go{margin-top:8px;font-size:13px;font-weight:600;color:#0f766e}
+@media (max-width:760px){
+  .w5-flbar{padding:0 12px;height:56px}.w5-flbar .u{display:none}
+  .w5-fltabs{padding:0 12px;gap:18px}
+  .w5-flbody{padding:14px 12px 40px}
+  .w5-flgrid{grid-template-columns:1fr}
+  /* pipeline toolbar scrolls sideways on phones; give the filter box room to type */
+  .mob-pl-bar .w1-plq{min-width:200px;flex:0 0 auto}
+}
+</style>
 <style id="mob-style">
 #mob-nav,#mob-brand,#mob-pl-chips,#mob-cp-bar,#mob-scrim{display:none}
 @media (max-width:760px){
