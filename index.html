@@ -920,7 +920,7 @@ body{font-size:14px !important; line-height:1.5}
   </div>
   <div id="settings-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
-      <div style="font-size:14px;font-weight:500">&#9881; App Settings</div>
+      <div><div style="font-size:14px;font-weight:600">Settings</div><div style="font-size:11px;color:#888;margin-top:1px">Your account, workspace setup, messages and automation</div></div>
       <button class="btn btn-o" onclick="toggleSettings()">&#10005; Close</button>
     </div>
     <div class="settings-body" id="settings-body"></div>
@@ -1020,7 +1020,7 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:28px;height:28px;border-radius:6px;background:#FBEDE4;display:flex;align-items:center;justify-content:center;font-size:14px">&#128202;</div>
-        <div><div style="font-size:14px;font-weight:600">Super Admin Panel</div><div style="font-size:11px;color:#888;margin-top:1px">Team overview, account approvals &amp; view-as</div></div>
+        <div><div style="font-size:14px;font-weight:600">Admin</div><div style="font-size:11px;color:#888;margin-top:1px">Tenants, account approvals, billing and API spend</div></div>
       </div>
       <div style="margin-left:auto"><button class="btn btn-o" onclick="closeAdmin()">&#10005; Close</button></div>
     </div>
@@ -2840,32 +2840,40 @@ async function ntfTogglePanel(force){
 function ntfRenderPanel(){
   var p = document.getElementById('ntf-panel');
   if (!p) return;
-  var items = _ntf.history || [];
+  p.setAttribute('role','dialog'); p.setAttribute('aria-label','Notifications');
+  var all = _ntf.history || [];
+  var unreadN = all.filter(function(x){ return !x.read_at; }).length;
+  var f = _ntf.filter || 'all';
+  if (f === 'unread' && !unreadN) f = 'all';
+  var items = f === 'unread' ? all.filter(function(x){ return !x.read_at; }) : all;
   var canDesk = (typeof Notification !== 'undefined') && Notification.permission !== 'granted';
-  var h = '<div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid #F2F4F7">'
-    + '<div style="font-size:14px;font-weight:700;color:#101828">Notifications</div>'
-    + (items.some(function(x){ return !x.read_at; }) ? '<button class="ntf-btn" style="margin-left:auto;background:#F2F4F7;color:#344054;font-size:11px;padding:5px 10px" onclick="ntfReadAll()">Mark all read</button>' : '<span style="margin-left:auto"></span>')
-    + '<button onclick="ntfTogglePanel(false)" style="background:none;border:none;font-size:18px;color:#98A2B3;cursor:pointer;padding:0 2px">&times;</button>'
-    + '</div>';
+  var tab = function(k, l){ var on = f === k; return '<button class="' + (on ? 'on' : '') + '" aria-pressed="' + on + '" onclick="_ntf.filter=\'' + k + '\';ntfRenderPanel()">' + l + '</button>'; };
+  var h = '<div class="w4-nh"><h2>Notifications</h2>'
+    + (unreadN ? '<button class="w4-nlink" onclick="ntfReadAll()">Mark all read</button>' : '<span style="margin-left:auto"></span>')
+    + '<button class="w4-nx" onclick="ntfTogglePanel(false)" aria-label="Close notifications">&times;</button></div>'
+    + '<div class="w4-ntabs">' + tab('all', 'All') + tab('unread', 'Unread' + (unreadN ? ' <b>' + unreadN + '</b>' : '')) + '</div>';
   if (canDesk) {
-    h += '<div style="padding:9px 16px;background:#FFFAEB;font-size:11.5px;color:#93370D;display:flex;align-items:center;gap:8px">'
-      + '<span>Get alerts even when this tab is in the background.</span>'
-      + '<button class="ntf-btn" style="margin-left:auto;background:#B54708;color:#fff;font-size:11px;padding:5px 10px" onclick="ntfEnableDesktop()">Enable</button></div>';
+    h += '<div class="w4-ndesk"><span>Get alerts even when this tab is in the background.</span>'
+      + '<button class="w1-btn" onclick="ntfEnableDesktop()">Enable</button></div>';
   }
-  h += '<div style="overflow:auto;flex:1">';
+  h += '<div class="w4-nlist">';
   if (!items.length) {
-    h += '<div style="padding:40px 20px;text-align:center;color:#98A2B3;font-size:13px">No notifications yet</div>';
+    h += '<div class="w4-nempty">' + (f === 'unread' ? 'You are all caught up.' : 'No notifications yet') + '</div>';
   }
+  var today = new Date(); today.setHours(0,0,0,0);
+  var lastGrp = '';
   items.forEach(function(n){
     var m = _ntfMeta(n);
-    h += '<div onclick="ntfOpen(' + n.id + ')" style="padding:11px 16px;border-bottom:1px solid #F2F4F7;cursor:pointer;display:flex;gap:10px;background:' + (n.read_at ? '#fff' : '#F5F9FF') + '">'
-      + '<div style="font-size:17px;line-height:1.2">' + m.icon + '</div>'
-      + '<div style="flex:1;min-width:0">'
-      +   '<div style="font-size:12.5px;font-weight:' + (n.read_at ? '500' : '700') + ';color:#101828;line-height:1.35">' + esc(n.title) + '</div>'
-      +   '<div style="font-size:11.5px;line-height:1.4;margin-top:2px">' + _ntfBodyHtml(n.body, 3) + '</div>'
-      +   '<div style="font-size:10.5px;color:#98A2B3;margin-top:4px">' + _ntfAgo(n.updated_at || n.created_at) + '</div>'
-      + '</div>'
-      + (n.read_at ? '' : '<span style="width:8px;height:8px;border-radius:50%;background:#2D6FB3;margin-top:5px;flex-shrink:0"></span>')
+    var ds = String(n.updated_at || n.created_at || '').replace(' ', 'T');
+    var d = ds ? new Date(ds) : null;
+    var grp = (d && !isNaN(d) && d >= today) ? 'Today' : 'Earlier';
+    if (grp !== lastGrp) { h += '<div class="w4-ngrp">' + grp + '</div>'; lastGrp = grp; }
+    h += '<div role="button" tabindex="0" class="w4-nrow' + (n.read_at ? '' : ' un') + '" onclick="ntfOpen(' + n.id + ')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();ntfOpen(' + n.id + ')}">'
+      + '<span class="ic" style="background:' + m.bg + ';color:' + m.color + '">' + m.icon + '</span>'
+      + '<div class="b"><div class="t">' + esc(n.title) + '</div>'
+      + '<div class="x">' + _ntfBodyHtml(n.body, 3) + '</div>'
+      + '<div class="w">' + m.label + ' &middot; ' + _ntfAgo(n.updated_at || n.created_at) + '</div></div>'
+      + (n.read_at ? '' : '<span class="dot" aria-label="Unread"></span>')
       + '</div>';
   });
   h += '</div>';
@@ -2897,60 +2905,84 @@ function showAuthScreen(mode) {
             : isSignup ? 'Request an account'
             : isForgot ? 'Reset your password'
             : isReset  ? 'Set a new password'
-            : 'Sign in to continue';
+            : 'Sign in';
+  var lead = isSetup ? 'This first account becomes the admin and owns all existing data.'
+           : isSignup ? 'Tell us who you are. An admin reviews every request.'
+           : isForgot ? 'Enter your username or email and we will send a reset link.'
+           : isReset  ? 'Choose a new password for your account.'
+           : 'Welcome back. Sign in to your workspace.';
   var ov = document.createElement('div');
   ov.id = 'auth-overlay';
-  ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:linear-gradient(135deg,#0E2A47,#16395E);display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.className = 'w4-auth';
 
-  var h = '<div style="background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);width:100%;max-width:380px;padding:32px">'
-    + '<div style="text-align:center;margin-bottom:24px">'
-    + '<div style="font-size:22px;font-weight:800;color:#0E2A47;letter-spacing:-0.5px">HireLab Screener</div>'
-    + '<div style="font-size:12px;color:#8A92A0;margin-top:4px">' + title + '</div>'
-    + '</div>';
+  var F = function(id, label, type, ac, extra){
+    var pw = type === 'password';
+    return '<label class="w4-af" for="' + id + '"><span>' + label + '</span>'
+      + '<span class="w4-ain"><input class="inp" id="' + id + '" type="' + (type||'text') + '"' + (ac ? ' autocomplete="' + ac + '"' : '') + (extra||'') + '>'
+      + (pw ? '<button type="button" class="w4-eye" aria-label="Show password" onclick="_authEye(this)">Show</button>' : '')
+      + '</span></label>';
+  };
+  var enter = function(m){ return ' onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;' + m + '&#39;)"'; };
+  var h = '<aside class="w4-abrand" aria-hidden="true"><div class="lg"><span>HL</span>HireLab Screener</div>'
+    + '<div class="tag">Recruitment, end to end.</div>'
+    + '<ul><li>Mandates, pipeline and candidate profiles in one place</li><li>AI screening, call analysis and outreach</li><li>Clients, BD and GST invoicing for agencies</li></ul></aside>'
+    + '<main class="w4-amain"><div id="auth-card" class="w4-acard" role="form" aria-labelledby="auth-title">'
+    + '<div class="w4-alg"><span>HL</span>HireLab Screener</div>'
+    + '<h1 id="auth-title">' + title + '</h1><p class="lead">' + lead + '</p>';
 
   if (isReset) {
-    h += '<input class="inp" id="auth-pass" type="password" placeholder="New password" autocomplete="new-password" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;reset&#39;)">'
-      + '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">At least 8 characters</div>'
-      + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="submitAuth(&#39;reset&#39;)">Set new password</button>';
+    h += F('auth-pass','New password','password','new-password', enter('reset'))
+      + '<div class="w4-ahint">At least 8 characters</div>'
+      + '<button class="w4-abtn" onclick="submitAuth(&#39;reset&#39;)">Set new password</button>';
   } else if (isForgot) {
-    h += '<input class="inp" id="auth-user" placeholder="Your username or email" autocomplete="username" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;forgot&#39;)">'
-      + '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">We&#39;ll email you a reset link (valid 1 hour).</div>'
-      + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="submitAuth(&#39;forgot&#39;)">Send reset link</button>';
+    h += F('auth-user','Username or email','text','username', enter('forgot'))
+      + '<div class="w4-ahint">The link is valid for 1 hour.</div>'
+      + '<button class="w4-abtn" onclick="submitAuth(&#39;forgot&#39;)">Send reset link</button>';
   } else {
-    h += (isSetup ? '<input class="inp" id="auth-display" placeholder="Your name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
-      + (isSignup ? '<input class="inp" id="auth-display" placeholder="Your name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
-      + (isSignup ? '<input class="inp" id="auth-company" placeholder="Agency / company name" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
-      + (isSignup ? '<input class="inp" id="auth-email" type="email" placeholder="Email (for password reset)" autocomplete="email" style="margin-bottom:10px;width:100%;box-sizing:border-box">' : '')
-      + '<input class="inp" id="auth-user" placeholder="Username" autocomplete="username" style="margin-bottom:10px;width:100%;box-sizing:border-box">'
-      + '<input class="inp" id="auth-pass" type="password" placeholder="Password" autocomplete="' + (isSetup||isSignup?'new-password':'current-password') + '" style="margin-bottom:6px;width:100%;box-sizing:border-box" onkeydown="if(event.key===&#39;Enter&#39;)submitAuth(&#39;'+mode+'&#39;)">'
-      + ((isSetup||isSignup) ? '<div style="font-size:10.5px;color:#8A92A0;margin-bottom:14px">Password must be at least 8 characters</div>' : '<div style="height:14px"></div>')
-      + (isSignup ? '<label style="display:flex;gap:8px;align-items:flex-start;font-size:11px;color:#5A6472;margin-bottom:14px;cursor:pointer"><input type="checkbox" id="auth-terms" style="margin-top:2px;flex-shrink:0"><span>I agree to the <a href="/terms" target="_blank" style="color:#13A37E;text-decoration:none">Terms of Service</a> and <a href="/privacy" target="_blank" style="color:#13A37E;text-decoration:none">Privacy Policy</a>.</span></label>' : '')
-      + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="submitAuth(&#39;'+mode+'&#39;)">' + (isSetup ? 'Create Admin & Continue' : (isSignup ? 'Request Account' : 'Sign In')) + '</button>';
+    h += ((isSetup || isSignup) ? F('auth-display','Your name','text','name') : '')
+      + (isSignup ? F('auth-company','Agency / company name','text','organization') : '')
+      + (isSignup ? F('auth-email','Email (for password reset)','email','email') : '')
+      + F('auth-user','Username','text','username')
+      + F('auth-pass','Password','password', (isSetup||isSignup) ? 'new-password' : 'current-password', enter(mode))
+      + ((isSetup||isSignup) ? '<div class="w4-ahint">At least 8 characters</div>' : '<div class="w4-afg"><a href="#" onclick="showAuthScreen(&#39;forgot&#39;);return false">Forgot password?</a></div>')
+      + (isSignup ? '<label class="w4-aterms"><input type="checkbox" id="auth-terms"><span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a>.</span></label>' : '')
+      + '<button class="w4-abtn" onclick="submitAuth(&#39;'+mode+'&#39;)">' + (isSetup ? 'Create admin &amp; continue' : (isSignup ? 'Request account' : 'Sign in')) + '</button>';
   }
 
-  h += '<div id="auth-err" style="color:#C0522B;font-size:12px;margin-top:12px;text-align:center;min-height:16px"></div>';
+  h += '<div id="auth-err" class="w4-aerr" role="alert" aria-live="polite"></div>';
 
   if (isForgot || isReset) {
-    h += '<div style="text-align:center;margin-top:14px;font-size:12px;color:#8A92A0"><a href="#" onclick="showAuthScreen(&#39;login&#39;);return false" style="color:#13A37E;font-weight:600;text-decoration:none">Back to sign in</a></div>';
+    h += '<div class="w4-aalt"><a href="#" onclick="showAuthScreen(&#39;login&#39;);return false">Back to sign in</a></div>';
   } else if (isSetup) {
-    h += '<div style="font-size:10.5px;color:#A0A0A0;margin-top:16px;text-align:center;line-height:1.5">This is the first account. It will be the <b>admin</b> and own all existing data. You can add team members later.</div>';
+    h += '<div class="w4-anote">You can add team members after this.</div>';
   } else {
-    h += '<div style="text-align:center;margin-top:14px;font-size:12px;color:#8A92A0">'
+    h += '<div class="w4-aalt">'
       + (isSignup
-          ? 'Already have an account? <a href="#" onclick="showAuthScreen(&#39;login&#39;);return false" style="color:#13A37E;font-weight:600;text-decoration:none">Sign in</a>'
-          : 'New here? <a href="#" onclick="showAuthScreen(&#39;signup&#39;);return false" style="color:#13A37E;font-weight:600;text-decoration:none">Request an account</a>')
+          ? 'Already have an account? <a href="#" onclick="showAuthScreen(&#39;login&#39;);return false">Sign in</a>'
+          : 'New here? <a href="#" onclick="showAuthScreen(&#39;signup&#39;);return false">Request an account</a>')
       + '</div>';
-    if (!isSignup) {
-      h += '<div style="text-align:center;margin-top:8px;font-size:12px"><a href="#" onclick="showAuthScreen(&#39;forgot&#39;);return false" style="color:#8A92A0;text-decoration:none">Forgot password?</a></div>';
-    }
-    if (isSignup) {
-      h += '<div style="font-size:10.5px;color:#A0A0A0;margin-top:12px;text-align:center;line-height:1.5">Your request will be reviewed by an admin. You will be able to sign in once approved.</div>';
-    }
+    if (isSignup) h += '<div class="w4-anote">You can sign in as soon as an admin approves the request.</div>';
   }
-  h += '</div>';
+  h += '</div></main>';
   ov.innerHTML = h;
   document.body.appendChild(ov);
   setTimeout(function(){ var fid = isReset ? 'auth-pass' : ((isSetup||isSignup)?'auth-display':'auth-user'); var f=document.getElementById(fid); if(f) f.focus(); }, 100);
+}
+function _authEye(btn){
+  var i = btn.previousElementSibling; if (!i) return;
+  var show = i.type === 'password';
+  i.type = show ? 'text' : 'password';
+  btn.textContent = show ? 'Hide' : 'Show';
+  btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+}
+// Replaces the auth card with a short result message (sent / updated / requested).
+function _authDone(kind, title, text, btn){
+  var o = document.getElementById('auth-overlay'); if (!o) return;
+  var card = o.querySelector('#auth-card') || o.querySelector('div');
+  var ic = {mail:'M3 5h18v14H3zM3 7l9 6 9-6', ok:'M5 12l5 5L20 7', wait:'M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z'}[kind] || 'M5 12l5 5L20 7';
+  card.innerHTML = '<div class="w4-adone"><span class="ic"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + ic + '"/></svg></span>'
+    + '<h1 id="auth-title">' + title + '</h1><p class="lead">' + text + '</p>'
+    + '<button class="w4-abtn" onclick="showAuthScreen(&#39;login&#39;)">' + btn + '</button></div>';
 }
 
 
@@ -2962,14 +2994,7 @@ async function submitAuth(mode) {
     if (!idv) { err.textContent = 'Enter your username or email'; return; }
     err.textContent = 'Sending...';
     await req('POST', '/auth/forgot', { identifier: idv });
-    var of = document.getElementById('auth-overlay');
-    if (of) { of.querySelector('div').innerHTML =
-      '<div style="text-align:center;padding:8px 0">'
-      + '<div style="font-size:36px;margin-bottom:10px">&#128231;</div>'
-      + '<div style="font-size:16px;font-weight:700;color:#0E2A47;margin-bottom:8px">Check your email</div>'
-      + '<div style="font-size:12.5px;color:#8A92A0;line-height:1.5;margin-bottom:20px">If an account matches, a password reset link has been sent. It is valid for 1 hour.</div>'
-      + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="showAuthScreen(&#39;login&#39;)">Back to Sign In</button>'
-      + '</div>'; }
+    _authDone('mail', 'Check your email', 'If an account matches, a password reset link has been sent. It is valid for 1 hour.', 'Back to sign in');
     return;
   }
 
@@ -2981,14 +3006,7 @@ async function submitAuth(mode) {
     if (rr.ok) {
       try { history.replaceState(null, '', location.pathname); } catch(e){}
       window._resetToken = null;
-      var orr = document.getElementById('auth-overlay');
-      if (orr) { orr.querySelector('div').innerHTML =
-        '<div style="text-align:center;padding:8px 0">'
-        + '<div style="font-size:36px;margin-bottom:10px">&#9989;</div>'
-        + '<div style="font-size:16px;font-weight:700;color:#0E2A47;margin-bottom:8px">Password updated</div>'
-        + '<div style="font-size:12.5px;color:#8A92A0;line-height:1.5;margin-bottom:20px">Your password has been changed. You can sign in now.</div>'
-        + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="showAuthScreen(&#39;login&#39;)">Go to Sign In</button>'
-        + '</div>'; }
+      _authDone('ok', 'Password updated', 'Your password has been changed. You can sign in now.', 'Go to sign in');
     } else { err.textContent = rr.error || 'Failed'; }
     return;
   }
@@ -3017,16 +3035,7 @@ async function submitAuth(mode) {
   var r = await req('POST', endpoint, payload);
   if (r.ok) {
     if (mode === 'signup' && r.pending) {
-      var o = document.getElementById('auth-overlay');
-      if (o) {
-        o.querySelector('div').innerHTML =
-          '<div style="text-align:center;padding:8px 0">'
-          + '<div style="font-size:36px;margin-bottom:10px">&#9203;</div>'
-          + '<div style="font-size:16px;font-weight:700;color:#0E2A47;margin-bottom:8px">Request submitted</div>'
-          + '<div style="font-size:12.5px;color:#8A92A0;line-height:1.5;margin-bottom:20px">Your account is awaiting admin approval. You will be able to sign in as soon as it is approved.</div>'
-          + '<button class="btn btn-g" style="width:100%;justify-content:center;padding:11px;font-size:14px;background:#13A37E" onclick="showAuthScreen(&#39;login&#39;)">Back to Sign In</button>'
-          + '</div>';
-      }
+      _authDone('wait', 'Request submitted', 'Your account is awaiting admin approval. You can sign in as soon as it is approved.', 'Back to sign in');
       return;
     }
     var o2 = document.getElementById('auth-overlay'); if (o2) o2.remove();
@@ -5587,7 +5596,7 @@ async function loadVectorStatus(){
   try{ r=await req('GET','/vector/status'); }catch(e){}
   if(!r||!r.ok){ el.innerHTML='<span style="color:#aaa">Status unavailable</span>'; return; }
   var by=r.by_type||{}; var parts=Object.keys(by).map(function(k){return k+': '+by[k];});
-  var keyBadge=r.has_key?'<span style="color:#0F7A52;font-weight:600">key set \u2713</span>':'<span style="color:#B4690E;font-weight:600">no key yet \u2014 AI structured data pe chal raha hai</span>';
+  var keyBadge=r.has_key?'<span style="color:#0F7A52;font-weight:600">key set \u2713</span>':'<span style="color:#B4690E;font-weight:600">no key yet \u2014 AI is running on structured data only</span>';
   el.innerHTML='<b>'+(r.total||0)+'</b> records indexed'+(parts.length?(' ('+parts.join(', ')+')'):'')+' &middot; '+keyBadge+(r.has_key?(' &middot; model: '+esc(r.model||'')):'');
   var k=document.getElementById('vec-model'); if(k&&!k.value) k.value=r.model||'text-embedding-3-small';
   var b=document.getElementById('vec-base'); if(b&&!b.value) b.value=r.base_url||'https://api.openai.com/v1';
@@ -8045,13 +8054,13 @@ function buildWAMsg(c,type){
 // `display`. saveSettings() reads its fields by id, so a lazily-built pane
 // would make hidden fields read as empty and silently wipe those settings.
 var SETTINGS_TABS = [
-  {id:'account',    ic:'&#128100;', label:'My Account',    sub:'Your profile &amp; plan'},
-  {id:'mytpl',      ic:'&#128221;', label:'My Templates',  sub:'Email &amp; WhatsApp', recruiterOnly:true},
-  {id:'workspace',  ic:'&#127970;', label:'Workspace',     sub:'Company-wide setup'},
-  {id:'comm',       ic:'&#9993;',   label:'Communication', sub:'Email, WhatsApp, templates'},
-  {id:'automation', ic:'&#9889;',   label:'Automation',    sub:'Follow-ups &amp; tasks'},
-  {id:'public',     ic:'&#127760;', label:'Public',        sub:'Careers page &amp; replies'},
-  {id:'admin',      ic:'&#128272;', label:'Admin',         sub:'Keys, users, billing', adminOnly:true}
+  {id:'account',    ic:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"/></svg>', label:'My Account',    sub:'Your profile &amp; plan'},
+  {id:'mytpl',      ic:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM9 11h7M9 15h7M9 7h3"/></svg>', label:'My Templates',  sub:'Email &amp; WhatsApp', recruiterOnly:true},
+  {id:'workspace',  ic:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1M14 9h1M9 13h1M14 13h1"/></svg>', label:'Workspace',     sub:'Company-wide setup'},
+  {id:'comm',       ic:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18v14H3zM3 7l9 6 9-6"/></svg>',   label:'Communication', sub:'Email, WhatsApp, templates'},
+  {id:'automation', ic:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>',   label:'Automation',    sub:'Follow-ups &amp; tasks'},
+  {id:'public',     ic:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/></svg>', label:'Public',        sub:'Careers page &amp; replies'},
+  {id:'admin',      ic:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>', label:'Admin',         sub:'Keys, users, billing', adminOnly:true}
 ];
 var _setTab = 'account';
 var _setSnap = {};
@@ -8065,7 +8074,7 @@ function _sec(id, tab, title, kw, html){
 }
 function _setSaveBar(tab, note){
   return '<div class="set-savebar">'
-    + '<button class="btn btn-g" id="setbar-btn-' + tab + '" onclick="saveSettingsTab(\'' + tab + '\')">&#128190; Save changes</button>'
+    + '<button class="btn btn-g" id="setbar-btn-' + tab + '" onclick="saveSettingsTab(\'' + tab + '\')">Save changes</button>'
     + '<span class="set-savebar-txt" id="setbar-txt-' + tab + '">All changes saved</span>'
     + (note ? '<span class="set-savebar-note">' + note + '</span>' : '')
     + '</div>';
@@ -8097,7 +8106,7 @@ function renderSettings(){
   }).join('');
 
   body.innerHTML =
-      '<input class="set-search" id="set-search" placeholder="&#128269;  Search settings — try gmail, careers, follow-up, GST" oninput="setSearch(this.value)">'
+      '<label class="set-searchwrap"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-5-5"/></svg><input class="set-search" id="set-search" aria-label="Search settings" placeholder="Search settings — try gmail, careers, follow-up, GST" oninput="setSearch(this.value)"></label>'
     + '<div class="set-res" id="set-search-res"></div>'
     + '<div class="set-wrap"><div class="set-rail">' + rail + '</div><div class="set-main">'
 
@@ -8359,7 +8368,7 @@ async function saveSettingsTab(tab){
       await saveSettings();
     }
   } finally {
-    if(btn){ btn.disabled = false; btn.innerHTML = '&#128190; Save changes'; }
+    if(btn){ btn.disabled = false; btn.innerHTML = 'Save changes'; }
     _setSnapshot(tab);
   }
 }
@@ -9119,7 +9128,7 @@ function waConfigHTML(s){
   return '<div style="margin:18px 0;border-top:2px solid #25D366;padding-top:16px">'
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="font-size:15px">&#128172;</span>'
     +'<div style="font-size:15px;font-weight:700;color:var(--navy)">WhatsApp</div></div>'
-    +'<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5">Message templates edit karo, aur reply-capture listener setup karo. Listener tumhare WhatsApp ka linked device banta hai (QR scan) aur sent + received messages ATS me laata hai.</div>'
+    +'<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5">Edit your message templates and set up the reply-capture listener. The listener joins your WhatsApp as a linked device (QR scan) and brings sent and received messages into the ATS.</div>'
     +'<div id="wa-settings-box"><div class="loading" style="padding:12px"><div class="spinner"></div>Loading…</div></div>'
     +'</div>';
 }
@@ -9132,7 +9141,7 @@ async function renderWaSettings(){
     +'<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:8px">&#128225; Reply-capture listener</div>'
     +'<div class="fg-row"><label>Post URL</label><input class="inp" readonly value="'+esc(cfg.url||'')+'" onclick="this.select()"></div>'
     +'<div class="fg-row"><label>Listener token</label><input class="inp" readonly value="'+esc(cfg.token||'')+'" onclick="this.select()"></div>'
-    +'<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-top:6px">Ye URL + token apne listener config me daalo. Token secret hai — kisi se share mat karo.</div>'
+    +'<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-top:6px">Put this URL and token in your listener config. The token is a secret — do not share it.</div>'
     +'</div></div>';
   var tpl='<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin:14px 0 8px">&#9998; Message templates</div>'
     +'<div style="font-size:10.5px;color:var(--muted);margin:0 0 10px">Pick a category and template to edit or delete, or add a new one. Placeholders: {{Name}} {{You}} {{Role}} {{Location}} {{Date}} {{Time}} {{Mode}} {{DOJ}}</div>'
@@ -9150,7 +9159,7 @@ async function renderWaSettings(){
   try{ var sp=await req('GET','/settings'); styleP=(sp&&sp.wa_style_profile)||''; }catch(e){}
   var stylecard='<div class="card" style="margin-bottom:14px"><div class="card-body">'
     +'<div style="font-size:12.5px;font-weight:700;color:var(--navy);margin-bottom:4px">&#10024; My communication style</div>'
-    +'<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:8px">DeepSeek tumhare bheje hue WhatsApp messages padhke seekhta hai ki tum kaise likhte ho. Phir AI drafts + auto-replies tumhari style me aate hain. Jitne zyada messages, utni accurate style.</div>'
+    +'<div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:8px">DeepSeek reads the WhatsApp messages you send and learns how you write, so AI drafts and auto-replies sound like you. The more messages, the closer the match.</div>'
     +'<button class="btn btn-g" onclick="waLearnStyle()" id="wa-learn-btn">&#10024; Learn / update my style</button> <span id="wa-learn-status" style="font-size:11px;color:#888;margin-left:8px"></span>'
     +'<div id="wa-style-box" style="margin-top:10px;font-size:11.5px;color:#333;white-space:pre-wrap;background:#F6F8F7;border-radius:8px;padding:'+(styleP?'10px':'0')+';line-height:1.5">'+(styleP?esc(styleP):'')+'</div>'
     +'</div></div>';
@@ -9295,9 +9304,8 @@ function billingConfigHTML(s){
   function row(id,label,val,ph){return '<div class="fg-row"><label>'+label+'</label><input class="inp" id="'+id+'" value="'+esc(val||'')+'" placeholder="'+(ph||'')+'"></div>';}
   return '<div style="margin-top:24px;border-top:2px solid #E8E4DC;padding-top:20px">'
     + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
-    + '<span style="font-size:15px">&#128179;</span>'
-    + '<div style="font-size:15px;font-weight:700;color:var(--navy)">Billing Configuration</div>'
-    + '<span style="font-size:10px;background:#EEE9F8;color:#6B4FA0;padding:2px 8px;border-radius:10px;font-weight:600">ADMIN</span></div>'
+    + '<div style="font-size:15px;font-weight:700;color:var(--navy)">Billing configuration</div>'
+    + '<span class="w3-pill teal">Platform admin</span></div>'
     + '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">These drive every agency\'s bill and invoices. Token counts are exact; rates are editable.</div>'
     + '<div class="card"><div class="card-body">'
     + '<div class="g2">'
@@ -14116,80 +14124,69 @@ async function loadAdminSummary() {
   var totMandates=0, totCands=0, totPlaced=0, totActive=0;
   r.summary.forEach(function(u){ totMandates+=u.mandates; totCands+=u.candidates; totPlaced+=u.placed; totActive+=u.active_mandates; });
 
-  var h = '<div style="max-width:920px;margin:0 auto">';
+  var h = '<div class="w4-adm">';
 
   // Pending approvals (only shown when there's something to approve)
   if (pending && pending.length) {
-    h += '<div style="background:#FFF3E6;border:1px solid #F0C078;border-radius:10px;overflow:hidden;margin-bottom:18px">'
-      + '<div style="padding:12px 16px;border-bottom:1px solid #F0C078;font-size:13px;font-weight:700;color:#9A6A1F;display:flex;align-items:center;gap:8px">&#9203; Pending Account Requests <span style="background:#C0522B;color:#fff;font-size:10px;padding:1px 7px;border-radius:8px">' + pending.length + '</span></div>';
+    h += '<section class="w4-card w4-pend" aria-label="Pending account requests"><div class="w4-ch"><h2>Pending account requests</h2><span class="w4-cnt">' + pending.length + '</span></div>';
     pending.forEach(function(p){
-      h += '<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid #F5DCAE" id="pend-row-' + p.id + '">'
+      h += '<div class="w4-row" id="pend-row-' + p.id + '">'
         + avatarHtml(p.display_name||p.username, 36)
-        + '<div style="flex:1;min-width:0">'
-        + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(p.display_name||p.username) + '</div>'
-        + '<div style="font-size:11px;color:var(--muted)">@' + esc(p.username) + (p.company_name?(' &middot; ' + esc(p.company_name)):'') + ' &middot; requested ' + fmtDateTime(p.requested_at) + '</div>'
-        + '</div>'
-        + '<button class="btn btn-g" style="font-size:11px;padding:6px 12px;background:#13A37E" onclick="decidePendingUser(' + p.id + ',&quot;approve&quot;)">&#10003; Approve</button>'
-        + '<button class="btn btn-o" style="font-size:11px;padding:6px 12px;margin-left:8px;color:#C0522B" onclick="decidePendingUser(' + p.id + ',&quot;reject&quot;)">&#10005; Decline</button>'
+        + '<div class="m"><div class="t">' + esc(p.display_name||p.username) + '</div>'
+        + '<div class="s">@' + esc(p.username) + (p.company_name?(' &middot; ' + esc(p.company_name)):'') + ' &middot; requested ' + fmtDateTime(p.requested_at) + '</div></div>'
+        + '<div class="w3-acts"><button class="w1-btn pri" onclick="decidePendingUser(' + p.id + ',&quot;approve&quot;)">&#10003; Approve</button>'
+        + '<button class="w1-btn dang" onclick="decidePendingUser(' + p.id + ',&quot;reject&quot;)">Decline</button></div>'
         + '</div>';
     });
-    h += '</div>';
+    h += '</section>';
   }
 
   // Top stat cards
-  h += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">'
-    + adminStatCard('Agencies', r.summary.length, '#6B4FA0', '#EEE9F8')
-    + adminStatCard('Total Mandates', totMandates, '#0F8A6B', '#E6F6F1')
-    + adminStatCard('Total Candidates', totCands, '#1D6FA5', '#E4F0F8')
-    + adminStatCard('Placed', totPlaced, '#BA7517', '#FBEDE4')
+  h += '<div class="w3-kpis">'
+    + adminStatCard('Tenants', r.summary.length)
+    + adminStatCard('Total ' + String(T('mandate_plural','mandates')).toLowerCase(), totMandates, (totActive||0) + ' active')
+    + adminStatCard('Total candidates', totCands)
+    + adminStatCard(T('placed','Placed'), totPlaced, '', '#027a48')
     + '</div>';
 
   // Per-agency (tenant) table
-  h += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:18px;box-shadow:var(--shadow-sm)">'
-    + '<div style="padding:12px 16px;border-bottom:0.5px solid var(--line);font-size:13px;font-weight:700;color:var(--navy)">Tenants (Agency &amp; Corporate)</div>';
+  h += '<section class="w4-card"><div class="w4-ch"><h2>Tenants</h2><span class="w4-sub">Agency &amp; Corporate workspaces</span></div>';
   r.summary.forEach(function(co){
     var isMine = S.currentUser && S.currentUser.company && co.id === S.currentUser.company.id;
-    var statusBadge;
-    if (co.status === 'suspended') statusBadge = '<span style="font-size:9px;background:#FCEBEB;color:#A32D2D;padding:1px 6px;border-radius:7px;font-weight:600">SUSPENDED</span>';
-    else if (co.status === 'pending') statusBadge = '<span style="font-size:9px;background:#FFF3E6;color:#9A6A1F;padding:1px 6px;border-radius:7px;font-weight:600">PENDING</span>';
-    else statusBadge = '<span style="font-size:9px;background:#E6F6F1;color:#0F8A6B;padding:1px 6px;border-radius:7px;font-weight:600">ACTIVE</span>';
-    var ownerBadge = isMine ? ' <span style="font-size:9px;background:#EEE9F8;color:#6B4FA0;padding:1px 6px;border-radius:7px;font-weight:600">YOUR AGENCY</span>' : '';
-    h += '<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:0.5px solid #f0f0f0">'
+    var statusBadge = co.status === 'suspended' ? '<span class="w3-pill lost">Suspended</span>'
+      : co.status === 'pending' ? '<span class="w3-pill sent">Pending</span>'
+      : '<span class="w3-pill paid">Active</span>';
+    var ownerBadge = isMine ? ' <span class="w3-pill teal">Your agency</span>' : '';
+    h += '<div class="w4-row">'
       + avatarHtml(co.name, 36)
-      + '<div style="flex:1;min-width:0">'
-      + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(co.name) + ' ' + statusBadge + ownerBadge + '</div>'
-      + '<div style="font-size:11px;color:var(--muted)">' + co.members + ' member' + (co.members===1?'':'s') + (co.last_login?(' &middot; last active ' + fmtDate(co.last_login)):' &middot; never logged in') + '</div>'
+      + '<div class="m"><div class="t">' + esc(co.name) + ' ' + statusBadge + ownerBadge + '</div>'
+      + '<div class="s">' + co.members + ' member' + (co.members===1?'':'s') + (co.last_login?(' &middot; last active ' + fmtDate(co.last_login)):' &middot; never logged in') + '</div></div>'
+      + '<div class="w4-minis">'
+      + adminMiniStat(co.mandates, String(T('mandate_plural','mandates')).toLowerCase()) + adminMiniStat(co.active_mandates, 'active') + adminMiniStat(co.candidates, 'candidates') + adminMiniStat(co.placed, 'placed')
       + '</div>'
-      + '<div style="display:flex;gap:18px;text-align:center;margin-right:8px">'
-      + adminMiniStat(co.mandates, 'mandates') + adminMiniStat(co.active_mandates, 'active') + adminMiniStat(co.candidates, 'candidates') + adminMiniStat(co.placed, 'placed')
-      + '</div>'
-      + '<div style="display:flex;gap:6px">'
-      + (isMine ? '' : '<button class="btn btn-g" style="font-size:11px;padding:6px 12px;background:#D97A4D;white-space:nowrap" onclick="viewAsCompany(' + co.id + ',&quot;' + esc(co.name) + '&quot;)">&#128065; View as</button>')
+      + '<div class="w3-acts">'
+      + (isMine ? '' : '<button class="w1-btn" onclick="viewAsCompany(' + co.id + ',&quot;' + esc(co.name) + '&quot;)">View as</button>')
       + (isMine ? '' : (co.status === 'suspended'
-            ? '<button class="btn btn-o" style="font-size:11px;padding:6px 10px;white-space:nowrap;color:#0F8A6B" onclick="setCompanyStatus(' + co.id + ',&quot;activate&quot;,&quot;' + esc(co.name) + '&quot;)">Reactivate</button>'
-            : '<button class="btn btn-o" style="font-size:11px;padding:6px 10px;white-space:nowrap;color:#A32D2D" onclick="setCompanyStatus(' + co.id + ',&quot;suspend&quot;,&quot;' + esc(co.name) + '&quot;)">Suspend</button>'))
-      + '</div>'
-      + '</div>';
+            ? '<button class="w1-btn" style="color:#0f766e" onclick="setCompanyStatus(' + co.id + ',&quot;activate&quot;,&quot;' + esc(co.name) + '&quot;)">Reactivate</button>'
+            : '<button class="w1-btn dang" onclick="setCompanyStatus(' + co.id + ',&quot;suspend&quot;,&quot;' + esc(co.name) + '&quot;)">Suspend</button>'))
+      + '</div></div>';
   });
-  h += '</div>';
+  h += '</section>';
 
   // Recent activity
-  h += '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow-sm)">'
-    + '<div style="padding:12px 16px;border-bottom:0.5px solid var(--line);font-size:13px;font-weight:700;color:var(--navy)">Recent Activity</div>';
+  h += '<section class="w4-card"><div class="w4-ch"><h2>Recent activity</h2></div>';
   if (!r.recent_activity.length) {
-    h += '<div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">No activity yet</div>';
+    h += '<div class="w3-none">No activity yet</div>';
   } else {
+    h += '<div class="w4-acts">';
     r.recent_activity.forEach(function(a){
-      h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:0.5px solid #f5f5f5;font-size:11.5px">'
-        + '<span style="color:var(--navy);font-weight:600;min-width:90px">' + esc(a.username) + '</span>'
-        + '<span style="color:var(--ink);flex:1">' + esc(actionLabel(a.action)) + (a.detail?(' <span style="color:var(--muted)">' + esc(a.detail) + '</span>'):'') + '</span>'
-        + '<span style="color:#aaa;white-space:nowrap">' + fmtDateTime(a.created_at) + '</span>'
-        + '</div>';
+      h += '<div class="w4-arow"><span class="u">' + esc(a.username) + '</span>'
+        + '<span class="d">' + esc(actionLabel(a.action)) + (a.detail?(' <span class="mu">' + esc(a.detail) + '</span>'):'') + '</span>'
+        + '<span class="w">' + fmtDateTime(a.created_at) + '</span></div>';
     });
+    h += '</div>';
   }
-  h += '</div>';
-
-  h += '</div>';
+  h += '</section>';
 
   // API spend per agency (loaded async below)
   h += '<div id="api-usage-section" style="margin-top:18px"></div>';
@@ -14435,14 +14432,14 @@ async function loadApiUsage(days) {
   sec.innerHTML = h;
 }
 
-function adminStatCard(label, value, color, bg) {
-  return '<div style="background:' + bg + ';border-radius:10px;padding:14px 16px">'
-    + '<div style="font-size:24px;font-weight:800;color:' + color + ';line-height:1">' + value + '</div>'
-    + '<div style="font-size:11px;color:var(--muted);margin-top:4px">' + label + '</div></div>';
+function adminStatCard(label, value, sub, color) {
+  // Wave 4: same KPI tile as the rest of the app (old colour args are ignored when they look like hex pairs)
+  if (sub && /^#/.test(sub)) sub = '';
+  return '<div class="w3-kpi"><div class="l">' + label + '</div><div class="v"' + (color && /^#/.test(color) && !/^#(?:E|F|e|f)/.test(color) ? ' style="color:' + color + '"' : '') + '>' + value + '</div>'
+    + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>';
 }
 function adminMiniStat(value, label) {
-  return '<div><div style="font-size:15px;font-weight:700;color:var(--ink)">' + value + '</div>'
-    + '<div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.3px">' + label + '</div></div>';
+  return '<div class="w4-mini"><div class="v">' + value + '</div><div class="l">' + label + '</div></div>';
 }
 function actionLabel(a) {
   var map = {login:'logged in', logout:'logged out', create_user:'created user', delete_user:'deleted user',
@@ -16022,13 +16019,14 @@ function _waOpenModal(title, innerHtml){
   if(existing) existing.remove();
   var m = document.createElement('div');
   m.id = 'wa-adhoc-modal';
-  m.style.cssText = 'position:fixed;inset:0;background:rgba(20,20,20,.55);z-index:9800;display:flex;align-items:center;justify-content:center;padding:24px';
-  m.innerHTML = '<div style="background:#fff;border-radius:14px;width:100%;max-width:740px;max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.28)">'
-    + '<div style="display:flex;align-items:center;padding:14px 20px;border-bottom:0.5px solid var(--line)">'
-    +   '<div style="font-size:14px;font-weight:700;color:var(--navy)">'+esc(title)+'</div>'
-    +   '<button onclick="_waCloseModal()" style="margin-left:auto;background:none;border:none;font-size:20px;color:#888;cursor:pointer;padding:0 4px">&times;</button>'
+  m.className = 'w4-wam';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:9800;display:flex;align-items:center;justify-content:center;padding:24px';
+  m.innerHTML = '<div class="w4-wamd" role="dialog" aria-modal="true" aria-labelledby="wa-adhoc-title" style="background:#fff;border-radius:16px;width:100%;max-width:740px;max-height:90vh;overflow:auto;box-shadow:0 24px 48px rgba(15,23,42,.18)">'
+    + '<div class="w4-wamh">'
+    +   '<h2 id="wa-adhoc-title">'+esc(title)+'</h2>'
+    +   '<button onclick="_waCloseModal()" aria-label="Close" class="w4-mx">&times;</button>'
     + '</div>'
-    + '<div style="padding:18px 20px">'+innerHtml+'</div></div>';
+    + '<div class="w4-wamb">'+innerHtml+'</div></div>';
   document.body.appendChild(m);
   m.addEventListener('click', function(e){ if(e.target===m) _waCloseModal(); });
 }
@@ -17123,10 +17121,10 @@ async function openClientForm(clientId){
     +'<div><label class="la-lbl">Website</label><input id="cf-website" class="inp" style="width:100%" value="'+esc(client.website||'')+'" placeholder="https://"></div>'
     +'<div><label class="la-lbl">Address (office / site)</label><input id="cf-address" class="inp" style="width:100%" value="'+esc(client.address||'')+'"></div>'
     +'<div style="border:1px solid #E4E7EC;border-radius:8px;padding:10px 11px;background:#FAFAFC">'
-      +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:8px">&#128176; GST Registrations <span style="font-weight:500;color:#888">— ek client ke multiple GST (state / branch) ho sakte hain</span></div>'
+      +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:8px">GST registrations <span style="font-weight:500;color:#888">— a client can have one per state / branch</span></div>'
       +'<div id="cf-gst-rows"></div>'
       +'<button type="button" class="btn btn-o" style="font-size:11px;margin-top:8px" onclick="cfAddGstRow()">+ Add GST registration</button>'
-      +'<div style="font-size:10px;color:#98A2B3;margin-top:7px">State Code zaroori hai — yehi decide karta hai invoice mein IGST lage ya CGST+SGST. (Haryana=06, UP=09, Delhi=07, Maharashtra=27)</div>'
+      +'<div style="font-size:10px;color:#98A2B3;margin-top:7px">State code is required — it decides whether an invoice gets IGST or CGST + SGST. (Haryana=06, UP=09, Delhi=07, Maharashtra=27)</div>'
     +'</div>'
     +'<div><label class="la-lbl">Notes</label><textarea id="cf-notes" class="inp" rows="2" style="width:100%">'+esc(client.notes||'')+'</textarea></div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
@@ -17423,7 +17421,7 @@ async function _cdOpenOrgChartModal(clientId){
     inner+='<div style="text-align:center;color:#98A2B3;padding:30px;font-size:12px">Set "Reports To" on contacts to build the org chart.</div>';
   }
   inner+='</div>';
-  _waOpenModal(esc(r.client_name)+' — Org Chart', inner);
+  _waOpenModal((r.client_name||'')+' — org chart', inner);  // title is escaped inside _waOpenModal (was double-escaped: "&amp;" showed)
 }
 
 
@@ -24151,6 +24149,180 @@ document.addEventListener('mousedown',function(e){
   var close=function(){ document.querySelectorAll('.w2-ebmenu.open').forEach(function(m){ if(m.style.position==='fixed') m.classList.remove('open'); }); };
   window.addEventListener('scroll', close, true);
   window.addEventListener('resize', close);
+})();
+</script>
+<style id="w4-style">
+/* ═══ Wave 4: Settings, Admin, Auth, Notifications, shared modals ═══ */
+/* Settings */
+#settings-view{background:var(--paper)}
+#settings-view > div:first-child{background:#fff !important}
+.settings-body{padding:16px 24px 0 !important;background:var(--paper)}
+.set-searchwrap{display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border:1px solid var(--w1-border,#d0d5dd);border-radius:10px;background:#fff;color:var(--muted);margin-bottom:14px;max-width:1000px;box-sizing:border-box}
+.set-searchwrap:focus-within{border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.12)}
+.set-searchwrap .set-search{border:0 !important;margin:0 !important;padding:0 !important;height:100%;flex:1;min-width:0;font-size:14px !important;background:transparent !important;outline:none;box-shadow:none !important}
+.set-res{max-width:1000px;border:1px solid var(--line) !important;border-radius:10px !important;box-shadow:0 10px 30px rgba(15,23,42,.10)}
+.set-res .set-hit{font-size:13px !important;padding:9px 12px !important;color:var(--ink) !important}
+.set-res .set-hit span{font-size:12px !important}
+.set-wrap{gap:24px !important;max-width:1000px}
+.set-rail{width:220px !important;top:8px !important}
+.set-tab{padding:9px 10px !important;border-radius:9px !important;color:#334155}
+.set-tab:hover{background:#f1f5f9 !important}
+.set-tab.active{background:#ecfdf5 !important}
+.set-tab.active .st-ic,.set-tab.active .st-l{color:#0f766e !important}
+.set-tab .st-ic{width:20px !important;display:flex;align-items:center;justify-content:center;color:#475063}
+.set-tab .st-l{font-size:13.5px !important;color:var(--ink) !important}
+.set-tab .st-s{font-size:12px !important}
+.set-main{max-width:760px !important;padding-bottom:0}
+.set-h{font-size:19px !important;color:var(--ink) !important;letter-spacing:-.2px}
+.set-hsub{font-size:13px !important;margin-bottom:16px !important}
+.set-pane .card{box-shadow:none !important;border-top-width:1px !important;border-top-color:var(--line) !important}
+.set-pane .card-head{font-size:14.5px !important;font-weight:700 !important;color:var(--ink) !important;border-bottom:1px solid #eef0f3 !important}
+.set-pane .card-head *{font-weight:inherit}
+.set-savebar{margin:24px 0 0 !important;padding:12px 16px !important;background:#fff !important;border:1px solid var(--line) !important;border-bottom:0 !important;border-radius:12px 12px 0 0 !important;box-shadow:0 -8px 20px rgba(15,23,42,.06)}
+.set-savebar .btn-g{font-weight:600}
+.set-savebar-txt{font-size:13px !important}.set-savebar-note{font-size:12px !important}
+.set-dot{background:#f59e0b !important}
+/* section builders (email, WhatsApp, follow-up, billing…) draw a coloured 2px rule + emoji badge; tone them down */
+#settings-body .set-sec > div[style*="border-top:2px solid"]{border-top:1px solid var(--line) !important;margin-top:22px !important}
+#settings-body .set-sec > div > div > span[style="font-size:15px"]{display:none !important}
+#settings-body .set-sec div[style*="font-size:15px;font-weight:700"]{color:var(--ink) !important}
+#settings-body .set-sec [style*="font-size:11px"],#settings-body .set-sec [style*="font-size:11.5px"]{font-size:12.5px !important}
+#settings-body .set-sec [style*="font-size:10px"],#settings-body .set-sec [style*="font-size:10.5px"]{font-size:12px !important}
+#settings-body .set-sec .card[style*="border-top:2px solid"]{border-top:1px solid var(--line) !important}
+/* Admin */
+#admin-body{background:var(--paper) !important;padding:18px 24px !important}
+.w4-adm{max-width:1100px;margin:0 auto}
+.w4-card{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:16px}
+.w4-ch{display:flex;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid #eef0f3}
+.w4-ch h2{margin:0;font-size:15px;font-weight:700;color:var(--ink)}
+.w4-ch .w4-sub{font-size:12.5px;color:var(--muted)}
+.w4-cnt{font-size:12px;font-weight:700;background:#b42318;color:#fff;border-radius:999px;padding:1px 8px}
+.w4-pend{border-color:#fedf89}.w4-pend .w4-ch{background:#fffaeb}
+.w4-row{display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid #f2f4f7;flex-wrap:wrap}
+.w4-row:last-child{border-bottom:0}
+.w4-row .m{flex:1;min-width:200px}.w4-row .t{font-size:14px;font-weight:600;color:var(--ink);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.w4-row .s{font-size:12.5px;color:var(--muted);margin-top:1px}
+.w4-minis{display:flex;gap:18px;text-align:center}
+.w4-mini .v{font-size:15px;font-weight:700;color:var(--ink)}.w4-mini .l{font-size:11.5px;color:var(--muted)}
+.w4-acts{max-height:420px;overflow:auto}
+.w4-arow{display:grid;grid-template-columns:120px minmax(0,1fr) auto;gap:12px;align-items:baseline;padding:8px 16px;border-bottom:1px solid #f2f4f7;font-size:13px}
+.w4-arow .u{font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis}.w4-arow .d{color:var(--ink);min-width:0}.w4-arow .w{color:var(--muted);white-space:nowrap;font-size:12px}
+#api-usage-section > div,#billing-section > div{border:1px solid var(--line) !important;border-radius:14px !important;box-shadow:none !important}
+#api-usage-section [style*="font-size:13px;font-weight:700"],#billing-section [style*="font-size:13px;font-weight:700"]{font-size:15px !important;color:var(--ink) !important}
+#api-usage-section [style*="font-size:10px"],#billing-section [style*="font-size:10px"],#billing-section [style*="font-size:10.5px"],#api-usage-section [style*="font-size:10.5px"]{font-size:12px !important}
+#api-usage-section [style*="font-size:9px"],#billing-section [style*="font-size:9px"]{font-size:11px !important}
+#admin-body .btn{font-size:12.5px !important;padding:6px 11px !important}
+#admin-body select,#admin-body input[type=number]{font-size:12.5px !important;padding:5px 8px !important;border:1px solid var(--w1-border,#d0d5dd) !important;border-radius:7px !important}
+/* Auth */
+.w4-auth{position:fixed;inset:0;z-index:9999;display:grid;grid-template-columns:minmax(0,1fr) minmax(380px,520px);background:#fff;font-family:'DM Sans',system-ui,sans-serif;overflow:auto}
+.w4-abrand{background:#0f3d3a;color:#e6f4f1;padding:48px 56px;display:flex;flex-direction:column;justify-content:space-between;background-image:radial-gradient(circle at 20% 20%,rgba(45,212,191,.18),transparent 45%),radial-gradient(circle at 80% 90%,rgba(15,118,110,.55),transparent 50%)}
+.w4-abrand .lg,.w4-alg{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:700}
+.w4-abrand .lg span,.w4-alg span{width:36px;height:36px;border-radius:10px;background:#14b8a6;color:#042f2e;font-size:14px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.w4-abrand .tag{font-size:34px;font-weight:700;line-height:1.15;letter-spacing:-.5px;max-width:420px;color:#fff}
+.w4-abrand ul{margin:0;padding:0;list-style:none;display:grid;gap:10px;font-size:14.5px;color:#b7e4dc}
+.w4-abrand li::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:#2dd4bf;margin-right:10px;vertical-align:middle}
+.w4-amain{display:flex;align-items:center;justify-content:center;padding:32px 24px}
+.w4-acard{width:100%;max-width:380px}
+.w4-alg{display:none;color:var(--ink,#0f172a);margin-bottom:22px}
+.w4-acard h1{margin:0;font-size:26px;font-weight:700;color:#0f172a;letter-spacing:-.4px}
+.w4-acard .lead{margin:6px 0 22px;font-size:14px;color:#5b6475;line-height:1.5}
+.w4-af{display:block;margin-bottom:14px}
+.w4-af > span:first-child{display:block;font-size:13px;font-weight:600;color:#344054;margin-bottom:6px}
+.w4-ain{position:relative;display:block}
+.w4-ain .inp{height:44px;font-size:15px !important;padding:0 12px !important;border:1px solid #d0d5dd !important;border-radius:10px !important;width:100%;box-sizing:border-box}
+.w4-ain .inp:focus{border-color:#0f766e !important;box-shadow:0 0 0 3px rgba(15,118,110,.15) !important;outline:none}
+.w4-eye{position:absolute;right:6px;top:7px;height:30px;padding:0 10px;border:0;border-radius:7px;background:#f1f5f9;color:#475063;font-size:12.5px;font-weight:600;cursor:pointer}
+.w4-ahint{font-size:12.5px;color:#5b6475;margin:-6px 0 16px}
+.w4-afg{text-align:right;margin:-6px 0 16px;font-size:13px}
+.w4-afg a,.w4-aalt a,.w4-aterms a{color:#0f766e;font-weight:600;text-decoration:none}
+.w4-aterms{display:flex;gap:9px;align-items:flex-start;font-size:13px;color:#475063;margin:0 0 16px;cursor:pointer}
+.w4-aterms input{margin-top:3px}
+.w4-abtn{width:100%;height:46px;border:0;border-radius:10px;background:#0f766e;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
+.w4-abtn:hover{background:#115e59}
+.w4-aerr{color:#b42318;font-size:13px;margin-top:12px;text-align:center;min-height:18px}
+.w4-aalt{text-align:center;margin-top:16px;font-size:13.5px;color:#5b6475}
+.w4-anote{font-size:12.5px;color:#5b6475;margin-top:14px;text-align:center;line-height:1.5}
+.w4-adone{text-align:center}.w4-adone .ic{width:56px;height:56px;border-radius:50%;background:#ecfdf5;color:#0f766e;display:inline-flex;align-items:center;justify-content:center;margin-bottom:14px}
+/* Notifications panel */
+#ntf-panel{border:1px solid var(--line,#e4e7ec) !important;border-radius:14px !important;box-shadow:0 18px 44px rgba(15,23,42,.18) !important;font-family:inherit}
+.w4-nh{display:flex;align-items:center;gap:8px;padding:12px 14px 8px 16px}
+.w4-nh h2{margin:0;font-size:16px;font-weight:700;color:var(--ink,#0f172a)}
+.w4-nlink{margin-left:auto;border:0;background:none;color:#0f766e;font-size:13px;font-weight:600;cursor:pointer;padding:4px 6px}
+.w4-nx{border:0;background:none;width:30px;height:30px;border-radius:8px;font-size:20px;color:#5b6475;cursor:pointer}
+.w4-nx:hover{background:#f1f5f9}
+.w4-ntabs{display:flex;gap:18px;padding:0 16px;border-bottom:1px solid #eef0f3}
+.w4-ntabs button{border:0;background:none;padding:8px 0;font-size:13.5px;color:#475063;border-bottom:2px solid transparent;cursor:pointer}
+.w4-ntabs button.on{color:var(--ink,#0f172a);font-weight:600;border-bottom-color:#0f766e}
+.w4-ntabs b{font-size:11.5px;background:#b42318;color:#fff;border-radius:999px;padding:0 6px;margin-left:3px}
+.w4-ndesk{display:flex;align-items:center;gap:8px;padding:9px 16px;background:#f0fdfa;font-size:12.5px;color:#134e4a}
+.w4-ndesk .w1-btn{margin-left:auto;height:28px;font-size:12px}
+.w4-nlist{overflow:auto;flex:1}
+.w4-nempty{padding:40px 20px;text-align:center;color:#5b6475;font-size:13.5px}
+.w4-ngrp{padding:10px 16px 4px;font-size:11.5px;font-weight:700;color:#5b6475;text-transform:uppercase;letter-spacing:.05em}
+.w4-nrow{display:flex;gap:10px;width:100%;text-align:left;padding:10px 16px;border-bottom:1px solid #f2f4f7;cursor:pointer;background:#fff;box-sizing:border-box}
+.w4-nrow:hover,.w4-nrow:focus-visible{background:#f8fafc;outline:none}
+.w4-nrow.un{background:#f0fdfa}
+.w4-nrow .ic{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;flex:none}
+.w4-nrow .b{flex:1;min-width:0}
+.w4-nrow .t{font-size:13.5px;font-weight:600;color:var(--ink,#0f172a);line-height:1.35}
+.w4-nrow:not(.un) .t{font-weight:500}
+.w4-nrow .x{font-size:12.5px;line-height:1.4;margin-top:1px}
+.w4-nrow .w{font-size:12px;color:#5b6475;margin-top:4px}
+.w4-nrow .dot{width:8px;height:8px;border-radius:50%;background:#0f766e;margin-top:6px;flex:none}
+/* Shared modals */
+.modal-bg{background:rgba(15,23,42,.45) !important}
+.modal{box-shadow:0 24px 48px rgba(15,23,42,.18) !important}
+.modal-head{border-bottom:1px solid var(--line) !important}
+.modal-title{font-size:17px !important;color:var(--ink) !important}
+.modal-x{width:32px;height:32px;border-radius:8px !important;color:#5b6475 !important;font-size:18px !important;display:inline-flex;align-items:center;justify-content:center}
+.modal-x:hover{background:#f1f5f9 !important}
+.modal-foot{background:#f8fafc !important;border-top:1px solid var(--line) !important}
+.fg-row label,.la-lbl{color:#344054 !important;font-weight:600 !important;font-size:12.5px !important}
+.w4-wamh{display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff;z-index:1}
+.w4-wamh h2{margin:0;font-size:17px;font-weight:700;color:var(--ink)}
+.w4-mx{margin-left:auto;width:32px;height:32px;border:0;border-radius:8px;background:none;font-size:20px;color:#5b6475;cursor:pointer}
+.w4-mx:hover{background:#f1f5f9}
+.w4-wamb{padding:18px 20px}
+@media (max-width:1180px){.w4-auth{grid-template-columns:minmax(0,1fr) minmax(360px,460px)}.w4-abrand{padding:36px}.w4-abrand .tag{font-size:28px}}
+@media (max-width:860px){
+  .w4-auth{grid-template-columns:1fr}
+  .w4-abrand{display:none}
+  .w4-alg{display:flex}
+  .w4-amain{align-items:flex-start;padding:40px 20px}
+}
+@media (max-width:760px){
+  .settings-body{padding:12px 12px 0 !important}
+  #admin-body{padding:12px !important}
+  .w4-minis{width:100%;justify-content:space-between}
+  .w4-arow{grid-template-columns:1fr;gap:2px}
+  #wa-adhoc-modal{padding:0 !important;align-items:flex-end !important}
+  #wa-adhoc-modal .w4-wamd{border-radius:16px 16px 0 0 !important;max-height:92dvh !important}
+}
+</style>
+<script id="w4-script">
+// Wave 4: settings/admin card headings carried emoji glyphs; drop the leading glyph (text is unchanged otherwise).
+(function(){
+  var re; try{ re=new RegExp('^[\\s\\p{Extended_Pictographic}\\uFE0F\\u200D]+','u'); }catch(e){ return; }
+  function clean(root){
+    if(!root) return;
+    root.querySelectorAll('.card-head').forEach(function(h){
+      var w=document.createTreeWalker(h, NodeFilter.SHOW_TEXT, null), n;
+      while((n=w.nextNode())){
+        if(!n.nodeValue.trim()) continue;
+        var v=n.nodeValue.replace(re,'');
+        if(v!==n.nodeValue) n.nodeValue=v;
+        break;
+      }
+    });
+  }
+  function watch(id){
+    var el=document.getElementById(id); if(!el || el._w4) return; el._w4=1;
+    var t=null;
+    new MutationObserver(function(){ clearTimeout(t); t=setTimeout(function(){ clean(el); }, 30); }).observe(el,{childList:true,subtree:true});
+    clean(el);
+  }
+  function go(){ watch('settings-body'); watch('admin-body'); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', go); else go();
 })();
 </script>
 <style id="mob-style">
