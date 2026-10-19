@@ -8746,18 +8746,20 @@ def embed_candidate_async(cid):
 @login_required
 def ai_index_status():
     conn = get_db()
-    total = conn.execute('SELECT COUNT(*) n FROM candidates').fetchone()['n']
-    done = conn.execute("SELECT COUNT(*) n FROM candidates WHERE embedding!='' AND embedding IS NOT NULL").fetchone()['n']
+    _oid = effective_company_id()   # counts are this workspace's only (they used to include every tenant)
+    total = conn.execute('SELECT COUNT(*) n FROM candidates WHERE owner_id=?', (_oid,)).fetchone()['n']
+    done = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND embedding!='' AND embedding IS NOT NULL",
+                        (_oid,)).fetchone()['n']
     # Optional metadata breakdown (additive — existing keys unchanged).
     by_status, by_model = {}, {}
     try:
         for r in conn.execute(
                 "SELECT COALESCE(NULLIF(embedding_status,''),'unknown') s, COUNT(*) n "
-                "FROM candidates GROUP BY s").fetchall():
+                "FROM candidates WHERE owner_id=? GROUP BY s", (_oid,)).fetchall():
             by_status[r['s']] = r['n']
         for r in conn.execute(
                 "SELECT COALESCE(NULLIF(embedding_model,''),'none') m, COUNT(*) n "
-                "FROM candidates GROUP BY m").fetchall():
+                "FROM candidates WHERE owner_id=? GROUP BY m", (_oid,)).fetchall():
             by_model[r['m']] = r['n']
     except sqlite3.OperationalError:
         pass  # metadata columns not present yet (pre-migration)
@@ -8765,6 +8767,7 @@ def ai_index_status():
     has_key = bool(get_setting('gemini_api_key'))
     return jsonify({'ok': True, 'total': total, 'indexed': done,
                     'pending': total - done, 'has_gemini_key': has_key,
+                    'has_embedding_key': bool(get_setting('embedding_api_key', '')),
                     'by_status': by_status, 'by_model': by_model,
                     'text_template': EMBED_TEXT_TEMPLATE, 'model': EMBEDDING_MODEL})
 
@@ -8846,16 +8849,19 @@ def ai_reindex():
         return jsonify({'error': 'Embedding (Jina) API key not set. Add your Jina key in Settings.'}), 400
 
     conn = get_db()
-    if force:
-        rows = conn.execute('SELECT * FROM candidates ORDER BY id LIMIT ?', (batch,)).fetchall()
-        # For force, also clear so they re-embed; but simplest: process those
-        # without embedding first; force re-embeds everything across calls by
-        # clearing embeddings up front on the first force call.
-        if d.get('reset'):
-            conn.execute("UPDATE candidates SET embedding='', embedding_status='pending'")
-            conn.commit()
-            rows = conn.execute('SELECT * FROM candidates ORDER BY id LIMIT ?', (batch,)).fetchall()
-    rows = conn.execute("SELECT * FROM candidates WHERE embedding='' OR embedding IS NULL ORDER BY id LIMIT ?", (batch,)).fetchall()
+    # TENANT ISOLATION: only this workspace's candidates are (re)indexed. Before,
+    # "Re-index all" cleared the embeddings of EVERY company on the platform and
+    # then embedded other companies' candidates with this workspace's key.
+    _oid = effective_company_id()
+    if force and d.get('reset'):
+        # Clearing a whole workspace's index is an admin decision.
+        if not (is_admin() or is_company_admin()):
+            conn.close()
+            return jsonify({'error': 'Only an admin can re-index the whole database.'}), 403
+        conn.execute("UPDATE candidates SET embedding='', embedding_status='pending' WHERE owner_id=?", (_oid,))
+        conn.commit()
+    rows = conn.execute("SELECT * FROM candidates WHERE owner_id=? AND (embedding='' OR embedding IS NULL) ORDER BY id LIMIT ?",
+                        (_oid, batch)).fetchall()
 
     done, failed, skipped = 0, 0, 0
     first_error = ''
@@ -8878,7 +8884,8 @@ def ai_reindex():
             done += 1
 
     # remaining count
-    pending = conn.execute("SELECT COUNT(*) n FROM candidates WHERE embedding='' OR embedding IS NULL").fetchone()['n']
+    pending = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND (embedding='' OR embedding IS NULL)",
+                           (_oid,)).fetchone()['n']
     conn.close()
     return jsonify({'ok': True, 'indexed': done, 'failed': failed, 'skipped': skipped,
                     'pending': pending, 'first_error': first_error})
@@ -9588,9 +9595,12 @@ def ai_search():
     no_cache    = bool(d.get('no_cache'))
     offset      = (page - 1) * page_size
 
-    api_key = get_setting('gemini_api_key')
-    if not api_key:
-        return jsonify({'error': 'Gemini API key not set. Add it in Settings.'}), 400
+    # Search embeds the query with the embedding provider (Jina by default, see
+    # embed_one) — the Gemini key is not used here. Checking for Gemini blocked
+    # search for workspaces that had a working Jina key.
+    if not get_setting('embedding_api_key', ''):
+        return jsonify({'error': 'AI search needs the embedding (Jina) API key. Add it in Settings → Admin → Knowledge Base.',
+                        'code': 'no_embedding_key'}), 400
 
     timing = {}
     _oid = effective_company_id()
@@ -15298,10 +15308,10 @@ def _sync_mailbox_impl(oid):
                                          (text, htmlbody, snip, irt, refs, tid, cid, ex['id']))
                         else:
                             _icur = conn.execute('INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,subject,'
-                                'date_str,date_ts,snippet,body,body_html,in_reply_to,refs,thread_id,candidate_id,created_at) '
-                                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                                'date_str,date_ts,snippet,body,body_html,in_reply_to,refs,thread_id,candidate_id,created_at,is_read) '
+                                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                                 (oid, mid, fname, addr, nm or addr, _email_decode(msg.get('To')), subject, dt, dts,
-                                 snip, text, htmlbody, irt, refs, tid, cid, ts()))
+                                 snip, text, htmlbody, irt, refs, tid, cid, ts(), 1 if fname == 'Sent' else 0))
                             added += 1
                             # Capture real attachments once, on first insert.
                             _save_incoming_attachments(msg, conn, oid, _icur.lastrowid)
@@ -15318,6 +15328,13 @@ def _sync_mailbox_impl(oid):
                         except Exception: pass
                     except Exception:
                         continue
+                # Read status: mails already read in Gmail (\\Seen) are marked read here too.
+                # One-way on purpose — something read inside the ATS is never flipped
+                # back to unread, and the mailbox is opened read-only so Gmail is untouched.
+                try:
+                    _sync_seen_flags(M, conn, oid, ids, fname, locals().get('_num2mid') or {})
+                except Exception as _fe:
+                    print('[email-sync] flags:', _fe)
             except Exception:
                 continue
         conn.commit()
@@ -15326,6 +15343,41 @@ def _sync_mailbox_impl(oid):
         try: M.logout()
         except Exception: pass
     return added, None
+
+
+def _parse_seen_flags(lines):
+    """From an IMAP '(FLAGS)' fetch response, return the set of message numbers
+    (bytes) that carry \\Seen. Accepts the list imaplib returns (bytes lines or
+    tuples)."""
+    seen = set()
+    for part in (lines or []):
+        raw = part[0] if isinstance(part, tuple) else part
+        if not isinstance(raw, (bytes, bytearray)):
+            continue
+        m = re.match(rb'\s*(\d+)\s+\(.*?FLAGS\s*\(([^)]*)\)', raw)
+        if m and b'\\seen' in m.group(2).lower():
+            seen.add(m.group(1))
+    return seen
+
+
+def _sync_seen_flags(M, conn, oid, ids, fname, num2mid):
+    if not ids or fname != 'Inbox':
+        return 0
+    typ, data = M.fetch(b','.join(ids).decode(), '(FLAGS)')
+    if typ != 'OK':
+        return 0
+    seen = _parse_seen_flags(data)
+    mids = [num2mid.get(n) or (fname + ':' + n.decode()) for n in seen]
+    n = 0
+    for i in range(0, len(mids), 400):
+        chunk = mids[i:i + 400]
+        if not chunk:
+            continue
+        cur = conn.execute('UPDATE emails SET is_read=1 WHERE owner_id=? AND is_read=0 AND msg_id IN (%s)'
+                           % ','.join('?' * len(chunk)), [oid] + chunk)
+        n += cur.rowcount or 0
+    conn.commit()
+    return n
 
 
 @app.route('/api/emailbox/sync', methods=['POST'])
@@ -15475,8 +15527,10 @@ def email_roundtrip_check():
 @login_required
 def emailbox_list():
     conn = get_db(); folder = request.args.get('folder', '')
-    q = ('SELECT id,folder,from_addr,from_name,to_addr,subject,date_str,date_ts,snippet,is_read,'
-         'is_draft,candidate_id FROM emails WHERE owner_id=?')
+    # thread_id is what the inbox groups conversations by — it was not selected,
+    # so every message showed as its own row and the "N messages" count never appeared.
+    q = ('SELECT id,folder,from_addr,from_name,to_addr,cc,subject,date_str,date_ts,snippet,is_read,'
+         'is_draft,candidate_id,thread_id FROM emails WHERE owner_id=?')
     params = [effective_company_id()]
     if folder in ('Inbox', 'Sent', 'Drafts'):
         q += ' AND folder=?'; params.append(folder)
@@ -21496,6 +21550,16 @@ def central_search():
     notice   = request.args.get('notice', '')
     page     = int(request.args.get('page', 1))
     per_page = 30
+    # Sorting (Talent table headers). Unknown values fall back to newest first.
+    _SORTS = {'name': 'name', 'location': 'location', 'experience': 'experience',
+              'ctc_current': 'ctc_current', 'ctc_expected': 'ctc_expected', 'stage': 'stage',
+              'job': 'mandate_role', 'created_at': 'created_at', 'notice': 'notice_period'}
+    sort_key = _SORTS.get(request.args.get('sort', ''), '')
+    sort_desc = (request.args.get('dir', 'desc') or 'desc').lower() != 'asc'
+    # Keyword search: every word must appear somewhere in the profile (any order).
+    # Before, the whole query had to appear as one exact phrase, so
+    # "sales switchgear" found nobody whose profile said "switchgear sales".
+    q_words = [w for w in re.split(r'\s+', q) if w]
 
     conn = get_db()
     # TENANT ISOLATION: only this company's candidates. owner_id stores the
@@ -21527,7 +21591,7 @@ def central_search():
                 str(d.get('email') or ''),
                 str(d.get('phone') or ''),
             ]).lower()
-            if q not in searchable: continue
+            if any(w not in searchable for w in q_words): continue
         if company and company not in (d.get('company') or '').lower(): continue
         if location and location not in (d.get('location') or '').lower(): continue
         if phone and phone not in (d.get('phone') or ''): continue
@@ -21555,10 +21619,27 @@ def central_search():
         except: d['key_skills'] = []
         results.append(d)
 
+    if sort_key:
+        _num = sort_key in ('experience', 'ctc_current', 'ctc_expected', 'notice_period')
+        def _sk(d):
+            v = d.get(sort_key)
+            if _num:
+                try: v = float(v or 0)
+                except Exception: v = 0.0
+                # unknown (0) values go last whichever way you sort
+                return (1, 0.0) if not v else (0, -v if sort_desc else v)
+            v = str(v or '').strip().lower()
+            return (1, '') if not v else (0, v)
+        results.sort(key=_sk)
+        if sort_desc and not _num:
+            filled = [r for r in results if str(r.get(sort_key) or '').strip()]
+            empty = [r for r in results if not str(r.get(sort_key) or '').strip()]
+            results = list(reversed(filled)) + empty
     total = len(results)
     start = (page - 1) * per_page
     paginated = results[start:start + per_page]
-    return jsonify({'ok': True, 'total': total, 'page': page, 'candidates': paginated})
+    return jsonify({'ok': True, 'total': total, 'page': page, 'candidates': paginated,
+                    'sort': sort_key or 'created_at', 'dir': 'desc' if sort_desc else 'asc'})
 
 @app.route('/api/central-db/add', methods=['POST'])
 @login_required

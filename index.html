@@ -13573,8 +13573,7 @@ async function renderResponses() {
   var total = r.total || 0;
 
   // Get submission link
-  var baseUrl = window.location.origin;
-  var applyLink = baseUrl + '/apply';
+  var applyLink = applyUrl();
 
   var html = '';
 
@@ -13584,7 +13583,7 @@ async function renderResponses() {
   html += '<div style="font-size:12.5px;font-weight:600;color:var(--ink)">Application link</div>';
   html += '<div style="font-size:12px;color:#127A57;background:#E8F4EE;padding:6px 12px;border-radius:8px;font-family:\'IBM Plex Mono\',monospace;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(applyLink) + '</div>';
   html += '<button class="btn btn-g" style="flex-shrink:0" onclick="copyApplyLink()">&#9112; Copy link</button>';
-  html += '<a href="/apply" target="_blank" class="btn btn-o" style="text-decoration:none;flex-shrink:0">&#128065; Preview</a>';
+  html += '<a href="' + esc(applyLink) + '" target="_blank" class="btn btn-o" style="text-decoration:none;flex-shrink:0">&#128065; Preview</a>';
   html += '</div>';
 
   // Search + Filters
@@ -13708,8 +13707,14 @@ async function sendRegret(sid, name) {
   else toast('ERR', (r && r.error) || 'Could not send');
 }
 
+// The public application link carries the company id, like the careers link.
+// Without it every applicant was filed under the platform's primary company.
+function applyUrl(){
+  var cid = (S.ws && S.ws.company_id) || '';
+  return location.origin + '/apply' + (cid ? ('?c=' + cid) : '');
+}
 function copyApplyLink() {
-  var link = window.location.origin + '/apply';
+  var link = applyUrl();
   navigator.clipboard.writeText(link).then(function() { toast('OK', 'Link copied: ' + link); });
 }
 
@@ -14502,8 +14507,9 @@ async function loadAIIndexStatus() {
   try {
     var r = await req('GET', '/ai/index-status');
     if (r.ok) {
-      if (!r.has_gemini_key) {
-        badge.innerHTML = '<span style="color:#C0522B">&#9888; Add Gemini key in Settings</span>';
+      var _hasEmbed = (r.has_embedding_key !== undefined) ? r.has_embedding_key : r.has_gemini_key;
+      if (!_hasEmbed) {
+        badge.innerHTML = '<span style="color:#C0522B">&#9888; Add the embedding (Jina) key in Settings for AI search</span>';
       } else {
         badge.textContent = r.indexed + '/' + r.total + ' indexed';
       }
@@ -15332,10 +15338,24 @@ function talentRow(c) {
     + '</tr>';
 }
 function _talentTable(rows){
-  return '<div class="w1-pltable w2-tt"><table><thead><tr><th><button type="button">Candidate</button></th><th><button type="button">Location</button></th><th><button type="button">Job / pool</button></th><th><button type="button">Exp</button></th><th><button type="button">Current</button></th><th><button type="button">Expected</button></th><th><button type="button">Stage</button></th><th><button type="button">Phone</button></th><th><button type="button">Open</button></th></tr></thead><tbody>'
+  return '<div class="w1-pltable w2-tt"><table><thead><tr>'
+    + _talentTh('name','Candidate') + _talentTh('location','Location') + _talentTh('job','Job / pool') + _talentTh('experience','Exp')
+    + _talentTh('ctc_current','Current') + _talentTh('ctc_expected','Expected') + _talentTh('stage','Stage')
+    + '<th>Phone</th><th>Open</th></tr></thead><tbody>'
     + rows.map(talentRow).join('') + '</tbody></table></div>';
 }
-var _talentPage = 1, _talentLastF = null;
+var _talentPage = 1, _talentLastF = null, _talentSort = {col:'', dir:'desc'};
+// Column sort for the Talent table (server-side, across every page).
+function talentSort(col){
+  if (_talentSort.col === col) _talentSort.dir = (_talentSort.dir === 'asc' ? 'desc' : 'asc');
+  else { _talentSort.col = col; _talentSort.dir = (col === 'name' || col === 'location' || col === 'job' || col === 'stage') ? 'asc' : 'desc'; }
+  _talentPage = 1;
+  talentFilterSearch(_talentLastF || readTalentFilters(), true);
+}
+function _talentTh(col, label){
+  var on = _talentSort.col === col, arrow = on ? (_talentSort.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
+  return '<th' + (on ? ' aria-sort="' + (_talentSort.dir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '><button type="button" onclick="talentSort(\'' + col + '\')">' + label + arrow + '</button></th>';
+}
 function talentPage(d){ _talentPage = Math.max(1, _talentPage + d); talentFilterSearch(_talentLastF || readTalentFilters(), true); }
 async function talentFilterSearch(f, keepPage) {
   var res = document.getElementById('ai-search-results');
@@ -15351,14 +15371,17 @@ async function talentFilterSearch(f, keepPage) {
   if (f.cmin)   qs += '&ctc_min='  + encodeURIComponent(f.cmin);
   if (f.cmax)   qs += '&ctc_max='  + encodeURIComponent(f.cmax);
   if (f.notice) qs += '&notice='   + encodeURIComponent(f.notice);
+  if (f.q)      qs += '&q='        + encodeURIComponent(f.q);
+  if (_talentSort.col) qs += '&sort=' + _talentSort.col + '&dir=' + _talentSort.dir;
   var r = await req('GET', '/central-db/search?' + qs);
   if (!r || r.error) { res.innerHTML = '<div style="color:#C0522B;padding:12px">' + esc((r&&r.error)||'Search failed') + '</div>'; return; }
   var cands = r.candidates || [];
-  if (!cands.length) { res.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">No candidates match these filters.</div>'; return; }
+  var _note = f._note ? '<div class="w2-tt-note">' + f._note + '</div>' : '';
+  if (!cands.length) { res.innerHTML = _note + '<div style="text-align:center;color:var(--muted);padding:40px">No candidates match ' + (f.q ? '&ldquo;' + esc(f.q) + '&rdquo; and these filters' : 'these filters') + '.</div>'; return; }
   window._cdbResults = cands;
   var total = r.total || cands.length, per = Math.max(cands.length, 30), pages = Math.max(1, Math.ceil(total / per));
   var from = (_talentPage - 1) * per + 1, to = from + cands.length - 1;
-  var html = '<div class="w2-tt-bar"><span>Showing ' + from + '–' + to + ' of ' + total + ' candidates &middot; full database</span>'
+  var html = _note + '<div class="w2-tt-bar"><span>Showing ' + from + '–' + to + ' of ' + total + ' candidates &middot; ' + (f.q ? 'keyword &ldquo;' + esc(f.q) + '&rdquo;' : 'full database') + '</span>'
     + '<span style="display:flex;gap:6px;align-items:center"><button class="w1-btn" onclick="talentPage(-1)"' + (_talentPage<=1?' disabled':'') + '>&larr; Prev</button>'
     + '<span>' + _talentPage + ' / ' + pages + '</span><button class="w1-btn" onclick="talentPage(1)"' + (_talentPage>=pages?' disabled':'') + '>Next &rarr;</button></span></div>';
   html += _talentTable(cands);
@@ -15397,8 +15420,11 @@ async function runAISearch(filterObj) {
   }
 
   if (!r.ok) {
-    res.innerHTML = banner + '<div style="color:#C0522B;padding:12px">' + esc(r.error||'Search failed') + '</div>';
-    return;
+    // AI search unavailable (no embedding key, provider down…) → plain keyword search
+    // over the whole database instead of a dead end.
+    var kf = Object.assign({}, filterObj || readTalentFilters(), {q: q,
+      _note: banner + '<span>AI search is not available right now (' + esc(r.error||'unknown error') + '). Showing keyword matches instead.</span>'});
+    return talentFilterSearch(kf);
   }
   if (filterObj && r && r.results && r.results.length) {
     var _lc = (filterObj.loc||'').toLowerCase();
@@ -23800,6 +23826,8 @@ input:focus,textarea:focus,select:focus{border-color:#0f766e !important}
 #ai-body{padding:18px 24px !important}
 .w2-tt-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-bottom:8px}
 .w2-tt .nm{font-weight:600;color:#1d4ed8}
+.w2-tt-note{background:#fffaeb;border:1px solid #fedf89;color:#7a4b0b;border-radius:10px;padding:9px 12px;font-size:13px;margin-bottom:10px}
+.w2-tt-note > div{margin-bottom:6px}
 .w2-stg{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:#f1f5f9;color:#334155;white-space:nowrap}
 .w2-tt td:nth-child(3){white-space:normal;min-width:180px;max-width:260px}
 .w2-tt td:first-child{white-space:normal;min-width:170px}
