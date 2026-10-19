@@ -14858,6 +14858,11 @@ def list_invoices():
                     'amount': taxable, 'total': gross, 'gst_rate': d['gst_rate'],
                     'status': d['status'], 'due_date': d['due_date'], 'doc_type': d.get('doc_type') or 'tax',
                     'received_amount': d['received_amount'], 'received_date': d['received_date']})
+        # Overdue = unpaid tax invoice whose due date has passed (dates typed in any common format).
+        _due = _parse_invoice_date(d['due_date'])
+        out[-1]['is_overdue'] = bool(_due and (d.get('doc_type') or 'tax') == 'tax'
+                                     and (d['status'] or '').lower() != 'paid'
+                                     and _due < datetime.date.today())
     return jsonify({'ok': True, 'invoices': out})
 
 
@@ -14999,6 +15004,24 @@ def invoice_next_number():
     return jsonify({'ok': True, 'invoice_no': inv_no})
 
 
+def _parse_invoice_date(s):
+    """Read an invoice / due date the way people type it: 2026-10-18, 18-Oct-26,
+    18-Oct-2026, 18 Oct 2026, 18/10/2026 or 18.10.26. Returns a date or None.
+    (Comparing the raw text with today's ISO date wrongly flagged '18-Oct-26'
+    as overdue, because '1' sorts before '2'.)"""
+    import datetime as _dt
+    s = (s or '').strip()
+    if not s:
+        return None
+    for fmt in ('%Y-%m-%d', '%d-%b-%y', '%d-%b-%Y', '%d %b %Y', '%d %b %y', '%d/%m/%Y', '%d/%m/%y',
+                '%d-%m-%Y', '%d-%m-%y', '%d.%m.%Y', '%d.%m.%y', '%d %B %Y', '%d-%B-%Y'):
+        try:
+            return _dt.datetime.strptime(s[:10] if fmt == '%Y-%m-%d' else s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 @app.route('/api/invoices/summary', methods=['GET'])
 @login_required
 @agency_only
@@ -15024,13 +15047,15 @@ def invoicing_summary():
             received += (r['received_amount'] or gross); n_paid += 1
         else:
             outstanding += gross; unpaid_count += 1
-            due = (r['due_date'] or '')[:10]
-            is_over = bool(due and due < today)
+            due = (r['due_date'] or '').strip()
+            _dd = _parse_invoice_date(due)
+            is_over = bool(_dd and _dd.isoformat() < today)
             if is_over:
                 overdue_amt += gross; overdue_count += 1
             outstanding_list.append({'invoice_no': r['invoice_no'], 'buyer_name': r['buyer_name'],
                                      'total': gross, 'due_date': due, 'overdue': is_over})
-    outstanding_list.sort(key=lambda x: (not x['overdue'], x['due_date'] or '9999'))
+    outstanding_list.sort(key=lambda x: (not x['overdue'],
+                                         (_parse_invoice_date(x['due_date']) or _dt.date(9999, 1, 1)).isoformat()))
     exp_by_cat = {}; total_exp = 0.0
     for e in exps:
         exp_by_cat[e['category']] = exp_by_cat.get(e['category'], 0) + (e['amount'] or 0)

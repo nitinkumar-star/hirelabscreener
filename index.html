@@ -1025,8 +1025,8 @@ body{font-size:14px !important; line-height:1.5}
       <div style="margin-left:auto"><button class="btn btn-o" onclick="closeAdmin()">&#10005; Close</button></div>
     </div>
     <div class="cdb-subtab-bar">
-      <button class="cdb-subtab active" onclick="openAdmin()">&#9672; Admin Panel</button>
-      <button class="cdb-subtab" onclick="openFreelancerAdmin()">&#129309; Freelancers</button>
+      <button class="cdb-subtab active" onclick="openAdmin()">Admin panel</button>
+      <button class="cdb-subtab" onclick="openFreelancerAdmin()">Freelancers</button>
     </div>
     <div id="admin-body" style="flex:1;overflow:auto;background:#f5f5f5;padding:16px"></div>
   </div>
@@ -1151,18 +1151,18 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:28px;height:28px;border-radius:6px;background:#E3EEFB;display:flex;align-items:center;justify-content:center;font-size:14px">&#127970;</div>
-        <div><div style="font-size:14px;font-weight:600">Clients (CRM)</div><div style="font-size:11px;color:#888;margin-top:1px">Companies, contacts &amp; relationship timeline</div></div>
+        <div><div style="font-size:14px;font-weight:600">Clients</div><div style="font-size:11px;color:#888;margin-top:1px">Companies, contacts and the relationship timeline</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-        <button class="btn btn-o" onclick="autoMapJobs()" style="font-size:11px" title="Link existing job postings to CRM clients by name">&#128279; Auto-map Jobs</button>
-        <button class="btn" onclick="openClientForm()" data-vocab-tpl="+ Add {client}" style="background:#2D6FB3;color:#fff;border:none;font-size:12px">&#43; Add Client</button>
-        <button class="btn btn-o" onclick="renderCrm()" style="font-size:11px">&#8635;</button>
+        <button class="w1-btn" onclick="autoMapJobs()" title="Link existing job postings to CRM clients by name">Auto-map jobs</button>
+        <button class="w1-btn ic" onclick="renderCrm()" title="Refresh" aria-label="Refresh">&#8635;</button>
+        <button class="w1-btn pri" onclick="openClientForm()" data-vocab-tpl="+ Add {client}">&#43; Add Client</button>
         <button class="btn btn-o" onclick="closeCrm()">&#10005; Close</button>
       </div>
     </div>
     <div class="cdb-subtab-bar">
-      <button class="cdb-subtab active" onclick="openCrm()">&#127970; Clients</button>
-      <button class="cdb-subtab" onclick="openBd()">&#128188; BD Command Center</button>
+      <button class="cdb-subtab active" onclick="openCrm()">Clients</button>
+      <button class="cdb-subtab" onclick="openBd()">BD workspace</button>
     </div>
     <div id="crm-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
   </div>
@@ -1178,17 +1178,17 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:28px;height:28px;border-radius:6px;background:#E7F0EC;display:flex;align-items:center;justify-content:center;font-size:14px">&#129309;</div>
-        <div><div style="font-size:14px;font-weight:600">Freelancer Sourcers</div><div style="font-size:11px;color:#888;margin-top:1px">Manage sourcers &amp; assign mandates</div></div>
+        <div><div style="font-size:14px;font-weight:600">Freelancer sourcers</div><div style="font-size:11px;color:#888;margin-top:1px">Sourcer logins, their mandates and what they have delivered</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-        <button class="btn" onclick="openFreelancerForm()" style="background:#0F6E56;color:#fff;border:none;font-size:12px">&#43; Add Freelancer</button>
-        <button class="btn btn-o" onclick="renderFreelancerAdmin()" style="font-size:11px">&#8635;</button>
+        <button class="w1-btn ic" onclick="renderFreelancerAdmin()" title="Refresh" aria-label="Refresh">&#8635;</button>
+        <button class="w1-btn pri" onclick="openFreelancerForm()">&#43; Add freelancer</button>
         <button class="btn btn-o" onclick="closeFreelancerAdmin()">&#10005; Close</button>
       </div>
     </div>
     <div class="cdb-subtab-bar">
-      <button class="cdb-subtab" onclick="openAdmin()">&#9672; Admin Panel</button>
-      <button class="cdb-subtab active" onclick="openFreelancerAdmin()">&#129309; Freelancers</button>
+      <button class="cdb-subtab" onclick="openAdmin()">Admin panel</button>
+      <button class="cdb-subtab active" onclick="openFreelancerAdmin()">Freelancers</button>
     </div>
     <div id="freelancers-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
   </div>
@@ -1198,7 +1198,7 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px;min-width:0">
         <div id="bd-head-ic" style="width:28px;height:28px;border-radius:6px;background:#EAE6FB;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">&#128188;</div>
-        <div style="min-width:0"><div id="bd-head-title" style="font-size:14px;font-weight:600">BD Command Center</div><div id="bd-head-sub" style="font-size:11px;color:#888;margin-top:1px">Today's follow-ups, meetings, stale clients &amp; requirements</div></div>
+        <div style="min-width:0"><div id="bd-head-title" style="font-size:14px;font-weight:600">BD workspace</div><div id="bd-head-sub" style="font-size:11px;color:#888;margin-top:1px">Today's follow-ups, meetings, stale clients &amp; requirements</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <div id="bd-home-ctl" style="display:flex;gap:8px;align-items:center">
@@ -1206,14 +1206,14 @@ body{font-size:14px !important; line-height:1.5}
             <button id="bd-scope-team" class="an-scope-btn active" onclick="setBdScope('team')" style="border:none;border-radius:0;font-size:11.5px;padding:6px 12px">Team</button>
             <button id="bd-scope-me" class="an-scope-btn" onclick="setBdScope('me')" style="border:none;border-radius:0;font-size:11.5px;padding:6px 12px;border-left:0.5px solid var(--line)">Mine</button>
           </div>
-          <button class="btn btn-o" style="font-size:11px" onclick="renderBd()" title="Refresh">&#8635;<span class="bdh-lbl"> Refresh</span></button>
+          <button class="w1-btn ic" onclick="renderBd()" title="Refresh" aria-label="Refresh">&#8635;</button>
         </div>
         <button class="btn btn-o" onclick="closeBd()" title="Close">&#10005;<span class="bdh-lbl"> Close</span></button>
       </div>
     </div>
     <div class="cdb-subtab-bar">
-      <button class="cdb-subtab" onclick="openCrm()">&#127970; Clients</button>
-      <button class="cdb-subtab active" onclick="openBd()">&#128188; BD Command Center</button>
+      <button class="cdb-subtab" onclick="openCrm()">Clients</button>
+      <button class="cdb-subtab active" onclick="openBd()">BD workspace</button>
     </div>
     <div id="bdw-shell">
       <nav id="bdw-nav"></nav>
@@ -1936,7 +1936,11 @@ async function readHash() {
     var overlayMap = { central: openCentralDB, ai: openAI, admin: openAdmin,
                        tasks: openTasks, responses: openResponses, analytics: openAnalytics,
                        waai: openWaAi, bd: openBd, crm: openCrm,
-                       freelancers: openFreelancerAdmin, jobs: openJobs };
+                       freelancers: openFreelancerAdmin, jobs: openJobs,
+                       // #invoicing and #email were written by their pages but never read back, so a refresh landed on Home.
+                       invoicing: openInvoicing, email: openEmailBox };
+    // Modules this workspace hides (e.g. Invoicing for Corporate) go Home, same as the sidebar.
+    if (overlayMap[head] && ((S.ws && S.ws.hidden_modules) || []).indexOf(head) >= 0) { await renderContent(); return; }
     if (overlayMap[head]) {
       // admin overlay only for admins
       if (head === 'admin' && !(S.currentUser && S.currentUser.role === 'admin')) {
@@ -2135,50 +2139,44 @@ async function renderFreelancerAdmin(){
     return;
   }
   var fls=r.freelancers||[];
-  var html='<div style="max-width:1000px;margin:0 auto">';
+  var html='<div class="w3-fl">';
 
   if(!fls.length){
-    html+='<div style="text-align:center;padding:60px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:14px">'
-      +'<div style="font-size:34px;margin-bottom:10px">&#129309;</div>'
-      +'<div style="font-size:15px;font-weight:600;color:#101828">No freelancers yet</div>'
-      +'<div style="font-size:13px;margin-top:6px;color:#667085">Add a sourcer account using "Add Freelancer".</div>'
-      +'<button class="btn" onclick="openFreelancerForm()" style="margin-top:14px;background:#0F6E56;color:#fff;border:none;font-size:12.5px">+ Add Freelancer</button>'
+    html+='<div class="w3-empty"><div class="t">No freelancers yet</div>'
+      +'<div class="s">Create a sourcer login with “Add freelancer”, then assign mandates to them.</div>'
+      +'<button class="w1-btn pri" onclick="openFreelancerForm()" style="margin-top:14px">+ Add freelancer</button>'
       +'</div></div>';
     body.innerHTML=html; return;
   }
-
-  html+='<div style="font-size:12.5px;color:#667085;margin-bottom:10px">'+fls.length+' freelancer'+(fls.length!==1?'s':'')+'</div>';
-  html+='<div style="display:flex;flex-direction:column;gap:12px">';
+  var act=fls.filter(function(f){ return f.status!=='disabled'; }).length;
+  html+='<div class="mu" style="font-size:13px;margin-bottom:10px">'+fls.length+' freelancer sourcer'+(fls.length!==1?'s':'')+' &middot; '+act+' active</div>';
+  html+='<div class="w3-flg">';
   fls.forEach(function(f){
     var st=f.stats||{};
     var disabled=f.status==='disabled';
-    html+='<div style="background:#fff;border:1px solid #E4E7EC;border-radius:14px;padding:16px 18px'+(disabled?';opacity:.6':'')+'">'
-      +'<div style="display:flex;align-items:center;gap:12px">'
-      +avatarHtml(f.display_name||f.username,38)
-      +'<div style="flex:1;min-width:0"><div style="font-size:14.5px;font-weight:700;color:#101828">'+esc(f.display_name||f.username)
-      +(disabled?' <span style="font-size:10px;background:#FEF3F2;color:#B42318;padding:1px 7px;border-radius:5px">DISABLED</span>':'')+'</div>'
-      +'<div style="font-size:12px;color:#667085">@'+esc(f.username)+' &middot; '+(f.mandate_count||0)+' mandate'+((f.mandate_count||0)!==1?'s':'')+' assigned</div></div>'
-      +'<div style="display:flex;gap:6px">'
-      +'<button class="btn btn-o" onclick="openAssignMandates('+f.id+',\''+esc(f.display_name||f.username).replace(/'/g,"")+'\')" style="font-size:11px">Assign Mandates</button>'
+    var nm=esc(f.display_name||f.username).replace(/'/g,"");
+    html+='<article class="w3-card w3-pad'+(disabled?' off':'')+'">'
+      +'<div class="w3-flh">'+avatarHtml(f.display_name||f.username,40)
+      +'<div class="m"><div class="t">'+esc(f.display_name||f.username)+(disabled?' <span class="w3-pill lost">Disabled</span>':'')+'</div>'
+      +'<div class="s">@'+esc(f.username)+' &middot; '+(f.mandate_count||0)+' mandate'+((f.mandate_count||0)!==1?'s':'')+' assigned</div></div>'
+      +'<div class="w3-acts"><button class="w1-btn" onclick="openAssignMandates('+f.id+',\''+nm+'\')">Assign mandates</button>'
       +(disabled
-        ? '<button class="btn btn-o" onclick="reactivateFreelancer('+f.id+')" style="font-size:11px;color:#0F6E56">Reactivate</button>'
-        : '<button class="btn btn-o" onclick="deactivateFreelancer('+f.id+')" style="font-size:11px;color:#B42318;border-color:#F5C4C0">Disable</button>')
+        ? '<button class="w1-btn" style="color:#0f766e" onclick="reactivateFreelancer('+f.id+')">Reactivate</button>'
+        : '<button class="w1-btn dang" onclick="deactivateFreelancer('+f.id+')">Disable</button>')
       +'</div></div>'
-      // stats strip
-      +'<div style="display:flex;gap:20px;margin-top:14px;padding-top:14px;border-top:1px solid #F2F4F7">'
-      +_flStat('Uploaded', st.uploaded||0, '#101828')
-      +_flStat('Screening', st.screening||0, '#2D6FB3')
-      +_flStat('Interested', st.interested||0, '#0F6E56')
-      +_flStat('Placed', st.placed||0, '#8A5A0B')
-      +'</div></div>';
+      +'<div class="w3-fls">'
+      +_flStat('Uploaded', st.uploaded||0, '#0f172a')
+      +_flStat('Screening', st.screening||0, '#175cd3')
+      +_flStat('Interested', st.interested||0, '#0f766e')
+      +_flStat('Placed', st.placed||0, '#b54708')
+      +'</div></article>';
   });
   html+='</div></div>';
   body.innerHTML=html;
 }
 
 function _flStat(label,val,color){
-  return '<div><div style="font-size:20px;font-weight:800;color:'+color+';line-height:1">'+val+'</div>'
-    +'<div style="font-size:10.5px;color:#98A2B3;text-transform:uppercase;letter-spacing:.3px;margin-top:3px">'+label+'</div></div>';
+  return '<div class="w3-flst"><div class="v" style="color:'+color+'">'+val+'</div><div class="l">'+label+'</div></div>';
 }
 
 // ─── Add Freelancer ────────────────────────────────────────────────────
@@ -5941,54 +5939,132 @@ async function openDraft(id){
   setTimeout(function(){ var ed=document.getElementById('cmp-editor'); if(ed) ed.innerHTML=(e.body_html||((e.body||'').replace(/\n/g,'<br>'))); },60);
 }
 
-function _invRup(n){ return '\u20B9'+Number(Math.round(n||0)).toLocaleString('en-IN'); }
-function _invCard(label,val,col){
-  return '<div style="flex:1;min-width:150px;background:#fff;border:1px solid #eee;border-left:3px solid '+col+';border-radius:9px;padding:12px 14px"><div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.4px">'+label+'</div><div style="font-size:20px;font-weight:700;color:'+col+';margin-top:3px">'+val+'</div></div>';
+function _invRup(n){ return '₹'+Number(Math.round(n||0)).toLocaleString('en-IN'); }
+function _invCard(label,val,col,sub){
+  return '<div class="w3-kpi"><div class="l">'+label+'</div><div class="v" style="color:'+(col||'var(--ink)')+'">'+val+'</div>'+(sub?'<div class="s">'+sub+'</div>':'')+'</div>';
+}
+// Parses the invoice/due dates people type (18-Oct-26, 2026-10-18, 18/10/2026 ...).
+function _invParseDate(s){
+  s=String(s||'').trim(); if(!s) return null;
+  var M={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11}, m;
+  if((m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return new Date(+m[1],+m[2]-1,+m[3]);
+  if((m=s.match(/^(\d{1,2})[\s\-\/.]([A-Za-z]{3,9})[\s\-\/.,]*(\d{2,4})$/)) && M[m[2].slice(0,3).toLowerCase()]!=null){ var y=+m[3]; if(y<100) y+=2000; return new Date(y,M[m[2].slice(0,3).toLowerCase()],+m[1]); }
+  if((m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/))){ var y2=+m[3]; if(y2<100) y2+=2000; return new Date(y2,+m[2]-1,+m[1]); }
+  return null;
+}
+function _invFmtDate(s){ var d=_invParseDate(s); return d?d.getDate()+' '+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]+' '+d.getFullYear():esc(s||''); }
+function _invHeader(active){
+  var t=function(k,l){ return '<button role="tab" aria-selected="'+(active===k)+'" class="'+(active===k?'on':'')+'" onclick="_invSwitch(\''+k+'\')">'+l+'</button>'; };
+  return '<div class="w2-ebhead w3-invhead"><div><h1>Invoicing</h1><p>GST tax invoices, proforma estimates, payments and expenses</p></div>'
+    +'<div class="w2-ebtabs" role="tablist" aria-label="Invoicing section">'+t('invoices','Invoices')+t('expenses','Expenses &amp; profit')+'</div>'
+    +'<div class="w2-ebtools">'+(active==='expenses'
+      ?'<button class="w1-btn pri" onclick="openExpenseForm()">+ Add expense</button>'
+      :'<button class="w1-btn pri" onclick="openInvoiceForm(0)">+ New invoice</button>')+'</div></div>';
+}
+function _invStatusPill(v){
+  if(v.doc_type==='proforma') return '<span class="w3-pill proforma">Estimate</span>';
+  if(v.status!=='Paid' && v.is_overdue) return '<span class="w3-pill overdue">Overdue</span>';
+  var k={'Paid':'paid','Overdue':'overdue','Sent':'sent','Draft':'draft'}[v.status]||'draft';
+  return '<span class="w3-pill '+k+'">'+esc(v.status||'Draft')+'</span>';
+}
+function _invBucket(v){
+  if(v.doc_type==='proforma') return 'proforma';
+  if(v.status==='Paid') return 'paid';
+  return (v.is_overdue||v.status==='Overdue')?'overdue':'unpaid';
 }
 async function renderInvoicing(){
   var el=document.getElementById('invoicing-body'); if(!el) return;
   if(window._invTab==='expenses'){ return renderExpenses(el); }
-  el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
+  if(!el.querySelector('.w3-inv')) el.innerHTML=_invHeader('invoices')+'<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
   var sum={}, list={};
   try{ sum=await req('GET','/invoices/summary'); }catch(e){}
   try{ list=await req('GET','/invoices'); }catch(e){}
-  var invs=(list&&list.invoices)||[];
-  var cards='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
-    +_invCard('Total Invoiced',_invRup(sum.invoiced),'#534AB7')
-    +_invCard('Received',_invRup(sum.received),'#0F7A52')
-    +_invCard('Outstanding',_invRup(sum.outstanding),'#B4690E')
-    +((sum.proforma_count||0)>0?_invCard('Projected (Proforma)',_invRup(sum.proforma_projected),'#7A5AF8'):_invCard('Invoices',(sum.count||0),'#555'))+'</div>';
-  var rows=invs.map(function(v){
-    var gross=Math.round((v.amount||0)*(1+(v.gst_rate||18)/100));
+  window._invList=(list&&list.invoices)||[];
+  window._invSum=sum||{};
+  window._invFilt=window._invFilt||'all';
+  _invPaint();
+}
+function _invSetF(f){ window._invFilt=f; _invPaint(); }
+function _invPaint(){
+  var el=document.getElementById('invoicing-body'); if(!el) return;
+  var invs=window._invList||[], sum=window._invSum||{}, f=window._invFilt||'all';
+  var qEl=document.getElementById('inv-q'), q=(qEl?qEl.value:(window._invQ||'')).trim().toLowerCase(); window._invQ=q;
+  var cnt={all:invs.length,unpaid:0,overdue:0,paid:0,proforma:0};
+  invs.forEach(function(v){ var b=_invBucket(v); cnt[b]++; if(b==='overdue') cnt.unpaid++; });
+  var show=invs.filter(function(v){
+    var b=_invBucket(v);
+    if(f==='unpaid' && !(b==='unpaid'||b==='overdue')) return false;
+    if(f!=='all' && f!=='unpaid' && b!==f) return false;
+    if(q && ((v.invoice_no||'')+' '+(v.buyer_name||'')+' '+(v.candidate_name||'')).toLowerCase().indexOf(q)<0) return false;
+    return true;
+  });
+  var cards='<div class="w3-kpis">'
+    +_invCard('Total invoiced',_invRup(sum.invoiced),'',(sum.count||0)+' tax invoice'+((sum.count||0)!==1?'s':''))
+    +_invCard('Received',_invRup(sum.received),'#027a48',(sum.n_paid||0)+' paid')
+    +_invCard('Outstanding',_invRup(sum.outstanding),'#b54708',(sum.unpaid_count||0)+' unpaid'+(sum.overdue_count?' &middot; '+sum.overdue_count+' overdue':''))
+    +((sum.proforma_count||0)>0?_invCard('Projected (proforma)',_invRup(sum.proforma_projected),'#c2410c',sum.proforma_count+' estimate'+(sum.proforma_count!==1?'s':'')):_invCard('Invoices',(sum.count||0),'',''))
+    +'</div>';
+  var chip=function(k,l){ var on=f===k; return '<button class="w1-chip'+(on?' on':'')+'" aria-pressed="'+on+'" onclick="_invSetF(\''+k+'\')">'+l+' <b>'+cnt[k]+'</b></button>'; };
+  var bar='<div class="w3-tb"><div class="w3-chips" role="group" aria-label="Status">'+chip('all','All')+chip('unpaid','Unpaid')+chip('overdue','Overdue')+chip('paid','Paid')+chip('proforma','Proforma')+'</div>'
+    +'<label class="w3-q" style="margin-left:auto;max-width:320px"><span aria-hidden="true">&#9906;</span><input id="inv-q" aria-label="Search invoices" placeholder="Search invoice no, client, candidate" value="'+esc(q)+'" oninput="_invPaint()"></label></div>';
+  var rows=show.map(function(v){
+    var gross=v.total!=null?v.total:Math.round((v.amount||0)*(1+(v.gst_rate||18)/100));
     var isPro=(v.doc_type==='proforma');
-    var stCol={'Paid':'#0F7A52','Overdue':'#C0392B','Sent':'#B4690E','Draft':'#888'}[v.status]||'#888';
-    var badge=isPro?'<span style="font-size:9px;font-weight:700;color:#fff;background:#B4690E;border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:middle">PROFORMA</span>':'';
-    return '<tr style="border-top:1px solid #f0f0f0'+(isPro?';background:#FFFDF7':'')+'">'
-      +'<td style="padding:8px;font-weight:600">'+esc(v.invoice_no||'')+badge+'</td>'
-      +'<td style="padding:8px">'+esc(v.invoice_date||'')+'</td>'
-      +'<td style="padding:8px">'+esc(v.buyer_name||'')+(v.candidate_name?'<div style="font-size:10.5px;color:#999">'+esc(v.candidate_name)+'</div>':'')+'</td>'
-      +'<td style="padding:8px;text-align:right">'+_invRup(gross)+'</td>'
-      +'<td style="padding:8px">'+(isPro?'<span style="font-size:10.5px;font-weight:700;color:#B4690E">Estimate</span>':'<span style="font-size:10.5px;font-weight:700;color:'+stCol+'">'+esc(v.status||'Draft')+'</span>')+'</td>'
-      +'<td style="padding:8px;text-align:right;white-space:nowrap">'
-        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="printInvoice('+v.id+')">&#128424; Print</button> '
-        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="openInvoiceForm('+v.id+')">Edit</button> '
-        +(isPro?'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#534AB7;font-weight:700" onclick="convertProforma('+v.id+')">&#8594; Convert to Tax</button> ':(v.status!=='Paid'?'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#0F7A52" onclick="markInvoicePaid('+v.id+')">Paid</button> ':''))
-        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#C0392B;border-color:#E7B3AE;font-weight:600" onclick="deleteInvoice('+v.id+',\''+esc(v.invoice_no||'')+'\')" title="Delete this invoice permanently">&#128465; Delete</button>'
-      +'</td></tr>';
+    var due=v.due_date?_invFmtDate(v.due_date):'<span class="dim">—</span>';
+    var prim=isPro?'<button class="w1-btn" style="color:#c2410c" onclick="convertProforma('+v.id+')">Convert to tax</button>'
+      :(v.status!=='Paid'?'<button class="w1-btn" style="color:#027a48" onclick="markInvoicePaid('+v.id+')">Mark paid</button>':'');
+    return '<tr'+(isPro?' class="pro"':'')+'>'
+      +'<td class="nw"><a href="#invoicing" onclick="event.preventDefault();openInvoiceForm('+v.id+')" style="font-weight:600;color:var(--ink);text-decoration:none">'+esc(v.invoice_no||'')+'</a></td>'
+      +'<td class="mu nw">'+_invFmtDate(v.invoice_date)+'</td>'
+      +'<td><div style="font-weight:600">'+esc(v.buyer_name||'')+'</div>'+(v.candidate_name?'<div class="sub">'+esc(v.candidate_name)+'</div>':'')+'</td>'
+      +'<td class="r nw" style="font-weight:600">'+_invRup(gross)+'</td>'
+      +'<td>'+_invStatusPill(v)+'</td>'
+      +'<td class="nw'+(v.is_overdue?' late':' mu')+'">'+due+'</td>'
+      +'<td class="r"><div class="w3-acts">'+prim
+        +'<button class="w1-btn" onclick="printInvoice('+v.id+')">&#128424; Print</button>'
+        +'<div class="w1-acct"><button class="w1-btn ic" aria-label="More actions for '+esc(v.invoice_no||'invoice')+'" aria-haspopup="menu" onclick="event.stopPropagation();_w3Menu(this)">&#8943;</button>'
+        +'<div class="w2-ebmenu" role="menu"><button role="menuitem" onclick="_w3MenuClose();openInvoiceForm('+v.id+')">Edit</button>'
+        +'<button role="menuitem" onclick="_w3MenuClose();_invDuplicate('+v.id+')">Duplicate as new</button>'
+        +'<button role="menuitem" style="color:#b42318" onclick="_w3MenuClose();deleteInvoice('+v.id+',\''+esc(v.invoice_no||'').replace(/'/g,'')+'\')">Delete&hellip;</button></div></div>'
+      +'</div></td></tr>';
   }).join('');
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
-    +'<div style="display:flex;gap:6px">'
-      +'<button class="btn" style="font-size:12.5px;background:#534AB7;color:#fff;border:none" onclick="_invSwitch(\'invoices\')">Invoices</button>'
-      +'<button class="btn btn-o" style="font-size:12.5px" onclick="_invSwitch(\'expenses\')">Expenses &amp; Profit</button></div>'
-    +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="openInvoiceForm(0)">+ New Invoice</button></div>'
-    +cards
-    +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
-    +'<thead><tr style="background:#F6F5FB;text-align:left"><th style="padding:8px">Invoice No</th><th style="padding:8px">Date</th><th style="padding:8px">Client</th><th style="padding:8px;text-align:right">Amount (incl GST)</th><th style="padding:8px">Status</th><th style="padding:8px;text-align:right">Actions</th></tr></thead>'
-    +'<tbody>'+(rows||'<tr><td colspan="6" style="padding:20px;text-align:center;color:#aaa">No invoices yet — click "New Invoice".</td></tr>')+'</tbody></table></div>';
+  var empty=invs.length?'No invoices match this filter.':'No invoices yet — click “New invoice”.';
+  var focus=document.activeElement&&document.activeElement.id==='inv-q';
+  el.innerHTML=_invHeader('invoices')+'<div class="w3-inv">'+cards+bar
+    +'<div class="w3-card"><div style="overflow-x:auto"><table class="w3-table"><thead><tr><th>Invoice no</th><th>Date</th><th>Client &middot; candidate</th><th class="r">Amount (incl. GST)</th><th>Status</th><th>Due</th><th></th></tr></thead>'
+    +'<tbody>'+(rows||'<tr><td colspan="7" class="w3-none">'+empty+'</td></tr>')+'</tbody></table></div></div></div>';
+  if(focus){ var qi=document.getElementById('inv-q'); if(qi){ qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); } }
+}
+function _w3Menu(btn){
+  var m=btn.nextElementSibling, open=m.classList.contains('open');
+  _w3MenuClose(); if(open) return;
+  // Fixed position so the table's scroll box does not clip the menu.
+  m.classList.add('open');
+  var r=btn.getBoundingClientRect(), w=m.offsetWidth||180, h=m.offsetHeight||120;
+  var top=(r.bottom+4+h>window.innerHeight)?Math.max(8,r.top-4-h):r.bottom+4;
+  m.style.position='fixed'; m.style.top=top+'px'; m.style.left=Math.max(8,r.right-w)+'px'; m.style.right='auto';
+}
+function _w3MenuClose(){ document.querySelectorAll('.w2-ebmenu.open').forEach(function(x){ x.classList.remove('open'); }); }
+async function _invDuplicate(id){
+  var r=await req('GET','/invoices/'+id); var src=(r&&r.invoice)||null;
+  if(!src){ toast('ERR','Could not load the invoice'); return; }
+  window._invNewDocType=src.doc_type||'tax';
+  await openInvoiceForm(0);
+  var set=function(k,v){ var e=document.getElementById(k); if(e && v!=null && v!=='') e.value=v; };
+  set('inv-ref',src.ref_no); set('inv-order',src.order_no); set('inv-orderdate',src.order_date);
+  set('inv-bname',src.buyer_name); set('inv-baddr',src.buyer_address); set('inv-bgstin',src.buyer_gstin);
+  set('inv-bstate',src.buyer_state); set('inv-bcode',src.buyer_state_code); set('inv-pos',src.place_of_supply);
+  set('inv-cand',src.candidate_name); set('inv-role',src.role); set('inv-desc',src.description);
+  set('inv-extra',(src.extra_lines&&src.extra_lines.join)?src.extra_lines.join('\n'):'');
+  set('inv-qty',src.quantity); set('inv-rate',src.rate); set('inv-per',src.per); set('inv-hsn',src.hsn);
+  set('inv-amount',src.amount); set('inv-gst',src.gst_rate); set('inv-totqty',src.total_qty);
+  if(src.client_id){ window._invClientId=src.client_id; var pk=document.getElementById('inv-crmpick'); if(pk) pk.value=String(src.client_id); try{ _invFillGstList(src.buyer_gstin||''); }catch(e){} }
+  window._invCandId=src.candidate_id||0;
+  _invCalc();
+  toast('OK','Copied from '+(src.invoice_no||'invoice')+' — new number and today’s date');
 }
 function printInvoice(id){ window.open(API+'/invoices/'+id+'/print?auto=1','_blank'); }
 function _invSwitch(t){ window._invTab=t; renderInvoicing(); }
-
 // ═══════════════════════════════════════════════════════════════════════
 //  ACCOUNTANT / CA VIEW — invoices only, view + print, no edits
 //  A self-contained, read-only screen. This login can never see or reach
@@ -5999,7 +6075,7 @@ function bootInvoiceViewer(){
   if(!host){
     host=document.createElement('div');
     host.id='inv-ro-app';
-    host.style.cssText='position:fixed;inset:0;background:#F6F5FB;overflow:auto;z-index:1;font-family:inherit';
+    host.style.cssText='position:fixed;inset:0;background:#f5f6f8;overflow:auto;z-index:1;font-family:inherit';
     document.body.appendChild(host);
   }
   host.style.display='block';
@@ -6007,19 +6083,12 @@ function bootInvoiceViewer(){
   var co=(u.company&&u.company.name)?u.company.name:'HireLab';
   var who=esc(u.display_name||u.username||'Accountant');
   host.innerHTML=
-    '<div style="max-width:1000px;margin:0 auto;padding:20px 16px 60px">'
-    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px">'
-      +'<div>'
-        +'<div style="font-size:20px;font-weight:800;color:#101828">'+esc(co)+' &middot; Invoices</div>'
-        +'<div style="font-size:12px;color:#667085;margin-top:2px">Accountant view (read-only) &middot; '+who+'</div>'
-      +'</div>'
-      +'<button class="btn btn-o" style="font-size:12.5px" onclick="doLogout()">Logout</button>'
-    +'</div>'
-    +'<div id="inv-ro-body"><div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div></div>'
-    +'</div>';
+    '<header class="w3-cahead"><span class="lg">'+esc(co.slice(0,2).toUpperCase())+'</span>'
+      +'<div style="flex:1;min-width:0"><h1>'+esc(co)+' &middot; Invoices</h1><p>Accountant view (read-only) &middot; '+who+'</p></div>'
+      +'<button class="w1-btn" onclick="doLogout()">Log out</button></header>'
+    +'<main class="w3-inv" style="max-width:1100px;margin:0 auto;padding:18px 16px 60px"><div id="inv-ro-body"><div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div></div></main>';
   renderInvoiceViewer();
 }
-
 async function renderInvoiceViewer(){
   var el=document.getElementById('inv-ro-body'); if(!el) return;
   var sum={}, list={};
@@ -6029,100 +6098,116 @@ async function renderInvoiceViewer(){
     el.innerHTML='<div style="color:#C0392B;padding:20px">Could not load invoices. Please try again, or ask the administrator.</div>';
     return;
   }
-  var invs=(list&&list.invoices)||[];
-  var cards='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
-    +_invCard('Total Invoiced',_invRup(sum.invoiced),'#534AB7')
-    +_invCard('Received',_invRup(sum.received),'#0F7A52')
-    +_invCard('Outstanding',_invRup(sum.outstanding),'#B4690E')
+  window._invRoList=(list&&list.invoices)||[]; window._invRoSum=sum||{};
+  _invRoPaint();
+}
+function _invRoMonthKey(v){ var d=_invParseDate(v.invoice_date); return d?d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2):''; }
+function _invRoPaint(){
+  var el=document.getElementById('inv-ro-body'); if(!el) return;
+  var all=window._invRoList||[], sum=window._invRoSum||{};
+  var mSel=document.getElementById('inv-ro-month'), mon=mSel?mSel.value:(window._invRoMon||''); window._invRoMon=mon;
+  var months={}; all.forEach(function(v){ var k=_invRoMonthKey(v); if(k) months[k]=1; });
+  var MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var mopts='<option value="">All months</option>'+Object.keys(months).sort().reverse().map(function(k){ return '<option value="'+k+'"'+(k===mon?' selected':'')+'>'+MN[+k.slice(5)-1]+' '+k.slice(0,4)+'</option>'; }).join('');
+  var invs=mon?all.filter(function(v){ return _invRoMonthKey(v)===mon; }):all;
+  var cards='<div class="w3-kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">'
+    +_invCard('Total invoiced',_invRup(sum.invoiced))
+    +_invCard('Received',_invRup(sum.received),'#027a48')
+    +_invCard('Outstanding',_invRup(sum.outstanding),'#b54708')
     +'</div>';
   var rows=invs.map(function(v){
-    var gross=Math.round((v.amount||0)*(1+(v.gst_rate||18)/100));
-    var isPro=(v.doc_type==='proforma');
-    var stCol={'Paid':'#0F7A52','Overdue':'#C0392B','Sent':'#B4690E','Draft':'#888'}[v.status]||'#888';
-    var badge=isPro?'<span style="font-size:9px;font-weight:700;color:#fff;background:#B4690E;border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:middle">PROFORMA</span>':'';
-    return '<tr style="border-top:1px solid #f0f0f0'+(isPro?';background:#FFFDF7':'')+'">'
-      +'<td style="padding:8px;font-weight:600">'+esc(v.invoice_no||'')+badge+'</td>'
-      +'<td style="padding:8px">'+esc(v.invoice_date||'')+'</td>'
-      +'<td style="padding:8px">'+esc(v.buyer_name||'')+(v.candidate_name?'<div style="font-size:10.5px;color:#999">'+esc(v.candidate_name)+'</div>':'')+'</td>'
-      +'<td style="padding:8px;text-align:right">'+_invRup(gross)+'</td>'
-      +'<td style="padding:8px">'+(isPro?'<span style="font-size:10.5px;font-weight:700;color:#B4690E">Estimate</span>':'<span style="font-size:10.5px;font-weight:700;color:'+stCol+'">'+esc(v.status||'Draft')+'</span>')+'</td>'
-      +'<td style="padding:8px;text-align:right;white-space:nowrap">'
-        +'<button class="btn btn-o" style="font-size:10.5px;padding:3px 8px" onclick="printInvoice('+v.id+')">&#128424; View / Print</button>'
-      +'</td></tr>';
+    var gross=v.total!=null?v.total:Math.round((v.amount||0)*(1+(v.gst_rate||18)/100));
+    return '<tr'+(v.doc_type==='proforma'?' class="pro"':'')+'>'
+      +'<td class="nw" style="font-weight:600">'+esc(v.invoice_no||'')+'</td>'
+      +'<td class="mu nw">'+_invFmtDate(v.invoice_date)+'</td>'
+      +'<td><div style="font-weight:600">'+esc(v.buyer_name||'')+'</div>'+(v.candidate_name?'<div class="sub">'+esc(v.candidate_name)+'</div>':'')+'</td>'
+      +'<td class="r nw" style="font-weight:600">'+_invRup(gross)+'</td>'
+      +'<td>'+_invStatusPill(v)+'</td>'
+      +'<td class="r"><button class="w1-btn" onclick="printInvoice('+v.id+')">&#128424; View / print</button></td></tr>';
   }).join('');
   el.innerHTML=cards
-    +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
-    +'<thead><tr style="background:#F6F5FB;text-align:left"><th style="padding:8px">Invoice No</th><th style="padding:8px">Date</th><th style="padding:8px">Client</th><th style="padding:8px;text-align:right">Amount (incl GST)</th><th style="padding:8px">Status</th><th style="padding:8px;text-align:right">Action</th></tr></thead>'
-    +'<tbody>'+(rows||'<tr><td colspan="6" style="padding:20px;text-align:center;color:#aaa">No invoices yet.</td></tr>')+'</tbody></table></div>';
+    +'<div class="w3-tb"><select id="inv-ro-month" class="w3-sel" aria-label="Month" onchange="_invRoPaint()">'+mopts+'</select>'
+    +'<button class="w1-btn" onclick="_invRoCsv()">Download list (CSV)</button><span class="mu" style="font-size:13px">'+invs.length+' invoice'+(invs.length!==1?'s':'')+'</span></div>'
+    +'<div class="w3-card"><div style="overflow-x:auto"><table class="w3-table"><thead><tr><th>Invoice no</th><th>Date</th><th>Client &middot; candidate</th><th class="r">Amount (incl. GST)</th><th>Status</th><th></th></tr></thead>'
+    +'<tbody>'+(rows||'<tr><td colspan="6" class="w3-none">No invoices'+(mon?' in this month':' yet')+'.</td></tr>')+'</tbody></table></div></div>';
+}
+function _invRoCsv(){
+  var mon=window._invRoMon||'', all=window._invRoList||[];
+  var invs=mon?all.filter(function(v){ return _invRoMonthKey(v)===mon; }):all;
+  var q=function(v){ v=(v==null?'':String(v)); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  var lines=[['Invoice no','Type','Invoice date','Client','Candidate','Taxable amount','GST %','Total (incl. GST)','Status','Due date','Received amount','Received date'].join(',')];
+  invs.forEach(function(v){
+    var gross=v.total!=null?v.total:Math.round((v.amount||0)*(1+(v.gst_rate||18)/100));
+    lines.push([v.invoice_no,v.doc_type==='proforma'?'Proforma':'Tax',v.invoice_date,v.buyer_name,v.candidate_name,v.amount,v.gst_rate,gross,v.status,v.due_date,v.received_amount,v.received_date].map(q).join(','));
+  });
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['﻿'+lines.join('\n')],{type:'text/csv'}));
+  a.download='invoices'+(mon?'-'+mon:'')+'.csv';
+  document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 500);
 }
 var _expCats=['Freelancer Salary','Freelancer Commission','Owner Salary','Tools & Subscriptions','Marketing','Office & Admin','Travel','Other'];
 async function renderExpenses(el){
-  el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
+  window._invTab='expenses';
+  if(!el.querySelector('.w3-exp')) el.innerHTML=_invHeader('expenses')+'<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
   var sum={}, list={};
   try{ sum=await req('GET','/invoices/summary'); }catch(e){}
   try{ list=await req('GET','/expenses'); }catch(e){}
-  var exps=(list&&list.expenses)||[];
+  window._expList=(list&&list.expenses)||[]; window._expSum=sum||{};
+  _expPaint();
+}
+function _expPaint(){
+  var el=document.getElementById('invoicing-body'); if(!el) return;
+  var sum=window._expSum||{}, all=window._expList||[];
+  var cSel=document.getElementById('exp-catf'), cat=(cSel?cSel.value:window._expCat)||''; window._expCat=cat;
+  var exps=cat?all.filter(function(e){ return e.category===cat; }):all;
   var net=(sum.net_profit!=null)?sum.net_profit:((sum.received||0)-(sum.total_expenses||0));
-  var netCol=net>=0?'#0F7A52':'#C0392B';
-  var cards='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
-    +_invCard('Received',_invRup(sum.received),'#0F7A52')
-    +_invCard('Total Expenses',_invRup(sum.total_expenses),'#C0392B')
-    +_invCard('Net Profit',_invRup(net),netCol)+'</div>';
-  // ── Agency financial projection ──
+  var cards='<div class="w3-kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">'
+    +_invCard('Received',_invRup(sum.received),'#027a48','paid invoices')
+    +_invCard('Total expenses',_invRup(sum.total_expenses),'#b42318',all.length+' entr'+(all.length!==1?'ies':'y'))
+    +_invCard('Net profit',_invRup(net),net>=0?'#027a48':'#b42318','received − expenses')+'</div>';
   var proj=sum.projection||{};
-  var recvCard=function(lbl,val,col,sub){ return '<div style="flex:1;min-width:140px;background:#fff;border:1px solid #eee;border-radius:12px;padding:13px 15px">'
-    +'<div style="font-size:10.5px;color:#888;text-transform:uppercase;letter-spacing:.4px">'+lbl+'</div>'
-    +'<div style="font-size:19px;font-weight:700;color:'+(col||'#1B1B18')+';margin-top:3px">'+val+'</div>'
-    +(sub?'<div style="font-size:10.5px;color:#aaa;margin-top:2px">'+sub+'</div>':'')+'</div>'; };
+  var rc=function(lbl,val,col,sub){ return '<div class="w3-kpi sm"><div class="l">'+lbl+'</div><div class="v" style="color:'+(col||'var(--ink)')+'">'+val+'</div>'+(sub?'<div class="s">'+sub+'</div>':'')+'</div>'; };
   var olist=sum.outstanding_list||[];
   var olrows=olist.map(function(o){
-    var col=o.overdue?'#C0392B':'#B4690E';
-    return '<tr style="border-top:1px solid #f2f2f2"><td style="padding:7px 8px;font-size:12px">'+esc(o.invoice_no||'')+'</td>'
-      +'<td style="padding:7px 8px;font-size:12px">'+esc(o.buyer_name||'')+'</td>'
-      +'<td style="padding:7px 8px;font-size:12px;color:#999">'+esc(o.due_date||'-')+(o.overdue?' <span style="color:#C0392B;font-weight:700">OVERDUE</span>':'')+'</td>'
-      +'<td style="padding:7px 8px;font-size:12px;text-align:right;font-weight:600;color:'+col+'">'+_invRup(o.total)+'</td></tr>';
+    return '<tr><td style="font-weight:600">'+esc(o.invoice_no||'')+'</td><td>'+esc(o.buyer_name||'')+'</td>'
+      +'<td class="nw'+(o.overdue?' late':' mu')+'">'+(o.due_date?_invFmtDate(o.due_date):'—')+(o.overdue?' &middot; <b>Overdue</b>':'')+'</td>'
+      +'<td class="r nw" style="font-weight:600;color:'+(o.overdue?'#b42318':'#b54708')+'">'+_invRup(o.total)+'</td></tr>';
   }).join('');
-  var projSection='<div style="background:#fff;border:1px solid #eee;border-radius:14px;padding:16px;margin-bottom:16px">'
-    +'<div style="font-weight:700;font-size:15px;margin-bottom:12px">🏦 Agency Financial Projection</div>'
-    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'
-      +recvCard('Outstanding (clearance baaki)',_invRup(sum.outstanding),'#B4690E',(sum.unpaid_count||0)+' invoice pending')
-      +recvCard('Overdue (paisa phasa)',_invRup(sum.overdue_amount),'#C0392B',(sum.overdue_count||0)+' invoice overdue')
-      +recvCard('Total Invoiced',_invRup(sum.invoiced),'#534AB7',(sum.count||0)+' invoices')
+  var projSection='<section class="w3-card w3-pad"><h2 class="w3-h2">Agency financial projection</h2>'
+    +'<div class="w3-kpis" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:12px 0 0">'
+      +rc('Outstanding',_invRup(sum.outstanding),'#b54708',(sum.unpaid_count||0)+' invoice'+((sum.unpaid_count||0)!==1?'s':'')+' awaiting payment')
+      +rc('Overdue',_invRup(sum.overdue_amount),'#b42318',(sum.overdue_count||0)+' invoice'+((sum.overdue_count||0)!==1?'s':'')+' past due date')
+      +rc('Total invoiced',_invRup(sum.invoiced),'',(sum.count||0)+' invoices')
     +'</div>'
-    +'<div style="font-size:12px;font-weight:600;color:#555;margin:6px 0 8px">Upcoming Revenue (placements se projection)</div>'
-    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">'
-      +recvCard('Confirmed (fee due)',_invRup(proj.confirmed),'#0F7A52','joined, invoice ready')
-      +recvCard('Committed (future joining)',_invRup(proj.committed),'#2456A6','offer accept, joining pending')
-      +recvCard('Probable (in interview)',_invRup(proj.probable),'#8E24AA','shared/interview stage')
+    +'<h3 class="w3-h3">Upcoming revenue from placements</h3>'
+    +'<div class="w3-kpis" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:0">'
+      +rc('Confirmed &middot; fee due',_invRup(proj.confirmed),'#027a48','joined, invoice ready')
+      +rc('Committed &middot; future joining',_invRup(proj.committed),'#175cd3','offer accepted, joining pending')
+      +rc('Probable &middot; in interview',_invRup(proj.probable),'#534ab7','shared / interview stage')
     +'</div>'
-    +'<div style="font-size:11px;color:#999;margin-top:6px">Total projected pipeline value: <b style="color:#1B1B18">'+_invRup(proj.total_potential)+'</b> (confirmed + committed + probable)</div>'
-    +(olist.length?('<div style="margin-top:14px"><div style="font-size:12px;font-weight:600;color:#555;margin-bottom:6px">Pending Invoices (clearance ke liye baaki)</div>'
-      +'<div style="background:#fcfbff;border:1px solid #eee;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#F6F5FB;text-align:left"><th style="padding:7px 8px;font-size:10.5px;color:#888">Invoice</th><th style="padding:7px 8px;font-size:10.5px;color:#888">Client</th><th style="padding:7px 8px;font-size:10.5px;color:#888">Due</th><th style="padding:7px 8px;font-size:10.5px;color:#888;text-align:right">Amount</th></tr></thead><tbody>'+olrows+'</tbody></table></div></div>'):'')
-    +'</div>';
+    +'<p class="mu" style="font-size:13px;margin:10px 0 0">Total projected pipeline: <b style="color:var(--ink)">'+_invRup(proj.total_potential)+'</b> (confirmed + committed + probable)</p>'
+    +(olist.length?('<h3 class="w3-h3">Pending invoices</h3><div class="w3-card" style="box-shadow:none"><div style="overflow-x:auto"><table class="w3-table"><thead><tr><th>Invoice</th><th>Client</th><th>Due</th><th class="r">Amount</th></tr></thead><tbody>'+olrows+'</tbody></table></div></div>'):'')
+    +'</section>';
   var byCat=sum.expenses_by_category||{};
-  var catChips=Object.keys(byCat).map(function(k){return '<span style="font-size:10.5px;background:#F4F3FB;border:1px solid #E3E0F3;border-radius:20px;padding:3px 10px;margin:2px;display:inline-block">'+esc(k)+': '+_invRup(byCat[k])+'</span>';}).join(' ');
+  var catKeys=Object.keys(byCat).sort(function(a,b){ return (byCat[b]||0)-(byCat[a]||0); });
+  var catMax=catKeys.reduce(function(m,k){ return Math.max(m,byCat[k]||0); },0)||1;
+  var catBars=catKeys.map(function(k){ return '<button class="w3-cbar'+(cat===k?' on':'')+'" onclick="_expSetCat(\''+esc(k).replace(/'/g,'\\\'')+'\')"><span>'+esc(k)+'</span><span class="b"><i style="width:'+Math.round((byCat[k]||0)/catMax*100)+'%"></i></span><span class="r">'+_invRup(byCat[k])+'</span></button>'; }).join('');
+  var catOpts='<option value="">All categories</option>'+_expCats.concat(catKeys.filter(function(k){ return _expCats.indexOf(k)<0; })).map(function(c){ return '<option value="'+esc(c)+'"'+(c===cat?' selected':'')+'>'+esc(c)+'</option>'; }).join('');
   var rows=exps.map(function(e){
-    return '<tr style="border-top:1px solid #f0f0f0">'
-      +'<td style="padding:8px">'+esc(e.date||'')+'</td>'
-      +'<td style="padding:8px">'+esc(e.category||'')+'</td>'
-      +'<td style="padding:8px">'+esc(e.payee||'')+(e.note?'<div style="font-size:10.5px;color:#999">'+esc(e.note)+'</div>':'')+'</td>'
-      +'<td style="padding:8px;text-align:right;font-weight:600;color:#C0392B">'+_invRup(e.amount)+'</td>'
-      +'<td style="padding:8px;text-align:right"><button class="btn btn-o" style="font-size:10.5px;padding:3px 8px;color:#C0392B" onclick="deleteExpense('+e.id+')">&#10005;</button></td></tr>';
+    return '<tr><td class="mu nw">'+_invFmtDate(e.date)+'</td>'
+      +'<td><span class="w3-pill">'+esc(e.category||'')+'</span></td>'
+      +'<td><div style="font-weight:600">'+esc(e.payee||'')+'</div>'+(e.note?'<div class="sub">'+esc(e.note)+'</div>':'')+'</td>'
+      +'<td class="r nw" style="font-weight:600;color:#b42318">'+_invRup(e.amount)+'</td>'
+      +'<td class="r"><button class="w1-btn ic" style="color:#b42318" onclick="deleteExpense('+e.id+')" title="Delete expense" aria-label="Delete expense">&#10005;</button></td></tr>';
   }).join('');
-  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
-    +'<div style="display:flex;gap:6px">'
-      +'<button class="btn btn-o" style="font-size:12.5px" onclick="_invSwitch(\'invoices\')">Invoices</button>'
-      +'<button class="btn" style="font-size:12.5px;background:#534AB7;color:#fff;border:none" onclick="_invSwitch(\'expenses\')">Expenses &amp; Profit</button></div>'
-    +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="openExpenseForm()">+ Add Expense</button></div>'
-    +cards
-    +projSection
-    +'<div style="font-weight:700;font-size:15px;margin:4px 0 10px">💸 Expenses</div>'
-    +(catChips?'<div style="margin-bottom:14px">'+catChips+'</div>':'')
-    +'<div style="background:#fff;border:1px solid #eee;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
-    +'<thead><tr style="background:#F6F5FB;text-align:left"><th style="padding:8px">Date</th><th style="padding:8px">Category</th><th style="padding:8px">Paid To / Note</th><th style="padding:8px;text-align:right">Amount</th><th style="padding:8px"></th></tr></thead>'
-    +'<tbody>'+(rows||'<tr><td colspan="5" style="padding:20px;text-align:center;color:#aaa">No expenses yet — click "Add Expense".</td></tr>')+'</tbody></table></div>'
-    +'<div style="font-size:10.5px;color:#999;margin-top:8px">Net Profit = Received (paid invoices) &minus; Total Expenses.</div>';
+  el.innerHTML=_invHeader('expenses')+'<div class="w3-inv w3-exp">'+cards+projSection
+    +'<div class="w3-expg"><section class="w3-card"><div class="w3-cardh"><h2 class="w3-h2">Expenses</h2><select id="exp-catf" class="w3-sel" aria-label="Category" onchange="_expPaint()">'+catOpts+'</select></div>'
+    +'<div style="overflow-x:auto"><table class="w3-table"><thead><tr><th>Date</th><th>Category</th><th>Paid to &middot; note</th><th class="r">Amount</th><th></th></tr></thead>'
+    +'<tbody>'+(rows||'<tr><td colspan="5" class="w3-none">'+(all.length?'No expenses in this category.':'No expenses yet — click “Add expense”.')+'</td></tr>')+'</tbody></table></div></section>'
+    +'<section class="w3-card w3-pad"><h2 class="w3-h2" style="margin-bottom:8px">By category</h2>'+(catBars||'<div class="dim" style="font-size:13px">Nothing yet.</div>')+'</section></div>'
+    +'<p class="mu" style="font-size:12.5px;margin:10px 0 0">Net profit = received (paid invoices) − total expenses.</p></div>';
 }
+function _expSetCat(c){ window._expCat=(window._expCat===c)?'':c; var s=document.getElementById('exp-catf'); if(s) s.value=window._expCat; _expPaint(); }
 function _expClose(){ var e=document.getElementById('modal-expense'); if(e) e.remove(); }
 function openExpenseForm(){
   _expClose();
@@ -6189,37 +6274,37 @@ async function openInvoiceForm(id){
   _invClose();
   var extra=(inv.extra_lines&&inv.extra_lines.join)?inv.extra_lines.join('\n'):'';
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-invoice';
-  bg.innerHTML='<div class="modal" style="max-width:760px;width:95%"><div class="modal-head"><span class="modal-title">'+(id?'Edit':'New')+' Invoice</span><button class="modal-x" onclick="_invClose()">&#10005;</button></div>'
-    +'<div class="modal-body" style="max-height:78vh;overflow:auto">'
-    +'<div style="display:flex;gap:6px;margin-bottom:12px;background:#F3F2FB;border-radius:8px;padding:4px">'
-      +(function(){ var dt=(inv.doc_type||'tax'); if(id){ return '<div style="flex:1;text-align:center;padding:6px;font-size:12px;font-weight:700;border-radius:6px;background:'+(dt==='proforma'?'#B4690E':'#534AB7')+';color:#fff">'+(dt==='proforma'?'Proforma Invoice':'Tax Invoice')+'</div><input type="hidden" id="inv-doctype" value="'+dt+'">'; }
-        return '<button type="button" id="dt-tax" onclick="_invSetDocType(\'tax\')" style="flex:1;padding:7px;font-size:12px;font-weight:700;border:none;border-radius:6px;cursor:pointer;background:'+(dt!=='proforma'?'#534AB7':'transparent')+';color:'+(dt!=='proforma'?'#fff':'#666')+'">Tax Invoice</button>'
-             +'<button type="button" id="dt-pro" onclick="_invSetDocType(\'proforma\')" style="flex:1;padding:7px;font-size:12px;font-weight:700;border:none;border-radius:6px;cursor:pointer;background:'+(dt==='proforma'?'#B4690E':'transparent')+';color:'+(dt==='proforma'?'#fff':'#666')+'">Proforma</button>'
+  bg.innerHTML='<div class="modal w3-invm" style="max-width:1020px;width:96%"><div class="modal-head"><span class="modal-title">'+(id?'Edit':'New')+' invoice</span><button class="modal-x" onclick="_invClose()">&#10005;</button></div>'
+    +'<div class="modal-body w3-invb" style="max-height:78vh;overflow:auto"><div class="w3-invf">'
+    +'<div class="w3-dt">'
+      +(function(){ var dt=(inv.doc_type||'tax'); if(id){ return '<div style="flex:1;text-align:center;padding:6px;font-size:12px;font-weight:700;border-radius:6px;background:'+(dt==='proforma'?'#c2410c':'#0f766e')+';color:#fff">'+(dt==='proforma'?'Proforma (estimate)':'Tax invoice')+'</div><input type="hidden" id="inv-doctype" value="'+dt+'">'; }
+        return '<button type="button" id="dt-tax" onclick="_invSetDocType(\'tax\')" style="flex:1;padding:7px;font-size:12px;font-weight:700;border:none;border-radius:6px;cursor:pointer;background:'+(dt!=='proforma'?'#0f766e':'transparent')+';color:'+(dt!=='proforma'?'#fff':'#475063')+'">Tax invoice</button>'
+             +'<button type="button" id="dt-pro" onclick="_invSetDocType(\'proforma\')" style="flex:1;padding:7px;font-size:12px;font-weight:700;border:none;border-radius:6px;cursor:pointer;background:'+(dt==='proforma'?'#c2410c':'transparent')+';color:'+(dt==='proforma'?'#fff':'#475063')+'">Proforma (estimate)</button>'
              +'<input type="hidden" id="inv-doctype" value="'+dt+'">'; })()
     +'</div>'
-    +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin-bottom:6px">Invoice</div>'
-    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+    +'<div class="w3-invh">Invoice</div>'
+    +'<div class="w3-g3">'
       +_invF('inv-no','Invoice No',inv.invoice_no)+_invF('inv-date','Invoice Date',inv.invoice_date,'29-Jul-26')
       +_invF('inv-ref','Reference No. & Date',inv.ref_no)+_invF('inv-order','Buyer Order No',inv.order_no)
       +_invF('inv-orderdate','Order Dated',inv.order_date)+_invF('inv-due','Due Date',inv.due_date,'optional')
     +'</div>'
-    +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin:12px 0 6px">Client (Buyer / Bill to)</div>'
-    +'<div style="margin-bottom:8px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">&#128193; Pick from CRM (auto-fills details)</label>'
+    +'<div class="w3-invh">Bill to</div>'
+    +'<div style="margin-bottom:8px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">Pick from CRM (auto-fills details)</label>'
       +'<select id="inv-crmpick" class="inp" style="width:100%" onchange="_invPickClient()"><option value="">— Select client from CRM —</option>'
       +crmClients.map(function(cl){return '<option value="'+cl.id+'"'+(cl.id===(window._invClientId||0)?' selected':'')+'>'+esc(cl.name)+((cl.gstins&&cl.gstins.length>1)?(' &middot; '+cl.gstins.length+' GST'):(cl.gstin?(' &middot; '+esc(cl.gstin)):' (no GSTIN yet)'))+'</option>';}).join('')
       +'</select></div>'
-    +'<div id="inv-gstwrap" style="margin-bottom:8px;display:none"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">&#129534; GST registration / branch</label>'
+    +'<div id="inv-gstwrap" style="margin-bottom:8px;display:none"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">GST registration / branch</label>'
       +'<select id="inv-gstpick" class="inp" style="width:100%" onchange="_invPickGstin()"></select>'
-      +'<div style="font-size:10px;color:#aaa;margin-top:3px">Is client ke multiple GST hain \u2014 jis branch par invoice banani hai wo chuno. Address aur State Code apne aap bhar jaayenge.</div></div>'
-    +'<div style="margin-bottom:8px"><div style="font-size:10px;color:#aaa;margin-top:3px">CRM mein client select karo \u2014 details bhar jaayengi. Pehli baar edit karoge toh CRM mein save ho jaayengi (dobara nahi bharni padegi).</div></div>'
+      +'<div style="font-size:10px;color:#aaa;margin-top:3px">This client has more than one GSTIN \u2014 pick the branch you are billing. Address and state code fill in automatically.</div></div>'
+    +'<div style="margin-bottom:8px"><div style="font-size:10px;color:#aaa;margin-top:3px">Pick the client from CRM and the details fill in. Anything you add here is saved back to CRM, so you only type it once.</div></div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
       +_invF('inv-bname','Client Name',inv.buyer_name,'',true)
       +_invF('inv-baddr','Address',inv.buyer_address,'',true)
       +_invF('inv-bgstin','GSTIN/UIN',inv.buyer_gstin)+_invF('inv-bstate','State',inv.buyer_state,'Haryana')
       +_invF('inv-bcode','State Code',inv.buyer_state_code,'06')+_invF('inv-pos','Place of Supply',inv.place_of_supply,'Haryana')
     +'</div>'
-    +'<div style="font-size:10.5px;color:#999;margin-top:4px">Consignee (Ship to) same as buyer rakha jaayega (blank chhodo).</div>'
-    +'<div style="font-size:11px;font-weight:700;color:#534AB7;margin:12px 0 6px">Line Item</div>'
+    +'<div style="font-size:10.5px;color:#999;margin-top:4px">Consignee (ship to) is printed the same as the buyer.</div>'
+    +'<div class="w3-invh">Line item</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
       +_invF('inv-cand','Candidate Name (Format 2 — blank = no name)',inv.candidate_name)+_invF('inv-role','Role',inv.role)
       +_invF('inv-desc','Description',inv.description||'Charge Towards Recruitment Services',true)
@@ -6234,10 +6319,11 @@ async function openInvoiceForm(id){
       +_invF('inv-gst','GST %',inv.gst_rate||18)
       +_invF('inv-totqty','Total Qty label',inv.total_qty,'39,13,044 CTC')
     +'</div>'
-    +'<div id="inv-calc" style="margin-top:10px;background:#F6F5FB;border-radius:8px;padding:10px 12px;font-size:12.5px"></div>'
+    +'</div><aside class="w3-invs"><div class="w3-invh" style="margin-top:0">Summary</div><div id="inv-calc"></div></aside>'
     +'</div>'
     +'<div class="modal-foot" style="display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid #eee">'
       +'<button class="btn btn-o" onclick="_invClose()">Cancel</button>'
+      +'<button class="btn btn-o" onclick="saveInvoice('+(id||0)+',true)">&#128424; Save &amp; print</button>'
       +'<button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="saveInvoice('+(id||0)+')">Save</button></div></div>';
   document.body.appendChild(bg);
   ['inv-qty','inv-rate','inv-amount','inv-gst','inv-bcode'].forEach(function(k){ var e=document.getElementById(k); if(e) e.addEventListener('input',_invCalc); });
@@ -6328,10 +6414,15 @@ function _invCalc(){
   var tax=Math.round((amt||0)*gst)/100;
   var total=Math.round((amt||0)+tax);
   var box=document.getElementById('inv-calc'); if(!box) return;
-  box.innerHTML='<b>Taxable:</b> '+_invRup(amt||0)+' &nbsp; <b>'+(inter?'IGST':'CGST+SGST')+' '+gst+'%:</b> '+_invRup(tax)+' &nbsp; <b>Total:</b> '+_invRup(total)
-    +' <span style="color:#999">('+(inter?'inter-state':'same-state, code '+sellerCode)+')</span>';
+  var row=function(l,v){ return '<div class="w3-sr"><span>'+l+'</span><span>'+v+'</span></div>'; };
+  box.innerHTML=row('Taxable amount',_invRup(amt||0))
+    +(inter?row('IGST '+gst+'%',_invRup(tax)):row('CGST '+(gst/2)+'%',_invRup(tax/2))+row('SGST '+(gst/2)+'%',_invRup(tax/2)))
+    +'<div class="w3-sr tot"><span>Total</span><span>'+_invRup(total)+'</span></div>'
+    +'<div class="w3-sn">'+(inter?'Inter-state (buyer code '+esc(buyerCode)+') \u2192 IGST':'Same state (code '+sellerCode+') \u2192 CGST + SGST')+'</div>';
 }
-async function saveInvoice(id){
+async function saveInvoice(id, andPrint){
+  // Open the print tab now (inside the click) so pop-up blockers allow it; it is pointed at the invoice after the save.
+  var _pw=andPrint?window.open('about:blank','_blank'):null;
   var v=function(x){ var e=document.getElementById(x); return e?e.value.trim():''; };
   var qty=parseFloat(v('inv-qty'))||0, rate=parseFloat(v('inv-rate'))||0;
   var amt=parseFloat(v('inv-amount')); if((!amt||isNaN(amt))&&qty&&rate) amt=Math.round(qty*rate*100)/100;
@@ -6348,12 +6439,12 @@ async function saveInvoice(id){
     doc_type: v('inv-doctype')||'tax',
     candidate_id: window._invCandId||0, client_id: window._invClientId||0
   };
-  if(!body.buyer_name){ toast('Client name required',''); return; }
+  if(!body.buyer_name){ if(_pw) _pw.close(); toast('Client name required',''); return; }
   var r;
   if(id){ r=await req('PUT','/invoices/'+id,body); }
   else { r=await req('POST','/invoices',body); }
-  if(r&&(r.ok||r.id)){ _invClose(); toast('OK','Invoice saved'); var cc=window._invCandId; window._invCandId=0; if(cc){ try{ cpLoadBilling(cc); }catch(e){} } renderInvoicing(); }
-  else toast('Error',(r&&r.error)||'Save failed');
+  if(r&&(r.ok||r.id)){ _invClose(); toast('OK','Invoice saved'); if(andPrint){ var pid=id||r.id||(r.invoice&&r.invoice.id); if(pid&&_pw){ _pw.location=API+'/invoices/'+pid+'/print?auto=1'; } else if(pid){ printInvoice(pid); } else if(_pw){ _pw.close(); } } var cc=window._invCandId; window._invCandId=0; if(cc){ try{ cpLoadBilling(cc); }catch(e){} } renderInvoicing(); }
+  else { if(_pw) _pw.close(); toast('Error',(r&&r.error)||'Save failed'); }
 }
 
 // ── CANDIDATE PROFILES ─────────────────────────────────────────────────────
@@ -16856,7 +16947,7 @@ async function renderCrm(){
   if(!_isCompanyAdmin()) setTimeout(function(){ document.querySelectorAll('[onclick="openClientForm()"]').forEach(function(b){ b.style.display='none'; }); }, 0);
   var body=document.getElementById('crm-body');
   if(!body) return;
-  body.innerHTML='<div class="loading"><div class="spinner"></div>Loading clients...</div>';
+  if(!body.querySelector('.w3-crm')) body.innerHTML='<div class="loading"><div class="spinner"></div>Loading clients...</div>';
 
   if(!_crmMeta.statuses.length){
     var m=await req('GET','/crm/meta');
@@ -16873,112 +16964,113 @@ async function renderCrm(){
   var r=await req('GET','/crm/clients?'+params.join('&'));
   if(!r.ok){ body.innerHTML='<div style="padding:20px;color:#D92D20">Failed to load clients</div>'; return; }
   var clients=r.clients||[];
+  window._crmRows=clients; window._crmSel={};
+  var filtered=!!(_crmState.q||_crmState.status||_crmState.industry);
 
-  var html='<div style="max-width:1200px;margin:0 auto">';
-
-  // ── Toolbar: search + filters + sort ──
-  html+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">';
-  html+='<div style="position:relative;flex:1;min-width:220px">'
-    +'<span style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:#98A2B3;font-size:13px">&#128269;</span>'
-    +'<input id="crm-search" placeholder="Search company, city, GSTIN" value="'+esc(_crmState.q)+'" '
-    +'oninput="_crmDebounceSearch(this.value)" '
-    +'style="width:100%;padding:8px 12px 8px 32px;font-size:13px;border:1px solid #D0D5DD;border-radius:8px;outline:none;background:#fff"></div>';
-  // Status chip
-  html+='<select onchange="_crmSetFilter(\'status\',this.value)" style="font-size:12.5px;padding:8px 10px;border:1px solid #D0D5DD;border-radius:8px;background:#fff;color:#344054;cursor:pointer">';
-  html+='<option value="">All status</option>';
-  _crmMeta.statuses.forEach(function(s){
-    html+='<option value="'+s+'"'+(_crmState.status===s?' selected':'')+'>'+s.charAt(0).toUpperCase()+s.slice(1)+'</option>';
+  var html='<div class="w3-crm">';
+  // ── Toolbar: search + status chips + industry ──
+  html+='<div class="w3-tb">'
+    +'<label class="w3-q"><span aria-hidden="true">&#9906;</span><input id="crm-search" aria-label="Search clients" placeholder="Search company, city or GSTIN" value="'+esc(_crmState.q)+'" oninput="_crmDebounceSearch(this.value)"></label>'
+    +'<div class="w3-chips" role="group" aria-label="Status">';
+  var sts=[''].concat(_crmMeta.statuses.length?_crmMeta.statuses:['active','prospect','inactive','lost']);
+  sts.forEach(function(s){
+    var on=(_crmState.status||'')===s;
+    html+='<button class="w1-chip'+(on?' on':'')+'" aria-pressed="'+on+'" onclick="_crmSetFilter(\'status\',\''+s+'\')">'+(s?s.charAt(0).toUpperCase()+s.slice(1):'All')+'</button>';
   });
-  html+='</select>';
-  // Industry chip
+  html+='</div>';
   if(_crmMeta.industries.length){
-    html+='<select onchange="_crmSetFilter(\'industry\',this.value)" style="font-size:12.5px;padding:8px 10px;border:1px solid #D0D5DD;border-radius:8px;background:#fff;color:#344054;cursor:pointer">';
-    html+='<option value="">All industries</option>';
-    _crmMeta.industries.forEach(function(i){
-      html+='<option value="'+esc(i)+'"'+(_crmState.industry===i?' selected':'')+'>'+esc(i)+'</option>';
-    });
+    html+='<select class="w3-sel" aria-label="Industry" onchange="_crmSetFilter(\'industry\',this.value)"><option value="">All industries</option>';
+    _crmMeta.industries.forEach(function(i){ html+='<option value="'+esc(i)+'"'+(_crmState.industry===i?' selected':'')+'>'+esc(i)+'</option>'; });
     html+='</select>';
   }
   html+='</div>';
-
-  // ── Result count ──
-  html+='<div style="font-size:12.5px;color:#667085;margin-bottom:8px">'+r.total+' client'+(r.total!==1?'s':'')
-    +(_crmState.q||_crmState.status||_crmState.industry?' (filtered)':'')+'</div>';
+  // ── Bulk bar (shown when rows are ticked) ──
+  html+='<div id="crm-bulk" class="w3-bulk" role="region" aria-label="Bulk actions" style="display:none"><b id="crm-bulk-n">0 selected</b>'
+    +'<select aria-label="Set status" onchange="_crmBulkStatus(this.value);this.value=\'\'"><option value="">Set status…</option><option value="active">Active</option><option value="prospect">Prospect</option><option value="inactive">Inactive</option><option value="lost">Lost</option></select>'
+    +'<button onclick="_crmExportCsv()">Export CSV</button><button class="x" onclick="_crmClearSel()">Clear</button></div>';
 
   if(!clients.length){
-    html+='<div style="text-align:center;padding:70px 20px;background:#fff;border:1px solid #E4E7EC;border-radius:12px">'
-      +'<div style="font-size:32px;margin-bottom:10px">&#127970;</div>'
-      +'<div style="font-size:15px;font-weight:600;color:#101828">'+(_crmState.q||_crmState.status?'No clients match':'Start your client list')+'</div>'
-      +'<div style="font-size:13px;margin-top:6px;color:#667085">'+(_crmState.q||_crmState.status?'Try clearing filters':'Add your first company to begin.')+'</div>'
-      +(!(_crmState.q||_crmState.status)?'<button class="btn" onclick="openClientForm()" style="margin-top:14px;background:#2D6FB3;color:#fff;border:none;font-size:12.5px">+ Add '+esc(T('client','Client'))+'</button>':'')
-      +'</div>';
-    html+='</div>'; body.innerHTML=html; return;
+    html+='<div class="w3-empty"><div class="t">'+(filtered?'No clients match':'Start your client list')+'</div>'
+      +'<div class="s">'+(filtered?'Try clearing the filters.':'Add your first company to begin.')+'</div>'
+      +(!filtered?'<button class="w1-btn pri" onclick="openClientForm()" style="margin-top:14px">+ Add '+esc(T('client','Client'))+'</button>':'')
+      +'</div></div>';
+    body.innerHTML=html; return;
   }
 
-  // ── TABLE ──
-  var sortIcon=function(col){
-    if(_crmState.sort!==col) return '<span style="color:#D0D5DD">&#8645;</span>';
-    return _crmState.dir==='asc'?'&#8593;':'&#8595;';
+  var sortBtn=function(col,label){
+    var ic=_crmState.sort!==col?'<span class="dim">&#8645;</span>':(_crmState.dir==='asc'?'&#8593;':'&#8595;');
+    return '<button class="w3-th" onclick="_crmSetSort2(\''+col+'\')">'+label+' '+ic+'</button>';
   };
-  html+='<div style="background:#fff;border:1px solid #E4E7EC;border-radius:12px;overflow:hidden">';
-  html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
-  // Header
-  html+='<thead><tr style="background:#F9FAFB;border-bottom:1px solid #E4E7EC">'
-    +'<th style="width:38px;padding:10px 0 10px 16px;text-align:left"><input type="checkbox" onclick="_crmToggleAll(this)" style="cursor:pointer"></th>'
-    +'<th onclick="_crmSetSort2(\'name\')" style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px;cursor:pointer;white-space:nowrap">Company '+sortIcon('name')+'</th>'
-    +'<th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Industry</th>'
-    +'<th onclick="_crmSetSort2(\'city\')" style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px;cursor:pointer;white-space:nowrap">City '+sortIcon('city')+'</th>'
-    +'<th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Contacts</th>'
-    +'<th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Open Jobs</th>'
-    +'<th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px">Status</th>'
-    +'<th onclick="_crmSetSort2(\'created_at\')" style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:#667085;text-transform:uppercase;letter-spacing:.4px;cursor:pointer;white-space:nowrap">Last Activity '+sortIcon('created_at')+'</th>'
-    +'</tr></thead><tbody>';
-  // Rows
+  html+='<div class="w3-card"><div style="overflow-x:auto"><table class="w3-table">'
+    +'<thead><tr><th style="width:36px"><input type="checkbox" aria-label="Select all" onclick="_crmToggleAll(this)"></th>'
+    +'<th>'+sortBtn('name','Company')+'</th><th>Industry</th><th>'+sortBtn('city','City')+'</th>'
+    +'<th class="r">Contacts</th><th class="r">Open jobs</th><th>Status</th><th>'+sortBtn('created_at','Last activity')+'</th></tr></thead><tbody>';
   clients.forEach(function(c){
     var sc=_crmStatusColor(c.status);
-    var la=c.last_activity?_fmtDateTime(c.last_activity):'<span style="color:#D0D5DD">—</span>';
-    html+='<tr style="border-bottom:1px solid #F2F4F7;transition:background .1s" '
-      +'onmouseover="this.style.background=\'#F9FAFB\'" onmouseout="this.style.background=\'#fff\'">'
-      // checkbox
-      +'<td style="padding:12px 0 12px 16px" onclick="event.stopPropagation()"><input type="checkbox" class="crm-row-cb" data-id="'+c.id+'" style="cursor:pointer"></td>'
-      // company (clickable)
-      +'<td style="padding:12px" onclick="openClientDetail('+c.id+')">'
-      +'<div style="display:flex;align-items:center;gap:10px;cursor:pointer">'
-      +'<div style="width:32px;height:32px;border-radius:8px;background:'+sc.bg+';display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:'+sc.fg+';flex-shrink:0">'+esc((c.name||'?').charAt(0).toUpperCase())+'</div>'
-      +'<div><span style="font-size:13px;font-weight:600;color:#2D6FB3">'+esc(c.name)+'</span>'
-      +(c.bill_name && c.bill_name!==c.name?'<div style="font-size:11px;color:#98A2B3;margin-top:1px">Legal: '+esc(c.bill_name)+'</div>':'')
-      +'</div></div></td>'
-      // industry
-      +'<td style="padding:12px;color:#475467">'+(c.industry?esc(c.industry):'<span style="color:#D0D5DD">—</span>')+'</td>'
-      // city
-      +'<td style="padding:12px;color:#475467">'+(c.city?esc(c.city):'<span style="color:#D0D5DD">—</span>')+'</td>'
-      // contacts
-      +'<td style="padding:12px;text-align:center;color:#475467">'+(c.contact_count||0)+'</td>'
-      // jobs
-      +'<td style="padding:12px;text-align:center">'+(c.job_count?'<span style="background:#EEF4FF;color:#2D6FB3;font-weight:600;padding:2px 8px;border-radius:6px">'+c.job_count+'</span>':'<span style="color:#D0D5DD">0</span>')+'</td>'
-      // status
-      +'<td style="padding:12px"><span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:6px;background:'+sc.bg+';color:'+sc.fg+'">'+esc(c.status)+'</span></td>'
-      // last activity
-      +'<td style="padding:12px;color:#667085;font-size:12px;white-space:nowrap">'+la+'</td>'
-      +'</tr>';
+    var la=c.last_activity?_fmtDateTime(c.last_activity):'<span class="dim">No activity</span>';
+    html+='<tr data-id="'+c.id+'">'
+      +'<td onclick="event.stopPropagation()"><input type="checkbox" class="crm-row-cb" data-id="'+c.id+'" aria-label="Select '+esc(c.name)+'" onchange="_crmRowSel(this)"></td>'
+      +'<td><a class="w3-co" href="#crm/client/'+c.id+'" onclick="event.preventDefault();openClientDetail('+c.id+')">'
+        +'<span class="av" style="background:'+sc.bg+';color:'+sc.fg+'">'+esc((c.name||'?').charAt(0).toUpperCase())+'</span>'
+        +'<span><span class="n">'+esc(c.name)+'</span>'+(c.bill_name && c.bill_name!==c.name?'<span class="lg">Legal: '+esc(c.bill_name)+'</span>':'')+'</span></a></td>'
+      +'<td class="mu">'+(c.industry?esc(c.industry):'<span class="dim">—</span>')+'</td>'
+      +'<td class="mu">'+(c.city?esc(c.city):'<span class="dim">—</span>')+'</td>'
+      +'<td class="r">'+(c.contact_count||0)+'</td>'
+      +'<td class="r">'+(c.job_count?'<a href="#crm/client/'+c.id+'" onclick="event.preventDefault();openClientDetail('+c.id+')" style="font-weight:600">'+c.job_count+'</a>':'<span class="dim">0</span>')+'</td>'
+      +'<td><span class="w3-pill" style="background:'+sc.bg+';color:'+sc.fg+'">'+esc(c.status)+'</span></td>'
+      +'<td class="mu nw">'+la+'</td></tr>';
   });
-  html+='</tbody></table></div></div>';
-
-  // Pagination
+  html+='</tbody></table></div>';
+  html+='<div class="w3-foot"><span>'+r.total+' client'+(r.total!==1?'s':'')+(filtered?' (filtered)':'')+'</span>';
   if(r.pages>1){
-    html+='<div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-top:16px">';
-    html+='<button class="btn btn-o" style="font-size:12px" '+(_crmState.page<=1?'disabled':'')+' onclick="_crmPage('+(_crmState.page-1)+')">&#8592; Prev</button>';
-    html+='<span style="font-size:12.5px;color:#667085">Page '+_crmState.page+' of '+r.pages+'</span>';
-    html+='<button class="btn btn-o" style="font-size:12px" '+(_crmState.page>=r.pages?'disabled':'')+' onclick="_crmPage('+(_crmState.page+1)+')">Next &#8594;</button>';
-    html+='</div>';
+    html+='<span style="margin-left:auto">Page '+_crmState.page+' of '+r.pages+'</span>'
+      +'<button class="w1-btn" '+(_crmState.page<=1?'disabled':'')+' onclick="_crmPage('+(_crmState.page-1)+')">&#8592; Prev</button>'
+      +'<button class="w1-btn" '+(_crmState.page>=r.pages?'disabled':'')+' onclick="_crmPage('+(_crmState.page+1)+')">Next &#8594;</button>';
   }
-
-  html+='</div>';
+  html+='</div></div></div>';
   body.innerHTML=html;
 }
 
 function _crmToggleAll(cb){
-  document.querySelectorAll('.crm-row-cb').forEach(function(x){ x.checked=cb.checked; });
+  document.querySelectorAll('.crm-row-cb').forEach(function(x){ x.checked=cb.checked; _crmRowSel(x, true); });
+  _crmBulkPaint();
+}
+function _crmRowSel(cb, quiet){
+  var id=+cb.getAttribute('data-id'); window._crmSel=window._crmSel||{};
+  if(cb.checked) window._crmSel[id]=1; else delete window._crmSel[id];
+  var tr=cb.closest('tr'); if(tr) tr.classList.toggle('sel', cb.checked);
+  if(!quiet) _crmBulkPaint();
+}
+function _crmSelIds(){ return Object.keys(window._crmSel||{}).map(Number); }
+function _crmBulkPaint(){
+  var n=_crmSelIds().length, bar=document.getElementById('crm-bulk');
+  if(!bar) return;
+  bar.style.display=n?'flex':'none';
+  var l=document.getElementById('crm-bulk-n'); if(l) l.textContent=n+' selected';
+}
+function _crmClearSel(){
+  window._crmSel={};
+  document.querySelectorAll('.crm-row-cb').forEach(function(x){ x.checked=false; var tr=x.closest('tr'); if(tr) tr.classList.remove('sel'); });
+  var all=document.querySelector('.w3-table thead input[type=checkbox]'); if(all) all.checked=false;
+  _crmBulkPaint();
+}
+async function _crmBulkStatus(st){
+  var ids=_crmSelIds(); if(!st || !ids.length) return;
+  if(!confirm('Set status to "'+st+'" for '+ids.length+' client'+(ids.length!==1?'s':'')+'?')) return;
+  var fail=0;
+  for(var i=0;i<ids.length;i++){ var r=await req('PUT','/crm/clients/'+ids[i],{status:st}); if(!r||!r.ok) fail++; }
+  toast(fail?'ERR':'OK', fail?(fail+' could not be updated'):('Status updated for '+ids.length));
+  renderCrm();
+}
+function _crmExportCsv(){
+  var ids=_crmSelIds(), rows=(window._crmRows||[]).filter(function(c){ return !ids.length || ids.indexOf(c.id)>=0; });
+  var q=function(v){ v=(v==null?'':String(v)); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  var lines=[['Company','Legal name','Industry','City','State','Contacts','Open jobs','Status','GSTIN','Last activity'].join(',')];
+  rows.forEach(function(c){ lines.push([c.name,c.bill_name,c.industry,c.city,c.state,c.contact_count||0,c.job_count||0,c.status,c.gstin,c.last_activity].map(q).join(',')); });
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['﻿'+lines.join('\n')],{type:'text/csv'}));
+  a.download='clients-'+new Date().toISOString().slice(0,10)+'.csv';
+  document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 500);
 }
 function _crmSetSort2(col){
   if(_crmState.sort===col){ _crmState.dir=_crmState.dir==='asc'?'desc':'asc'; }
@@ -17154,212 +17246,172 @@ async function _renderClientDetail(clientId){
   var contacts=r.contacts||[];
   _cdCurrentClient={client:c, contacts:contacts};
   var sc=_crmStatusColor(c.status);
-
-  // ═══ HEADER (full width) ═══
-  var hdr='<div style="background:#fff;border-bottom:1px solid #E4E7EC;padding:14px 24px">'
-    +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px">'
-    +'<button onclick="backToCrmList()" style="background:none;border:none;color:#2D6FB3;font-size:12.5px;cursor:pointer;padding:0;display:flex;align-items:center;gap:4px">&#8592; Clients</button>'
-    +'<span style="color:#C4C7CE;font-size:12px">/</span>'
-    +'<span style="font-size:12.5px;color:#667085">'+esc(c.name)+'</span>'
-    +'</div>'
-    +'<div style="display:flex;align-items:center;gap:14px">'
-    +'<div style="width:48px;height:48px;border-radius:12px;background:'+sc.bg+';display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:'+sc.fg+';flex-shrink:0">'+esc((c.name||'?').charAt(0).toUpperCase())+'</div>'
-    +'<div style="flex:1">'
-    +'<div style="font-size:20px;font-weight:700;color:#101828;letter-spacing:-.02em">'+esc(c.name)+'</div>'
-    +(c.bill_name && c.bill_name!==c.name?'<div style="font-size:12px;color:#475467;margin-top:2px">&#127970; Legal entity (invoices): <b>'+esc(c.bill_name)+'</b></div>':'')
-    +'<div style="font-size:12.5px;color:#667085;margin-top:2px">'
+  // ═══ HEADER: breadcrumb, identity, actions, activity tabs ═══
+  var hdr='<div class="w3-cdh">'
+    +'<nav class="w3-crumb" aria-label="Breadcrumb"><a href="#crm" onclick="event.preventDefault();backToCrmList()">Clients</a><span>/</span><b>'+esc(c.name)+'</b></nav>'
+    +'<div class="w3-cdh-row">'
+    +'<span class="w3-cdav" style="background:'+sc.bg+';color:'+sc.fg+'">'+esc((c.name||'?').charAt(0).toUpperCase())+'</span>'
+    +'<div class="w3-cdh-t"><h1>'+esc(c.name)+'</h1>'
+    +'<p>'+(c.bill_name && c.bill_name!==c.name?'Legal entity: <b>'+esc(c.bill_name)+'</b> &middot; ':'')
     +(c.industry?esc(c.industry):'No industry')+(c.city?' &middot; '+esc(c.city):'')
-    +(c.website?' &middot; <a href="'+esc(c.website)+'" target="_blank" style="color:#2D6FB3;text-decoration:none">Website &#8599;</a>':'')
-    +'</div></div>'
-    +'<span style="font-size:11px;font-weight:600;padding:5px 12px;border-radius:8px;background:'+sc.bg+';color:'+sc.fg+'">'+esc(c.status)+'</span>'
-    +'<button class="btn" onclick="openLogActivity('+clientId+')" style="background:#0F6E56;color:#fff;border:none;font-size:12px">&#43; Log activity</button>'
-    +'<button class="btn btn-o" onclick="openClientForm('+clientId+')" style="font-size:12px">&#9998; Edit</button>'
-    +'</div></div>';
+    +(c.website?' &middot; <a href="'+esc(/^https?:\/\//i.test(c.website)?c.website:'https://'+c.website)+'" target="_blank" rel="noopener">'+esc(String(c.website).replace(/^https?:\/\/(www\.)?/i,'').replace(/\/$/,''))+' &#8599;</a>':'')
+    +'</p></div>'
+    +'<div class="w3-cdh-a"><span class="w3-pill" style="background:'+sc.bg+';color:'+sc.fg+'">'+esc(c.status)+'</span>'
+    +'<button class="w1-btn" onclick="openClientForm('+clientId+')">&#9998; Edit</button>'
+    +'<button class="w1-btn pri" onclick="openLogActivity('+clientId+')">&#43; Log activity</button></div></div>'
+    +'<nav class="w3-tabs" id="cd-tabs" aria-label="Activity filter">'+_cdTabsHtml(clientId)+'</nav></div>';
   document.getElementById('cd-header').innerHTML=hdr;
-
-  // ═══ 3 COLUMNS ═══
-  var cols='';
-  // LEFT column — company properties
-  cols+='<div style="width:290px;flex-shrink:0;background:#fff;border-right:1px solid #E4E7EC;overflow-y:auto;padding:18px 18px 40px">'
-    +_cdLeftColumn(c)+'</div>';
-
-  // CENTER column — activity feed
-  cols+='<div style="flex:1;overflow-y:auto;padding:20px 24px 60px;min-width:0">'
-    +'<div id="cd-center"></div></div>';
-
-  // RIGHT column — associated cards (contacts, jobs, org chart)
-  cols+='<div style="width:320px;flex-shrink:0;background:#fff;border-left:1px solid #E4E7EC;overflow-y:auto;padding:18px 18px 40px">'
+  // ═══ 3 COLUMNS (stack on small screens) ═══
+  document.getElementById('cd-columns').innerHTML='<div class="w3-cdgrid">'
+    +'<aside class="w3-pane" aria-label="About this company">'+_cdLeftColumn(c)+'</aside>'
+    +'<section id="cd-center" class="w3-cdc" aria-label="Activity"></section>'
     +'<div id="cd-right"></div></div>';
-
-  document.getElementById('cd-columns').innerHTML=cols;
-
-  // Populate center + right
   _cdRenderCenter(clientId);
   _cdRenderRight(clientId, contacts);
+  _cdLoadGst(clientId, c);
 }
-
+var _CD_FILTERS=[['all','Activity'],['email','Emails'],['meeting','Meetings'],['call','Calls'],['note','Notes'],['followup','Follow-ups']];
+function _cdTabsHtml(clientId){
+  return _CD_FILTERS.map(function(f){
+    var on=_cdActivityFilter===f[0];
+    return '<button class="'+(on?'on':'')+'" aria-pressed="'+on+'" onclick="_cdSetActivityFilter('+clientId+',\''+f[0]+'\')">'+f[1]+'</button>';
+  }).join('');
+}
+function _cdKv(label,val,href){
+  var v=val?(href?'<a href="'+esc(href)+'" target="_blank" rel="noopener">'+esc(val)+'</a>':esc(val)):'<span class="dim">—</span>';
+  return '<div class="w3-kv"><span>'+label+'</span><span>'+v+'</span></div>';
+}
 function _cdLeftColumn(c){
-  var row=function(label,val,isLink){
-    var display=val?(isLink?'<a href="'+esc(val)+'" target="_blank" style="color:#2D6FB3;text-decoration:none;word-break:break-all">'+esc(val)+'</a>':esc(val)):'<span style="color:#98A2B3">—</span>';
-    return '<div style="padding:9px 0;border-bottom:1px solid #F2F4F7">'
-      +'<div style="font-size:10.5px;color:#98A2B3;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">'+label+'</div>'
-      +'<div style="font-size:12.5px;color:#344054">'+display+'</div></div>';
-  };
-  var html='<div style="font-size:11px;font-weight:700;color:#667085;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">About this company</div>';
-  html+=row('Industry',c.industry);
-  html+=row('Website',c.website,true);
-  html+=row('City',c.city);
-  html+=row('State',c.state);
-  html+=row('Country',c.country);
-  html+=row('Address',c.address);
-  html+='<div style="margin-top:12px;font-size:11px;font-weight:700;color:#534AB7;text-transform:uppercase;letter-spacing:.5px">&#128176; Billing &amp; GST</div>';
-  html+=row('GSTIN / UIN',c.gstin);
-  html+=row('Billing Address',c.bill_address||c.address);
-  html+=row('Billing State',c.bill_state||c.state);
-  html+=row('State Code',c.bill_state_code);
-  if(c.notes){
-    html+='<div style="margin-top:14px"><div style="font-size:10.5px;color:#98A2B3;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Notes</div>'
-      +'<div style="font-size:12px;color:#475467;line-height:1.55;background:#F9FAFB;border-radius:8px;padding:10px 12px;white-space:pre-wrap">'+esc(c.notes)+'</div></div>';
-  }
+  var web=c.website?(/^https?:\/\//i.test(c.website)?c.website:'https://'+c.website):'';
+  var html='<h2 class="w3-ph">About</h2>';
+  html+=_cdKv('Industry',c.industry);
+  html+=_cdKv('Website',c.website,web);
+  html+=_cdKv('City',c.city);
+  html+=_cdKv('State',c.state);
+  html+=_cdKv('Country',c.country);
+  html+=_cdKv('Address',c.address);
+  html+='<h2 class="w3-ph">Billing &amp; GST</h2><div id="cd-gst">'+_cdGstHtml([{label:c.bill_state||'Primary', gstin:c.gstin, bill_address:c.bill_address||c.address, bill_state_code:c.bill_state_code, is_default:1}])+'</div>';
+  if(c.notes) html+='<h2 class="w3-ph">Notes</h2><p class="w3-note">'+esc(c.notes)+'</p>';
   return html;
 }
-
-// CENTER: activity timeline with filter tabs + inline logger
+function _cdGstHtml(rows){
+  rows=(rows||[]).filter(function(g){ return g.gstin||g.bill_address||g.bill_state_code; });
+  if(!rows.length) return '<div class="dim" style="font-size:13px;padding:6px 0">No GST details yet &mdash; add them with Edit.</div>';
+  return rows.map(function(g){
+    return '<div class="w3-gst"><div class="h"><b>'+esc(g.label||g.bill_state||'GST')+'</b>'+(g.is_default?'<span class="w3-pill teal">Default</span>':'')+'</div>'
+      +'<div class="m">'+(g.gstin?esc(g.gstin):'No GSTIN')+(g.bill_state_code?' &middot; code '+esc(g.bill_state_code):'')+'</div>'
+      +(g.bill_name?'<div class="s">Bill to: '+esc(g.bill_name)+'</div>':'')
+      +(g.bill_address?'<div class="s">'+esc(g.bill_address)+'</div>':'')+'</div>';
+  }).join('');
+}
+async function _cdLoadGst(clientId, c){
+  try{
+    var r=await req('GET','/crm/clients/'+clientId+'/gstins');
+    var rows=(r&&r.gstins)||[];
+    var el=document.getElementById('cd-gst');
+    if(el && rows.length) el.innerHTML=_cdGstHtml(rows);
+  }catch(e){}
+}
+function _cdActHtml(a, clientId, showDone){
+  var when=a.created_at?_fmtDateTime(a.created_at):(a.due_at?_fmtDateTime(a.due_at):'');
+  if(a.status==='open' && a.due_at) when='Due '+_fmtDateTime(a.due_at);
+  var stCls=a.status==='done'?'paid':a.status==='cancelled'?'draft':'sent';
+  return '<li class="w3-act'+(a.status==='open'&&a.due_at&&new Date(String(a.due_at).replace(' ','T'))<new Date()?' late':'')+'">'
+    +'<span class="ic" aria-hidden="true">'+_bdTypeIcon(a.activity_type)+'</span>'
+    +'<div class="b"><div class="h"><b>'+esc(a.subject||a.activity_type)+'</b><span class="w3-pill '+stCls+'">'+esc(a.status||'')+'</span><span class="w">'+when+(a.user_name?' &middot; '+esc(a.user_name):'')+'</span></div>'
+    +(a.body?'<p>'+esc(a.body)+'</p>':'')
+    +(a.outcome?'<div class="oc">&#8594; '+esc(a.outcome)+'</div>':'')
+    +(showDone && a.status==='open' && a.due_at?'<button class="w1-btn" onclick="completeBdActivity('+a.id+');openClientDetail('+clientId+')">&#10003; Mark done</button>':'')
+    +'</div></li>';
+}
+// CENTER: activity timeline (filters live in the header) + inline logger
 async function _cdRenderCenter(clientId){
   var el=document.getElementById('cd-center');
   if(!el) return;
-  // Filter tabs
-  var filters=[['all','Activity'],['email','Emails'],['meeting','Meetings'],['call','Calls'],['note','Notes'],['followup','Follow-ups']];
-  var tabs='<div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid #E4E7EC">';
-  filters.forEach(function(f){
-    var active=_cdActivityFilter===f[0];
-    tabs+='<button onclick="_cdSetActivityFilter('+clientId+',\''+f[0]+'\')" style="border:none;background:none;font-size:12.5px;padding:8px 12px;cursor:pointer;'
-      +(active?'color:#0F6E56;font-weight:600;border-bottom:2px solid #0F6E56':'color:#667085;border-bottom:2px solid transparent')+'">'+f[1]+'</button>';
-  });
-  tabs+='</div>';
-
+  var tabs=document.getElementById('cd-tabs'); if(tabs) tabs.innerHTML=_cdTabsHtml(clientId);
   // Emails tab -> dedicated thread + AI-assisted composer (not the generic logger)
   if(_cdActivityFilter==='email'){
-    el.innerHTML=tabs+'<div id="cd-emailwrap"></div>';
+    el.innerHTML='<div id="cd-emailwrap"></div>';
     var _cts=(_cdCurrentClient&&_cdCurrentClient.contacts)||[];
     _cdRenderEmails(clientId, 0, 'cd-emailwrap', _cts);
     return;
   }
-
-  // Inline "log activity" prompt
-  var logger='<div onclick="openLogActivity('+clientId+')" style="background:#fff;border:1px solid #E4E7EC;border-radius:10px;padding:12px 14px;margin-bottom:18px;cursor:text;color:#98A2B3;font-size:12.5px;display:flex;align-items:center;gap:8px">'
-    +'<span style="font-size:15px">&#9998;</span> Click to log a note, call, or meeting...</div>';
-
-  el.innerHTML=tabs+logger+'<div id="cd-activity-feed"><div class="loading" style="padding:20px"><div class="spinner"></div>Loading activity...</div></div>';
-
-  // Load timeline
+  el.innerHTML='<button class="w3-logger" onclick="openLogActivity('+clientId+')">&#9998; Log a note, call, meeting or follow-up&hellip;</button>'
+    +'<div id="cd-activity-feed"><div class="loading" style="padding:20px"><div class="spinner"></div>Loading activity...</div></div>';
   var r=await req('GET','/bd/clients/'+clientId+'/timeline');
   var feed=document.getElementById('cd-activity-feed');
   if(!feed) return;
   if(!r.ok){ feed.innerHTML='<div style="color:#D92D20;padding:16px">Failed to load activity</div>'; return; }
   var acts=(r.activities||[]);
   if(_cdActivityFilter!=='all') acts=acts.filter(function(a){ return a.activity_type===_cdActivityFilter; });
-
   if(!acts.length){
-    feed.innerHTML='<div style="text-align:center;padding:44px 20px;color:#98A2B3">'
-      +'<div style="font-size:30px;margin-bottom:8px">&#128203;</div>'
-      +'<div style="font-size:13px;color:#667085;font-weight:500">No activity yet</div>'
-      +'<div style="font-size:12px;margin-top:4px">Click above to log the first activity.</div></div>';
+    feed.innerHTML='<div class="w3-empty"><div class="t">No activity yet</div><div class="s">Use the box above to log the first one.</div></div>';
     return;
   }
-
-  var html='<div style="position:relative;padding-left:26px">';
-  html+='<div style="position:absolute;left:9px;top:8px;bottom:8px;width:2px;background:#E4E7EC"></div>';
-  acts.forEach(function(a){
-    var icon=_bdTypeIcon(a.activity_type);
-    var stColor=a.status==='done'?'#0F6E56':a.status==='cancelled'?'#98A2B3':'#DC6803';
-    var when=a.created_at?_fmtDateTime(a.created_at):(a.due_at?_fmtDateTime(a.due_at):'');
-    html+='<div style="position:relative;padding:0 0 20px 0">'
-      +'<div style="position:absolute;left:-26px;top:0;width:20px;height:20px;border-radius:50%;background:#fff;border:2px solid '+stColor+';display:flex;align-items:center;justify-content:center;font-size:10px">'+icon+'</div>'
-      +'<div style="background:#fff;border:1px solid #E4E7EC;border-radius:10px;padding:12px 14px">'
-      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">'
-      +'<span style="font-size:13px;font-weight:600;color:#101828">'+esc(a.subject||a.activity_type)+'</span>'
-      +'<span style="font-size:9.5px;padding:1px 7px;border-radius:5px;background:'+(a.status==='done'?'#ECFDF3':a.status==='cancelled'?'#F2F4F7':'#FFFAEB')+';color:'+stColor+';text-transform:capitalize">'+a.status+'</span>'
-      +'<span style="margin-left:auto;font-size:10.5px;color:#98A2B3">'+when+'</span></div>'
-      +(a.body?'<div style="font-size:12.5px;color:#475467;white-space:pre-wrap;line-height:1.5;margin-top:4px">'+esc(a.body)+'</div>':'')
-      +(a.outcome?'<div style="font-size:12px;color:#0F6E56;margin-top:5px;padding-top:5px;border-top:1px solid #F2F4F7">&#8594; '+esc(a.outcome)+'</div>':'')
-      +(a.status==='open'&&a.due_at?'<button class="btn btn-o" onclick="completeBdActivity('+a.id+');openClientDetail('+clientId+')" style="font-size:10px;padding:2px 9px;margin-top:8px">&#10003; Mark done</button>':'')
-      +'</div></div>';
-  });
-  html+='</div>';
+  var up=acts.filter(function(a){ return a.status==='open' && a.due_at; });
+  up.sort(function(a,b){ return String(a.due_at).localeCompare(String(b.due_at)); });
+  var rest=acts.filter(function(a){ return up.indexOf(a)<0; });
+  var html='';
+  if(up.length) html+='<h3 class="w3-sh">Upcoming</h3><ol class="w3-feed">'+up.map(function(a){ return _cdActHtml(a,clientId,true); }).join('')+'</ol>';
+  if(rest.length) html+=(up.length?'<h3 class="w3-sh">Earlier</h3>':'')+'<ol class="w3-feed">'+rest.map(function(a){ return _cdActHtml(a,clientId,true); }).join('')+'</ol>';
   feed.innerHTML=html;
 }
-
 function _cdSetActivityFilter(clientId, f){
   _cdActivityFilter=f;
   _cdRenderCenter(clientId);
 }
-
-// RIGHT: associated preview cards (contacts, jobs, org chart)
+// RIGHT: associated preview cards (contacts, jobs, attachments)
 async function _cdRenderRight(clientId, contacts){
   var el=document.getElementById('cd-right');
   if(!el) return;
-
-  // Contacts card
+  var byId={}; contacts.forEach(function(x){ byId[x.id]=x; });
   var html=_cdCard('Contacts', contacts.length,
-    '<button onclick="openContactForm('+clientId+')" style="background:none;border:none;color:#2D6FB3;font-size:11.5px;cursor:pointer">+ Add</button>');
+    '<button class="w3-lnk" onclick="openContactForm('+clientId+')">+ Add</button>');
   if(!contacts.length){
-    html+='<div style="font-size:12px;color:#98A2B3;padding:6px 0">No contacts yet</div>';
+    html+='<div class="dim" style="font-size:13px;padding:6px 0">No contacts yet. Add the decision makers and hiring managers.</div>';
   } else {
-    contacts.slice(0,6).forEach(function(ct){
-      var roles=(ct.role_tags||[]).slice(0,2).map(_roleTagBadge).join('');
-      html+='<div onclick="openContactWorkspace('+clientId+','+ct.id+')" style="display:flex;align-items:center;gap:9px;padding:8px 0;border-top:1px solid #F2F4F7;cursor:pointer">'
-        +avatarHtml(ct.name,30)
-        +'<div style="flex:1;min-width:0">'
-        +'<div style="font-size:12.5px;font-weight:600;color:#101828">'+esc(ct.name)
-        +(ct.is_primary?' <span style="font-size:8px;background:#ECFDF3;color:#0F6E56;padding:1px 4px;border-radius:4px">PRIMARY</span>':'')+'</div>'
-        +(ct.designation?'<div style="font-size:10.5px;color:#667085">'+esc(ct.designation)+'</div>':'')
-        +(roles?'<div style="margin-top:2px">'+roles+'</div>':'')
-        +'</div></div>';
+    contacts.slice(0,8).forEach(function(ct){
+      var roles=(ct.role_tags||[]).slice(0,3).map(_roleTagBadge).join('');
+      var mgr=ct.reports_to&&byId[ct.reports_to]?' &middot; reports to '+esc(byId[ct.reports_to].name.split(' ')[0]):'';
+      html+='<a class="w3-row" href="#crm/client/'+clientId+'/contact/'+ct.id+'" onclick="event.preventDefault();openContactWorkspace('+clientId+','+ct.id+')">'
+        +avatarHtml(ct.name,32)
+        +'<span class="m"><span class="t">'+esc(ct.name)+(ct.is_primary?' <span class="w3-pill teal">Primary</span>':'')+'</span>'
+        +'<span class="s">'+esc(ct.designation||'')+(ct.department?(ct.designation?' &middot; ':'')+esc(ct.department):'')+mgr+'</span>'
+        +(roles?'<span class="tags">'+roles+'</span>':'')
+        +'</span></a>';
     });
-    if(contacts.length>6) html+='<div style="font-size:11px;color:#667085;padding-top:6px">+'+(contacts.length-6)+' more</div>';
+    if(contacts.length>8) html+='<div class="dim" style="font-size:12px;padding-top:6px">+'+(contacts.length-8)+' more in the org chart</div>';
   }
-  html+='<div style="margin-top:8px"><button onclick="_cdOpenOrgChartModal('+clientId+')" style="background:none;border:none;color:#2D6FB3;font-size:11.5px;cursor:pointer;padding:0">&#127959;&#65039; View org chart</button></div>';
+  html+='<button class="w3-lnk" style="margin-top:8px" onclick="_cdOpenOrgChartModal('+clientId+')">View org chart</button>';
   html+='</div>'; // close card
-
-  // Jobs card
-  html+='<div id="cd-jobs-card" style="margin-top:14px">'+_cdCard('Jobs / Requirements', '…', '')+'<div style="font-size:12px;color:#98A2B3">Loading...</div></div></div>';
-  html+='<div id="crm-att-card" style="margin-top:14px"></div>';
-
+  html+='<div id="cd-jobs-card">'+_cdCard('Jobs / requirements', '…', '')+'<div class="dim" style="font-size:13px">Loading...</div></div></div>';
+  html+='<div id="crm-att-card"></div>';
   el.innerHTML=html;
   _crmRenderAttachments('client', clientId);
-
-  // Load jobs into the jobs card
   var jr=await req('GET','/crm-link/client/'+clientId+'/mandates');
   var jobsCard=document.getElementById('cd-jobs-card');
   if(jobsCard && jr.ok){
     var mandates=jr.mandates||[];
-    var jh=_cdCard('Jobs / Requirements', mandates.length, '');
+    var jh=_cdCard('Jobs / requirements', mandates.length, '');
     if(!mandates.length){
-      jh+='<div style="font-size:12px;color:#98A2B3;padding:6px 0">No linked jobs.<br><button onclick="autoMapJobs()" style="background:none;border:none;color:#2D6FB3;font-size:11.5px;cursor:pointer;padding:4px 0 0">Auto-map existing jobs</button></div>';
+      jh+='<div class="dim" style="font-size:13px;padding:6px 0">No linked jobs.</div><button class="w3-lnk" onclick="autoMapJobs()">Auto-map existing jobs</button>';
     } else {
       mandates.forEach(function(m){
-        var stC=m.status==='active'?'#0F6E56':'#98A2B3';
-        jh+='<div onclick="backToCrmList();selectMandate('+m.id+')" style="display:flex;align-items:center;gap:9px;padding:8px 0;border-top:1px solid #F2F4F7;cursor:pointer">'
-          +'<div style="width:28px;height:28px;border-radius:7px;background:#EEF4FF;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">&#128188;</div>'
-          +'<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;color:#101828">'+esc(m.role)+'</div>'
-          +'<div style="font-size:10.5px;color:#667085">'+(m.location?esc(m.location):'')+' &middot; '+m.candidate_count+' candidates</div></div>'
-          +'<span style="width:7px;height:7px;border-radius:50%;background:'+stC+';flex-shrink:0"></span></div>';
+        var stC=m.status==='active'?'#16a34a':'#98A2B3';
+        jh+='<a class="w3-row" href="#mandate/'+m.id+'" onclick="event.preventDefault();backToCrmList();selectMandate('+m.id+')">'
+          +'<span class="dot" style="background:'+stC+'"></span>'
+          +'<span class="m"><span class="t">'+esc(m.role)+'</span><span class="s">'+(m.location?esc(m.location)+' &middot; ':'')+m.candidate_count+' candidate'+(m.candidate_count!==1?'s':'')+'</span></span></a>';
       });
     }
     jh+='</div>';
     jobsCard.innerHTML=jh;
   }
 }
-
 function _cdCard(title, count, action){
-  return '<div style="background:#fff;border:1px solid #E4E7EC;border-radius:12px;padding:14px">'
-    +'<div style="display:flex;align-items:center;margin-bottom:8px">'
-    +'<span style="font-size:12.5px;font-weight:700;color:#101828">'+title
-    +(count!==''&&count!=null?' <span style="color:#98A2B3;font-weight:500">'+count+'</span>':'')+'</span>'
-    +(action?'<span style="margin-left:auto">'+action+'</span>':'')+'</div>';
+  return '<div class="w3-rc"><div class="w3-rch"><h2>'+title
+    +(count!==''&&count!=null?' <span>'+count+'</span>':'')+'</h2>'
+    +(action?'<span class="a">'+action+'</span>':'')+'</div>';
 }
-
 async function _cdOpenOrgChartModal(clientId){
   var r=await req('GET','/crm/clients/'+clientId+'/org-chart');
   if(!r.ok){ toast('ERR','Failed'); return; }
@@ -17640,7 +17692,7 @@ async function openContactForm(clientId, contactId){
     +'</div>'
     +'<div><label class="la-lbl">Notes</label><textarea id="ctf-notes" class="inp" rows="2" style="width:100%">'+esc(ct.notes||'')+'</textarea></div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'
-    +'<button class="btn btn-o" onclick="openClientDetail('+clientId+')" style="font-size:11px">Cancel</button>'
+    +'<button class="btn btn-o" onclick="_waCloseModal()" style="font-size:11px">Cancel</button>'
     +'<button class="btn" onclick="saveContact('+clientId+','+(contactId||'null')+')" style="background:#2D6FB3;color:#fff;border:none;font-size:11px">'+(isEdit?'Save':'Add Contact')+'</button>'
     +'</div></div>';
   _waOpenModal(isEdit?'Edit Contact':'Add Contact', inner);
@@ -17666,7 +17718,7 @@ async function saveContact(clientId, contactId){
   var r=contactId
     ? await req('PUT','/crm/contacts/'+contactId,payload)
     : await req('POST','/crm/clients/'+clientId+'/contacts',payload);
-  if(r.ok){ toast('OK', contactId?'Contact updated':'Contact added'); openClientDetail(clientId); }
+  if(r.ok){ toast('OK', contactId?'Contact updated':'Contact added'); try{ _waCloseModal(); }catch(e){} if(contactId && String(location.hash).indexOf('/contact/'+contactId)>=0) openContactWorkspace(clientId, contactId); else openClientDetail(clientId); }
   else toast('ERR', r.error||'Failed');
 }
 
@@ -17817,142 +17869,111 @@ async function openContactWorkspace(clientId, contactId){
   if(!ct){ toast('ERR','Contact not found'); openClientDetail(clientId); return; }
   _cdCurrentClient={client:client, contacts:contacts};
   _ctFilter='activity';
-
-  var hdr='<div style="background:#fff;border-bottom:1px solid #E4E7EC;padding:14px 24px">'
-    +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap">'
-    +'<button onclick="backToCrmList()" style="background:none;border:none;color:#2D6FB3;font-size:12.5px;cursor:pointer;padding:0">&#8592; Clients</button>'
-    +'<span style="color:#C4C7CE">/</span>'
-    +'<button onclick="openClientDetail('+clientId+')" style="background:none;border:none;color:#2D6FB3;font-size:12.5px;cursor:pointer;padding:0">'+esc(client.name)+'</button>'
-    +'<span style="color:#C4C7CE">/</span>'
-    +'<span style="font-size:12.5px;color:#667085">'+esc(ct.name)+'</span>'
-    +'</div>'
-    +'<div style="display:flex;align-items:center;gap:14px">'
-    +avatarHtml(ct.name,48)
-    +'<div style="flex:1">'
-    +'<div style="font-size:20px;font-weight:700;color:#101828;letter-spacing:-.02em">'+esc(ct.name)
-    +(ct.is_primary?' <span style="font-size:10px;font-weight:600;background:#ECFDF3;color:#0F6E56;padding:2px 7px;border-radius:6px;vertical-align:middle">PRIMARY</span>':'')
-    +(ct.is_decision_maker?' <span style="font-size:10px;font-weight:600;background:#FFF4E5;color:#B54708;padding:2px 7px;border-radius:6px;vertical-align:middle">DECISION MAKER</span>':'')
-    +'</div>'
-    +'<div style="font-size:12.5px;color:#667085;margin-top:2px">'+(ct.designation?esc(ct.designation):'&mdash;')
-    +' &middot; at <button onclick="openClientDetail('+clientId+')" style="background:none;border:none;color:#2D6FB3;font-size:12.5px;cursor:pointer;padding:0">'+esc(client.name)+'</button></div>'
-    +'</div>'
-    +'<button class="btn btn-o" onclick="openContactForm('+clientId+','+contactId+')" style="font-size:12px">&#9998; Edit</button>'
-    +'</div></div>';
+  var roles=ct.role_tags||[];
+  var hdr='<div class="w3-cdh">'
+    +'<nav class="w3-crumb" aria-label="Breadcrumb"><a href="#crm" onclick="event.preventDefault();backToCrmList()">Clients</a><span>/</span>'
+    +'<a href="#crm/client/'+clientId+'" onclick="event.preventDefault();openClientDetail('+clientId+')">'+esc(client.name)+'</a><span>/</span><b>'+esc(ct.name)+'</b></nav>'
+    +'<div class="w3-cdh-row">'+avatarHtml(ct.name,48)
+    +'<div class="w3-cdh-t"><h1>'+esc(ct.name)
+    +(ct.is_primary?' <span class="w3-pill teal">Primary</span>':'')
+    +(ct.is_decision_maker||roles.indexOf('decision_maker')>=0?' <span class="w3-pill sent">Decision maker</span>':'')+'</h1>'
+    +'<p>'+(ct.designation?esc(ct.designation):'&mdash;')+' at <a href="#crm/client/'+clientId+'" onclick="event.preventDefault();openClientDetail('+clientId+')">'+esc(client.name)+'</a></p></div>'
+    +'<div class="w3-cdh-a">'
+    +(ct.phone?'<a class="w1-btn w3-abtn" href="tel:'+esc(String(ct.phone).replace(/[^\d+]/g,''))+'">&#128222; Call</a>':'')
+    +(ct.email?'<button class="w1-btn" onclick="_ctSetFilter('+clientId+','+contactId+',\'email\')">&#9993; Email</button>':'')
+    +'<button class="w1-btn" onclick="openContactForm('+clientId+','+contactId+')">&#9998; Edit</button>'
+    +'<div class="w1-acct"><button class="w1-btn ic" aria-label="More contact actions" aria-haspopup="menu" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle(\'open\')">&#8943;</button>'
+    +'<div class="w2-ebmenu" role="menu"><button role="menuitem" onclick="this.parentElement.classList.remove(\'open\');openLogActivity('+clientId+')">Log activity</button>'
+    +'<button role="menuitem" style="color:#b42318" onclick="this.parentElement.classList.remove(\'open\');deleteContact('+clientId+','+contactId+')">Delete contact</button></div></div>'
+    +'</div></div><nav class="w3-tabs" id="ct-tabs" aria-label="Contact sections"></nav></div>';
   document.getElementById('cd-header').innerHTML=hdr;
-
-  var cols='';
-  cols+='<div style="width:290px;flex-shrink:0;background:#fff;border-right:1px solid #E4E7EC;overflow-y:auto;padding:18px 18px 40px">'+_ctLeftColumn(ct)+'</div>';
-  cols+='<div style="flex:1;overflow-y:auto;padding:20px 24px 60px;min-width:0"><div id="cd-center"></div></div>';
-  cols+='<div style="width:320px;flex-shrink:0;background:#fff;border-left:1px solid #E4E7EC;overflow-y:auto;padding:18px 18px 40px"><div id="cd-right"></div></div>';
-  document.getElementById('cd-columns').innerHTML=cols;
-
+  document.getElementById('cd-columns').innerHTML='<div class="w3-cdgrid">'
+    +'<aside class="w3-pane" aria-label="About this contact">'+_ctLeftColumn(ct, contacts)+'</aside>'
+    +'<section id="cd-center" class="w3-cdc" aria-label="Activity"></section>'
+    +'<div id="cd-right"></div></div>';
   _ctRenderCenter(clientId, ct);
   _ctRenderRight(clientId, client, contacts, ct.id);
 }
-
-function _ctLeftColumn(ct){
-  var row=function(label,val,isLink,href){
-    var display=val?(isLink?'<a href="'+esc(href||val)+'" target="_blank" style="color:#2D6FB3;text-decoration:none;word-break:break-all">'+esc(val)+'</a>':esc(val)):'<span style="color:#98A2B3">&mdash;</span>';
-    return '<div style="padding:9px 0;border-bottom:1px solid #F2F4F7"><div style="font-size:10.5px;color:#98A2B3;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">'+label+'</div><div style="font-size:12.5px;color:#344054">'+display+'</div></div>';
-  };
-  var html='<div style="font-size:11px;font-weight:700;color:#667085;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">About this contact</div>';
-  html+=row('Designation',ct.designation);
-  html+=row('Department',ct.department);
-  html+=row('Email',ct.email,!!ct.email,'mailto:'+(ct.email||''));
-  html+=row('Phone',ct.phone,!!ct.phone,'tel:'+(ct.phone||''));
-  html+=row('LinkedIn',ct.linkedin,!!ct.linkedin);
+function _ctLeftColumn(ct, contacts){
+  contacts=contacts||[];
+  var mgr=contacts.filter(function(x){ return x.id===ct.reports_to; })[0];
+  var reps=contacts.filter(function(x){ return x.reports_to===ct.id; });
+  var li=ct.linkedin?(/^https?:\/\//i.test(ct.linkedin)?ct.linkedin:'https://'+ct.linkedin):'';
+  var html='<h2 class="w3-ph">About</h2>';
+  html+=_cdKv('Designation',ct.designation);
+  html+=_cdKv('Department',ct.department);
+  html+=_cdKv('Email',ct.email,ct.email?'mailto:'+ct.email:'');
+  html+=_cdKv('Phone',ct.phone,ct.phone?'tel:'+String(ct.phone).replace(/[^\d+]/g,''):'');
+  html+=_cdKv('LinkedIn',ct.linkedin,li);
+  html+=_cdKv('Reports to',mgr?mgr.name+(mgr.designation?' ('+mgr.designation+')':''):'');
+  if(reps.length) html+=_cdKv('Direct reports',reps.map(function(x){return x.name;}).join(', '));
   var roles=(ct.role_tags||[]);
-  if(roles.length){
-    html+='<div style="padding:9px 0"><div style="font-size:10.5px;color:#98A2B3;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Roles</div><div style="display:flex;flex-wrap:wrap;gap:4px">'+roles.map(_roleTagBadge).join('')+'</div></div>';
-  }
-  if(ct.notes){
-    html+='<div style="margin-top:12px"><div style="font-size:10.5px;color:#98A2B3;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Notes</div><div style="font-size:12px;color:#475467;line-height:1.55;background:#F9FAFB;border-radius:8px;padding:10px 12px;white-space:pre-wrap">'+esc(ct.notes)+'</div></div>';
-  }
+  if(roles.length) html+='<div class="w3-kv"><span>Roles</span><span>'+roles.map(_roleTagBadge).join('')+'</span></div>';
+  if(ct.notes) html+='<h2 class="w3-ph">Notes</h2><p class="w3-note">'+esc(ct.notes)+'</p>';
   return html;
 }
-
 async function _ctRenderCenter(clientId, ct){
   var el=document.getElementById('cd-center');
   if(!el) return;
-  var tabs='<div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid #E4E7EC">';
-  [['activity','Activity'],['email','Emails']].forEach(function(f){
-    var active=_ctFilter===f[0];
-    tabs+='<button onclick="_ctSetFilter('+clientId+','+ct.id+',\''+f[0]+'\')" style="border:none;background:none;font-size:12.5px;padding:8px 12px;cursor:pointer;'
-      +(active?'color:#0F6E56;font-weight:600;border-bottom:2px solid #0F6E56':'color:#667085;border-bottom:2px solid transparent')+'">'+f[1]+'</button>';
-  });
-  tabs+='</div>';
+  var tabs=document.getElementById('ct-tabs');
+  if(tabs) tabs.innerHTML=[['activity','Activity'],['email','Emails']].map(function(f){
+    var on=_ctFilter===f[0];
+    return '<button class="'+(on?'on':'')+'" aria-pressed="'+on+'" onclick="_ctSetFilter('+clientId+','+ct.id+',\''+f[0]+'\')">'+f[1]+'</button>';
+  }).join('');
   if(_ctFilter==='email'){
-    el.innerHTML=tabs+'<div id="cd-emailwrap"></div>';
+    el.innerHTML='<div id="cd-emailwrap"></div>';
     _cdRenderEmails(clientId, ct.id, 'cd-emailwrap', (_cdCurrentClient&&_cdCurrentClient.contacts)||[]);
     return;
   }
-  el.innerHTML=tabs+'<div id="ct-feed"><div class="loading" style="padding:20px"><div class="spinner"></div>Loading activity...</div></div>';
+  el.innerHTML='<button class="w3-logger" onclick="openLogActivity('+clientId+')">&#9998; Log a note, call, meeting or follow-up&hellip;</button>'
+    +'<div id="ct-feed"><div class="loading" style="padding:20px"><div class="spinner"></div>Loading activity...</div></div>';
   var r=await req('GET','/bd/clients/'+clientId+'/timeline');
   var feed=document.getElementById('ct-feed');
   if(!feed) return;
   if(!r.ok){ feed.innerHTML='<div style="color:#D92D20;padding:16px">Failed to load activity</div>'; return; }
   var acts=(r.activities||[]).filter(function(a){ return a.contact_id===ct.id; });
   if(!acts.length){
-    feed.innerHTML='<div style="text-align:center;padding:40px 20px;color:#98A2B3"><div style="font-size:28px;margin-bottom:6px">&#128203;</div><div style="font-size:12.5px;color:#667085">No activity logged for this contact yet</div></div>';
+    feed.innerHTML='<div class="w3-empty"><div class="t">No activity logged for this contact yet</div></div>';
     return;
   }
-  var html='<div style="position:relative;padding-left:26px"><div style="position:absolute;left:9px;top:8px;bottom:8px;width:2px;background:#E4E7EC"></div>';
-  acts.forEach(function(a){
-    var icon=_bdTypeIcon(a.activity_type);
-    var when=a.created_at?_fmtDateTime(a.created_at):'';
-    html+='<div style="position:relative;padding:0 0 20px 0">'
-      +'<div style="position:absolute;left:-26px;top:0;width:20px;height:20px;border-radius:50%;background:#fff;border:2px solid #0F6E56;display:flex;align-items:center;justify-content:center;font-size:10px">'+icon+'</div>'
-      +'<div style="background:#fff;border:1px solid #E4E7EC;border-radius:10px;padding:12px 14px">'
-      +'<div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:600;color:#101828">'+esc(a.subject||a.activity_type)+'</span><span style="margin-left:auto;font-size:10.5px;color:#98A2B3">'+when+'</span></div>'
-      +(a.body?'<div style="font-size:12.5px;color:#475467;white-space:pre-wrap;line-height:1.5;margin-top:4px">'+esc(a.body)+'</div>':'')
-      +'</div></div>';
-  });
-  html+='</div>';
-  feed.innerHTML=html;
+  feed.innerHTML='<ol class="w3-feed">'+acts.map(function(a){ return _cdActHtml(a, clientId, false); }).join('')+'</ol>';
 }
-
 function _ctSetFilter(clientId, contactId, f){
   _ctFilter=f;
   var ct=((_cdCurrentClient&&_cdCurrentClient.contacts)||[]).find(function(x){return x.id===contactId;});
   if(ct) _ctRenderCenter(clientId, ct);
 }
-
 async function _ctRenderRight(clientId, client, contacts, contactId){
   var el=document.getElementById('cd-right');
   if(!el) return;
   var sc=_crmStatusColor(client.status);
-  var html=_cdCard('Associated company','','')
-    +'<div onclick="openClientDetail('+clientId+')" style="display:flex;align-items:center;gap:10px;padding:8px 0;cursor:pointer">'
-    +'<div style="width:36px;height:36px;border-radius:9px;background:'+sc.bg+';display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:'+sc.fg+'">'+esc((client.name||'?').charAt(0).toUpperCase())+'</div>'
-    +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#101828">'+esc(client.name)+'</div>'
-    +'<div style="font-size:10.5px;color:#667085">'+(client.industry?esc(client.industry):'')+(client.city?' &middot; '+esc(client.city):'')+'</div></div>'
-    +'<span style="font-size:11px;color:#2D6FB3">Open &#8594;</span></div>'
-    +'<div style="font-size:11px;color:#667085;margin-top:4px">'+contacts.length+' contact'+(contacts.length!==1?'s':'')+' at this company</div>'
+  var html=_cdCard('Company','','')
+    +'<a class="w3-row" href="#crm/client/'+clientId+'" onclick="event.preventDefault();openClientDetail('+clientId+')">'
+    +'<span class="w3-cdav sm" style="background:'+sc.bg+';color:'+sc.fg+'">'+esc((client.name||'?').charAt(0).toUpperCase())+'</span>'
+    +'<span class="m"><span class="t">'+esc(client.name)+'</span>'
+    +'<span class="s">'+(client.industry?esc(client.industry):'')+(client.city?' &middot; '+esc(client.city):'')+' &middot; '+contacts.length+' contact'+(contacts.length!==1?'s':'')+'</span></span><span class="go">Open &#8594;</span></a>'
     +'</div>';
-  html+='<div id="cd-jobs-card" style="margin-top:14px">'+_cdCard('Associated jobs','...','')+'<div style="font-size:12px;color:#98A2B3">Loading...</div></div></div>';
-  html+='<div id="crm-att-card" style="margin-top:14px"></div>';
+  html+='<div id="cd-jobs-card">'+_cdCard('Jobs','…','')+'<div class="dim" style="font-size:13px">Loading...</div></div></div>';
+  html+='<div id="crm-att-card"></div>';
   el.innerHTML=html;
   if(contactId) _crmRenderAttachments('contact', contactId);
   var jr=await req('GET','/crm-link/client/'+clientId+'/mandates');
   var jobsCard=document.getElementById('cd-jobs-card');
   if(jobsCard && jr.ok){
     var mandates=jr.mandates||[];
-    var jh=_cdCard('Associated jobs', mandates.length, '');
-    if(!mandates.length){ jh+='<div style="font-size:12px;color:#98A2B3;padding:6px 0">No linked jobs.</div>'; }
+    var jh=_cdCard('Jobs', mandates.length, '');
+    if(!mandates.length){ jh+='<div class="dim" style="font-size:13px;padding:6px 0">No linked jobs.</div>'; }
     else {
       mandates.forEach(function(m){
-        jh+='<div onclick="backToCrmList();selectMandate('+m.id+')" style="display:flex;align-items:center;gap:9px;padding:8px 0;border-top:1px solid #F2F4F7;cursor:pointer">'
-          +'<div style="width:28px;height:28px;border-radius:7px;background:#EEF4FF;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">&#128188;</div>'
-          +'<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;color:#101828">'+esc(m.role)+'</div>'
-          +'<div style="font-size:10.5px;color:#667085">'+(m.location?esc(m.location):'')+' &middot; '+m.candidate_count+' candidates</div></div></div>';
+        var stC=m.status==='active'?'#16a34a':'#98A2B3';
+        jh+='<a class="w3-row" href="#mandate/'+m.id+'" onclick="event.preventDefault();backToCrmList();selectMandate('+m.id+')"><span class="dot" style="background:'+stC+'"></span>'
+          +'<span class="m"><span class="t">'+esc(m.role)+'</span><span class="s">'+(m.location?esc(m.location)+' &middot; ':'')+m.candidate_count+' candidates</span></span></a>';
       });
     }
     jh+='</div>';
     jobsCard.innerHTML=jh;
   }
 }
-
-
 // ── CRM Attachments (Sprint 2): files on a company or contact ───────────────
 function _fmtBytes(n){ n=n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
 function _attIcon(name){
@@ -17969,32 +17990,30 @@ function _attIcon(name){
 async function _crmRenderAttachments(entityType, entityId){
   var card=document.getElementById('crm-att-card');
   if(!card) return;
-  card.innerHTML=_cdCard('Attachments','...','')+'<div style="font-size:12px;color:#98A2B3">Loading...</div></div>';
+  card.innerHTML=_cdCard('Attachments','…','')+'<div class="dim" style="font-size:13px">Loading...</div></div>';
   var r=await req('GET','/crm/'+entityType+'/'+entityId+'/attachments');
   var atts=(r&&r.ok)?(r.attachments||[]):[];
   var cats=['NDA','Agreement','PO','Requirement','Proposal','Presentation','Invoice','Resume','BusinessCard','Other'];
-  var uploader='<div style="display:flex;flex-direction:column;gap:6px;margin:6px 0 10px">'
-    +'<select id="att-cat" class="inp" style="font-size:11.5px;padding:5px 8px">'+cats.map(function(c){return '<option value="'+c+'">'+c+'</option>';}).join('')+'</select>'
-    +'<input type="file" id="att-file" style="font-size:11px">'
-    +'<button class="btn" id="att-btn" onclick="_crmUploadAttachment(\''+entityType+'\','+entityId+')" style="background:#0F6E56;color:#fff;border:none;font-size:11.5px;padding:5px 10px">&#8593; Upload file</button>'
-    +'</div>';
+  var uploader='<div class="w3-drop" ondragover="event.preventDefault();this.classList.add(\'over\')" ondragleave="this.classList.remove(\'over\')" '
+    +'ondrop="event.preventDefault();this.classList.remove(\'over\');var f=document.getElementById(\'att-file\');if(event.dataTransfer.files.length){f.files=event.dataTransfer.files;_crmUploadAttachment(\''+entityType+'\','+entityId+');}">'
+    +'<select id="att-cat" class="w3-sel" aria-label="File category">'+cats.map(function(c){return '<option value="'+c+'">'+c+'</option>';}).join('')+'</select>'
+    +'<input type="file" id="att-file" style="display:none" onchange="if(this.files.length)_crmUploadAttachment(\''+entityType+'\','+entityId+')">'
+    +'<button class="w1-btn" id="att-btn" onclick="document.getElementById(\'att-file\').click()">&#8593; Upload file</button>'
+    +'<span class="dim" style="font-size:12px">or drop it here</span></div>';
   var list='';
-  if(!atts.length){ list='<div style="font-size:12px;color:#98A2B3;padding:4px 0">No files yet</div>'; }
+  if(!atts.length){ list='<div class="dim" style="font-size:13px;padding:4px 0">No files yet</div>'; }
   else {
     atts.forEach(function(a){
-      list+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid #F2F4F7">'
-        +'<div style="font-size:16px;flex-shrink:0">'+_attIcon(a.original_name)+'</div>'
-        +'<div style="flex:1;min-width:0">'
-        +'<a href="'+API+'/crm/attachments/'+a.id+'/download" target="_blank" style="font-size:12px;font-weight:600;color:#2D6FB3;text-decoration:none;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(a.original_name)+'</a>'
-        +'<div style="font-size:10px;color:#98A2B3"><span style="background:#F2F4F7;color:#667085;padding:0 5px;border-radius:4px">'+esc(a.category)+'</span> '+_fmtBytes(a.size_bytes)+'</div>'
-        +'</div>'
-        +'<button onclick="_crmDeleteAttachment('+a.id+',\''+entityType+'\','+entityId+')" title="Delete" style="background:none;border:none;color:#D92D20;cursor:pointer;font-size:13px;flex-shrink:0">&#10005;</button>'
+      list+='<div class="w3-row nolink">'
+        +'<span aria-hidden="true" style="font-size:16px">'+_attIcon(a.original_name)+'</span>'
+        +'<span class="m"><a class="t" href="'+API+'/crm/attachments/'+a.id+'/download" target="_blank" style="color:#0f766e;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(a.original_name)+'</a>'
+        +'<span class="s">'+esc(a.category)+' &middot; '+_fmtBytes(a.size_bytes)+'</span></span>'
+        +'<button class="w3-icb" onclick="_crmDeleteAttachment('+a.id+',\''+entityType+'\','+entityId+')" title="Delete" aria-label="Delete '+esc(a.original_name)+'">&#10005;</button>'
         +'</div>';
     });
   }
   card.innerHTML=_cdCard('Attachments', atts.length, '')+uploader+list+'</div>';
 }
-
 async function _crmUploadAttachment(entityType, entityId){
   var fi=document.getElementById('att-file');
   var cat=(document.getElementById('att-cat')||{}).value||'Other';
@@ -19392,7 +19411,7 @@ async function bdwShow(page, rid){
   window._bdwPage=page; BDW.page=page;
   _bdwRenderNav();
   var pg=_BDW_PAGES.filter(function(p){return p.k===page;})[0];
-  document.getElementById('bd-head-title').textContent = page==='home' ? 'BD Command Center' : pg.label;
+  document.getElementById('bd-head-title').textContent = page==='home' ? 'BD workspace' : pg.label;
   document.getElementById('bd-head-sub').textContent = pg.sub;
   var ic=document.getElementById('bd-head-ic'); ic.style.background=pg.bg;
   ic.innerHTML = page==='home' ? '&#128188;' : '<span style="width:16px;height:16px;display:inline-flex;color:#344054">'+_BDW_IC[page]+'</span>';
@@ -20866,7 +20885,11 @@ function _bdwRenderKanban(){
   var h='<div class="bdw-kb">';
   st.kb.cols.forEach(function(c){
     var vattr=esc(c.value);
-    h+='<div class="bdw-kcol" data-v="'+vattr+'"><div class="bdw-kh">'+(c.value===''?'<span class="bdw-pill" style="background:#F2F4F7;color:#667085">No value</span>':_bdwPill(f, c.value))
+    // Wave 3: closed stages (Won / Lost) fold into a slim strip so open deals get the width; one click opens them.
+    var closedCol=(BDW.obj==='opportunities' && (c.value==='won'||c.value==='lost'));
+    var cz=closedCol && !BDW.kbShowClosed;
+    h+='<div class="bdw-kcol'+(cz?' cz':'')+'" data-v="'+vattr+'"><div class="bdw-kh">'
+      +(closedCol?'<button class="z" title="'+(cz?'Show':'Fold')+' closed columns" aria-label="'+(cz?'Show':'Fold')+' closed columns" onclick="event.stopPropagation();BDW.kbShowClosed=!BDW.kbShowClosed;_bdwRenderKanban()">'+(cz?'&#8250;':'&#8249;')+'</button>':'')+(c.value===''?'<span class="bdw-pill" style="background:#F2F4F7;color:#667085">No value</span>':_bdwPill(f, c.value))
       +'<span class="c">'+c.count+'</span>'+(sumF?'<span class="s" title="'+esc(sumF.label)+'">'+esc(_bdwMoney(c.sum||0))+'</span>':'<span class="s"></span>')
       +(c.value!==''?'<button class="p" data-a="kbnew" data-v="'+vattr+'" title="New in '+esc(c.label)+'">+</button>':'')+'</div><div class="bdw-kl">'
       +(c.records.length ? c.records.map(_bdwKcHtml).join('') : '<div class="bdw-kempty">Drop here</div>')
@@ -23903,6 +23926,233 @@ document.addEventListener('mousedown',function(e){
 });
 </script>
 
+<style id="w3-style">
+/* ═══ Wave 3: CRM, BD workspace, Invoicing, Expenses, CA view, Freelancers ═══ */
+.dim{color:#98a2b3}.mu{color:var(--muted)}.nw{white-space:nowrap}
+.w3-tb{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.w3-q{position:relative;flex:1 1 260px;display:flex;align-items:center;gap:6px;height:36px;padding:0 11px;border:1px solid var(--w1-border,#d0d5dd);border-radius:8px;background:#fff;color:var(--muted);box-sizing:border-box}
+.w3-q input{border:0 !important;outline:none;flex:1;min-width:0;font-size:13.5px;background:transparent;padding:0;color:var(--ink)}
+.w3-q:focus-within{border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.12)}
+.w3-chips{display:flex;gap:6px;flex-wrap:wrap}
+.w3-chips .w1-chip{height:32px;font-size:13px;font-weight:600}
+.w3-chips .w1-chip b{font-weight:600;color:var(--muted)}
+.w3-sel{height:36px;border:1px solid var(--w1-border,#d0d5dd);border-radius:8px;padding:0 10px;font-size:13px;background:#fff;color:var(--ink);max-width:100%}
+.w3-card{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.w3-pad{padding:14px 16px}
+.w3-cardh{display:flex;align-items:center;gap:10px;padding:14px 16px}
+.w3-cardh .w3-sel{margin-left:auto;height:32px}
+.w3-h2{margin:0;font-size:15px;font-weight:700;color:var(--ink)}
+.w3-h3{font-size:13px;font-weight:600;color:#344054;margin:16px 0 8px}
+.w3-table{width:100%;border-collapse:collapse;font-size:13.5px;color:var(--ink)}
+.w3-table th{padding:10px 12px;text-align:left;font-size:12px;font-weight:600;color:#475063;background:#f8fafc;border-bottom:1px solid var(--line);white-space:nowrap}
+.w3-table td{padding:10px 12px;border-bottom:1px solid #eef0f3;vertical-align:middle}
+.w3-table tbody tr:last-child td{border-bottom:0}
+.w3-table tbody tr:hover{background:#f8fafc}
+.w3-table tr.sel,.w3-table tr.sel:hover{background:#f0fdfa}
+.w3-table tr.pro{background:#fffcf5}
+.w3-table .r{text-align:right}.w3-table .mu{color:#475063}
+.w3-table .sub{font-size:12px;color:var(--muted);margin-top:1px}
+.w3-table .late{color:#b42318;font-weight:600}
+.w3-none{text-align:center;color:var(--muted);padding:28px 12px !important}
+.w3-th{border:0;background:none;padding:0;font:inherit;font-weight:600;color:#475063;cursor:pointer;white-space:nowrap}
+.w3-th .dim{color:#c0c6d0}
+.w3-pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px;background:#f2f4f7;color:#344054;white-space:nowrap;text-transform:none;vertical-align:middle}
+.w3-pill.teal{background:#f0fdfa;color:#0f766e}.w3-pill.paid{background:#ecfdf3;color:#027a48}.w3-pill.sent{background:#fffaeb;color:#b54708}
+.w3-pill.overdue,.w3-pill.lost{background:#fef3f2;color:#b42318}.w3-pill.draft{background:#f2f4f7;color:#475063}.w3-pill.proforma{background:#fff7ed;color:#c2410c}
+.w3-empty{text-align:center;padding:56px 20px;background:#fff;border:1px solid var(--line);border-radius:14px}
+.w3-empty .t{font-size:15px;font-weight:600;color:var(--ink)}.w3-empty .s{font-size:13px;color:var(--muted);margin-top:4px}
+.w3-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;font-size:13px;color:#475063;border-top:1px solid var(--line)}
+.w3-bulk{align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:#0f172a;color:#fff;border-radius:10px;margin-bottom:10px;font-size:13px}
+.w3-bulk select,.w3-bulk button{height:30px;border:1px solid #475569;border-radius:7px;background:transparent;color:#fff;font-size:12.5px;font-weight:600;padding:0 10px;cursor:pointer}
+.w3-bulk select option{color:#0f172a}
+.w3-bulk .x{border:0;color:#cbd5e1;margin-left:auto}
+.w3-acts{display:inline-flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:nowrap}
+.w3-acts .w1-btn{height:30px;font-size:12.5px;padding:0 10px}.w3-acts .w1-btn.ic{width:30px;padding:0}
+.w3-lnk{border:0;background:none;padding:0;color:#0f766e;font-size:13px;font-weight:600;cursor:pointer}
+.w3-icb{border:0;background:none;color:#b42318;cursor:pointer;font-size:13px;padding:4px;flex:none}
+.w3-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.w3-kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 16px;min-width:0}
+.w3-kpi .l{font-size:12.5px;color:#475063;font-weight:500}
+.w3-kpi .v{font-size:23px;font-weight:700;margin-top:3px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.w3-kpi .s{font-size:12px;color:var(--muted);margin-top:2px}
+.w3-kpi.sm{border-radius:12px;padding:11px 13px}.w3-kpi.sm .v{font-size:19px}
+/* Clients list */
+#crm-body{background:var(--paper) !important;padding:18px 24px 24px !important}
+.w3-crm{max-width:1280px;margin:0 auto}
+.w3-co{display:flex;gap:10px;align-items:center;text-decoration:none;color:inherit}
+.w3-co .av{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex:none}
+.w3-co .n{display:block;font-weight:600;color:var(--ink)}.w3-co:hover .n{color:#0f766e}
+.w3-co .lg{display:block;font-size:12px;color:var(--muted)}
+/* Client detail + contact workspace */
+#client-detail-view{background:var(--paper) !important}
+#cd-columns{display:block !important;overflow:auto !important}
+.w3-cdh{background:#fff;border-bottom:1px solid var(--line);padding:14px 24px 0}
+.w3-crumb{font-size:13px;color:#98a2b3;display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.w3-crumb a{color:#0f766e;text-decoration:none}.w3-crumb b{color:#475063;font-weight:500}
+.w3-cdh-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.w3-cdav{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;flex:none}
+.w3-cdav.sm{width:36px;height:36px;border-radius:9px;font-size:15px}
+.w3-cdh-t{flex:1;min-width:220px}
+.w3-cdh-t h1{margin:0;font-size:21px;font-weight:700;color:var(--ink);letter-spacing:-.2px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.w3-cdh-t p{margin:2px 0 0;font-size:13px;color:var(--muted)}
+.w3-cdh-t p b{color:var(--ink);font-weight:600}.w3-cdh-t a{color:#0f766e;text-decoration:none}
+.w3-cdh-a{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.w3-cdh-a .w1-acct{position:relative}
+.w3-abtn{display:inline-flex;align-items:center;text-decoration:none}
+.w3-tabs{display:flex;gap:22px;margin-top:12px;overflow-x:auto}
+.w3-tabs button{border:0;background:none;padding:9px 0;font-size:14px;color:#475063;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap}
+.w3-tabs button.on{color:var(--ink);font-weight:600;border-bottom-color:#0f766e}
+.w3-cdgrid{display:grid;grid-template-columns:290px minmax(0,1fr) 320px;gap:16px;align-items:start;padding:18px 24px 48px;max-width:1500px;margin:0 auto;box-sizing:border-box}
+.w3-pane{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 16px 14px}
+.w3-ph{margin:12px 0 2px;font-size:12px;font-weight:700;color:#475063;text-transform:uppercase;letter-spacing:.05em}
+.w3-ph:first-child{margin-top:2px}
+.w3-kv{display:grid;grid-template-columns:104px minmax(0,1fr);gap:8px;padding:8px 0;border-bottom:1px solid #f2f4f7;font-size:13px}
+.w3-kv > span:first-child{color:var(--muted)}.w3-kv > span:last-child{overflow-wrap:anywhere;color:var(--ink)}
+.w3-kv a{color:#0f766e;text-decoration:none}
+.w3-note{margin:6px 0 0;font-size:13px;color:#344054;background:#f8fafc;border-radius:8px;padding:9px 11px;line-height:1.5;white-space:pre-wrap}
+.w3-gst{border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-top:8px;font-size:12.5px}
+.w3-gst .h{display:flex;gap:6px;align-items:center;color:var(--ink)}.w3-gst .m{color:#475063;margin-top:2px}.w3-gst .s{color:var(--muted);margin-top:2px}
+.w3-cdc{min-width:0}
+.w3-logger{width:100%;text-align:left;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--muted);font-size:13.5px;cursor:text;margin-bottom:14px}
+.w3-logger:hover{border-color:#99d5cc}
+.w3-sh{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:4px 0 8px}
+.w3-feed{list-style:none;margin:0 0 14px;padding:0}
+.w3-act{display:grid;grid-template-columns:30px minmax(0,1fr);gap:10px;margin-bottom:10px}
+.w3-act .ic{width:30px;height:30px;border-radius:50%;background:#fff;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:13px}
+.w3-act .b{background:#fff;border:1px solid var(--line);border-radius:12px;padding:11px 14px;min-width:0}
+.w3-act.late .b{border-color:#fecdca}
+.w3-act .h{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.w3-act .h b{font-size:13.5px;color:var(--ink)}
+.w3-act .w{margin-left:auto;font-size:12px;color:var(--muted)}
+.w3-act.late .w{color:#b42318;font-weight:600}
+.w3-act p{margin:4px 0 0;font-size:13px;color:#344054;line-height:1.5;white-space:pre-wrap}
+.w3-act .oc{font-size:12.5px;color:#027a48;margin-top:6px;padding-top:6px;border-top:1px solid #f2f4f7}
+.w3-act .w1-btn{height:30px;font-size:12.5px;margin-top:8px}
+.w3-rc{background:#fff;border:1px solid var(--line);border-radius:14px;padding:13px 16px;margin-bottom:12px}
+.w3-rch{display:flex;align-items:center;margin-bottom:4px}
+.w3-rch h2{margin:0;font-size:14px;font-weight:700;color:var(--ink)}.w3-rch h2 span{color:var(--muted);font-weight:500}
+.w3-rch .a{margin-left:auto}
+.w3-row{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid #f2f4f7;text-decoration:none;color:inherit;cursor:pointer}
+.w3-row.nolink{cursor:default}
+.w3-row .m{flex:1;min-width:0;display:flex;flex-direction:column}
+.w3-row .t{font-size:13.5px;font-weight:600;color:var(--ink)}.w3-row:hover .t{color:#0f766e}
+.w3-row .s{font-size:12px;color:var(--muted)}
+.w3-row .tags{display:flex;gap:3px;flex-wrap:wrap;margin-top:3px}
+.w3-row .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.w3-row .go{font-size:12.5px;color:#0f766e;white-space:nowrap}
+.w3-drop{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border:1.5px dashed #d0d5dd;border-radius:10px;padding:9px 10px;margin:6px 0 8px}
+.w3-drop.over{border-color:#0f766e;background:#f0fdfa}
+.w3-drop .w3-sel{height:32px}.w3-drop .w1-btn{height:32px}
+#cd-emailwrap > div:first-child{border-radius:14px !important}
+/* BD workspace — same teal accent as the rest of the app */
+#bd-body{background:var(--paper) !important}
+.bdw-kcol.cz{width:46px !important;min-width:46px !important;flex:0 0 46px !important;overflow:hidden}
+.bdw-kcol.cz .bdw-kh{flex-direction:column;align-items:center;gap:8px;height:auto}
+.bdw-kcol.cz .bdw-kh .bdw-pill{writing-mode:vertical-rl;transform:rotate(180deg)}
+.bdw-kcol.cz .bdw-kh .s,.bdw-kcol.cz .bdw-kh .p,.bdw-kcol.cz .bdw-kc,.bdw-kcol.cz .bdw-kmore,.bdw-kcol.cz .bdw-kempty{display:none !important}
+.bdw-kcol.cz .bdw-kl{min-height:160px}
+.bdw-kh .z{border:1px solid var(--line);background:#fff;border-radius:6px;width:22px;height:22px;line-height:18px;padding:0;color:#475063;cursor:pointer;flex:none}
+/* Invoicing */
+#invoicing-body{padding:0 !important;background:var(--paper)}
+.w3-invhead .w2-ebtools{align-self:center}
+.w3-inv{padding:16px 24px 28px;max-width:1400px;box-sizing:border-box}
+.w3-expg{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:start;margin-top:16px}
+.w3-exp > .w3-card.w3-pad{margin-top:0}
+.w3-cbar{display:grid;grid-template-columns:minmax(0,150px) 1fr auto;gap:10px;align-items:center;width:100%;border:0;background:none;padding:6px 4px;font-size:13px;color:var(--ink);text-align:left;cursor:pointer;border-radius:6px}
+.w3-cbar:hover,.w3-cbar.on{background:#f8fafc}.w3-cbar.on{font-weight:600}
+.w3-cbar .b{height:8px;background:#eef0f3;border-radius:4px;overflow:hidden}.w3-cbar .b i{display:block;height:100%;background:#d92d20;opacity:.7;border-radius:4px}
+.w3-cbar .r{text-align:right;white-space:nowrap}
+.w3-invb{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:18px;align-items:start}
+.w3-invs{position:sticky;top:0;background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:13px}
+.w3-invh{font-size:12px;font-weight:700;color:#0f766e;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px}
+.w3-g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.w3-dt{display:flex;gap:6px;margin-bottom:6px;background:#f2f4f7;border-radius:10px;padding:4px}
+.w3-sr{display:flex;justify-content:space-between;gap:8px;padding:4px 0;color:#475063}.w3-sr span:last-child{color:var(--ink)}
+.w3-sr.tot{border-top:1px solid var(--line);margin-top:6px;padding-top:8px;font-weight:700;font-size:15px;color:var(--ink)}
+.w3-sn{font-size:12px;color:var(--muted);margin-top:6px}
+@media (min-width:761px){#modal-invoice .modal{width:min(1020px,94vw) !important;max-width:none !important}}
+#bd-head-ic{display:none !important}
+/* Accountant (CA) view */
+.w3-cahead{display:flex;gap:12px;align-items:center;background:#fff;border-bottom:1px solid var(--line);padding:14px 24px}
+.w3-cahead .lg{width:34px;height:34px;border-radius:9px;background:#0f766e;color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;flex:none}
+.w3-cahead h1{margin:0;font-size:19px;font-weight:700;color:var(--ink)}.w3-cahead p{margin:2px 0 0;font-size:13px;color:var(--muted)}
+/* Freelancers */
+#freelancers-body{background:var(--paper) !important;padding:18px 24px !important}
+.w3-fl{max-width:1100px;margin:0 auto}
+.w3-flg{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:12px}
+.w3-flg .off{opacity:.6}
+.w3-flh{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.w3-flh .m{flex:1;min-width:160px}.w3-flh .t{font-size:15px;font-weight:700;color:var(--ink)}.w3-flh .s{font-size:13px;color:var(--muted)}
+.w3-fls{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid #f2f4f7}
+.w3-flst .v{font-size:20px;font-weight:700}.w3-flst .l{font-size:12px;color:var(--muted)}
+@media (max-width:1180px){
+  .w3-cdgrid{grid-template-columns:270px minmax(0,1fr)}
+  #cd-right{grid-column:1 / -1;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+  #cd-right > *{margin-bottom:0}
+  .w3-kpis{grid-template-columns:repeat(2,minmax(0,1fr)) !important}
+  .w3-expg{grid-template-columns:1fr}
+}
+@media (max-width:760px){
+  #crm-body,#freelancers-body{padding:12px !important}
+  .w3-cdh{padding:12px 12px 0}.w3-cdh-a{width:100%}
+  .w3-cdgrid{grid-template-columns:1fr;padding:12px 12px 40px}
+  #cd-right{display:block}
+  .w3-inv{padding:12px}
+  .w3-kpis{grid-template-columns:1fr 1fr !important;gap:8px}
+  .w3-kpi{padding:11px 12px}.w3-kpi .v{font-size:19px}
+  .w3-invb{grid-template-columns:1fr}.w3-invs{position:static}
+  .w3-g3{grid-template-columns:1fr 1fr}
+  .w3-flg{grid-template-columns:1fr}
+  .w3-fls{grid-template-columns:repeat(2,1fr)}
+  .w3-cahead{padding:12px}
+  .w3-q{flex-basis:100%}
+}
+.ms-as-row.on{background:#f0fdfa}
+.ms-as-row input{accent-color:#0f766e}
+.bdw-nav-i.on{background:#ecfdf5;color:#0f766e}
+.bdw-tb.on{color:#0f766e;background:#ecfdf5}
+.bdw-search:focus{border-color:#0f766e}
+.bdw-new{background:#0f766e}
+.bdw-new:hover{background:#115e59}
+.bdw-chip{background:#ecfdf5;color:#0f766e}
+.bdw-lnk{color:#0f766e}
+.bdw-lnk:hover{background:#ecfdf5}
+.bdw-bulk{background:#ecfdf5;color:#0f766e}
+.bdw-t th .rs:hover{background:#0f766e55}
+.bdw-t tr.sel td{background:#f0fdfa}
+.bdw-t td.ing{box-shadow:inset 0 0 0 2px #0f766e}
+.bdw-t tr.add td:hover{color:#0f766e}
+.bdw-t input[type=checkbox]{accent-color:#0f766e}
+.bdw-open:hover{color:#0f766e}
+.bdw-pi.on{color:#0f766e}
+.bdw-pbtn{background:#0f766e}
+#bdw-modal input:focus,#bdw-modal select:focus,#bdw-modal textarea:focus{border-color:#0f766e}
+.bdw-t tr.pnl td{background:#ecfdf5}
+.bdw-ttl-in{border:1px solid #0f766e}
+.bdw-fin{border:1px solid #0f766e}
+.bdw-go:hover{color:#0f766e}
+.bdw-tk input[type=checkbox]{accent-color:#0f766e}
+.bdw-tk .m:hover .t1{color:#0f766e}
+.bdw-seg button.on{background:#ecfdf5;color:#0f766e}
+.bdw-kcol.over{border-color:#0f766e;background:#f0fdfa}
+.bdw-kc.pnl{border-color:#0f766e;box-shadow:0 0 0 1px #0f766e}
+.bdw-kmore{color:#0f766e}
+.bdh-btn.p{background:#0f766e;border-color:#0f766e}
+.bdh-btn.p:hover{background:#115e59}
+.bdh-row input[type=checkbox]{accent-color:#0f766e}
+.bdh-tag.soon{background:#ecfdf5;color:#0f766e}
+.bdh-bar{background:#0f766e}
+.bdh-col .bx{background:#0f766e}
+.bdh-col.cur .bx{background:#0f766e}
+.bdh-col:not(.cur) .bx{background:#99d5cc}
+</style>
+<script id="w3-script">
+// Wave 3: close fixed-position row menus when the page scrolls or resizes (they are placed with getBoundingClientRect).
+(function(){
+  var close=function(){ document.querySelectorAll('.w2-ebmenu.open').forEach(function(m){ if(m.style.position==='fixed') m.classList.remove('open'); }); };
+  window.addEventListener('scroll', close, true);
+  window.addEventListener('resize', close);
+})();
+</script>
 <style id="mob-style">
 #mob-nav,#mob-brand,#mob-pl-chips,#mob-cp-bar,#mob-scrim{display:none}
 @media (max-width:760px){
