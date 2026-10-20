@@ -1926,7 +1926,7 @@ async function readHash() {
     }
 
     // Recruiter sub-accounts: admin-module links go to Home instead of a 403 page
-    if (_isRecruiterScoped() && ['crm','bd','invoicing','email','command','analytics','orgmap','freelancers','admin'].indexOf(head)>=0) {
+    if (_isRecruiterScoped() && ['crm','bd','invoicing','command','analytics','orgmap','freelancers','admin'].indexOf(head)>=0) {
       await renderContent(); return;
     }
     // BD workspace deep link: #bd/<page>
@@ -3266,6 +3266,50 @@ async function requestUpdate(cid){
   else toast('ERR', r.error || 'Failed to send');
 }
 
+// ── One person, several jobs (Phase D) ────────────────────────────────────
+// The profile shows every job this person is on; each job keeps its own stage.
+window._cpPerson={};
+async function cpLoadPerson(cid){
+  var box=document.getElementById('cp-person-'+cid); if(!box) return;
+  var r=await req('GET','/candidates/'+cid+'/person');
+  if(!r||!r.ok){ box.innerHTML=''; return; }
+  window._cpPerson[cid]=r;
+  var recs=r.records||[];
+  if(recs.length<=1 && !r.hidden){ box.innerHTML=''; return; }
+  box.innerHTML='<span class="pd-lbl">On '+(recs.length+(r.hidden||0))+' jobs</span>'
+    +recs.map(function(x){
+      var lbl=esc(x.role||'Job')+(x.central?'':' <span class="pd-st">'+esc(stageLabel(x.stage||''))+'</span>');
+      return x.current?'<span class="pd-chip on" aria-current="true" title="You are looking at this job">'+lbl+'</span>'
+        :'<button type="button" class="pd-chip" title="Open their record on '+esc(x.role||'')+(x.client?' — '+esc(x.client):'')+'" onclick="openProfileById('+x.id+','+(x.central?'null':(x.mandate_id||'null'))+')">'+lbl+'</button>';
+    }).join('')
+    +(r.hidden?'<span class="pd-chip ghost" title="Jobs you are not assigned to">+'+r.hidden+' other</span>':'');
+}
+function cpAddToJob(cid){
+  var on={}; ((window._cpPerson[cid]||{}).records||[]).forEach(function(x){ on[x.mandate_id]=1; });
+  var ms=(S.mandates||[]).filter(function(m){ return (m.status||'active')==='active' && !on[m.id]; });
+  if(!ms.length){ toast('ERR','They are already on every active job you can add to'); return; }
+  var ex=document.getElementById('modal-pdadd'); if(ex) ex.remove();
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-pdadd';
+  bg.onclick=function(ev){ if(ev.target===bg) bg.remove(); };
+  bg.innerHTML='<div class="modal" style="max-width:460px;width:96%" role="dialog" aria-modal="true" aria-label="Add to another job"><div class="modal-head"><span class="modal-title" style="font-size:15px">Add to another job</span><button class="modal-x" aria-label="Close" onclick="document.getElementById(\'modal-pdadd\').remove()">&#10005;</button></div>'
+    +'<div class="modal-body"><label for="pdadd-m" style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Job</label>'
+    +'<select class="inp" id="pdadd-m" style="width:100%">'+ms.map(function(m){ return '<option value="'+m.id+'">'+esc((m.role||'')+(m.client?(' — '+m.client):''))+'</option>'; }).join('')+'</select>'
+    +'<p style="font-size:12px;color:#667085;margin:10px 0 0">They start there at <b>Screening</b> and <b>stay on this job</b> too. Contact details, CTC and CV stay in step on both; stage, notes and feedback are kept per job.</p>'
+    +'<div style="margin-top:14px;display:flex;gap:8px;align-items:center"><button class="w1-btn pri" onclick="_cpAddToJobGo('+cid+',this)">Add to job</button><span id="pdadd-st" style="font-size:12px;color:#667085"></span></div></div></div>';
+  document.body.appendChild(bg);
+}
+async function _cpAddToJobGo(cid, btn){
+  var mid=parseInt((document.getElementById('pdadd-m')||{}).value||'0',10);
+  btn.disabled=true;
+  var r=await req('POST','/candidates/'+cid+'/add-to-job',{mandate_id:mid});
+  if(!r||!r.ok){ btn.disabled=false; var st=document.getElementById('pdadd-st'); if(st){ st.style.color='#B42318'; st.textContent=(r&&r.error)||'Could not add'; } return; }
+  var m=document.getElementById('modal-pdadd'); if(m) m.remove();
+  var msg={copied:'Added to '+esc(r.job)+' — still on this job too',moved:'Moved onto '+esc(r.job)+' from the Central Database',already:'Already on '+esc(r.job)}[r.status]||'Done';
+  toast('OK', msg+(r.status!=='already'?' &middot; <a href="#" onclick="event.preventDefault();openProfileById('+r.candidate_id+','+r.mandate_id+')">Open there</a>':''));
+  if(r.status==='moved'){ openProfileById(r.candidate_id, r.mandate_id); return; }
+  cpLoadPerson(cid);
+}
+
 // ── Move candidate to another mandate ─────────────────────────────────────
 function openMoveCandidate(cid){
   var current = S.activeMandate ? S.activeMandate.id : null;
@@ -3290,7 +3334,7 @@ function openMoveCandidate(cid){
     + '<div style="padding:16px 18px;border-bottom:0.5px solid var(--line);display:flex;align-items:center;justify-content:space-between">'
     + '<div style="font-size:15px;font-weight:700;color:var(--navy)">&#8644; Move Candidate to...</div>'
     + '<button onclick="document.getElementById(\'move-cand-modal\').remove()" style="background:none;border:none;font-size:20px;color:#999;cursor:pointer">&times;</button></div>'
-    + '<div style="font-size:11.5px;color:var(--muted);padding:10px 18px 4px">Which mandate should this move to? The candidate will enter that mandate&#39;s pipeline.</div>'
+    + '<div style="font-size:11.5px;color:var(--muted);padding:10px 18px 4px">Moving takes them <b>off this job</b> and onto the one you pick. To keep them here as well, close this and use <b>+ Another job</b>.</div>'
     + '<div style="flex:1;overflow-y:auto;padding:8px 12px">' + listHtml + '</div>'
     + '</div>';
   document.body.appendChild(modal);
@@ -5572,22 +5616,48 @@ async function reindexVectors(btn){
 }
 function _ccInp(id,lbl,val){ return '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#666;display:block;margin-bottom:3px">'+lbl+'</label>'
   +'<input id="'+id+'" class="inp" type="number" value="'+(val!=null&&val!==''?val:'')+'" style="width:100%"></div>'; }
-window._emailFolder='';
-// Wave 2: one header for Mailbox / Campaigns / Email Agent with every tool kept
+// ═══ Email Box (Phase B, Oct 2026) ═══════════════════════════════════════
+// Gmail-style: list + reading pane (desktop), own inbox per recruiter, server
+// search, folders, bulk actions, linked candidate, "Add as candidate" from a CV.
+window._emailFolder = window._emailFolder || 'Inbox';
+window._eb = window._eb || {q:'', box:'', emails:[], offset:0, more:false, sel:{}, openId:null, me:null, counts:{}};
+function _ebIsRec(){ return _isRecruiterScoped(); }
+function _ebBoxQ(sep){ return (window._eb.box==='me' && !_ebIsRec()) ? (sep+'box=me') : ''; }
+function _ebSplit(){ return window.innerWidth >= 1100; }
 function _ebHeader(active){
+  var rec=_ebIsRec(), me=window._eb.me||{};
   var t=function(k,l,f){ return '<button role="tab" aria-selected="'+(active===k)+'" class="'+(active===k?'on':'')+'" onclick="window._emailFolder=\''+f+'\';renderEmailBox()">'+l+'</button>'; };
-  return '<div class="w2-ebhead"><div><h1>Email</h1><p>Inbox, sent mail, campaigns and the email agent</p></div>'
-    +'<div class="w2-ebtabs" role="tablist" aria-label="Email section">'+t('mail','Mailbox','')+t('camp','Campaigns','__campaigns')+t('agent','Email Agent','__agent')+'</div>'
-    +'<div class="w2-ebtools"><button class="w1-btn" onclick="syncEmail(this)" title="Pull new mail now">&#8635; Sync</button>'
-    +'<div class="w1-acct"><button class="w1-btn ic" aria-label="More email tools" aria-haspopup="menu" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle(\'open\')">&#8943;</button>'
+  var who=rec?(me.own_mailbox?esc(me.own_email):'Your inbox'):
+    (window._eb.box==='me'?('My mailbox &middot; '+esc(me.own_email||'')):('Company mailbox'+(me.company_email?(' &middot; '+esc(me.company_email)):'')));
+  var boxSw=(!rec && me.own_mailbox)?('<select class="inp eb2-boxsel" aria-label="Mailbox" onchange="ebSwitchBox(this.value)">'
+      +'<option value=""'+(window._eb.box!=='me'?' selected':'')+'>Company mailbox</option>'
+      +'<option value="me"'+(window._eb.box==='me'?' selected':'')+'>My mailbox</option></select>'):'';
+  return '<div class="w2-ebhead"><div><h1>Email</h1><p>'+who+'</p></div>'
+    +(rec?'':'<div class="w2-ebtabs" role="tablist" aria-label="Email section">'+t('mail','Mailbox','Inbox')+t('camp','Campaigns','__campaigns')+t('agent','Email Agent','__agent')+'</div>')
+    +'<div class="w2-ebtools">'+boxSw+'<button class="w1-btn" onclick="syncEmail(this)" title="Pull new mail now">&#8635; Sync</button>'
+    +(rec?'':'<div class="w1-acct"><button class="w1-btn ic" aria-label="More email tools" aria-haspopup="menu" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle(\'open\')">&#8943;</button>'
     +'<div class="w1-acct-menu w2-ebmenu" role="menu">'
     +'<button role="menuitem" onclick="this.parentElement.classList.remove(\'open\');openSignatureEditor()">Signature</button>'
     +'<button role="menuitem" title="Test email sending, receiving, threading and attachments" onclick="this.parentElement.classList.remove(\'open\');openEmailSelfTest()">Self-Test</button>'
     +'<button role="menuitem" title="Regroup existing emails into conversations" onclick="this.parentElement.classList.remove(\'open\');ebRethread(this)">Fix threads</button>'
-    +'</div></div></div></div>';
+    +'</div></div>')+'</div></div>';
+}
+function ebSwitchBox(v){ window._eb.box=v||''; window._eb.openId=null; renderEmailBox(); }
+function ebGoMyMail(){
+  var v=document.getElementById('email-view'); if(v) v.style.display='none';
+  var sb=document.getElementById('sb-email'); if(sb) sb.classList.remove('active');
+  S.settingsOpen=false; toggleSettings();
+  setTimeout(function(){ try{ setJump('sec-mymail','account'); }catch(e){} },120);
+}
+async function _ebLoadMe(){
+  if(window._eb.me) return window._eb.me;
+  try{ var r=await req('GET','/emailbox/me'); if(r&&r.ok) window._eb.me=r; }catch(e){}
+  return window._eb.me||{};
 }
 async function renderEmailBox(){
   var el=document.getElementById('emailbox-body'); if(!el) return;
+  await _ebLoadMe();
+  if(_ebIsRec() && /^__/.test(window._emailFolder||'')) window._emailFolder='Inbox';
   // Mass email campaigns (lives inside the Email Box)
   if(window._emailFolder==='__campaigns'){
     el.innerHTML=_ebHeader('camp')+'<div class="w2-ebbar"><span class="w2-ebtitle">Campaigns</span>'
@@ -5610,108 +5680,382 @@ async function renderEmailBox(){
     loadEmailAgent();
     return;
   }
-  el.innerHTML='<div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div>';
-  var r={};
-  try{ r=await req('GET','/emailbox/list'+(window._emailFolder?('?folder='+window._emailFolder):'')); }catch(e){}
-  var emails=(r&&r.emails)||[];
-  function tab(id,label){ var on=window._emailFolder===id; return '<button class="w1-chip'+(on?' on':'')+'" aria-pressed="'+on+'" onclick="window._emailFolder=\''+id+'\';renderEmailBox()">'+label+'</button>'; }
-  window._ebEmails=emails;
-  el.innerHTML=_ebHeader('mail')+'<div class="w2-ebbar">'
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap">'+tab('','All')+tab('Inbox','Inbox')+tab('Unread','Unread')+tab('Sent','Sent')+tab('Drafts','Drafts')+'</div>'
-    +'<input class="inp" id="eb-search" placeholder="Search mail" aria-label="Search mail" style="margin-left:auto;font-size:13px;width:220px;padding:7px 11px" oninput="renderEmailList()">'
+  var me=window._eb.me||{};
+  var needMail=(_ebIsRec() || window._eb.box==='me') && !me.own_mailbox;
+  var f=window._emailFolder||'Inbox';
+  function tab(id,label,n){ var on=f===id; return '<button class="w1-chip'+(on?' on':'')+'" aria-pressed="'+on+'" onclick="ebFolder(\''+id+'\')">'+label+(n?' <span class="eb2-n">'+n+'</span>':'')+'</button>'; }
+  var c=window._eb.counts||{};
+  el.innerHTML=_ebHeader('mail')
+    +(needMail?'<div class="eb2-banner" role="status"><b>Connect your Gmail to get your own inbox.</b> Mail you send and receive there will show up here &mdash; only you can see it. '
+      +'<button class="w1-btn pri" onclick="ebGoMyMail()">Connect in Settings &rarr; My Account</button></div>':'')
+    +'<div class="w2-ebbar">'
+    +'<div class="eb2-chips" id="eb2-chips">'+tab('Inbox','Inbox',c.unread)+tab('Unread','Unread')+tab('Starred','Starred')+tab('Sent','Sent')+tab('Drafts','Drafts',c.drafts)+tab('Candidates','Candidates')+tab('Archived','Archived')+tab('','All mail')+'</div>'
+    +'<input class="inp" id="eb-search" type="search" placeholder="Search all mail" aria-label="Search mail" value="'+esc(window._eb.q||'')+'" style="margin-left:auto;font-size:13px;width:240px;padding:7px 11px" oninput="ebSearchDebounced()">'
     +'<button class="w1-btn pri" onclick="openCompose()">Compose</button></div>'
-    +'<div class="w2-eblist" id="eb-list"></div>';
+    +'<div class="eb2-wrap'+(_ebSplit()?' split':'')+'" id="eb2-wrap">'
+    +'<div class="eb2-listcol"><div class="eb2-bulk" id="eb2-bulk"></div><div class="w2-eblist" id="eb-list"><div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div></div><div id="eb2-more"></div></div>'
+    +(_ebSplit()?'<div class="eb2-pane" id="eb2-pane" aria-live="polite"><div class="eb2-pane-empty">Select a conversation to read it here.</div></div>':'')
+    +'</div>';
+  await ebLoadList(false);
+  if(window._eb.openId && _ebSplit()) openEmail(window._eb.openId, true);
+}
+function ebFolder(id){ window._emailFolder=id; window._eb.sel={}; window._eb.openId=null; renderEmailBox(); }
+var _ebSearchT=null;
+function ebSearchDebounced(){
+  clearTimeout(_ebSearchT);
+  _ebSearchT=setTimeout(function(){ var q=document.getElementById('eb-search'); window._eb.q=q?q.value.trim():''; window._eb.sel={}; ebLoadList(false); },300);
+}
+async function ebLoadList(append){
+  var E=window._eb, f=window._emailFolder||'';
+  var off=append?E.offset+100:0;
+  var qs='?limit=100&offset='+off+(f?('&folder='+encodeURIComponent(f)):'')+(E.q?('&q='+encodeURIComponent(E.q)):'')+_ebBoxQ('&');
+  var r={}; try{ r=await req('GET','/emailbox/list'+qs); }catch(e){}
+  if(r&&r.error){ var b=document.getElementById('eb-list'); if(b) b.innerHTML='<div class="w3-empty" style="padding:30px">'+esc(r.error)+'</div>'; return; }
+  var rows=(r&&r.emails)||[];
+  E.emails=append?(E.emails||[]).concat(rows):rows; E.offset=off; E.more=!!(r&&r.has_more);
+  window._ebEmails=E.emails;
+  if(r&&r.counts){ E.counts=r.counts; _ebPaintCounts(); }
   renderEmailList();
 }
-function _ebRow(e, count, unread){
-  var d=e.date_ts?new Date(e.date_ts*1000).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}):'';
+function _ebPaintCounts(){
+  var c=window._eb.counts||{};
+  var nb=document.getElementById('nav-email-badge');
+  if(nb){ nb.textContent=c.unread>99?'99+':(c.unread||''); nb.style.display=c.unread?'':'none'; }
+  var chips=document.getElementById('eb2-chips');
+  if(chips){ chips.querySelectorAll('.w1-chip').forEach(function(b){
+    var on=b.getAttribute('onclick')||'';
+    var n=/'Inbox'/.test(on)?c.unread:(/'Drafts'/.test(on)?c.drafts:0);
+    var s=b.querySelector('.eb2-n');
+    if(n){ if(!s){ s=document.createElement('span'); s.className='eb2-n'; b.appendChild(document.createTextNode(' ')); b.appendChild(s);} s.textContent=n; }
+    else if(s) s.remove();
+  }); }
+}
+async function ebRefreshCounts(){
+  try{ var r=await req('GET','/emailbox/counts'+_ebBoxQ('?')); if(r&&r.ok){ window._eb.counts=r; _ebPaintCounts(); } }catch(e){}
+}
+function _ebSize(n){ return n>=1048576?((n/1048576).toFixed(1)+' MB'):(Math.max(1,Math.round((n||0)/1024))+' KB'); }
+function _ebWhen(ts){
+  if(!ts) return '';
+  var d=new Date(ts*1000), now=new Date();
+  if(d.toDateString()===now.toDateString()) return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  return d.toLocaleDateString('en-GB',(d.getFullYear()===now.getFullYear())?{day:'2-digit',month:'short'}:{day:'2-digit',month:'short',year:'2-digit'});
+}
+function _ebRow(e, g){
+  g=g||{count:1,unread:0,ids:[e.id],starred:e.is_starred,attach:e.n_attach,cand:e.candidate_name};
   var isDraft=e.is_draft||e.folder==='Drafts';
-  var anyUnread=(unread||0)>0 || (!isDraft && !e.is_read);
-  var who=isDraft?('To: '+esc(e.to_addr||'(no recipient)')):(e.folder==='Sent'?('To: '+esc(e.to_addr||'')):esc(e.from_name||e.from_addr||''));
-  var cnt=(count&&count>1)?(' <span style="font-size:9px;color:#666;background:#eee;border-radius:8px;padding:0 6px">'+count+'</span>'):'';
-  var fb=isDraft?'<span style="font-size:9px;background:#FBECEC;color:#B23B3B;padding:1px 6px;border-radius:6px">Draft</span>':(e.folder==='Sent'?'<span style="font-size:9px;background:#EAF3FF;color:#2456A6;padding:1px 6px;border-radius:6px">Sent</span>':'<span style="font-size:9px;background:#EAF7F0;color:#127A57;padding:1px 6px;border-radius:6px">Inbox</span>');
-  var click=isDraft?('openDraft('+e.id+')'):('openEmail('+e.id+')');
-  return '<div onclick="'+click+'" style="padding:10px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer" onmouseover="this.style.background=\'#faf9ff\'" onmouseout="this.style.background=\'\'">'
-    +'<div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:'+(anyUnread?'700':'500')+';font-size:12.5px;color:#1B1B18">'+who+cnt+'</div><div style="font-size:10.5px;color:#999;white-space:nowrap">'+fb+' '+d+'</div></div>'
-    +'<div style="font-size:12.5px;color:#333;margin-top:2px;font-weight:'+(anyUnread?'700':'400')+'">'+esc(e.subject||'(no subject)')+'</div>'
-    +'<div style="font-size:11px;color:#999;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(e.snippet||'')+'</div></div>';
+  var anyUnread=(g.unread||0)>0;
+  var who=isDraft?('<span class="eb2-draft">Draft</span> '+esc(e.to_addr||'(no recipient)')):(e.folder==='Sent'?('To: '+esc((e.to_addr||'').replace(/<[^>]*>/g,'').trim())):esc(e.from_name||e.from_addr||''));
+  var n=Math.max(g.count||1, g.thread_n||0);
+  var cnt=(n>1)?(' <span class="eb2-cnt">'+n+'</span>'):'';
+  var key=g.key||('t'+e.id);
+  var sel=!!window._eb.sel[key];
+  var open=String(window._eb.openId)===String(e.id) || (g.ids||[]).some(function(i){return String(i)===String(window._eb.openId);});
+  var cand=g.cand?('<span class="eb2-cand" title="Linked candidate">&#128100; '+esc(g.cand)+'</span>'):'';
+  var att=g.attach?'<span class="eb2-att" title="Has attachments">&#128206;</span>':'';
+  return '<div class="eb2-row'+(anyUnread?' unread':'')+(sel?' sel':'')+(open?' open':'')+'" role="button" tabindex="0" data-key="'+key+'" data-id="'+e.id+'"'
+    +' onclick="ebRowClick(event,'+e.id+','+(isDraft?1:0)+')" onkeydown="if(event.key===\'Enter\')ebRowClick(event,'+e.id+','+(isDraft?1:0)+')">'
+    +'<label class="eb2-cb" onclick="event.stopPropagation()"><input type="checkbox" aria-label="Select"'+(sel?' checked':'')+' onchange="ebSel(\''+key+'\',this.checked)"></label>'
+    +'<button class="eb2-star'+(g.starred?' on':'')+'" aria-label="'+(g.starred?'Unstar':'Star')+'" aria-pressed="'+(!!g.starred)+'" onclick="event.stopPropagation();ebStarKey(\''+key+'\')">'+(g.starred?'&#9733;':'&#9734;')+'</button>'
+    +'<div class="eb2-main"><div class="eb2-l1"><span class="eb2-who">'+who+cnt+'</span>'+cand+'<span class="eb2-date">'+att+_ebWhen(e.date_ts)+'</span></div>'
+    +'<div class="eb2-l2"><span class="eb2-sub">'+esc(e.subject||'(no subject)')+'</span><span class="eb2-snip"> &ndash; '+esc(e.snippet||'')+'</span></div></div></div>';
+}
+function _ebGroups(){
+  var groups={}, order=[];
+  (window._eb.emails||[]).forEach(function(e){
+    var key=(e.is_draft||e.folder==='Drafts')?('d'+e.id):('t'+(e.thread_id||('id'+e.id)));
+    var g=groups[key];
+    if(!g){ g=groups[key]={key:key,latest:e,count:0,unread:0,ids:[],starred:0,attach:0,cand:''}; order.push(key); }
+    g.count++; g.ids.push(e.id); g.thread_n=Math.max(g.thread_n||0, e.thread_n||0);
+    if(!e.is_read&&e.folder==='Inbox') g.unread++;
+    if(e.is_starred) g.starred=1;
+    if(e.n_attach) g.attach+=e.n_attach;
+    if(e.candidate_name&&!g.cand) g.cand=e.candidate_name;
+    if((e.date_ts||0)>(g.latest.date_ts||0)) g.latest=e;
+  });
+  window._eb.groups=groups;
+  return order.map(function(k){ return groups[k]; });
 }
 function renderEmailList(){
   var box=document.getElementById('eb-list'); if(!box) return;
-  var qEl=document.getElementById('eb-search'); var q=(qEl?qEl.value:'').trim().toLowerCase();
-  var list=(window._ebEmails||[]).filter(function(e){ if(!q) return true; return ((e.subject||'')+' '+(e.from_name||'')+' '+(e.from_addr||'')+' '+(e.to_addr||'')+' '+(e.snippet||'')).toLowerCase().indexOf(q)>=0; });
-  var groups={}, order=[];
-  list.forEach(function(e){
-    var key=(e.is_draft||e.folder==='Drafts')?('d'+e.id):('t'+(e.thread_id||('id'+e.id)));
-    if(!groups[key]){ groups[key]={latest:e,count:1,unread:(!e.is_read&&e.folder!=='Sent'&&e.folder!=='Drafts')?1:0}; order.push(key); }
-    else { var g=groups[key]; g.count++; if(!e.is_read&&e.folder!=='Sent'&&e.folder!=='Drafts') g.unread++; if((e.date_ts||0)>(g.latest.date_ts||0)) g.latest=e; }
-  });
-  box.innerHTML = order.map(function(k){ var g=groups[k]; return _ebRow(g.latest,g.count,g.unread); }).join('')
-    || '<div style="padding:30px;text-align:center;color:#aaa">No emails'+(q?' match your search':' yet. Click <b>Sync</b> to pull your inbox + sent')+'.</div>';
+  var list=_ebGroups(), E=window._eb;
+  box.innerHTML=list.map(function(g){ return _ebRow(g.latest,g); }).join('')
+    || '<div class="w3-empty" style="padding:30px;text-align:center">'+(E.q?'No mail matches <b>'+esc(E.q)+'</b>.':'No emails here yet. Click <b>Sync</b> to pull your inbox and sent mail.')+'</div>';
+  var more=document.getElementById('eb2-more');
+  if(more) more.innerHTML=E.more?'<div style="text-align:center;margin:-12px 0 20px"><button class="w1-btn" onclick="this.disabled=true;ebLoadList(true)">Load older mail</button></div>':'';
+  _ebPaintBulk();
 }
-
+function ebSel(key,on){ if(on) window._eb.sel[key]=1; else delete window._eb.sel[key];
+  var row=document.querySelector('.eb2-row[data-key="'+key+'"]'); if(row) row.classList.toggle('sel',!!on); _ebPaintBulk(); }
+function _ebSelIds(){
+  var G=window._eb.groups||{}, ids=[];
+  Object.keys(window._eb.sel||{}).forEach(function(k){ if(G[k]) ids=ids.concat(G[k].ids); });
+  return ids;
+}
+function _ebPaintBulk(){
+  var bar=document.getElementById('eb2-bulk'); if(!bar) return;
+  var n=Object.keys(window._eb.sel||{}).length;
+  var allKeys=Object.keys(window._eb.groups||{});
+  var arch=(window._emailFolder==='Archived');
+  if(!n){ bar.innerHTML=allKeys.length?'<label class="eb2-all"><input type="checkbox" aria-label="Select all" onchange="ebSelAll(this.checked)"> Select all</label>':''; bar.classList.remove('on'); return; }
+  bar.classList.add('on');
+  bar.innerHTML='<label class="eb2-all"><input type="checkbox" checked aria-label="Clear selection" onchange="ebSelAll(this.checked)"> '+n+' selected</label>'
+    +'<button class="w1-btn" onclick="ebBulk(\'read\')">Mark read</button>'
+    +'<button class="w1-btn" onclick="ebBulk(\'unread\')">Mark unread</button>'
+    +'<button class="w1-btn" onclick="ebBulk(\'star\')">&#9733; Star</button>'
+    +'<button class="w1-btn" onclick="ebBulk(\''+(arch?'unarchive':'archive')+'\')">'+(arch?'Move to inbox':'Archive')+'</button>'
+    +'<button class="w1-btn dang" onclick="ebBulk(\'delete\')">Delete</button>';
+}
+function ebSelAll(on){
+  window._eb.sel={};
+  if(on) Object.keys(window._eb.groups||{}).forEach(function(k){ window._eb.sel[k]=1; });
+  renderEmailList();
+}
+async function ebBulk(action, ids){
+  ids=ids||_ebSelIds(); if(!ids.length) return;
+  if(action==='delete' && !confirm('Delete '+ids.length+' email(s) from the ATS? Your Gmail is not changed.')) return;
+  var r=await req('POST','/emailbox/bulk',{ids:ids,action:action,box:window._eb.box||''});
+  if(!r||!r.ok){ toast('Error',esc((r&&r.error)||'Could not update')); return; }
+  if(r.counts){ window._eb.counts=r.counts; _ebPaintCounts(); }
+  window._eb.sel={};
+  var gone=/^(archive|unarchive|delete)$/.test(action);
+  if(gone && ids.some(function(i){return String(i)===String(window._eb.openId);})){ window._eb.openId=null; _ebPaneEmpty(); }
+  var labels={read:'Marked read',unread:'Marked unread',star:'Starred',unstar:'Star removed',archive:'Archived',unarchive:'Moved to inbox',delete:'Deleted'};
+  toast('OK',(labels[action]||'Done')+(gone?' &middot; <a href="#" onclick="event.preventDefault();ebBulk(\''+({archive:'unarchive',unarchive:'archive',delete:'restore'}[action])+'\','+JSON.stringify(ids).replace(/"/g,'')+')">Undo</a>':''));
+  await ebLoadList(false);
+}
+function ebStarKey(key){ var g=(window._eb.groups||{})[key]; if(g) ebBulk(g.starred?'unstar':'star', g.ids); }
+function _ebPaneEmpty(){ var p=document.getElementById('eb2-pane'); if(p) p.innerHTML='<div class="eb2-pane-empty">Select a conversation to read it here.</div>'; }
+function ebRowClick(ev,id,isDraft){
+  if(isDraft){ openDraft(id); return; }
+  openEmail(id);
+}
 async function syncEmail(btn){
   if(btn){ btn.disabled=true; btn.innerHTML='&#8987; Syncing…'; }
-  var r;
-  try{ r=await req('POST','/emailbox/sync',{}); }
-  catch(e){ if(btn){btn.disabled=false;btn.innerHTML='&#8635; Sync (last 30 days)';} toast('Error','Sync failed'); return; }
-  if(r&&r.error){ if(btn){btn.disabled=false;btn.innerHTML='&#8635; Sync (last 30 days)';} toast('Error', esc(String(r.error))); return; }
-  toast('OK',(r.added||0)+' new email(s) synced');
-  renderEmailBox();
+  var total=0, r;
+  for(var i=0;i<5;i++){   // a new mailbox downloads in batches of 60
+    try{ r=await req('POST','/emailbox/sync'+_ebBoxQ('?'),{box:window._eb.box||''}); }catch(e){ r={error:'Sync failed'}; }
+    if(!r||r.error) break;
+    total+=(r.added||0);
+    if(!r.more) break;
+    if(btn) btn.innerHTML='&#8987; Syncing… '+total;
+  }
+  if(btn){ btn.disabled=false; btn.innerHTML='&#8635; Sync'; }
+  if(r&&r.error){
+    if(r.code==='no_personal_mailbox'){ toast('EMAIL','Connect your Gmail first: Settings &rarr; My Account'); return; }
+    toast('Error', esc(String(r.error))); return;
+  }
+  toast('OK',total+' new email(s) synced'+((r&&r.more)?' &middot; more older mail comes with the next sync':''));
+  ebLoadList(false);
 }
+// HTML mail: rendered without scripts; height follows the content.
 function _emailContent(m){
-  if(m.body_html && m.body_html.length>15){ var safe=m.body_html.replace(/&/g,'&amp;').replace(/"/g,'&quot;'); return '<iframe sandbox="" referrerpolicy="no-referrer" srcdoc="'+safe+'" style="width:100%;height:280px;border:none;background:#fff"></iframe>'; }
+  if(m.body_html && m.body_html.length>15){
+    var doc='<base target="_blank"><style>body{margin:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style>'+m.body_html;
+    var safe=doc.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+    return '<iframe class="eb2-frame" title="Email content" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" srcdoc="'+safe+'" onload="_ebFit(this)" style="width:100%;height:120px;border:none;background:#fff"></iframe>';
+  }
   var raw=m.body||m.snippet||'(empty email)';
   var qm=raw.indexOf('\n--- On ');
   if(qm<0){ var gm=raw.search(/\n>\s?/); if(gm>=0) qm=gm; }
   var main=raw, quoted='';
   if(qm>0){ main=raw.slice(0,qm); quoted=raw.slice(qm); }
-  var html='<div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#222">'+esc(main)+'</div>';
+  var html='<div style="white-space:pre-wrap;font-size:13.5px;line-height:1.6;color:#222;overflow-wrap:anywhere">'+esc(main)+'</div>';
   if(quoted){ var qid='q'+Math.random().toString(36).slice(2,8);
-    html+='<div style="margin-top:4px"><span onclick="var x=document.getElementById(\''+qid+'\');x.style.display=x.style.display===\'none\'?\'block\':\'none\'" title="Show quoted text" style="cursor:pointer;color:#888;font-size:15px;background:#eee;border-radius:6px;padding:0 8px;display:inline-block;line-height:1.4">&#8943;</span>'
+    html+='<div style="margin-top:4px"><button type="button" class="eb2-q" aria-expanded="false" onclick="var x=document.getElementById(\''+qid+'\');var o=x.style.display===\'none\';x.style.display=o?\'block\':\'none\';this.setAttribute(\'aria-expanded\',o)" title="Show quoted text">&#8943;</button>'
       +'<div id="'+qid+'" style="display:none;white-space:pre-wrap;font-size:12px;color:#888;border-left:2px solid #ddd;padding-left:8px;margin-top:6px">'+esc(quoted.trim())+'</div></div>'; }
   return html;
 }
-async function openEmail(id){
-  var r; try{ r=await req('GET','/emailbox/'+id); }catch(e){ toast('Error','Email load failed'); return; }
-  if(!r || r.error || !r.email){ toast('Error',(r&&r.error)||'Could not open email'); return; }
-  var e=r.email;
-  var tr={}; try{ tr=await req('GET','/emailbox/thread?eid='+id); }catch(_){}
-  var msgs=(tr&&tr.thread&&tr.thread.length)?tr.thread:[e];
-  var subject=e.subject||'';
-  var rSub=/^re:/i.test(subject)?subject:('Re: '+subject);
-  var replyTo=(e.folder==='Sent')?(e.to_addr||''):(e.from_addr||'');
-  var qd=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB'):'';
-  var quoted='\n\n--- On '+qd+', '+(e.from_name||e.from_addr||'')+' wrote ---\n'+((e.body||e.snippet||'').split('\n').map(function(l){return '> '+l;}).join('\n'));
-  window._replyCtx={to:replyTo,sub:rSub,body:quoted,in_reply_to:(e.msg_id||''),thread_id:(e.thread_id||'')};
-  var fwdBody='\n\n---------- Forwarded message ----------\nFrom: '+(e.from_name||e.from_addr||'')+'\nSubject: '+subject+'\nDate: '+qd+'\n\n'+(e.body||e.snippet||'');
-  window._fwdCtx={to:'',sub:(/^fwd:/i.test(subject)?subject:('Fwd: '+subject)),body:fwdBody,forward_from_email_id:e.id};
-  var _attHtml=function(m){
-    var a=m.attachments||[]; if(!a.length) return '';
-    return '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'+a.map(function(x){
-      var kb=x.size?(' <span style=\"color:#aaa\">('+(x.size>=1048576?((x.size/1048576).toFixed(1)+' MB'):(Math.max(1,Math.round(x.size/1024))+' KB'))+')</span>'):'';
-      return '<a href="'+API+'/emailbox/attachment/'+x.id+'" style="display:inline-flex;align-items:center;gap:5px;background:#EEF2F1;border:1px solid #D5E0DC;border-radius:14px;padding:3px 10px;font-size:11.5px;color:#0F6E56;text-decoration:none">&#128206; '+esc(x.filename)+kb+'</a>';
-    }).join('')+'</div>';
-  };
-  var msgHtml=msgs.map(function(m){
-    var d=m.date_ts?new Date(m.date_ts*1000).toLocaleString('en-GB'):'';
-    var content=_emailContent(m);
-    return '<div style="border:1px solid #eee;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:'+(m.folder==='Sent'?'#F7F9FF':'#fff')+'">'
-      +'<div style="font-size:11px;color:#666;border-bottom:1px solid #f0f0f0;padding-bottom:6px;margin-bottom:8px"><b>'+esc(m.from_name||m.from_addr||'')+'</b> &rarr; '+esc(m.to_addr||'')+' <span style="color:#aaa">&middot; '+esc(d)+' &middot; '+esc(m.folder||'')+'</span></div>'+content+_attHtml(m)+'</div>';
+function _ebFit(fr){
+  try{
+    var d=fr.contentDocument; if(!d||!d.body) return;
+    var h=Math.max(d.body.scrollHeight, d.documentElement?d.documentElement.scrollHeight:0);
+    fr.style.height=Math.min(Math.max(h+8,60),6000)+'px';
+    // images load after the first paint
+    Array.prototype.forEach.call(d.images||[],function(im){ if(!im.complete) im.addEventListener('load',function(){ _ebFit(fr); },{once:true}); });
+  }catch(e){ fr.style.height='420px'; }
+}
+function _ebAddrs(s){ return String(s||'').split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(function(x){ var m=x.match(/<([^>]+)>/); return (m?m[1]:x).trim(); }).filter(function(x){ return x.indexOf('@')>0; }); }
+// "Me" in this mailbox: its address plus whoever sent the Sent copies in this thread.
+function _ebMine(){ var me=window._eb.me||{}; var out=[(window._eb.box==='me'||_ebIsRec())?me.own_email:me.company_email];
+  ((window._eb.thread&&window._eb.thread.thread)||[]).forEach(function(m){ if(m.folder==='Sent') out.push(m.from_addr); });
+  return out.filter(Boolean).map(function(x){return String(x).toLowerCase();}); }
+function _ebIsCv(name){ return /\.(pdf|docx?)$/i.test(name||''); }
+function _ebThreadHtml(tr, inPane){
+  var msgs=tr.thread||[], last=msgs[msgs.length-1]||{};
+  // Reply goes to the latest message from the other side (like Gmail), not to your own sent copy.
+  var lastIn=msgs.slice().reverse().find(function(m){ return m.folder==='Inbox'; })||last;
+  var subject=tr.subject||last.subject||'';
+  var starred=msgs.some(function(m){return m.is_starred;});
+  var archived=msgs.length && msgs.every(function(m){return m.is_archived;});
+  var cand=tr.candidate;
+  var candHtml;
+  if(cand){
+    var where=cand.central?'Central Database':esc((cand.mandate_role||'')+(cand.mandate_client?(' &middot; '+cand.mandate_client):''));
+    candHtml='<div class="eb2-candbox"><span class="eb2-cav">'+esc((cand.name||'?').charAt(0).toUpperCase())+'</span><div style="min-width:0;flex:1"><div class="eb2-cn">'+esc(cand.name)+'</div><div class="eb2-cm">'+where+((cand.stage&&!cand.central)?(' &middot; '+esc(cand.stage)):'')+'</div></div>'
+      +(cand.can_open?'<button class="w1-btn" onclick="ebOpenCand('+cand.id+','+(cand.mandate_id||0)+')">Open profile</button>':'')
+      +'<button class="w1-btn ic" title="Unlink this conversation" aria-label="Unlink candidate" onclick="ebLink('+last.id+',null)">&#10005;</button></div>';
+  } else {
+    candHtml='<div class="eb2-candbox none"><span style="flex:1;color:var(--muted,#667085)">Not linked to a candidate.</span>'
+      +'<button class="w1-btn" onclick="ebLinkPick('+last.id+')">Link to candidate</button></div>';
+  }
+  var tools='<div class="eb2-tools" role="toolbar" aria-label="Conversation actions">'
+    +'<button class="w1-btn pri" onclick="ebReply('+lastIn.id+',false)">&#8617; Reply</button>'
+    +'<button class="w1-btn" onclick="ebReply('+lastIn.id+',true)">Reply all</button>'
+    +'<button class="w1-btn" onclick="ebForward('+lastIn.id+')">&#10150; Forward</button>'
+    +'<span class="eb2-sp"></span>'
+    +'<button class="w1-btn ic" title="'+(starred?'Unstar':'Star')+'" aria-label="'+(starred?'Unstar':'Star')+'" onclick="ebThreadAct(\''+(starred?'unstar':'star')+'\')">'+(starred?'&#9733;':'&#9734;')+'</button>'
+    +'<button class="w1-btn ic" title="Mark unread" aria-label="Mark unread" onclick="ebThreadAct(\'unread\')">&#9993;</button>'
+    +'<button class="w1-btn ic" title="'+(archived?'Move to inbox':'Archive')+'" aria-label="'+(archived?'Move to inbox':'Archive')+'" onclick="ebThreadAct(\''+(archived?'unarchive':'archive')+'\')">&#128229;</button>'
+    +'<button class="w1-btn ic dang" title="Delete" aria-label="Delete" onclick="ebThreadAct(\'delete\')">&#128465;</button>'
+    +(inPane?'':'<button class="w1-btn ic" aria-label="Close" onclick="var m=document.getElementById(\'modal-email\');if(m)m.remove()">&#10005;</button>')+'</div>';
+  var body=msgs.map(function(m,i){
+    var d=m.date_ts?new Date(m.date_ts*1000).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+    var collapsed=(i<msgs.length-1 && msgs.length>2 && m.is_read);
+    var att=(m.attachments||[]).map(function(x){
+      return '<span class="eb2-file"><a href="'+API+'/emailbox/attachment/'+x.id+'">&#128206; '+esc(x.filename)+' <span style="color:#98A2B3">('+_ebSize(x.size)+')</span></a>'
+        +((_ebIsCv(x.filename)&&m.folder==='Inbox')?'<button class="eb2-addc" onclick="ebAddCand('+m.id+','+x.id+',this)" title="Read this CV and add the person as a candidate">+ Add as candidate</button>':'')+'</span>';
+    }).join('');
+    return '<article class="eb2-msg'+(m.folder==='Sent'?' sent':'')+(collapsed?' collapsed':'')+'" id="eb2-m'+m.id+'">'
+      +'<header onclick="this.parentElement.classList.toggle(\'collapsed\')"><span class="eb2-av">'+esc((m.from_name||m.from_addr||'?').charAt(0).toUpperCase())+'</span>'
+      +'<div class="eb2-mh"><div><b>'+esc(m.from_name||m.from_addr||'')+'</b> <span class="eb2-addr">&lt;'+esc(m.from_addr||'')+'&gt;</span></div>'
+      +'<div class="eb2-to">to '+esc(m.to_addr||'')+(m.cc?(' &middot; cc '+esc(m.cc)):'')+'</div><div class="eb2-sn">'+esc(m.snippet||'')+'</div></div>'
+      +'<span class="eb2-md">'+esc(d)+'</span></header>'
+      +'<div class="eb2-mb">'+_emailContent(m)+(att?'<div class="eb2-files">'+att+'</div>':'')+'</div></article>';
   }).join('');
+  return '<div class="eb2-thread"><div class="eb2-th-head"><h2>'+esc(subject||'(no subject)')+' <span class="eb2-cnt">'+msgs.length+'</span></h2>'+tools+'</div>'
+    +candHtml+body
+    +'<div class="eb2-replybar"><button class="w1-btn" onclick="ebReply('+lastIn.id+',false)">&#8617; Reply</button> <button class="w1-btn" onclick="ebReply('+lastIn.id+',true)">Reply all</button> <button class="w1-btn" onclick="ebForward('+lastIn.id+')">&#10150; Forward</button></div></div>';
+}
+async function openEmail(id, quiet){
+  var tr={}; try{ tr=await req('GET','/emailbox/thread?eid='+id+_ebBoxQ('&')); }catch(e){}
+  if(!tr || tr.error || !tr.thread){ if(!quiet) toast('Error',esc((tr&&tr.error)||'Could not open email')); return; }
+  if(!tr.thread.length){ var one=await req('GET','/emailbox/'+id+_ebBoxQ('?')); if(one&&one.email){ one.email.attachments=one.attachments; tr.thread=[one.email]; } }
+  window._eb.openId=id; window._eb.thread=tr;
+  if(tr.counts){ window._eb.counts=tr.counts; _ebPaintCounts(); }
+  // mark the row read + open
+  var G=window._eb.groups||{};
+  Object.keys(G).forEach(function(k){ if(G[k].ids.some(function(i){return String(i)===String(id);})){ G[k].unread=0; (window._eb.emails||[]).forEach(function(e){ if(G[k].ids.indexOf(e.id)>=0) e.is_read=1; }); } });
+  document.querySelectorAll('.eb2-row.open').forEach(function(r){ r.classList.remove('open'); });
+  var row=document.querySelector('.eb2-row[data-id="'+id+'"]'); if(row){ row.classList.remove('unread'); row.classList.add('open'); }
+  var pane=document.getElementById('eb2-pane');
+  if(pane && _ebSplit()){ pane.innerHTML=_ebThreadHtml(tr,true); pane.scrollTop=0;
+    var lastMsg=pane.querySelector('.eb2-msg:last-of-type'); if(lastMsg && tr.thread.length>2) lastMsg.scrollIntoView({block:'nearest'});
+    return; }
   var ex=document.getElementById('modal-email'); if(ex) ex.remove();
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-email';
-  bg.innerHTML='<div class="modal" style="max-width:760px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">'+esc(subject||'(no subject)')+' <span style="font-size:11px;color:#999">('+msgs.length+')</span></span><button class="modal-x" onclick="document.getElementById(\'modal-email\').remove()">&#10005;</button></div>'
-    +'<div class="modal-body" style="max-height:80vh;overflow:auto">'
-    +'<div style="margin-bottom:10px"><button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12px" onclick="document.getElementById(\'modal-email\').remove();replyFromEmail()">&#8617; Reply</button> <button class="btn btn-o" style="font-size:12px" onclick="document.getElementById(\'modal-email\').remove();forwardFromEmail()">&#10150; Forward</button></div>'
-    +msgHtml+'</div></div>';
+  bg.onclick=function(ev){ if(ev.target===bg) bg.remove(); };
+  bg.innerHTML='<div class="modal eb2-modal" role="dialog" aria-modal="true" aria-label="Email conversation"><div class="modal-body" style="max-height:88vh;overflow:auto;padding:0">'+_ebThreadHtml(tr,false)+'</div></div>';
   document.body.appendChild(bg);
 }
-function replyFromEmail(){ var c=window._replyCtx||{}; openCompose(c.to,c.sub,c.body,{in_reply_to:c.in_reply_to||'',thread_id:c.thread_id||''}); }
-function forwardFromEmail(){ var c=window._fwdCtx||{}; openCompose(c.to,c.sub,c.body,{forward_from_email_id:c.forward_from_email_id||null}); }
+function _ebClosePane(){ var m=document.getElementById('modal-email'); if(m) m.remove(); }
+function _ebMsg(id){ var t=(window._eb.thread&&window._eb.thread.thread)||[]; return t.find(function(m){return String(m.id)===String(id);})||t[t.length-1]||{}; }
+function ebReply(id, all){
+  var e=_ebMsg(id), mine=_ebMine();
+  var subject=e.subject||'';
+  var rSub=/^re:/i.test(subject)?subject:('Re: '+subject);
+  var to=(e.folder==='Sent')?(e.to_addr||''):(e.from_addr||'');
+  var cc='';
+  if(all){
+    var seen={}; _ebAddrs(to).forEach(function(a){ seen[a.toLowerCase()]=1; });
+    var rest=_ebAddrs((e.folder==='Sent'?'':e.to_addr||'')+','+(e.cc||'')).filter(function(a){ var k=a.toLowerCase(); if(seen[k]||mine.indexOf(k)>=0) return false; seen[k]=1; return true; });
+    cc=rest.join(', ');
+  }
+  var qd=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB'):'';
+  var quoted='\n\n--- On '+qd+', '+(e.from_name||e.from_addr||'')+' wrote ---\n'+((e.body||e.snippet||'').split('\n').map(function(l){return '> '+l;}).join('\n'));
+  var cand=window._eb.thread&&window._eb.thread.candidate;
+  _ebClosePane();
+  openCompose(to,rSub,quoted,{in_reply_to:(e.msg_id||''),references:((e.refs||'')+' '+(e.msg_id||'')).trim(),thread_id:(e.thread_id||''),cc:cc,candidate_id:cand?cand.id:null});
+}
+function ebForward(id){
+  var e=_ebMsg(id), subject=e.subject||'';
+  var qd=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB'):'';
+  var fwdBody='\n\n---------- Forwarded message ----------\nFrom: '+(e.from_name||e.from_addr||'')+'\nTo: '+(e.to_addr||'')+(e.cc?('\nCc: '+e.cc):'')+'\nSubject: '+subject+'\nDate: '+qd+'\n\n'+(e.body||e.snippet||'');
+  _ebClosePane();
+  openCompose('',(/^fwd:/i.test(subject)?subject:('Fwd: '+subject)),fwdBody,{forward_from_email_id:e.id});
+}
+// kept for older callers
+function replyFromEmail(){ var t=window._eb.thread&&window._eb.thread.thread; if(t&&t.length) ebReply(t[t.length-1].id,false); }
+function forwardFromEmail(){ var t=window._eb.thread&&window._eb.thread.thread; if(t&&t.length) ebForward(t[t.length-1].id); }
+async function ebThreadAct(action){
+  var t=(window._eb.thread&&window._eb.thread.thread)||[]; if(!t.length) return;
+  var ids=t.map(function(m){return m.id;});
+  await ebBulk(action, ids);
+  if(/^(star|unstar)$/.test(action)){ t.forEach(function(m){ m.is_starred=(action==='star')?1:0; }); _ebRepaintThread(); }
+  if(action==='unread'){ window._eb.openId=null; _ebClosePane(); _ebPaneEmpty(); }
+  if(/^(archive|unarchive|delete)$/.test(action)) _ebClosePane();
+}
+function _ebRepaintThread(){
+  var tr=window._eb.thread; if(!tr) return;
+  var pane=document.getElementById('eb2-pane');
+  if(pane && _ebSplit() && document.getElementById('eb2-wrap')){ pane.innerHTML=_ebThreadHtml(tr,true); return; }
+  var m=document.querySelector('#modal-email .modal-body'); if(m) m.innerHTML=_ebThreadHtml(tr,false);
+}
+function ebOpenCand(cid, mid){ _ebClosePane(); openCandidateInNewTab(cid, mid||null); }
+async function ebLink(eid, cid){
+  var r=await req('POST','/emailbox/'+eid+'/link',{cand:cid,box:window._eb.box||''});
+  if(!r||!r.ok){ toast('Error',esc((r&&r.error)||'Could not link')); return; }
+  if(window._eb.thread){ window._eb.thread.candidate=r.candidate||null; _ebRepaintThread(); }
+  toast('OK', cid?'Linked to '+esc((r.candidate||{}).name||'candidate'):'Unlinked');
+  ebLoadList(false);
+}
+function ebLinkPick(eid){
+  var ex=document.getElementById('modal-eblink'); if(ex) ex.remove();
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-eblink';
+  bg.innerHTML='<div class="modal" style="max-width:480px;width:96%" role="dialog" aria-modal="true" aria-label="Link to candidate"><div class="modal-head"><span class="modal-title" style="font-size:15px">Link to a candidate</span><button class="modal-x" aria-label="Close" onclick="document.getElementById(\'modal-eblink\').remove()">&#10005;</button></div>'
+    +'<div class="modal-body"><input class="inp" id="eblink-q" type="search" placeholder="Search by name, email or phone" style="width:100%" oninput="_ebLinkSearch('+eid+')"><div id="eblink-res" style="margin-top:10px;max-height:320px;overflow:auto"></div></div></div>';
+  document.body.appendChild(bg);
+  var t=_ebMsg(eid), q=document.getElementById('eblink-q');
+  if(q){ q.value=(t.folder==='Sent'?_ebAddrs(t.to_addr)[0]:t.from_addr)||''; q.focus(); _ebLinkSearch(eid); }
+}
+var _ebLinkT=null;
+function _ebLinkSearch(eid){
+  clearTimeout(_ebLinkT);
+  _ebLinkT=setTimeout(async function(){
+    var q=(document.getElementById('eblink-q')||{}).value||''; var box=document.getElementById('eblink-res'); if(!box) return;
+    if(q.trim().length<2){ box.innerHTML=''; return; }
+    var r=await req('GET','/central-db/search?q='+encodeURIComponent(q.trim()));
+    var list=(r&&r.candidates)||[];
+    box.innerHTML=list.slice(0,20).map(function(c){
+      return '<button class="eb2-pick" onclick="document.getElementById(\'modal-eblink\').remove();ebLink('+eid+','+c.id+')"><b>'+esc(c.name||'')+'</b><span>'+esc([c.designation,c.company,c.email].filter(Boolean).join(' · '))+'</span><span>'+esc(c.mandate_role||'')+'</span></button>';
+    }).join('')||'<div class="w3-empty" style="padding:16px">No candidate found.</div>';
+  },250);
+}
+function ebAddCand(eid, aid, btn){
+  var ms=(S.mandates||[]).filter(function(m){ return (m.status||'active')==='active'; });
+  var ex=document.getElementById('modal-ebadd'); if(ex) ex.remove();
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-ebadd';
+  bg.innerHTML='<div class="modal" style="max-width:460px;width:96%" role="dialog" aria-modal="true" aria-label="Add as candidate"><div class="modal-head"><span class="modal-title" style="font-size:15px">Add as candidate</span><button class="modal-x" aria-label="Close" onclick="document.getElementById(\'modal-ebadd\').remove()">&#10005;</button></div>'
+    +'<div class="modal-body"><div style="font-size:12.5px;color:#475467;margin-bottom:10px">The CV is read by AI, saved on the profile, and this conversation is linked to them. If they are already in your database (same email or phone) they are linked instead.</div>'
+    +'<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px" for="ebadd-m">Add to</label>'
+    +'<select class="inp" id="ebadd-m" style="width:100%"><option value="0">Central Database (no job yet)</option>'
+    +ms.map(function(m){ return '<option value="'+m.id+'">'+esc((m.role||'')+(m.client?(' — '+m.client):''))+'</option>'; }).join('')+'</select>'
+    +'<div style="margin-top:14px;display:flex;gap:8px;align-items:center"><button class="w1-btn pri" id="ebadd-go" onclick="_ebAddGo('+eid+','+aid+',this)">Read CV &amp; add</button><span id="ebadd-st" style="font-size:12px;color:#667085"></span></div></div></div>';
+  document.body.appendChild(bg);
+}
+async function _ebAddGo(eid, aid, btn){
+  var mid=parseInt((document.getElementById('ebadd-m')||{}).value||'0',10)||0;
+  var st=document.getElementById('ebadd-st');
+  btn.disabled=true; if(st) st.textContent='Reading the CV…';
+  var body={attachment_id:aid,box:window._eb.box||''}; if(mid) body.mandate_id=mid;
+  var r=await req('POST','/emailbox/'+eid+'/to-candidate',body);
+  if(!r||!r.ok){ btn.disabled=false; if(st){ st.style.color='#B42318'; st.textContent=(r&&r.error)||'Could not add'; } return; }
+  var m=document.getElementById('modal-ebadd'); if(m) m.remove();
+  if(r.candidate && window._eb.thread){ window._eb.thread.candidate=r.candidate; _ebRepaintThread(); }
+  var c=r.candidate||{};
+  toast('OK', r.existing?esc(r.message||'Already in your database'):(esc(c.name||'Candidate')+' added'+(r.note?(' &middot; '+esc(r.note)):'')+(c.id?' &middot; <a href="#" onclick="event.preventDefault();ebOpenCand('+c.id+','+(c.mandate_id||0)+')">Open</a>':'')));
+  ebLoadList(false);
+}
+// The list/pane layout follows the window width.
+window.addEventListener('resize', function(){
+  var w=document.getElementById('eb2-wrap'); if(!w) return;
+  var want=_ebSplit(); if(want!==w.classList.contains('split')){ var keep=window._eb.openId; renderEmailBox().then(function(){ if(keep&&!want) {} }); }
+});
+// Unread badge in the sidebar, refreshed in the background.
+setTimeout(function(){ if(S.currentUser && S.currentUser.role!=='freelancer_sourcer') ebRefreshCounts(); }, 4000);
+setInterval(function(){ if(document.visibilityState==='visible' && S.currentUser && S.currentUser.role!=='freelancer_sourcer') ebRefreshCounts(); }, 180000);
 async function ebRethread(btn){
   if(btn){ btn.disabled=true; btn.textContent='Fixing...'; }
-  var r=await req('POST','/emailbox/rethread',{});
+  var r=await req('POST','/emailbox/rethread'+_ebBoxQ('?'),{box:window._eb.box||''});
   toast('EMAIL', (r&&r.ok)?('Regrouped '+r.rethreaded+' emails into conversations'):'Failed');
   renderEmailBox();
 }
@@ -5777,29 +6121,133 @@ async function saveSignature(btn){
   if(st) st.textContent=(r&&r.ok)?'Saved \u2713':'Failed'; if(btn) btn.disabled=false;
 }
 function openCompose(to, subject, body, meta){
-  window._composeMeta = meta || {};
-  window._composeDraftId = (meta && meta.draft_id) || null;
-  window._composeAttach = (meta && meta.attach) ? meta.attach.slice() : [];
-  window._composeFwdFrom = (meta && meta.forward_from_email_id) || null;
+  meta = meta || {};
+  window._composeMeta = meta;
+  window._composeDraftId = meta.draft_id || null;
+  window._composeAttach = meta.attach ? meta.attach.slice() : [];
+  window._composeFwdFrom = meta.forward_from_email_id || null;
   var ex=document.getElementById('modal-compose'); if(ex) ex.remove();
-  var initHtml=(body||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  var initHtml=(meta.html!=null)?meta.html:(body||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  var showCc=!!(meta.cc||meta.bcc);
+  var me=(window._eb&&window._eb.me)||{};
+  var from=(_isRecruiterScoped()||(window._eb&&window._eb.box==='me'))?(me.own_email||''):(me.company_email||'');
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-compose';
-  bg.innerHTML='<div class="modal" style="max-width:660px;width:96%"><div class="modal-head"><span class="modal-title" style="font-size:15px">New message</span><button class="modal-x" onclick="document.getElementById(\'modal-compose\').remove()">&#10005;</button></div>'
+  bg.innerHTML='<div class="modal eb2-compose" style="max-width:680px;width:96%" role="dialog" aria-modal="true" aria-label="New message"><div class="modal-head"><span class="modal-title" style="font-size:15px">'+(meta.in_reply_to?'Reply':(meta.forward_from_email_id?'Forward':(meta.draft_id?'Draft':'New message')))+'</span><button class="modal-x" aria-label="Close" onclick="cmpClose()">&#10005;</button></div>'
     +'<div class="modal-body">'
-    +'<input class="inp" id="cmp-to" placeholder="To (email)" value="'+esc(to||'')+'" style="width:100%;margin-bottom:8px">'
-    +'<input class="inp" id="cmp-sub" placeholder="Subject" value="'+esc(subject||'')+'" style="width:100%;margin-bottom:8px">'
-    +'<div style="margin-bottom:8px"><select class="inp" id="cmp-tpl" onchange="cmpApplyTemplate()" style="font-size:12px;width:100%"><option value="-1">&#128196; Insert a saved template…</option></select></div>'
+    +(from?'<div class="eb2-from">From <b>'+esc(from)+'</b></div>':'')
+    +'<div class="eb2-frow"><label for="cmp-to">To</label><div class="eb2-ac"><input class="inp" id="cmp-to" autocomplete="off" placeholder="name@example.com, …" value="'+esc(to||'')+'" oninput="cmpAc(this)" onkeydown="cmpAcKey(event,this)" onblur="setTimeout(cmpAcHide,150)"></div>'
+    +'<button type="button" class="eb2-cclink" id="cmp-cctog" onclick="cmpShowCc()"'+(showCc?' style="display:none"':'')+'>Cc / Bcc</button></div>'
+    +'<div id="cmp-ccrows" style="'+(showCc?'':'display:none')+'">'
+    +'<div class="eb2-frow"><label for="cmp-cc">Cc</label><div class="eb2-ac"><input class="inp" id="cmp-cc" autocomplete="off" value="'+esc(meta.cc||'')+'" oninput="cmpAc(this)" onkeydown="cmpAcKey(event,this)" onblur="setTimeout(cmpAcHide,150)"></div></div>'
+    +'<div class="eb2-frow"><label for="cmp-bcc">Bcc</label><div class="eb2-ac"><input class="inp" id="cmp-bcc" autocomplete="off" value="'+esc(meta.bcc||'')+'" oninput="cmpAc(this)" onkeydown="cmpAcKey(event,this)" onblur="setTimeout(cmpAcHide,150)"></div></div></div>'
+    +'<div class="eb2-frow"><label for="cmp-sub">Subject</label><input class="inp" id="cmp-sub" value="'+esc(subject||'')+'"></div>'
+    +'<div style="margin-bottom:8px"><select class="inp" id="cmp-tpl" aria-label="Insert a saved template" onchange="cmpApplyTemplate()" style="font-size:12px;width:100%"><option value="-1">&#128196; Insert a saved template…</option></select></div>'
     +'<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;align-items:center">'+eBtn('bold','<b>B</b>')+eBtn('italic','<i>I</i>')+eBtn('underline','<u>U</u>')+eBtn('insertUnorderedList','&#8226; List')+eBtn('insertOrderedList','1. List')+'<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="eLink()">&#128279; Link</button><select onchange="cmpInsertVar(this.value);this.selectedIndex=0" class="inp" style="font-size:11px;padding:3px 6px;width:auto" title="Focus and type to jump to the closest variable">'+etVarOptions()+'</select></div>'
-    +'<div id="cmp-editor" contenteditable="true" style="width:100%;min-height:170px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;outline:none;overflow:auto" onkeyup="cmpSaveRange()" onmouseup="cmpSaveRange()">'+initHtml+'</div>'
+    +'<div id="cmp-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message" style="width:100%;min-height:200px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;outline:none;overflow:auto" onkeyup="cmpSaveRange()" onmouseup="cmpSaveRange()">'+initHtml+'</div>'
     +'<input type="file" id="cmp-file" multiple style="display:none" onchange="ebUploadAttach(this)">'
     +'<div id="cmp-attach-list" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"></div>'
-    +'<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="sendCompose(this)">&#9993; Send</button><button class="btn btn-o" onclick="document.getElementById(\'cmp-file\').click()">&#128206; Attach</button><button class="btn btn-o" onclick="saveDraft(this)">Save draft</button><span id="cmp-status" style="font-size:11px;color:#0F6E56"></span></div>'
+    +'<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="sendCompose(this)">&#9993; Send</button><button class="btn btn-o" onclick="document.getElementById(\'cmp-file\').click()">&#128206; Attach</button><button class="btn btn-o" onclick="saveDraft(this)">Save draft</button>'
+    +(meta.draft_id?'<button class="btn btn-o" style="color:#B42318" onclick="cmpDiscard()">Discard</button>':'')
+    +'<span id="cmp-status" style="font-size:11px;color:#0F6E56"></span></div>'
     +'</div></div>';
+  bg.onclick=function(ev){ if(ev.target===bg) cmpClose(); };
   document.body.appendChild(bg);
   window._cmpCtxKey=null; window._cmpCtxVal=null;
   ebRenderAttachList();
   cmpLoadTemplates();
   installTagAutocomplete('cmp-editor');
+  setTimeout(function(){ window._cmpSnap=_cmpSnapshot(); var f=document.getElementById(to?'cmp-editor':'cmp-to'); if(f) f.focus(); },0);
+}
+function _cmpSnapshot(){ var v=_cmpVals(); return JSON.stringify([v.to,v.cc,v.bcc,v.sub,v.html,(window._composeAttach||[]).length]); }
+function _cmpDirty(){ return !!document.getElementById('modal-compose') && window._cmpSnap!=null && _cmpSnapshot()!==window._cmpSnap; }
+function cmpClose(force){
+  if(!force && _cmpDirty()){
+    if(confirm('Save this message as a draft before closing?')){ saveDraft(null).then(function(){ cmpClose(true); }); return; }
+    if(!confirm('Discard this message?')) return;
+  }
+  var m=document.getElementById('modal-compose'); if(m) m.remove(); window._cmpSnap=null;
+}
+async function cmpDiscard(){
+  if(!confirm('Delete this draft?')) return;
+  if(window._composeDraftId) await req('POST','/emailbox/draft/'+window._composeDraftId+'/delete',{box:(window._eb&&window._eb.box)||''});
+  cmpClose(true); if(document.getElementById('emailbox-body')) ebLoadList(false);
+}
+function cmpShowCc(){ var r=document.getElementById('cmp-ccrows'); if(r) r.style.display=''; var t=document.getElementById('cmp-cctog'); if(t) t.style.display='none'; var c=document.getElementById('cmp-cc'); if(c) c.focus(); }
+// "To" autocomplete: candidates, client contacts and people you have mailed.
+var _cmpAcT=null, _cmpAcSel=-1;
+function _cmpAcTerm(inp){ var v=inp.value, pos=inp.selectionStart==null?v.length:inp.selectionStart; var s=v.lastIndexOf(',',pos-1)+1; return {start:s,end:pos,term:v.slice(s,pos).trim()}; }
+function cmpAc(inp){
+  clearTimeout(_cmpAcT);
+  var t=_cmpAcTerm(inp);
+  if(t.term.length<2){ cmpAcHide(); return; }
+  _cmpAcT=setTimeout(async function(){
+    var r=await req('GET','/emailbox/contacts?q='+encodeURIComponent(t.term)+_ebBoxQ('&'));
+    var list=(r&&r.contacts)||[];
+    cmpAcHide();
+    if(!list.length || document.activeElement!==inp) return;
+    var box=document.createElement('div'); box.className='eb2-acl'; box.id='cmp-acl'; box.setAttribute('role','listbox');
+    box.innerHTML=list.map(function(c,i){
+      var tag={candidate:'Candidate',client:'Client',mail:'Mailed before'}[c.kind]||'';
+      return '<button type="button" role="option" class="eb2-aci" data-i="'+i+'" onmousedown="event.preventDefault()" onclick="cmpAcPick('+i+')"><b>'+esc(c.name||c.email)+'</b> <span>'+esc(c.email)+'</span><em>'+esc(tag+(c.extra?(' · '+c.extra):''))+'</em></button>';
+    }).join('');
+    window._cmpAcList=list; window._cmpAcInp=inp; _cmpAcSel=-1;
+    inp.parentElement.appendChild(box);
+  },200);
+}
+function cmpAcHide(){ var b=document.getElementById('cmp-acl'); if(b) b.remove(); _cmpAcSel=-1; }
+function cmpAcPick(i){
+  var c=(window._cmpAcList||[])[i], inp=window._cmpAcInp; if(!c||!inp) return;
+  var t=_cmpAcTerm(inp), v=inp.value;
+  var addr=(c.name && c.name!==c.email)?('"'+c.name.replace(/"/g,'')+'" <'+c.email+'>'):c.email;
+  var before=v.slice(0,t.start).replace(/\s*$/,''); var after=v.slice(t.end).replace(/^\s*,?\s*/,'');
+  inp.value=(before?before+' ':'')+addr+', '+after;
+  cmpAcHide(); inp.focus(); var p=inp.value.length-after.length; try{ inp.setSelectionRange(p,p); }catch(e){}
+  window._cmpCtxKey=null;
+}
+function cmpAcKey(ev, inp){
+  var b=document.getElementById('cmp-acl'); if(!b) return;
+  var items=b.querySelectorAll('.eb2-aci'); if(!items.length) return;
+  if(ev.key==='ArrowDown'||ev.key==='ArrowUp'){ ev.preventDefault(); _cmpAcSel=(_cmpAcSel+(ev.key==='ArrowDown'?1:-1)+items.length)%items.length;
+    items.forEach(function(x,i){ x.classList.toggle('on',i===_cmpAcSel); x.setAttribute('aria-selected',i===_cmpAcSel); }); }
+  else if((ev.key==='Enter'||ev.key==='Tab') && _cmpAcSel>=0){ ev.preventDefault(); cmpAcPick(_cmpAcSel); }
+  else if(ev.key==='Escape'){ cmpAcHide(); }
+}
+function _cmpVals(){ var ed=document.getElementById('cmp-editor'); var g=function(id){ return ((document.getElementById(id)||{}).value||'').trim().replace(/[,\s]+$/,''); };
+  return {to:g('cmp-to'), cc:g('cmp-cc'), bcc:g('cmp-bcc'), sub:g('cmp-sub'), html:ed?ed.innerHTML:'', text:(ed?ed.innerText:'').trim()}; }
+function _cmpBadAddr(s){ return String(s||'').split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(function(x){ return x.trim(); }).filter(Boolean)
+  .filter(function(x){ var m=x.match(/<([^>]+)>/); var a=(m?m[1]:x).trim(); return !/^[^\s@,<>]+@[^\s@,<>]+\.[^\s@,<>]+$/.test(a); }); }
+async function sendCompose(btn){
+  var v=_cmpVals();
+  if(!v.to||!v.sub||!v.text){ toast('EMAIL','To, subject and message are required'); return; }
+  var bad=_cmpBadAddr(v.to).concat(_cmpBadAddr(v.cc),_cmpBadAddr(v.bcc));
+  if(bad.length){ toast('EMAIL','Check this address: '+esc(bad[0])); return; }
+  var st=document.getElementById('cmp-status'); if(st){ st.style.color='#0F6E56'; st.textContent='Sending...'; } if(btn) btn.disabled=true;
+  var meta=window._composeMeta||{};
+  var attachIds=(window._composeAttach||[]).map(function(a){return a.id;});
+  var r=await req('POST','/emailbox/send',{to:v.to,cc:v.cc,bcc:v.bcc,subject:v.sub,body:v.text,body_html:v.html,
+    in_reply_to:meta.in_reply_to||'',references:meta.references||'',thread_id:meta.thread_id||'',candidate_id:meta.candidate_id||null,
+    attachment_ids:attachIds,forward_from_email_id:(window._composeFwdFrom||null),draft_id:window._composeDraftId||null,box:(window._eb&&window._eb.box)||''});
+  if(r&&r.ok){ window._composeAttach=[]; window._composeFwdFrom=null; window._cmpSnap=null; if(st) st.textContent='Sent ✓';
+    setTimeout(function(){ cmpClose(true); if(document.getElementById('emailbox-body')){ ebLoadList(false); if(window._eb.openId&&_ebSplit()) openEmail(window._eb.openId,true); } },600); }
+  else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Send failed'; } if(btn) btn.disabled=false; }
+}
+async function saveDraft(btn){
+  var v=_cmpVals(); var meta=window._composeMeta||{};
+  var payload={to:v.to,cc:v.cc,bcc:v.bcc,subject:v.sub,body:v.text,body_html:v.html,in_reply_to:meta.in_reply_to||'',thread_id:meta.thread_id||'',
+    attachment_ids:(window._composeAttach||[]).map(function(a){return a.id;}),candidate_id:meta.candidate_id||null,box:(window._eb&&window._eb.box)||''};
+  if(window._composeDraftId) payload.id=window._composeDraftId;
+  var r=await req('POST','/emailbox/draft',payload);
+  var st=document.getElementById('cmp-status');
+  if(r&&r.id){ window._composeDraftId=r.id; window._cmpSnap=_cmpSnapshot(); if(st){ st.style.color='#0F6E56'; st.textContent='Draft saved'; }
+    if(document.getElementById('emailbox-body')) ebLoadList(false); }
+  else if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Could not save draft'; }
+  return r;
+}
+async function openDraft(id){
+  var r=await req('GET','/emailbox/'+id+(typeof _ebBoxQ==='function'?_ebBoxQ('?'):'')); if(!r||!r.email){ toast('Error','Could not open draft'); return; } var e=r.email;
+  openCompose(e.to_addr||'', e.subject||'', e.body||'', {in_reply_to:e.in_reply_to||'',thread_id:e.thread_id||'',draft_id:e.id,
+    cc:e.cc||'',bcc:e.bcc||'',attach:(r.attachments||[]),candidate_id:e.candidate_id||null,
+    html:(e.body_html||null)});
 }
 async function cmpLoadTemplates(){
   var sel=document.getElementById('cmp-tpl'); if(!sel) return;
@@ -5812,7 +6260,8 @@ async function cmpLoadTemplates(){
 // Resolves the candidate behind the "To" address so {name}/{role}/{client}
 // can be filled here too. Cached per address; silent no-op if not a candidate.
 async function _cmpCtx(){
-  var to=((document.getElementById('cmp-to')||{}).value||'').trim().toLowerCase();
+  var _toRaw=((document.getElementById('cmp-to')||{}).value||'');
+  var to=((typeof _ebAddrs==='function'?_ebAddrs(_toRaw)[0]:_toRaw)||'').trim().toLowerCase();
   if(window._cmpCtxKey===to && window._cmpCtxVal) return window._cmpCtxVal;
   var ctx={cand:null,mand:null};
   if(to && to.indexOf('@')>0){
@@ -5873,30 +6322,6 @@ function cmpInsertVar(tag){
   var ok=false; try{ ok=document.execCommand('insertText',false,tag); }catch(e){}
   if(!ok){ ed.innerHTML+=(ed.innerHTML && !/[\s>]$/.test(ed.innerHTML)?' ':'')+tag; }
   cmpSaveRange();
-}
-function _cmpVals(){ var ed=document.getElementById('cmp-editor'); return {to:((document.getElementById('cmp-to')||{}).value||'').trim(), sub:((document.getElementById('cmp-sub')||{}).value||'').trim(), html:ed?ed.innerHTML:'', text:(ed?ed.innerText:'').trim()}; }
-async function sendCompose(btn){
-  var v=_cmpVals();
-  if(!v.to||!v.sub||!v.text){ toast('EMAIL','To, subject and message are required'); return; }
-  var st=document.getElementById('cmp-status'); if(st) st.textContent='Sending...'; if(btn) btn.disabled=true;
-  var meta=window._composeMeta||{};
-  var attachIds=(window._composeAttach||[]).map(function(a){return a.id;});
-  var r=await req('POST','/emailbox/send',{to:v.to,subject:v.sub,body:v.text,body_html:v.html,in_reply_to:meta.in_reply_to||'',thread_id:meta.thread_id||'',attachment_ids:attachIds,forward_from_email_id:(window._composeFwdFrom||null)});
-  if(r&&r.ok){ if(window._composeDraftId){ await req('POST','/emailbox/draft/'+window._composeDraftId+'/delete',{}); } window._composeAttach=[]; window._composeFwdFrom=null; if(st) st.textContent='Sent \u2713'; setTimeout(function(){ var m=document.getElementById('modal-compose'); if(m) m.remove(); if(document.getElementById('emailbox-body')) renderEmailBox(); },700); }
-  else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Send failed'; } if(btn) btn.disabled=false; }
-}
-async function saveDraft(btn){
-  var v=_cmpVals(); var meta=window._composeMeta||{};
-  var payload={to:v.to,subject:v.sub,body:v.text,body_html:v.html,in_reply_to:meta.in_reply_to||'',thread_id:meta.thread_id||''};
-  if(window._composeDraftId) payload.id=window._composeDraftId;
-  var r=await req('POST','/emailbox/draft',payload);
-  if(r&&r.id) window._composeDraftId=r.id;
-  var st=document.getElementById('cmp-status'); if(st) st.textContent='Draft saved';
-}
-async function openDraft(id){
-  var r=await req('GET','/emailbox/'+id); if(!r||!r.email) return; var e=r.email;
-  openCompose(e.to_addr||'', e.subject||'', '', {in_reply_to:e.in_reply_to||'',thread_id:e.thread_id||'',draft_id:e.id});
-  setTimeout(function(){ var ed=document.getElementById('cmp-editor'); if(ed) ed.innerHTML=(e.body_html||((e.body||'').replace(/\n/g,'<br>'))); },60);
 }
 
 function _invRup(n){ return '₹'+Number(Math.round(n||0)).toLocaleString('en-IN'); }
@@ -6783,7 +7208,8 @@ function renderProfileDetail(c){
   html+=avatarHtml(c.name,52);
   html+='<div class="w1-cp-id"><div class="w1-cp-name"><h1>'+esc(c.name||'')+'</h1>'+refBadge+cdbBadge+'</div>'
     +'<div class="w1-cp-sub">'+esc(c.designation||'')+(c.company?' &middot; '+esc(c.company):'')+'</div>'
-    +'<div id="status-tags-'+c.id+'" style="margin-top:8px">'+statusTagsInner(c.id)+'</div></div>';
+    +'<div id="status-tags-'+c.id+'" style="margin-top:8px">'+statusTagsInner(c.id)+'</div>'
+    +'<div class="pd-jobs" id="cp-person-'+c.id+'" aria-live="polite"></div></div>';
   html+='<div class="w1-cp-stage"><label for="prof-stage-sel">Stage</label>'
     +'<select id="prof-stage-sel" data-cid="'+c.id+'" style="color:'+stageDot(c.stage||'')+'">'+stageOptions+'</select>'
     +'<span id="w1-next-'+c.id+'">'+w1NextStageBtn(c.id, c.stage)+'</span></div>';
@@ -6798,7 +7224,8 @@ function renderProfileDetail(c){
     +'<div class="w1-cp-acts">'
       +'<button type="button" class="w1-btn w1-vio" onclick="rateCandidate('+c.id+')">Re-score</button>'
       +'<button type="button" class="w1-btn" onclick="cpTab(&#39;overview&#39;);toggleEdit(&#39;pd&#39;)">Edit</button>'
-      +'<button type="button" class="w1-btn" onclick="openMoveCandidate('+c.id+')">Move</button>'
+      +'<button type="button" class="w1-btn" onclick="cpAddToJob('+c.id+')" title="Put this person on another job as well. They stay on this one.">+ Another job</button>'
+      +'<button type="button" class="w1-btn" onclick="openMoveCandidate('+c.id+')" title="Take them off this job and put them on another">Move</button>'
       +'<button type="button" class="w1-btn" onclick="requestUpdate('+c.id+')">Request update</button>'
       +'<button type="button" class="w1-btn ic" title="Save all" aria-label="Save all" onclick="saveProfile('+c.id+')">'+_ic('M5 3h11l3 3v15H5zM8 3v6h8V3M8 21v-7h8v7')+'</button>'
       +'<button type="button" class="w1-btn ic dang" title="Delete candidate" aria-label="Delete candidate" onclick="deleteCandidateFromProfile('+c.id+',\''+_q(c.name)+'\')">'+_ic('M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3')+'</button>'
@@ -6850,6 +7277,7 @@ function renderProfileDetail(c){
   try{ cpLoadOrg(c.id); }catch(e){}
   try{ cpLoadInterviews(c.id); }catch(e){}
   try{ cpLoadBilling(c.id); }catch(e){}
+  try{ cpLoadPerson(c.id); }catch(e){}
 }
 
 // ── Wave 1 candidate-profile helpers ────────────────────────────────────
@@ -11057,7 +11485,8 @@ async function loadWorkspace(){
 // switched back to agency gets everything intact.
 // Recruiter sub-accounts work only their assigned jobs. The server refuses the
 // admin modules (modules/access.py); this keeps them out of the menu too.
-var _RECRUITER_HIDDEN = ['crm','bd','invoicing','email','command','analytics','orgmap','freelancers','admin'];
+// 'email' left this list in Oct 2026: recruiters read their OWN mailbox in the Email Box.
+var _RECRUITER_HIDDEN = ['crm','bd','invoicing','command','analytics','orgmap','freelancers','admin'];
 function _isRecruiterScoped(){
   var u = S.currentUser;
   return !!u && !(u.role==='admin' || u.is_company_admin) && u.role!=='freelancer_sourcer' && !S.viewingAs;
@@ -13566,11 +13995,18 @@ async function renderResponses() {
   if (_respFilters.ctc)    _url += '&ctc='    + encodeURIComponent(_respFilters.ctc);
   if (_respFilters.notice) _url += '&notice=' + encodeURIComponent(_respFilters.notice);
   if (_respFilters.loc)    _url += '&loc='    + encodeURIComponent(_respFilters.loc);
+  if (_respFilters.job)    _url += '&job='    + encodeURIComponent(_respFilters.job);
+  if (_respFilters.source) _url += '&source=' + encodeURIComponent(_respFilters.source);
   var r = await req('GET', _url);
   if (!r.ok) { body.innerHTML = '<div style="padding:20px;color:#E24B4A">' + esc(r.error||'Failed') + '</div>'; return; }
 
   var subs = r.submissions || [];
   var total = r.total || 0;
+  window._respSubs = {}; subs.forEach(function(s){ window._respSubs[s.id] = s; });
+  var _rf = _respFilters || {};
+  var _jobOpts = '<option value="">Job: All</option><option value="none"' + (_rf.job==='none'?' selected':'') + '>General applications</option>'
+    + (r.jobs || []).map(function(j){ return '<option value="' + j.id + '"' + (String(_rf.job)===String(j.id)?' selected':'') + '>' + esc((j.role||'') + (j.client?' — '+j.client:'')) + ' (' + j.n + ')</option>'; }).join('');
+  var _srcOpts = '<option value="">Source: All</option>' + (r.sources || []).map(function(v){ var k = v===''?'__none__':v; return '<option value="' + esc(k) + '"' + (_rf.source===k?' selected':'') + '>' + esc(_respSrcLabel(v)) + '</option>'; }).join('');
 
   // Get submission link
   var applyLink = applyUrl();
@@ -13588,7 +14024,7 @@ async function renderResponses() {
 
   // Search + Filters
   html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
-  html += '<input class="inp" id="resp-search" placeholder="Boolean: LV AND Sales | Delhi OR Mumbai" style="flex:1;min-width:180px" onkeydown="if(event.key===String.fromCharCode(13))searchResponses()">';
+  html += '<input class="inp" id="resp-search" placeholder="Search: LV AND Sales, Delhi OR Mumbai, -trainee" value="' + esc(_rf.q||'') + '" style="flex:1;min-width:180px" onkeydown="if(event.key===String.fromCharCode(13))searchResponses()">';
   html += '<button class="btn btn-g" style="font-size:11px" onclick="searchResponses()">&#128269; Search</button>';
   html += '<button class="btn btn-o" style="font-size:11px" onclick="clearRespSearch()">&#10005; Clear</button>';
   html += '</div>';
@@ -13598,14 +14034,20 @@ async function renderResponses() {
   html += '<select class="inp" id="resp-exp-filter" style="font-size:11px;padding:4px 6px;width:auto"><option value="">Exp: Any</option><option value="0-3">0-3 yrs</option><option value="3-6">3-6 yrs</option><option value="6-10">6-10 yrs</option><option value="10-15">10-15 yrs</option><option value="15-99">15+ yrs</option></select>';
   html += '<select class="inp" id="resp-ctc-filter" style="font-size:11px;padding:4px 6px;width:auto"><option value="">CTC: Any</option><option value="0-5">0-5 LPA</option><option value="5-10">5-10 LPA</option><option value="10-15">10-15 LPA</option><option value="15-20">15-20 LPA</option><option value="20-30">20-30 LPA</option><option value="30-99">30+ LPA</option></select>';
   html += '<select class="inp" id="resp-notice-filter" style="font-size:11px;padding:4px 6px;width:auto"><option value="">Notice: Any</option><option value="0-0">Immediate</option><option value="1-30">upto 30d</option><option value="1-60">upto 60d</option><option value="1-90">upto 90d</option><option value="91-999">90d+</option></select>';
-  html += '<input class="inp" id="resp-loc-filter" placeholder="Location..." style="font-size:11px;padding:4px 6px;width:100px">';
+  html += '<input class="inp" id="resp-loc-filter" placeholder="Location..." value="' + esc(_rf.loc||'') + '" style="font-size:11px;padding:4px 6px;width:100px">';
+  html += '<select class="inp" id="resp-job-filter" style="font-size:11px;padding:4px 6px;width:auto;max-width:220px">' + _jobOpts + '</select>';
+  html += '<select class="inp" id="resp-src-filter" style="font-size:11px;padding:4px 6px;width:auto">' + _srcOpts + '</select>';
   html += '</div></div>';
 
   if (!subs.length) {
     html += '<div style="padding:60px 20px;text-align:center"><div style="font-size:40px;margin-bottom:12px">&#128235;</div>';
-    html += '<div style="font-size:14px;font-weight:500;color:#555;margin-bottom:6px">No responses yet</div>';
+    var _anyF = Object.keys(_rf).some(function(k){ return _rf[k]; });
+    html += '<div style="font-size:14px;font-weight:500;color:#555;margin-bottom:6px">' + (_anyF ? 'No responses match these filters' : 'No responses yet') + '</div>';
     html += '<div style="font-size:12px;color:#888;max-width:300px;margin:0 auto">Share the submission link with candidates. Their applications will appear here.</div></div>';
     document.getElementById('resp-body').innerHTML = html;
+    [['resp-status-filter','status'],['resp-exp-filter','exp'],['resp-ctc-filter','ctc'],['resp-notice-filter','notice']].forEach(function(p){
+      var el=document.getElementById(p[0]); if(el && _rf[p[1]]) el.value=_rf[p[1]];
+    });
     return;
   }
 
@@ -13639,6 +14081,13 @@ async function renderResponses() {
     if (s.cv_path) html += '<span style="font-size:9.5px;font-weight:600;background:#E8F4EE;color:#127A57;padding:2px 7px;border-radius:6px">CV &#10003;</span>';
     html += '</div>';
     html += '<div style="font-size:12.5px;color:#76746C;margin-top:3px">' + esc(s.designation||'') + (s.company?' \u00b7 <strong style="color:#127A57;font-weight:600">' + esc(s.company) + '</strong>':'') + '</div>';
+    // Which job they applied for, through which channel, and whether we already know them
+    html += '<div class="rs-meta"><span class="rs-job">' + (s.mandate_role ? ('&#128188; ' + esc(s.mandate_role) + (s.mandate_client?' &middot; '+esc(s.mandate_client):'')) : 'General application') + '</span>'
+      + '<span class="rs-src">' + esc(_respSrcLabel(s.source_channel||'')) + '</span>'
+      + (s.existing ? (s.existing.visible
+          ? '<a href="#" class="rs-dup" onclick="event.preventDefault();openCandidateInNewTab(' + s.existing.id + ',' + (s.existing.mandate_id||'null') + ')" title="Same email or phone already in your database">Already in database: ' + esc(s.existing.name||'') + ' &middot; ' + esc(s.existing.job||'') + ' &#8599;</a>'
+          : '<span class="rs-dup">Already in the company database</span>') : '')
+      + '</div>';
     html += '</div>';
     html += '<div style="text-align:right;flex-shrink:0">';
     html += '<div style="font-size:11px;color:#A8A498;font-family:\'IBM Plex Mono\',monospace">' + esc(date) + '</div>';
@@ -13663,7 +14112,8 @@ async function renderResponses() {
       html += '<option value="' + st + '"' + (s.status===st?' selected':'') + '>' + st + '</option>';
     });
     html += '</select>';
-    html += '<button class="btn btn-g" style="font-size:12px;padding:6px 13px" onclick="addSubToPipeline(' + s.id + ')">+ Add to pipeline</button>';
+    if (s.status !== 'added_to_pipeline') html += '<button class="btn btn-g" style="font-size:12px;padding:6px 13px" onclick="addSubToPipeline(' + s.id + ')">+ Add to pipeline</button>';
+    else html += '<span style="font-size:11.5px;color:#0F6E56;font-weight:600">&#10003; In pipeline</span>';
     if (s.email && s.status !== 'regretted') {
       html += '<button class="btn btn-o" style="font-size:12px;padding:6px 13px;margin-left:7px" onclick="sendRegret(' + s.id + ',\'' + esc(String(s.name||'').replace(/'/g,"")) + '\')">Send regret</button>';
     } else if (s.status === 'regretted') {
@@ -13686,6 +14136,10 @@ async function renderResponses() {
   }
 
   body.innerHTML = html;
+  // Keep the chosen filters visible after the list reloads
+  [['resp-status-filter','status'],['resp-exp-filter','exp'],['resp-ctc-filter','ctc'],['resp-notice-filter','notice']].forEach(function(p){
+    var el=document.getElementById(p[0]); if(el && _rf[p[1]]) el.value=_rf[p[1]];
+  });
 
   // Attach status dropdown handlers
   document.querySelectorAll('.resp-status-sel').forEach(function(sel) {
@@ -13726,33 +14180,65 @@ async function searchResponses() {
     exp:    (document.getElementById('resp-exp-filter')||{}).value||'',
     ctc:    (document.getElementById('resp-ctc-filter')||{}).value||'',
     notice: (document.getElementById('resp-notice-filter')||{}).value||'',
-    loc:    (document.getElementById('resp-loc-filter')||{}).value||''
+    loc:    (document.getElementById('resp-loc-filter')||{}).value||'',
+    job:    (document.getElementById('resp-job-filter')||{}).value||'',
+    source: (document.getElementById('resp-src-filter')||{}).value||''
   };
   renderResponses();
 }
 
 function clearRespSearch() {
-  ['resp-search','resp-status-filter','resp-exp-filter','resp-ctc-filter','resp-notice-filter','resp-loc-filter'].forEach(function(id) {
+  ['resp-search','resp-status-filter','resp-exp-filter','resp-ctc-filter','resp-notice-filter','resp-loc-filter','resp-job-filter','resp-src-filter'].forEach(function(id) {
     var el = document.getElementById(id); if (el) el.value = '';
   });
   _respFilters = {};
   _respPage = 1; renderResponses();
 }
 
-async function addSubToPipeline(sid) {
-  // Show mandate picker
-  if (!S.mandates.length) { toast('ERR', 'No mandates created yet'); return; }
-  var opts = S.mandates.map(function(m) { return m.id + ':' + m.role + ' - ' + m.client; }).join('\n');
-  var input = prompt('Choose mandate (enter ID):\n' + opts);
-  if (!input) return;
-  var mid = parseInt(input);
-  if (!mid || isNaN(mid)) { toast('ERR', 'Invalid mandate ID'); return; }
-  var r = await req('POST', '/submissions/' + sid + '/add-to-pipeline', {mandate_id: mid});
-  if (r.ok) {
-    toast('OK', 'Added to pipeline successfully');
+function _respSrcLabel(v){
+  var m={careers:'Careers page',apply:'Application form',referral:'Referral',naukri:'Naukri',email:'Email','':'Source not recorded'};
+  return m[v]!=null?m[v]:v;
+}
+// Pick the job (or the Central Database) in a dialog; the job they applied for is preselected.
+function addSubToPipeline(sid) {
+  var s=(window._respSubs||{})[sid]||{};
+  var ms=(S.mandates||[]).filter(function(m){ return (m.status||'active')==='active'; });
+  var ex=document.getElementById('modal-respadd'); if(ex) ex.remove();
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-respadd';
+  bg.onclick=function(ev){ if(ev.target===bg) bg.remove(); };
+  var pre=s.mandate_id && ms.some(function(m){ return m.id===s.mandate_id; }) ? s.mandate_id : (ms.length?'':'0');
+  var dup='';
+  if(s.existing && s.existing.visible){
+    dup='<div class="w2-tt-note" style="margin-top:10px"><div><b>'+esc(s.existing.name||'')+'</b> is already in your database ('+esc(s.existing.job||'')+'). <a href="#" onclick="event.preventDefault();openCandidateInNewTab('+s.existing.id+','+(s.existing.mandate_id||'null')+')">Open profile &#8599;</a></div>'
+      +'<label class="pd-opt"><input type="radio" name="respadd-how" value="existing" checked> Put <b>'+esc(s.existing.name||'them')+'</b> on this job (same profile, keeps their history)</label>'
+      +'<label class="pd-opt"><input type="radio" name="respadd-how" value="new"> Create a separate profile from this application</label></div>';
+  } else if(s.existing){
+    dup='<div class="w2-tt-note" style="margin-top:10px">This person is already in the company database, on a job you are not on. Adding creates a profile for your job, linked to theirs.</div>';
+  }
+  bg.innerHTML='<div class="modal" style="max-width:460px;width:96%" role="dialog" aria-modal="true" aria-label="Add to pipeline"><div class="modal-head"><span class="modal-title" style="font-size:15px">Add '+esc(s.name||'applicant')+' to</span><button class="modal-x" aria-label="Close" onclick="document.getElementById(\'modal-respadd\').remove()">&#10005;</button></div>'
+    +'<div class="modal-body"><label for="respadd-m" style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Job</label>'
+    +'<select class="inp" id="respadd-m" style="width:100%">'+(pre===''?'<option value="" disabled selected>Choose a job…</option>':'')
+    +ms.map(function(m){ return '<option value="'+m.id+'"'+(m.id===pre?' selected':'')+'>'+esc((m.role||'')+(m.client?(' — '+m.client):''))+(m.id===s.mandate_id?' (applied for)':'')+'</option>'; }).join('')
+    +'<option value="0"'+(pre==='0'?' selected':'')+'>Central Database (no job yet)</option></select>'+dup
+    +'<div style="margin-top:14px;display:flex;gap:8px;align-items:center"><button class="w1-btn pri" onclick="_respAddGo('+sid+',this,'+(s.existing?'true':'false')+')">Add</button><span id="respadd-st" style="font-size:12px;color:#667085"></span></div></div></div>';
+  document.body.appendChild(bg);
+}
+async function _respAddGo(sid, btn, force){
+  var v=(document.getElementById('respadd-m')||{}).value;
+  if(v===''||v==null){ toast('ERR','Choose a job'); return; }
+  btn.disabled=true;
+  var how=(document.querySelector('input[name="respadd-how"]:checked')||{}).value;
+  var body={mandate_id: parseInt(v,10)||0};
+  if(how==='existing') body.use_existing=true; else if(force) body.force_new=true;
+  var r = await req('POST', '/submissions/' + sid + '/add-to-pipeline', body);
+  if (r && r.ok) {
+    var m=document.getElementById('modal-respadd'); if(m) m.remove();
+    var _m={moved:'Moved onto the job from the Central Database',copied:'Added to this job (also stays on their other job)',already:'Already on this job — application marked as added'};
+    toast('OK', (r.existing?(_m[r.status]||'Linked to their profile'):(r.central?'Added to the Central Database':'Added to the pipeline'))+' &middot; <a href="#" onclick="event.preventDefault();openCandidateInNewTab('+r.candidate_id+','+(r.central?'null':r.mandate_id)+')">Open</a>');
     renderResponses();
   } else {
-    toast('ERR', r.error || 'Failed');
+    btn.disabled=false;
+    var st=document.getElementById('respadd-st'); if(st){ st.style.color='#B42318'; st.textContent=(r&&r.error)||'Failed'; }
   }
 }
 
@@ -14520,28 +15006,12 @@ async function loadAIIndexStatus() {
 function renderAITab() {
   var body = document.getElementById('ai-body');
   if (aiActiveTab === 'search') {
-    // Wave 2: full-width search panel, labelled fields, same ids + handlers
-    body.innerHTML =
-      '<div class="w2-ts">'
-      + '<section class="w2-ts-card">'
-      + '<div class="w2-ts-head"><div><h2>Search talent</h2><p>Type a query for <b>AI semantic ranking</b>, or leave it blank and use the filters to browse the <b>whole database</b>.</p></div>'
-      +   '<button class="w1-btn pri" onclick="openAddCandidateModal()">+ Add candidate</button></div>'
-      + '<div class="w2-ts-q"><label class="w1-sr" for="ai-search-q">Search query</label><input class="inp" id="ai-search-q" placeholder="e.g. BMS commissioning engineer  (blank = filter only)" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()">'
-      +   '<button class="w1-btn pri" style="height:42px;padding:0 20px" onclick="runTalentSearch()">Search</button></div>'
-      + '<div class="w2-ts-f">'
-      +   '<label>Company<input class="inp" id="tf-company" placeholder="e.g. ABB"></label>'
-      +   '<label>Location<input class="inp" id="tf-loc" placeholder="City"></label>'
-      +   '<label>Experience (yrs)<span class="w2-rng"><input class="inp" id="tf-emin" type="number" placeholder="Min" aria-label="Experience min"><i>–</i><input class="inp" id="tf-emax" type="number" placeholder="Max" aria-label="Experience max"></span></label>'
-      +   '<label>CTC (LPA)<span class="w2-rng"><input class="inp" id="tf-cmin" type="number" placeholder="Min" aria-label="CTC min"><i>–</i><input class="inp" id="tf-cmax" type="number" placeholder="Max" aria-label="CTC max"></span></label>'
-      +   '<label>Notice (days &#8804;)<input class="inp" id="tf-notice" type="number" placeholder="Any"></label>'
-      +   '<button class="w1-btn" style="align-self:flex-end" onclick="clearTalentFilters()">Clear</button>'
-      + '</div>'
-      + '<div class="w2-ts-foot"><label><input type="checkbox" id="ai-explain" checked> Add AI reasoning (only for text queries)</label>'
-      + (_isRecruiterScoped() ? '' : '<span style="margin-left:auto;display:flex;gap:6px"><button class="w1-btn" onclick="runReindex(false)">&#8635; Index new candidates</button>'
-      + '<button class="w1-btn" onclick="runReindex(true)">Re-index all</button></span>')
-      + '</div></section>'
-      + '<div id="ai-search-results" style="margin-top:16px"></div>'
-      + '</div>';
+    // Phase C: opens on the newest candidates; filters + bulk actions (see _talentSearchHTML)
+    body.innerHTML = _talentSearchHTML();
+    talentMode(_talentMode);
+    _talentRestore();
+    _talentFillMenus();
+    if (_talentAI) _talentRenderAI(); else talentFilterSearch(_talentF || readTalentFilters(), true);
   } else if (aiActiveTab === 'jd') {
     body.innerHTML =
       '<div style="max-width:820px;margin:0 auto">'
@@ -15302,30 +15772,145 @@ async function runReindex(force) {
   }
 }
 
-// ── Unified Talent Search: filters-only = full DB, text = AI semantic + narrow ──
-function readTalentFilters() {
-  var v = function(id){ var e=document.getElementById(id); return e?e.value.trim():''; };
-  return {company:v('tf-company'), loc:v('tf-loc'), emin:v('tf-emin'), emax:v('tf-emax'), cmin:v('tf-cmin'), cmax:v('tf-cmax'), notice:v('tf-notice')};
+// ── Talent (Phase C, Oct 2026) ───────────────────────────────────────────
+// Opens straight onto the newest candidates. Filters run on the server over the
+// whole database. Keyword box = boolean search; "AI match" ranks by meaning and
+// the same filters still apply. Tick rows to add them to a job, tag or export.
+var _talentF = null, _talentSel = {}, _talentFacets = null, _talentMode = 'keyword', _talentAI = null, _talentPer = 30;
+var _TF_IDS = ['tf-skills','tf-company','tf-loc','tf-phone','tf-emin','tf-emax','tf-cmin','tf-cmax','tf-notice','tf-job','tf-stage','tf-source','tf-cv','tf-added'];
+function _tfSel(id,label,opts){ return '<label>'+label+'<select class="inp" id="'+id+'">'+opts+'</select></label>'; }
+function _talentSearchHTML(){
+  var rec=_isRecruiterScoped();
+  return '<div class="w2-ts">'
+    + '<section class="w2-ts-card">'
+    + '<div class="w2-ts-head"><div><h2>Search talent</h2><p>Keyword search understands <b>AND</b>, <b>OR</b>, <b>NOT</b>, <b>( )</b>, <b>"exact phrase"</b> and <b>-exclude</b>. Switch to <b>AI match</b> to rank by meaning.</p></div>'
+    +   '<button class="w1-btn pri" onclick="openAddCandidateModal()">+ Add candidate</button></div>'
+    + '<div class="w2-ts-q"><div class="tc-mode" role="radiogroup" aria-label="Search mode">'
+    +   '<button type="button" role="radio" id="tc-m-keyword" onclick="talentMode(\'keyword\')">Keyword</button>'
+    +   '<button type="button" role="radio" id="tc-m-ai" onclick="talentMode(\'ai\')">AI match</button></div>'
+    +   '<label class="w1-sr" for="ai-search-q">Search query</label><input class="inp" id="ai-search-q" type="search" placeholder="e.g. solar AND (inverter OR SCADA) NOT trainee" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()">'
+    +   '<button class="w1-btn pri" style="height:42px;padding:0 20px" onclick="runTalentSearch()">Search</button></div>'
+    + '<div class="w2-ts-f">'
+    +   '<label class="tc-wide">Skills<span class="tc-skills"><input class="inp" id="tf-skills" placeholder="Comma-separated, e.g. SCADA, inverter" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()">'
+    +     '<select class="inp" id="tf-skmode" aria-label="Skills must match"><option value="">all</option><option value="any">any</option></select></span></label>'
+    +   '<label>Company<input class="inp" id="tf-company" placeholder="ABB, Siemens" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()"></label>'
+    +   '<label>Location<input class="inp" id="tf-loc" placeholder="Pune, Delhi" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()"></label>'
+    +   '<label>Phone<input class="inp" id="tf-phone" type="tel" placeholder="Any format" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()"></label>'
+    + '</div>'
+    + '<div class="w2-ts-f tc-more" id="tc-more">'
+    +   '<label>Experience (yrs)<span class="w2-rng"><input class="inp" id="tf-emin" type="number" placeholder="Min" aria-label="Experience min"><i>–</i><input class="inp" id="tf-emax" type="number" placeholder="Max" aria-label="Experience max"></span></label>'
+    +   '<label>Current CTC (LPA)<span class="w2-rng"><input class="inp" id="tf-cmin" type="number" placeholder="Min" aria-label="CTC min"><i>–</i><input class="inp" id="tf-cmax" type="number" placeholder="Max" aria-label="CTC max"></span></label>'
+    +   '<label>Notice (days &#8804;)<input class="inp" id="tf-notice" type="number" placeholder="Any"></label>'
+    +   _tfSel('tf-job','Job / pool','<option value="">All</option><option value="central">Central Database</option><option value="jobs">On any job</option>')
+    +   _tfSel('tf-stage','Stage','<option value="">Any</option>')
+    +   _tfSel('tf-source','Source','<option value="">Any</option>')
+    +   _tfSel('tf-cv','CV','<option value="">Any</option><option value="1">Has CV</option><option value="0">No CV</option>')
+    +   _tfSel('tf-added','Added','<option value="">Any time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last year</option>')
+    + '</div>'
+    + '<div class="w2-ts-foot"><button class="w1-btn pri" onclick="runTalentSearch()">Apply filters</button><button class="w1-btn" onclick="clearTalentFilters(true)">Clear all</button>'
+    +   '<button type="button" class="w1-btn tc-morebtn" aria-controls="tc-more" aria-expanded="false" onclick="var m=document.getElementById(\'tc-more\');var o=m.classList.toggle(\'open\');this.setAttribute(\'aria-expanded\',o);this.textContent=o?\'Fewer filters\':\'More filters\'">More filters</button>'
+    +   '<label id="tc-explain-wrap"><input type="checkbox" id="ai-explain" checked> Add AI reasoning</label>'
+    + (rec ? '' : '<span style="margin-left:auto;display:flex;gap:6px"><button class="w1-btn" onclick="runReindex(false)">&#8635; Index new candidates</button>'
+    +   '<button class="w1-btn" onclick="runReindex(true)">Re-index all</button></span>')
+    + '</div><div class="tc-chips" id="tc-chips"></div></section>'
+    + '<div id="tc-bulk" class="tc-bulk" aria-live="polite"></div>'
+    + '<div id="ai-search-results" style="margin-top:12px"></div>'
+    + '</div>';
 }
-function clearTalentFilters() {
-  ['tf-company','tf-loc','tf-emin','tf-emax','tf-cmin','tf-cmax','tf-notice'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+function talentMode(m){
+  _talentMode=m==='ai'?'ai':'keyword';
+  var k=document.getElementById('tc-m-keyword'), a=document.getElementById('tc-m-ai');
+  if(k){ k.classList.toggle('on',_talentMode==='keyword'); k.setAttribute('aria-checked',_talentMode==='keyword'); }
+  if(a){ a.classList.toggle('on',_talentMode==='ai'); a.setAttribute('aria-checked',_talentMode==='ai'); }
+  var ew=document.getElementById('tc-explain-wrap'); if(ew) ew.style.display=_talentMode==='ai'?'':'none';
+  var q=document.getElementById('ai-search-q');
+  if(q) q.placeholder=_talentMode==='ai'?'Describe who you need, e.g. BMS commissioning engineer with Niagara':'e.g. solar AND (inverter OR SCADA) NOT trainee';
+}
+async function _talentLoadFacets(force){
+  if(_talentFacets && !force) return _talentFacets;
+  try{ var r=await req('GET','/central-db/facets'); if(r&&r.ok) _talentFacets=r; }catch(e){}
+  return _talentFacets||{stages:[],jobs:[],sources:[],pool:0};
+}
+async function _talentFillMenus(){
+  var f=await _talentLoadFacets(true);
+  var job=document.getElementById('tf-job'), st=document.getElementById('tf-stage'), so=document.getElementById('tf-source');
+  if(job){ var v=job.value; job.innerHTML='<option value="">All</option><option value="central">Central Database ('+(f.pool||0)+')</option><option value="jobs">On any job</option>'
+    +(f.jobs||[]).map(function(j){ return '<option value="'+j.id+'">'+esc((j.role||'')+(j.client?' — '+j.client:''))+(j.status&&j.status!=='active'?' ('+esc(j.status)+')':'')+' ('+j.n+')</option>'; }).join(''); job.value=v; }
+  if(st){ var v2=st.value; st.innerHTML='<option value="">Any</option>'+(f.stages||[]).map(function(s){ return '<option value="'+esc(s.value)+'">'+esc(stageLabel(s.value))+' ('+s.n+')</option>'; }).join(''); st.value=v2; }
+  if(so){ var v3=so.value; so.innerHTML='<option value="">Any</option>'+(f.sources||[]).map(function(s){ return '<option value="'+esc(s.value===''?'__none__':s.value)+'">'+esc(s.label||s.value)+' ('+s.n+')</option>'; }).join(''); so.value=v3; }
+  _talentRestore();
+}
+function readTalentFilters() {
+  var v = function(id){ var e=document.getElementById(id); return e?String(e.value||'').trim():''; };
+  return {company:v('tf-company'), loc:v('tf-loc'), emin:v('tf-emin'), emax:v('tf-emax'), cmin:v('tf-cmin'), cmax:v('tf-cmax'), notice:v('tf-notice'),
+    skills:v('tf-skills'), skmode:v('tf-skmode'), phone:v('tf-phone'), job:v('tf-job'), stage:v('tf-stage'), source:v('tf-source'), cv:v('tf-cv'), added:v('tf-added')};
+}
+function _talentRestore(){
+  var f=_talentF; if(!f) return;
+  var map={'tf-company':'company','tf-loc':'loc','tf-emin':'emin','tf-emax':'emax','tf-cmin':'cmin','tf-cmax':'cmax','tf-notice':'notice','tf-skills':'skills','tf-skmode':'skmode','tf-phone':'phone','tf-job':'job','tf-stage':'stage','tf-source':'source','tf-cv':'cv','tf-added':'added'};
+  Object.keys(map).forEach(function(id){ var e=document.getElementById(id); if(e && f[map[id]]!=null) e.value=f[map[id]]; });
+  var q=document.getElementById('ai-search-q'); if(q && f.q!=null && !q.value) q.value=f.q;
+}
+function clearTalentFilters(run) {
+  _TF_IDS.concat(['tf-skmode','ai-search-q']).forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+  _talentF=null; _talentSel={};
+  if(run) runTalentSearch();
+}
+var _TF_LABEL={q:'Search',skills:'Skills',company:'Company',loc:'Location',phone:'Phone',emin:'Exp ≥',emax:'Exp ≤',cmin:'CTC ≥',cmax:'CTC ≤',notice:'Notice ≤',job:'Job',stage:'Stage',source:'Source',cv:'CV',added:'Added'};
+function _talentChips(f){
+  var box=document.getElementById('tc-chips'); if(!box) return;
+  var fac=_talentFacets||{};
+  var show=function(k,v){
+    if(k==='job'){ if(v==='central') return 'Central Database'; if(v==='jobs') return 'On any job'; var j=(fac.jobs||[]).find(function(x){return String(x.id)===String(v);}); return j?j.role:v; }
+    if(k==='source'){ if(v==='__none__') return 'Not recorded'; var s=(fac.sources||[]).find(function(x){return x.value===v;}); return s?(s.label||v):v; }
+    if(k==='cv') return v==='1'?'has CV':'no CV';
+    if(k==='added') return 'last '+v+' days';
+    if(k==='stage') return stageLabel(v);
+    if(k==='skills' && f.skmode==='any') return v+' (any)';
+    return v;
+  };
+  var keys=Object.keys(_TF_LABEL).filter(function(k){ return f[k]; });
+  box.innerHTML=keys.length?keys.map(function(k){
+    return '<span class="tc-chip">'+esc(_TF_LABEL[k])+': <b>'+esc(show(k,f[k]))+'</b><button type="button" aria-label="Remove '+esc(_TF_LABEL[k])+' filter" onclick="talentDropFilter(\''+k+'\')">&#10005;</button></span>';
+  }).join(''):'';
+}
+function talentDropFilter(k){
+  var ids={q:'ai-search-q',skills:'tf-skills',company:'tf-company',loc:'tf-loc',phone:'tf-phone',emin:'tf-emin',emax:'tf-emax',cmin:'tf-cmin',cmax:'tf-cmax',notice:'tf-notice',job:'tf-job',stage:'tf-stage',source:'tf-source',cv:'tf-cv',added:'tf-added'};
+  var e=document.getElementById(ids[k]); if(e) e.value='';
+  if(_talentF) delete _talentF[k];
+  runTalentSearch();
 }
 function runTalentSearch() {
   var qEl = document.getElementById('ai-search-q');
   var q = qEl ? qEl.value.trim() : '';
-  var f = readTalentFilters();
-  if (!q) { return talentFilterSearch(f); }   // no text → structured search over ALL candidates
-  return runAISearch(f);                        // text → AI semantic ranking, narrowed by filters
+  var f = readTalentFilters(); f.q=q;
+  _talentSel={}; _talentPaintBulk();
+  if (q && _talentMode==='ai') return runAISearch(f);
+  return talentFilterSearch(f);
 }
-// Wave 2: results as a table (candidate · location · job · exp · CTC · stage · phone · open)
+function _talentQS(f){
+  var qs='', add=function(k,v){ if(v!==''&&v!=null) qs+='&'+k+'='+encodeURIComponent(v); };
+  add('q',f.q); add('company',f.company); add('location',f.loc); add('exp_min',f.emin); add('exp_max',f.emax);
+  add('ctc_min',f.cmin); add('ctc_max',f.cmax); add('notice',f.notice); add('skills',f.skills);
+  if(f.skills && f.skmode==='any') add('skills_mode','any');
+  add('phone',f.phone); add('job',f.job); add('stage',f.stage); add('source',f.source); add('has_cv',f.cv); add('added_days',f.added);
+  return qs;
+}
+// Results table (candidate · location · job · exp · CTC · stage · phone · open)
 function talentRow(c) {
   var phone=(c.phone||'').replace(/\D/g,''), dp=phone.length>=10?phone.slice(-10).replace(/(\d{5})(\d{5})/,'$1 $2'):'';
   var cur=c.ctc_current||c.ctc, ex=c.ctc_expected;
   var open='onclick="openProfileById(' + c.id + ',' + (c.mandate_id||'null') + ')" style="cursor:pointer"';
   var dash='<span class="mu">&mdash;</span>';
-  var job=c.mandate_role ? ('<div>'+esc(c.mandate_role)+'</div>'+(c.mandate_client?'<div class="mu sm">'+esc(c.mandate_client)+'</div>':'')) : '<span class="mu">Central DB</span>';
-  return '<tr>'
-    + '<td '+open+'><div class="nm">' + esc(c.name||'') + '</div><div class="mu sm">' + esc([c.designation,c.company].filter(Boolean).join(' · ')) + '</div></td>'
+  var job=(c.mandate_role && !c.central) ? ('<div>'+esc(c.mandate_role)+'</div>'+(c.mandate_client?'<div class="mu sm">'+esc(c.mandate_client)+'</div>':'')) : '<span class="tc-pool">Central DB</span>';
+  var oj=(c.other_jobs||[]);
+  if(oj.length) job+='<span class="tc-more-jobs" title="Also on: '+esc(oj.map(function(o){ return o.role+(o.stage&&!o.central?' ('+stageLabel(o.stage)+')':''); }).join(', '))+'">+'+oj.length+' more job'+(oj.length>1?'s':'')+'</span>';
+  var tags=(c.status_tags||[]).slice(0,3).map(function(t){ return '<span class="tc-tag">'+esc(t)+'</span>'; }).join('');
+  var sel=!!_talentSel[c.id];
+  return '<tr'+(sel?' class="tc-on"':'')+' data-id="'+c.id+'">'
+    + '<td class="tc-cb"><input type="checkbox" aria-label="Select '+esc(c.name||'')+'"'+(sel?' checked':'')+' onchange="talentPick('+c.id+',this.checked)"></td>'
+    + (c._score!=null?'<td><span class="tc-score" style="color:'+(c._score>=60?'#067647':c._score>=40?'#b54708':'#667085')+'">'+c._score+'%</span></td>':'')
+    + '<td '+open+'><div class="nm">' + esc(c.name||'') + '</div><div class="mu sm">' + esc([c.designation,c.company].filter(Boolean).join(' · ')) + '</div>'+(tags?'<div class="tc-tags">'+tags+'</div>':'')+'</td>'
     + '<td '+open+'>' + (c.location?esc(c.location):dash) + '</td>'
     + '<td '+open+'>' + job + '</td>'
     + '<td '+open+'>' + (c.experience?esc(String(c.experience))+'y':dash) + '</td>'
@@ -15337,15 +15922,18 @@ function talentRow(c) {
     + (c.cv_path?' &middot; <a href="#" onclick="event.preventDefault();openCvWindow(\''+esc(c.cv_path).replace(/'/g,'')+'\')">CV &#8599;</a>':' &middot; <span class="mu">no CV</span>') + '</td>'
     + '</tr>';
 }
-function _talentTable(rows){
+function _talentTable(rows, scored){
+  var all=rows.length && rows.every(function(c){ return _talentSel[c.id]; });
   return '<div class="w1-pltable w2-tt"><table><thead><tr>'
-    + _talentTh('name','Candidate') + _talentTh('location','Location') + _talentTh('job','Job / pool') + _talentTh('experience','Exp')
-    + _talentTh('ctc_current','Current') + _talentTh('ctc_expected','Expected') + _talentTh('stage','Stage')
+    + '<th class="tc-cb"><input type="checkbox" aria-label="Select all on this page"'+(all?' checked':'')+' onchange="talentPickPage(this.checked)"></th>'
+    + (scored?'<th><button type="button" disabled>Match</button></th>':'')
+    + (scored?'<th><button type="button" disabled>Candidate</button></th><th><button type="button" disabled>Location</button></th><th><button type="button" disabled>Job / pool</button></th><th><button type="button" disabled>Exp</button></th><th><button type="button" disabled>Current</button></th><th><button type="button" disabled>Expected</button></th><th><button type="button" disabled>Stage</button></th>'
+      : _talentTh('name','Candidate') + _talentTh('location','Location') + _talentTh('job','Job / pool') + _talentTh('experience','Exp')
+      + _talentTh('ctc_current','Current') + _talentTh('ctc_expected','Expected') + _talentTh('stage','Stage'))
     + '<th>Phone</th><th>Open</th></tr></thead><tbody>'
     + rows.map(talentRow).join('') + '</tbody></table></div>';
 }
-var _talentPage = 1, _talentLastF = null, _talentSort = {col:'', dir:'desc'};
-// Column sort for the Talent table (server-side, across every page).
+var _talentPage = 1, _talentLastF = null, _talentSort = {col:'', dir:'desc'}, _talentRows = [];
 function talentSort(col){
   if (_talentSort.col === col) _talentSort.dir = (_talentSort.dir === 'asc' ? 'desc' : 'asc');
   else { _talentSort.col = col; _talentSort.dir = (col === 'name' || col === 'location' || col === 'job' || col === 'stage') ? 'asc' : 'desc'; }
@@ -15357,50 +15945,131 @@ function _talentTh(col, label){
   return '<th' + (on ? ' aria-sort="' + (_talentSort.dir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '><button type="button" onclick="talentSort(\'' + col + '\')">' + label + arrow + '</button></th>';
 }
 function talentPage(d){ _talentPage = Math.max(1, _talentPage + d); talentFilterSearch(_talentLastF || readTalentFilters(), true); }
+function talentPer(n){ _talentPer=parseInt(n,10)||30; _talentPage=1; talentFilterSearch(_talentLastF || readTalentFilters(), true); }
 async function talentFilterSearch(f, keepPage) {
   var res = document.getElementById('ai-search-results');
   if (!res) return;
   if (!keepPage) _talentPage = 1;
-  _talentLastF = f;
+  _talentLastF = f; _talentF = f; _talentAI = null;
+  _talentChips(f);
   res.innerHTML = '<div class="loading"><div class="spinner"></div>Searching your database...</div>';
-  var qs = 'page=' + _talentPage;
-  if (f.company) qs += '&company='  + encodeURIComponent(f.company);
-  if (f.loc)    qs += '&location=' + encodeURIComponent(f.loc);
-  if (f.emin)   qs += '&exp_min='  + encodeURIComponent(f.emin);
-  if (f.emax)   qs += '&exp_max='  + encodeURIComponent(f.emax);
-  if (f.cmin)   qs += '&ctc_min='  + encodeURIComponent(f.cmin);
-  if (f.cmax)   qs += '&ctc_max='  + encodeURIComponent(f.cmax);
-  if (f.notice) qs += '&notice='   + encodeURIComponent(f.notice);
-  if (f.q)      qs += '&q='        + encodeURIComponent(f.q);
+  var qs = 'page=' + _talentPage + '&per_page=' + _talentPer + _talentQS(f);
   if (_talentSort.col) qs += '&sort=' + _talentSort.col + '&dir=' + _talentSort.dir;
+  window._talentQSLast = _talentQS(f);
   var r = await req('GET', '/central-db/search?' + qs);
   if (!r || r.error) { res.innerHTML = '<div style="color:#C0522B;padding:12px">' + esc((r&&r.error)||'Search failed') + '</div>'; return; }
   var cands = r.candidates || [];
+  _talentRows = cands;
   var _note = f._note ? '<div class="w2-tt-note">' + f._note + '</div>' : '';
-  if (!cands.length) { res.innerHTML = _note + '<div style="text-align:center;color:var(--muted);padding:40px">No candidates match ' + (f.q ? '&ldquo;' + esc(f.q) + '&rdquo; and these filters' : 'these filters') + '.</div>'; return; }
+  var filtered = Object.keys(_TF_LABEL).some(function(k){ return f[k]; });
+  if (!cands.length) { res.innerHTML = _note + '<div class="w3-empty" style="text-align:center;color:var(--muted);padding:40px">'+(filtered?'No candidates match '+(f.q?'&ldquo;'+esc(f.q)+'&rdquo; and ':'')+'these filters. <a href="#" onclick="event.preventDefault();clearTalentFilters(true)">Clear all filters</a>':'No candidates yet. Add one, or bring them in from Naukri or the careers page.')+'</div>'; return; }
   window._cdbResults = cands;
-  var total = r.total || cands.length, per = Math.max(cands.length, 30), pages = Math.max(1, Math.ceil(total / per));
+  var total = r.total || cands.length, per = r.per_page || _talentPer, pages = Math.max(1, Math.ceil(total / per));
   var from = (_talentPage - 1) * per + 1, to = from + cands.length - 1;
-  var html = _note + '<div class="w2-tt-bar"><span>Showing ' + from + '–' + to + ' of ' + total + ' candidates &middot; ' + (f.q ? 'keyword &ldquo;' + esc(f.q) + '&rdquo;' : 'full database') + '</span>'
-    + '<span style="display:flex;gap:6px;align-items:center"><button class="w1-btn" onclick="talentPage(-1)"' + (_talentPage<=1?' disabled':'') + '>&larr; Prev</button>'
+  var admin = !_isRecruiterScoped();
+  var html = _note + '<div class="w2-tt-bar"><span>Showing ' + from + '–' + to + ' of <b>' + total + '</b> candidates &middot; ' + (filtered ? 'filtered' : 'newest first') + '</span>'
+    + '<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+    + (admin?'<a class="w1-btn" style="display:inline-flex;align-items:center" href="'+API+'/central-db/export?'+_talentQS(f).slice(1)+'" title="Download every result as CSV">&#8681; Export '+total+'</a>':'')
+    + '<select class="inp tc-per" aria-label="Rows per page" onchange="talentPer(this.value)">'+[30,50,100].map(function(n){ return '<option'+(n===per?' selected':'')+'>'+n+'</option>'; }).join('')+'</select>'
+    + '<button class="w1-btn" onclick="talentPage(-1)"' + (_talentPage<=1?' disabled':'') + '>&larr; Prev</button>'
     + '<span>' + _talentPage + ' / ' + pages + '</span><button class="w1-btn" onclick="talentPage(1)"' + (_talentPage>=pages?' disabled':'') + '>Next &rarr;</button></span></div>';
-  html += _talentTable(cands);
-  html += '<p class="w1-plnote">&ldquo;Profile &#8599;&rdquo; opens the full profile in a new tab; &ldquo;CV &#8599;&rdquo; opens only the CV.</p>';
-  res.innerHTML = html;
+  html += _talentTable(cands, false);
+  html += '<p class="w1-plnote">Tick candidates to add them to a job or tag them. &ldquo;Profile &#8599;&rdquo; opens the full profile in a new tab; &ldquo;CV &#8599;&rdquo; opens only the CV.</p>';
+  res.innerHTML = '<div id="tc-dupnote"></div>' + html;
+  _talentPaintBulk();
+  _talentDupNote();
+}
+// Old duplicate profiles (same email / phone, made before one-person-many-jobs)
+// can be linked by an admin in one click; nothing is merged or deleted.
+var _talentDup=null;
+async function _talentDupNote(){
+  if(_isRecruiterScoped()) return;
+  if(_talentDup===null){ try{ _talentDup=await req('GET','/central-db/link-duplicates'); }catch(e){ _talentDup={}; } }
+  var box=document.getElementById('tc-dupnote'); var d=_talentDup||{};
+  if(!box || !d.ok || !d.people) { if(box) box.innerHTML=''; return; }
+  box.innerHTML='<div class="w2-tt-note tc-dup"><span><b>'+d.people+' '+(d.people===1?'person has':'people have')+' more than one profile</b> (same email or phone'
+    +(d.sample&&d.sample.length?', e.g. '+d.sample.slice(0,3).map(function(s){ return esc(s.name); }).join(', '):'')+'). Link them so each shows once and their profile lists every job. Nothing is merged or deleted.</span>'
+    +'<button class="w1-btn pri" onclick="_talentLinkDup(this)">Link '+d.people+'</button></div>';
+}
+async function _talentLinkDup(btn){
+  btn.disabled=true;
+  var r=await req('POST','/central-db/link-duplicates',{});
+  if(!r||!r.ok){ btn.disabled=false; toast('ERR',esc((r&&r.error)||'Failed')); return; }
+  toast('OK','Linked '+r.linked_people+' '+(r.linked_people===1?'person':'people'));
+  _talentDup={ok:true,people:0};
+  talentFilterSearch(_talentLastF||readTalentFilters(), true);
+}
+function talentPick(id,on){ if(on) _talentSel[id]=1; else delete _talentSel[id];
+  var tr=document.querySelector('.w2-tt tr[data-id="'+id+'"]'); if(tr) tr.classList.toggle('tc-on',!!on); _talentPaintBulk(); }
+function talentPickPage(on){ (_talentRows||[]).forEach(function(c){ if(on) _talentSel[c.id]=1; else delete _talentSel[c.id]; });
+  document.querySelectorAll('.w2-tt tbody tr').forEach(function(tr){ tr.classList.toggle('tc-on',!!on); var cb=tr.querySelector('input'); if(cb) cb.checked=!!on; }); _talentPaintBulk(); }
+function _talentPaintBulk(){
+  var bar=document.getElementById('tc-bulk'); if(!bar) return;
+  var ids=Object.keys(_talentSel); var n=ids.length;
+  if(!n){ bar.innerHTML=''; bar.classList.remove('on'); return; }
+  bar.classList.add('on');
+  bar.innerHTML='<b>'+n+' selected</b>'
+    +'<button class="w1-btn pri" onclick="talentBulkJob()">Add to job</button>'
+    +'<button class="w1-btn" onclick="talentBulkTag(\'tag\')">Add tag</button>'
+    +'<button class="w1-btn" onclick="talentBulkTag(\'untag\')">Remove tag</button>'
+    +(_isRecruiterScoped()?'':'<a class="w1-btn" style="display:inline-flex;align-items:center" href="'+API+'/central-db/export?ids='+ids.join(',')+'">&#8681; Export</a>')
+    +'<button class="w1-btn" onclick="_talentSel={};talentPickPage(false)">Clear</button>';
+}
+function _talentModal(id,title,body){
+  var ex=document.getElementById(id); if(ex) ex.remove();
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id=id;
+  bg.onclick=function(ev){ if(ev.target===bg) bg.remove(); };
+  bg.innerHTML='<div class="modal" style="max-width:460px;width:96%" role="dialog" aria-modal="true" aria-label="'+esc(title)+'"><div class="modal-head"><span class="modal-title" style="font-size:15px">'+esc(title)+'</span><button class="modal-x" aria-label="Close" onclick="document.getElementById(\''+id+'\').remove()">&#10005;</button></div><div class="modal-body">'+body+'</div></div>';
+  document.body.appendChild(bg); return bg;
+}
+function talentBulkJob(){
+  var ms=(S.mandates||[]).filter(function(m){ return (m.status||'active')==='active'; });
+  if(!ms.length){ toast('ERR','No active job to add them to'); return; }
+  var n=Object.keys(_talentSel).length;
+  _talentModal('modal-tcjob','Add '+n+' candidate'+(n>1?'s':'')+' to a job',
+    '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px" for="tcjob-m">Job</label>'
+    +'<select class="inp" id="tcjob-m" style="width:100%">'+ms.map(function(m){ return '<option value="'+m.id+'">'+esc((m.role||'')+(m.client?(' — '+m.client):''))+'</option>'; }).join('')+'</select>'
+    +'<p style="font-size:12px;color:#667085;margin:10px 0 0">They start on this job at <b>Screening</b>. People from the Central Database move onto it; anyone already working on another job <b>stays there too</b> (one profile, a separate stage per job).</p>'
+    +'<div style="margin-top:14px;display:flex;gap:8px;align-items:center"><button class="w1-btn pri" onclick="_talentBulkJobGo(this)">Add to job</button><span id="tcjob-st" style="font-size:12px;color:#667085"></span></div>');
+}
+async function _talentBulkJobGo(btn){
+  var mid=parseInt((document.getElementById('tcjob-m')||{}).value||'0',10);
+  btn.disabled=true;
+  var r=await req('POST','/central-db/bulk-action',{action:'add_to_job',mandate_id:mid,ids:Object.keys(_talentSel).map(Number)});
+  if(!r||!r.ok){ btn.disabled=false; var st=document.getElementById('tcjob-st'); if(st){ st.style.color='#B42318'; st.textContent=(r&&r.error)||'Failed'; } return; }
+  var m=document.getElementById('modal-tcjob'); if(m) m.remove();
+  var msg=(r.added!=null?r.added:r.moved)+' added to '+esc(r.job||'the job');
+  if(r.copied) msg+=' &middot; '+r.copied+' also stay on their current job';
+  if(r.already&&r.already.length) msg+=' &middot; '+r.already.length+' already on it';
+  toast('OK',msg);
+  _talentSel={}; _talentFacets=null; _talentFillMenus(); talentFilterSearch(_talentLastF||readTalentFilters(), true);
+}
+function talentBulkTag(act){
+  var n=Object.keys(_talentSel).length;
+  _talentModal('modal-tctag',(act==='tag'?'Tag ':'Remove a tag from ')+n+' candidate'+(n>1?'s':''),
+    '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px" for="tctag-v">Tag</label>'
+    +'<input class="inp" id="tctag-v" list="tctag-list" style="width:100%" placeholder="e.g. Hot, Call back, Relocate OK" onkeydown="if(event.key===&#39;Enter&#39;)_talentBulkTagGo(\''+act+'\',this)"><datalist id="tctag-list"></datalist>'
+    +'<div style="margin-top:14px"><button class="w1-btn pri" onclick="_talentBulkTagGo(\''+act+'\',this)">'+(act==='tag'?'Add tag':'Remove tag')+'</button></div>');
+  setTimeout(function(){ var i=document.getElementById('tctag-v'); if(i) i.focus(); },0);
+  req('GET','/tags/status').then(function(r){ var dl=document.getElementById('tctag-list'); if(dl&&r&&r.tags) dl.innerHTML=r.tags.slice(0,60).map(function(t){ return '<option value="'+esc(t)+'">'; }).join(''); });
+}
+async function _talentBulkTagGo(act, el){
+  var v=((document.getElementById('tctag-v')||{}).value||'').trim(); if(!v){ toast('ERR','Type a tag'); return; }
+  var r=await req('POST','/central-db/bulk-action',{action:act,tag:v,ids:Object.keys(_talentSel).map(Number)});
+  if(!r||!r.ok){ toast('ERR',esc((r&&r.error)||'Failed')); return; }
+  var m=document.getElementById('modal-tctag'); if(m) m.remove();
+  toast('OK',(act==='tag'?'Tagged ':'Tag removed from ')+r.changed+' candidate'+(r.changed===1?'':'s'));
+  if(_talentAI) _talentRenderAI(); else talentFilterSearch(_talentLastF||readTalentFilters(), true);
 }
 
 async function runAISearch(filterObj) {
   var q = document.getElementById('ai-search-q').value.trim();
   if (!q) { toast('ERR','Type a search query'); return; }
+  var f = filterObj || readTalentFilters(); f.q=q; _talentF=f; _talentChips(f);
   var explain = document.getElementById('ai-explain').checked;
   var res = document.getElementById('ai-search-results');
-  res.innerHTML = '<div class="loading"><div class="spinner"></div>Searching your talent pool...</div>';
-
+  res.innerHTML = '<div class="loading"><div class="spinner"></div>Ranking your talent pool by meaning...</div>';
   var r = await req('POST', '/ai/search', {query: q, top_k: 200, explain: explain});
-
-  // Skill-graph banner — show recognised/related skills for THIS query even if the
-  // search errors or returns nothing (proves the graph works independently of
-  // indexing/embeddings). Uses the search response when present, else a direct call.
   var fd = (r && r.filters_detected) || {};
   if (!(fd.skill_recognized && fd.skill_recognized.length) && !(fd.skill_related && fd.skill_related.length)) {
     try { var _ex = await req('GET', '/skill-graph/expand?q=' + encodeURIComponent(q));
@@ -15418,56 +16087,39 @@ async function runAISearch(filterObj) {
     }
     banner += '</div>';
   }
-
-  if (!r.ok) {
-    // AI search unavailable (no embedding key, provider down…) → plain keyword search
-    // over the whole database instead of a dead end.
-    var kf = Object.assign({}, filterObj || readTalentFilters(), {q: q,
-      _note: banner + '<span>AI search is not available right now (' + esc(r.error||'unknown error') + '). Showing keyword matches instead.</span>'});
+  if (!r || !r.ok) {
+    // AI search unavailable (no embedding key, provider down…) → keyword search instead of a dead end.
+    var kf = Object.assign({}, f, {_note: banner + '<span>AI match is not available right now (' + esc((r&&r.error)||'unknown error') + '). Showing keyword matches instead.</span>'});
     return talentFilterSearch(kf);
   }
-  if (filterObj && r && r.results && r.results.length) {
-    var _lc = (filterObj.loc||'').toLowerCase();
-    var _co = (filterObj.company||'').toLowerCase();
-    r.results = r.results.filter(function(c){
-      if (_co && (c.company||'').toLowerCase().indexOf(_co) < 0) return false;
-      if (_lc && (c.location||'').toLowerCase().indexOf(_lc) < 0) return false;
-      var e = parseFloat(c.experience);
-      if (filterObj.emin && !isNaN(e) && e < parseFloat(filterObj.emin)) return false;
-      if (filterObj.emax && !isNaN(e) && e > parseFloat(filterObj.emax)) return false;
-      var ct = parseFloat(c.ctc);
-      if (filterObj.cmin && !isNaN(ct) && ct < parseFloat(filterObj.cmin)) return false;
-      if (filterObj.cmax && !isNaN(ct) && ct > parseFloat(filterObj.cmax)) return false;
-      return true;
-    });
+  var hits=(r.results||[]);
+  if(!hits.length){ res.innerHTML = banner + '<div class="w3-empty" style="text-align:center;color:var(--muted);padding:24px">No indexed candidates match yet. '+(_isRecruiterScoped()?'':'Click &ldquo;Index new candidates&rdquo; first, or ')+'<a href="#" onclick="event.preventDefault();talentMode(\'keyword\');runTalentSearch()">try a keyword search</a>.</div>'; return; }
+  // Full rows + every filter come from the same server search, in AI order.
+  var score={}; hits.forEach(function(h){ score[h.id]=h.score; });
+  var fq=Object.assign({},f); delete fq.q;
+  var ids=hits.map(function(h){return h.id;});
+  var rows=[];
+  for(var i=0;i<ids.length;i+=100){
+    var part=await req('GET','/central-db/search?per_page=100&ids='+ids.slice(i,i+100).join(',')+_talentQS(fq));
+    rows=rows.concat((part&&part.candidates)||[]);
   }
-  if (!r.results.length) {
-    res.innerHTML = banner + '<div style="text-align:center;color:var(--muted);padding:24px">No indexed candidates yet. Click \"Index new candidates\" first.</div>';
-    return;
-  }
-
-  var html = banner;
-  if (r.reasoning) {
+  rows.forEach(function(c){ c._score=score[c.id]; });
+  rows.sort(function(a,b){ return (b._score||0)-(a._score||0); });
+  _talentAI={rows:rows,banner:banner,reasoning:r.reasoning||'',searched:r.searched,hits:hits.length};
+  _talentRenderAI();
+}
+function _talentRenderAI(){
+  var res=document.getElementById('ai-search-results'); if(!res||!_talentAI) return;
+  var A=_talentAI; _talentRows=A.rows;
+  var html=A.banner;
+  if (A.reasoning) {
     html += '<div style="background:#EEE9F8;border:0.5px solid #D6C9F0;border-radius:9px;padding:12px 14px;margin-bottom:14px">'
       + '<div style="font-size:11px;font-weight:700;color:#6B4FA0;margin-bottom:6px">&#10024; AI REASONING</div>'
-      + '<div style="font-size:12px;color:#3D2E63;white-space:pre-wrap;line-height:1.5">' + esc(r.reasoning) + '</div></div>';
+      + '<div style="font-size:12px;color:#3D2E63;white-space:pre-wrap;line-height:1.5">' + esc(A.reasoning) + '</div></div>';
   }
-  html += '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">' + r.results.length + ' matches (searched ' + r.searched + ' indexed candidates)</div>';
-
-  r.results.forEach(function(c) {
-    var scoreColor = c.score >= 60 ? '#13A37E' : c.score >= 40 ? '#BA7517' : '#888';
-    html += '<div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:9px;margin-bottom:7px;background:#fff;border:0.5px solid var(--line);box-shadow:var(--shadow-sm);cursor:pointer" onclick="openProfileById(' + c.id + ',' + (c.mandate_id||'null') + ')">'
-      + avatarHtml(c.name, 34)
-      + '<div style="flex:1;min-width:0">'
-      + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(c.name||'') + '</div>'
-      + '<div style="font-size:11px;color:var(--muted)">' + esc(c.designation||'') + (c.company?' @ '+esc(c.company):'') + (c.location?' · '+esc(c.location):'') + (c.experience?' · '+c.experience+'y':'') + '</div>'
-      + '<div style="font-size:10px;color:#A99;margin-top:2px">In mandate: ' + esc(c.mandate_role||'N/A') + (c.mandate_client?' ('+esc(c.mandate_client)+')':'') + ' · stage: ' + esc(c.stage||'') + '</div>'
-      + (((c.explain&&c.explain.matched_related)||[]).length ? '<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">' + c.explain.matched_related.slice(0,6).map(function(s){return '<span style="font-size:9px;background:#EAF6F1;color:#0F6E56;padding:1px 6px;border-radius:5px">&#128279; '+esc(s)+'</span>';}).join('') + '</div>' : '')
-      + '</div>'
-      + '<div style="font-size:13px;font-weight:700;color:' + scoreColor + ';white-space:nowrap">' + c.score + '%</div>'
-      + '</div>';
-  });
-  res.innerHTML = html;
+  html += '<div class="w2-tt-bar"><span><b>'+A.rows.length+'</b> best matches'+(A.rows.length<A.hits?' after your filters ('+A.hits+' before)':'')+' &middot; searched '+(A.searched||0)+' indexed candidates</span></div>';
+  html += A.rows.length?_talentTable(A.rows, true):'<div class="w3-empty" style="padding:24px;text-align:center">None of the AI matches pass these filters.</div>';
+  res.innerHTML=html; _talentPaintBulk();
 }
 
 async function runAIStats() {
@@ -18926,7 +19578,7 @@ async function cpOrgResolve(cid, field, keep){
    selector outranks '#sidebar .sb-gear{display:flex!important}'. */
 body.rs-scoped .rs-hide{display:none!important}
 body.rs-scoped #sidebar #sb-crm, body.rs-scoped #sidebar #sb-bd, body.rs-scoped #sidebar #sb-invoicing,
-body.rs-scoped #sidebar #sb-email, body.rs-scoped #sidebar #sb-command, body.rs-scoped #sidebar #sb-analytics,
+body.rs-scoped #sidebar #sb-command, body.rs-scoped #sidebar #sb-analytics,
 body.rs-scoped #sidebar #sb-orgmap, body.rs-scoped #sidebar #sb-freelancers, body.rs-scoped #sidebar #sb-admin,
 body.rs-scoped #ai-tab-stats, body.rs-scoped #ai-tab-companies, body.rs-scoped #ai-tab-movement,
 .cdb-subtab.rs-hidden{display:none!important}
@@ -24341,6 +24993,156 @@ document.addEventListener('mousedown',function(e){
   .w5-flgrid{grid-template-columns:1fr}
   /* pipeline toolbar scrolls sideways on phones; give the filter box room to type */
   .mob-pl-bar .w1-plq{min-width:200px;flex:0 0 auto}
+}
+</style>
+<style id="tc-style">
+/* ═══ Talent + Responses phase C ═══ */
+.pd-jobs{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.pd-jobs:empty{display:none}
+.pd-lbl{font-size:11.5px;font-weight:700;color:#475063;text-transform:uppercase;letter-spacing:.04em;margin-right:2px}
+.pd-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 10px;font-size:12.5px;color:#1d4ed8;cursor:pointer;max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pd-chip:hover{border-color:#1d4ed8;background:#eff6ff}
+.pd-chip.on{background:#0f172a;border-color:#0f172a;color:#fff;cursor:default}
+.pd-chip.on .pd-st{background:rgba(255,255,255,.18);color:#fff}
+.pd-chip.ghost{color:#667085;cursor:default;border-style:dashed}
+.pd-st{font-size:11px;background:#f2f4f7;color:#475063;border-radius:6px;padding:0 6px}
+.pd-opt{display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-top:8px;cursor:pointer;color:#344054}
+.pd-opt input{margin-top:3px;accent-color:#0f766e}
+.tc-dup{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.tc-dup span{flex:1;min-width:240px}
+.tc-more-jobs{display:inline-block;margin-top:3px;font-size:11px;font-weight:600;color:#3730a3;background:#eef2ff;border-radius:6px;padding:0 6px;cursor:help}
+
+.tc-mode{display:inline-flex;border:1px solid var(--w1-border,#d0d5dd);border-radius:10px;overflow:hidden;flex:0 0 auto;height:42px}
+.tc-mode button{border:0;background:#fff;padding:0 14px;font-size:13px;font-weight:600;color:#475063;cursor:pointer}
+.tc-mode button+button{border-left:1px solid var(--w1-border,#d0d5dd)}
+.tc-mode button.on{background:#0f766e;color:#fff}
+.tc-mode button:focus-visible{outline:2px solid #0f766e;outline-offset:-2px}
+.w2-ts-f > label.tc-wide{flex:2 1 260px}
+.tc-hint{font-weight:400;color:#98a2b3;font-size:11px;margin-left:4px}
+.tc-skills{display:flex;gap:6px}.tc-skills .inp:first-child{flex:1;min-width:0}.tc-skills select{width:74px;flex:0 0 74px}
+.tc-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.tc-chips:empty{display:none}
+.tc-chip{display:inline-flex;align-items:center;gap:4px;background:#f0fdfa;border:1px solid #99f6e4;color:#115e59;border-radius:999px;padding:3px 4px 3px 10px;font-size:12px}
+.tc-chip button{border:0;background:none;color:#115e59;cursor:pointer;font-size:11px;width:20px;height:20px;border-radius:50%}
+.tc-chip button:hover{background:#ccfbf1}
+.tc-bulk{position:sticky;top:0;z-index:5;display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;padding:10px 14px;background:#0f172a;color:#fff;border-radius:12px;font-size:13px;box-shadow:0 8px 24px rgba(15,23,42,.18)}
+.tc-bulk.on{display:flex}
+.tc-bulk .w1-btn{height:32px}
+.tc-bulk b{margin-right:6px}
+.w2-tt .tc-cb{width:36px;padding:0 0 0 12px !important}
+.w2-tt th.tc-cb{padding:10px 0 10px 12px !important}
+.w2-tt .tc-cb input{width:16px;height:16px;accent-color:#0f766e;cursor:pointer}
+.w2-tt tr.tc-on td{background:#f0fdfa}
+.tc-pool{display:inline-block;font-size:11.5px;color:#475063;background:#f2f4f7;border-radius:6px;padding:1px 7px}
+.tc-tags{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
+.tc-tag{font-size:10.5px;background:#fef3c7;color:#92400e;border-radius:6px;padding:0 6px;font-weight:600}
+.tc-score{font-weight:700;font-size:13px}
+.tc-per{height:34px !important;width:auto;padding:0 26px 0 10px !important;font-size:13px !important}
+a.w1-btn{text-decoration:none !important;color:var(--ink)}
+.tc-bulk a.w1-btn{color:var(--ink)}
+.w2-ts-f.tc-more{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+.rs-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center}
+.rs-job{font-size:11.5px;background:#eef2ff;color:#3730a3;border-radius:6px;padding:2px 8px;font-weight:600}
+.rs-src{font-size:11.5px;background:#f2f4f7;color:#475063;border-radius:6px;padding:2px 8px}
+.rs-dup{font-size:11.5px;background:#fffaeb;color:#b54708;border:1px solid #fedf89;border-radius:6px;padding:1px 8px;text-decoration:none;font-weight:600}
+.tc-morebtn{display:none}
+@media(max-width:760px){
+  .tc-morebtn{display:inline-flex;align-items:center}
+  .w2-ts-f.tc-more{display:none}.w2-ts-f.tc-more.open{display:grid}
+  .w2-ts-q{flex-wrap:wrap}.tc-mode{width:100%}.tc-mode button{flex:1}
+  .tc-bulk{border-radius:0;margin-left:-12px;margin-right:-12px}
+}
+</style>
+<style id="eb2-style">
+/* ═══ Email Box phase B: list + reading pane, bulk bar, compose ═══ */
+.eb2-banner{margin:14px 24px 0;padding:12px 14px;border:1px solid #fde68a;background:#fffbeb;border-radius:12px;font-size:13px;color:#713f12;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.eb2-banner .w1-btn{margin-left:auto}
+.eb2-boxsel{height:34px;font-size:13px;padding:0 8px;width:auto}
+.eb2-chips{display:flex;gap:6px;flex-wrap:wrap}
+.eb2-n{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:#0f766e;color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center}
+.w1-chip.on .eb2-n{background:#fff;color:#0f766e}
+.eb2-wrap{margin:0 24px 24px}
+.eb2-wrap .w2-eblist{margin:0}
+.eb2-wrap.split{display:grid;grid-template-columns:minmax(340px,40%) minmax(0,1fr);gap:14px;height:calc(100vh - 190px);min-height:440px}
+.eb2-wrap.split .eb2-listcol{display:flex;flex-direction:column;min-height:0;background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.eb2-wrap.split .w2-eblist{flex:1;overflow:auto;border:0;border-radius:0}
+.eb2-wrap.split #eb2-more>div{margin:8px 0 !important}
+.eb2-pane{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:auto;min-height:0}
+.eb2-pane-empty{height:100%;display:flex;align-items:center;justify-content:center;color:#98a2b3;font-size:13.5px;padding:30px;text-align:center}
+.eb2-bulk{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line);background:#fff;font-size:12.5px;min-height:46px}
+.eb2-wrap:not(.split) .eb2-bulk{border:1px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0}
+.eb2-wrap:not(.split) .eb2-bulk + .w2-eblist{border-top-left-radius:0;border-top-right-radius:0}
+.eb2-bulk.on{background:#f0fdfa}
+.eb2-bulk .w1-btn{height:30px;font-size:12.5px;padding:0 10px}
+.eb2-all{display:inline-flex;align-items:center;gap:6px;color:#475063;margin-right:6px;cursor:pointer}
+.eb2-row{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-bottom:1px solid #f0f1f3;cursor:pointer;position:relative}
+.eb2-row:hover{background:#f8fafc}
+.eb2-row.sel{background:#f0fdfa}
+.eb2-row.open{background:#ecfdf5;box-shadow:inset 3px 0 0 #0f766e}
+.eb2-row:focus-visible{outline:2px solid #0f766e;outline-offset:-2px}
+.eb2-cb{display:flex;align-items:center;padding-top:2px;cursor:pointer}
+.eb2-cb input{width:15px;height:15px;accent-color:#0f766e;cursor:pointer}
+.eb2-star{border:0;background:none;color:#98a2b3;font-size:16px;line-height:1;padding:1px 2px;cursor:pointer}
+.eb2-star.on{color:#f59e0b}
+.eb2-main{flex:1;min-width:0}
+.eb2-l1{display:flex;align-items:center;gap:6px;min-width:0}
+.eb2-who{font-size:13px;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.eb2-row.unread .eb2-who,.eb2-row.unread .eb2-sub{font-weight:700;color:#0f172a}
+.eb2-row.unread::before{content:"";position:absolute;left:3px;top:17px;width:5px;height:5px;border-radius:50%;background:#0f766e}
+.eb2-cnt{font-size:11px;color:#475063;background:#eef0f3;border-radius:8px;padding:0 6px;font-weight:600}
+.eb2-cand{font-size:11px;color:#3730a3;background:#eef2ff;border-radius:8px;padding:1px 7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}
+.eb2-date{margin-left:auto;font-size:11.5px;color:#667085;white-space:nowrap;display:flex;gap:4px;align-items:center}
+.eb2-l2{font-size:12.5px;color:#475063;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.eb2-sub{color:#1f2937}.eb2-snip{color:#667085}
+.eb2-draft{font-size:10.5px;background:#fef3f2;color:#b42318;padding:1px 6px;border-radius:6px;font-weight:600}
+.eb2-thread{padding:18px 20px 24px}
+.eb2-th-head{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.eb2-th-head h2{margin:0;font-size:18px;line-height:1.35;color:#0f172a;overflow-wrap:anywhere}
+.eb2-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.eb2-tools .w1-btn{height:32px}.eb2-tools .w1-btn.ic{width:32px}
+.eb2-sp{flex:1}
+.eb2-candbox{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e0e7ff;background:#f5f7ff;border-radius:12px;margin-bottom:14px;font-size:13px}
+.eb2-candbox.none{border-color:var(--line);background:#fafafa}
+.eb2-cav,.eb2-av{flex:0 0 auto;width:32px;height:32px;border-radius:50%;background:#e0e7ff;color:#3730a3;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
+.eb2-av{background:#ccfbf1;color:#115e59}
+.eb2-cn{font-weight:700;color:#0f172a}.eb2-cm{font-size:12px;color:#475063;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.eb2-msg{border:1px solid var(--line);border-radius:12px;margin-bottom:10px;background:#fff;overflow:hidden}
+.eb2-msg.sent{border-color:#dbe4ff}
+.eb2-msg header{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;cursor:pointer}
+.eb2-mh{flex:1;min-width:0;font-size:13px}
+.eb2-addr,.eb2-to{color:#667085;font-size:12px;overflow-wrap:anywhere}
+.eb2-sn{display:none;color:#667085;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.eb2-md{font-size:11.5px;color:#667085;white-space:nowrap}
+.eb2-mb{padding:4px 14px 14px 54px}
+.eb2-msg.collapsed .eb2-mb,.eb2-msg.collapsed .eb2-to{display:none}
+.eb2-msg.collapsed .eb2-sn{display:block}
+.eb2-files{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.eb2-file{display:inline-flex;align-items:center;border:1px solid #d5e0dc;background:#f3f7f6;border-radius:16px;overflow:hidden;font-size:12px}
+.eb2-file a{color:#0f6e56;text-decoration:none;padding:4px 10px}
+.eb2-addc{border:0;border-left:1px solid #d5e0dc;background:#fff;color:#3730a3;font-weight:600;font-size:12px;padding:4px 10px;cursor:pointer}
+.eb2-addc:hover{background:#eef2ff}
+.eb2-q{cursor:pointer;color:#666;font-size:15px;background:#eee;border:0;border-radius:6px;padding:0 8px;line-height:1.4}
+.eb2-replybar{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.eb2-modal{max-width:820px !important;width:96% !important}
+.eb2-pick{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 10px;margin-bottom:6px;cursor:pointer;font-size:13px}
+.eb2-pick:hover{border-color:#0f766e;background:#f0fdfa}
+.eb2-pick span{font-size:12px;color:#667085}
+/* compose */
+.eb2-from{font-size:12px;color:#475063;margin-bottom:8px}
+.eb2-frow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.eb2-frow>label{flex:0 0 52px;font-size:12.5px;color:#475063;font-weight:600}
+.eb2-frow>.inp,.eb2-ac{flex:1;min-width:0}
+.eb2-ac{position:relative}.eb2-ac .inp{width:100%}
+.eb2-cclink{border:0;background:none;color:#0f766e;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.eb2-acl{position:absolute;left:0;right:0;top:100%;z-index:50;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.12);margin-top:4px;max-height:260px;overflow:auto}
+.eb2-aci{display:block;width:100%;text-align:left;border:0;background:#fff;padding:7px 10px;font-size:13px;cursor:pointer;border-bottom:1px solid #f2f4f7}
+.eb2-aci span{color:#475063;font-size:12px}.eb2-aci em{display:block;font-style:normal;font-size:11px;color:#98a2b3}
+.eb2-aci:hover,.eb2-aci.on{background:#f0fdfa}
+@media(max-width:760px){
+  .eb2-banner,.eb2-wrap{margin-left:12px;margin-right:12px}
+  .eb2-thread{padding:14px 12px 20px}.eb2-mb{padding:4px 12px 12px}
+  #eb-search{width:100% !important;margin-left:0 !important;order:3}
+  .eb2-cand{display:none}
+  .eb2-addr{display:none}.eb2-msg header{flex-wrap:wrap}.eb2-md{width:100%;padding-left:42px}
 }
 </style>
 <style id="mob-style">
