@@ -11,7 +11,8 @@ vector, cosine similarity — the same retrieval the AI search uses. No keyword
 or skill-tag matching anywhere in this module.
 
 A candidate row belongs to ONE mandate. Adding someone who already sits in
-another job makes a COPY in this job (owner's decision, Oct 2026): profile,
+another job makes a COPY in this job (owner's decision, Oct 2026; since
+phase D every screen goes through place_in_job below): profile,
 resume file, work history and vectors are copied; pipeline state (stage,
 offers, follow-up timers, WhatsApp state, feedback) is not. Central-database
 people are MOVED (the existing pool behaviour). Copies are linked through
@@ -340,6 +341,63 @@ def copy_into_mandate(conn, src, mid, note):
     return new_id
 
 
+def person_records(conn, company_id, cid):
+    """Every record (one per job) of the person behind candidate `cid`."""
+    r = conn.execute('SELECT id, copied_from FROM candidates WHERE id=? AND owner_id=?', (cid, company_id)).fetchone()
+    if not r:
+        return []
+    root = _person_key(r)
+    return conn.execute(
+        "SELECT c.id, c.mandate_id, c.stage, c.updated_at, c.created_at, c.cv_path, m.role, m.client, m.status AS m_status "
+        "FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
+        "WHERE c.owner_id=? AND (c.id=? OR c.copied_from=?) ORDER BY c.created_at, c.id",
+        (company_id, root, root)).fetchall()
+
+
+def place_in_job(conn, src, mid, note, central_mid=None, in_keys=None, in_phones=None):
+    """Put the person `src` (a candidates row joined with m_status/m_role/m_client)
+    on job `mid`, by the one rule every screen follows (Oct 2026):
+      already there (same person or same phone)  -> 'already'
+      sitting in the Central Database             -> MOVED onto the job ('moved')
+      working on another job                      -> COPIED; stays on the old job ('copied')
+    Returns (status, candidate id on `mid`). The caller commits."""
+    core = _core()
+    co = int(src['owner_id'] or 0)
+    if central_mid is None:
+        try:
+            central_mid = int(core.get_or_create_central_mandate() or 0)
+        except Exception:
+            central_mid = 0
+    if in_keys is None or in_phones is None:
+        in_keys, in_phones = _people_in_mandate(conn, mid, co)
+    ph = _digits(src['phone'])
+    if _person_key(src) in in_keys or int(src['id']) in in_keys or (ph and ph in in_phones):
+        root = _person_key(src)
+        here = conn.execute('SELECT id FROM candidates WHERE mandate_id=? AND owner_id=? AND (id=? OR copied_from=? OR id=?) '
+                            'LIMIT 1', (mid, co, root, root, int(src['id']))).fetchone()
+        return 'already', (here['id'] if here else None)
+    if int(src['mandate_id'] or 0) == central_mid or (src['m_status'] or '') == 'central' or not src['mandate_id']:
+        conn.execute('UPDATE candidates SET mandate_id=?, stage=?, updated_at=? WHERE id=?',
+                     (mid, 'Screening', ts(), src['id']))
+        conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
+                     (src['id'], src['stage'] or '', 'Screening', note + ' — picked from Central Database', ts()))
+        new_id, how = int(src['id']), 'moved'
+    else:
+        frm = (src['m_role'] or 'another job') + (' (' + src['m_client'] + ')' if src['m_client'] else '')
+        new_id = copy_into_mandate(conn, src, mid, note + ' — copied from ' + frm + ', stage there: ' + (src['stage'] or '-'))
+        how = 'copied'
+    in_keys.add(_person_key(src))
+    if ph:
+        in_phones.add(ph)
+    return how, new_id
+
+
+def load_src(conn, company_id, cid):
+    return conn.execute('SELECT c.*, m.status AS m_status, m.role AS m_role, m.client AS m_client FROM candidates c '
+                        'LEFT JOIN mandates m ON m.id=c.mandate_id WHERE c.id=? AND c.owner_id=?',
+                        (cid, company_id)).fetchone()
+
+
 @bp.route('/mandate/<int:mid>/add', methods=['POST'])
 @login_required
 def mandate_add(mid):
@@ -371,31 +429,16 @@ def mandate_add(mid):
                 cid = int(raw)
             except (TypeError, ValueError):
                 continue
-            src = conn.execute('SELECT c.*, m.status AS m_status, m.role AS m_role, m.client AS m_client FROM candidates c LEFT JOIN mandates m '
-                               'ON m.id=c.mandate_id WHERE c.id=? AND c.owner_id=?', (cid, co)).fetchone()
+            src = load_src(conn, co, cid)
             if not src or not can_see_candidate(conn, cid):
                 results.append({'id': cid, 'status': 'not_found'})
                 continue
-            ph = _digits(src['phone'])
-            if _person_key(src) in in_keys or cid in in_keys or (ph and ph in in_phones):
-                results.append({'id': cid, 'status': 'already_in_job'})
-                continue
             sc = scores.get(str(cid))
             note = 'Added from Matching Candidates' + (f' ({sc}% match)' if sc not in (None, '') else '')
-            if int(src['mandate_id'] or 0) == central_mid or (src['m_status'] or '') == 'central':
-                conn.execute('UPDATE candidates SET mandate_id=?, stage=?, updated_at=? WHERE id=?',
-                             (mid, 'Screening', ts(), cid))
-                conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) '
-                             'VALUES (?,?,?,?,?)', (cid, src['stage'] or '', 'Screening',
-                                                    note + ' — picked from Central Database', ts()))
-                new_id, how = cid, 'moved'
-            else:
-                frm = (src['m_role'] or 'another job') + (' (' + src['m_client'] + ')' if src['m_client'] else '')
-                new_id = copy_into_mandate(conn, src, mid, note + ' — copied from ' + frm + ', stage there: ' + (src['stage'] or '-'))
-                how = 'copied'
-            in_keys.add(_person_key(src))
-            if ph:
-                in_phones.add(ph)
+            how, new_id = place_in_job(conn, src, mid, note, central_mid, in_keys, in_phones)
+            if how == 'already':
+                results.append({'id': cid, 'status': 'already_in_job'})
+                continue
             conn.commit()
             try:
                 core.log_candidate_event(new_id, 'note', f'{note}: {job}')
