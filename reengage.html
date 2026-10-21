@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Re-engagement · HireLab</title>
+<style>
+:root{--ink:#1F2328;--muted:#6B6F76;--line:#E3E1DA;--paper:#F7F6F2;--green:#0F6E56;--navy:#0E2A47;--red:#B3261E;--amber:#9A6512;--blue:#1a73e8}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--paper)}
+button,input,select{font:inherit;color:inherit}
+a{color:var(--blue)}
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.top a.back{text-decoration:none;color:var(--muted);font-size:13px}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--green);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.top h1{font-size:17px;margin:0}
+.top .sp{flex:1}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 20px 60px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.h{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 4px}
+.sub{color:var(--muted);font-size:12.5px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.btn.navy{background:var(--navy);border-color:var(--navy);color:#fff}
+.btn:disabled{opacity:.5;cursor:default}
+.status{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.pill{font-size:12px;font-weight:700;border-radius:20px;padding:4px 11px}
+.pill.on{background:#E6F4EE;color:var(--green)}
+.pill.off{background:#F4EBDD;color:var(--amber)}
+.switch{position:relative;width:46px;height:26px;border-radius:13px;background:#CFCBC0;border:none;cursor:pointer;flex-shrink:0}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .15s}
+.switch.on{background:var(--green)}
+.switch.on::after{left:23px}
+.set{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}
+.set label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.set input,.set select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.err{background:#FBE9E7;color:var(--red);border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
+.note{background:#EEF4FB;color:#185FA5;border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:13px 14px}
+.kpi b{display:block;font-size:24px;font-variant-numeric:tabular-nums;color:var(--navy)}
+.kpi span{font-size:12px;color:var(--muted)}
+.kpi i{font-style:normal;font-size:11.5px;color:var(--muted)}
+.two{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
+.chart svg{width:100%;height:170px;display:block}
+.funnel{display:flex;flex-direction:column;gap:9px;margin-top:6px}
+.fr{display:grid;grid-template-columns:110px 1fr 56px;gap:10px;align-items:center;font-size:13px}
+.fr div{height:10px;border-radius:5px;background:#EEECE6;overflow:hidden}
+.fr div s{display:block;height:100%;background:var(--green)}
+.fr b{text-align:right;font-variant-numeric:tabular-nums}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.tab{border:1px solid var(--line);background:#fff;border-radius:18px;padding:6px 13px;font-weight:600;font-size:13px;cursor:pointer}
+.tab.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.tab em{font-style:normal;opacity:.7;margin-left:4px}
+.search{flex:1;min-width:180px;padding:8px 11px;border:1px solid var(--line);border-radius:9px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11.5px;color:var(--muted);font-weight:600;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:9px 8px;border-bottom:1px solid #EFEDE7;vertical-align:top}
+td .m{color:var(--muted);font-size:12px}
+.tag{font-size:11px;border-radius:10px;padding:2px 8px;background:#F2F0EA;color:var(--muted);white-space:nowrap}
+.tag.g{background:#E6F4EE;color:var(--green)}.tag.b{background:#E8F0FE;color:var(--blue)}.tag.r{background:#FBE9E7;color:var(--red)}
+.tg{display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--muted);border:none;background:none;padding:0}
+.tg .switch{width:36px;height:20px}.tg .switch::after{width:14px;height:14px}.tg .switch.on::after{left:19px}
+.preview{border:1px solid var(--line);border-radius:10px;padding:14px 16px;background:#FCFCFA;font-size:13.5px}
+.preview .subj{font-weight:700;margin-bottom:8px}
+.empty{text-align:center;color:var(--muted);padding:26px}
+.more{color:var(--muted);font-size:12px;margin-top:8px}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.two{grid-template-columns:1fr}.set{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hide-m{display:none}}
+</style>
+</head>
+<body>
+<div class="top"><a class="back" href="/">&#8592; App</a><div class="logo">H</div><h1>Candidate re-engagement</h1><span class="sp"></span>
+  <span class="sub" id="sender"></span></div>
+<div class="wrap">
+  <div class="card">
+    <div class="status">
+      <button class="switch" id="sw" aria-label="Campaign on or off"></button>
+      <div style="flex:1;min-width:220px">
+        <div class="h" id="st-h">Loading…</div>
+        <div class="sub" id="st-s"></div>
+      </div>
+      <button class="btn" id="test">✉ Send a test to me</button>
+      <button class="btn navy" id="now">Send 5 now</button>
+    </div>
+    <div class="set">
+      <label>E-mails per day<input type="number" id="cap" min="1" max="500"></label>
+      <label>Mail again every<select id="interval"><option value="90">3 months</option><option value="180">6 months</option><option value="270">9 months</option><option value="365">12 months</option></select></label>
+      <label>Send from (IST)<select id="sh"></select></label>
+      <label>Send until (IST)<select id="eh"></select></label>
+    </div>
+    <div id="msg"></div>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="two">
+    <div class="card chart"><div class="h">E-mails sent · last 30 days</div><div class="sub" id="chart-sub"></div><div id="chart"></div></div>
+    <div class="card"><div class="h">What happened after the e-mail</div><div class="sub">Of all re-engagement e-mails sent so far</div><div class="funnel" id="funnel"></div>
+      <div class="more">Opens are approximate — many mail apps block the tracking image.</div></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><div><div class="h">E-mail preview</div><div class="sub">Exactly what a candidate receives (your signature is added at the bottom).</div></div>
+      <div class="tabs" style="margin:0"><button class="tab on" data-pk="job">Considered for a job</button><button class="tab" data-pk="pool">Central DB</button></div></div>
+    <div class="preview" id="preview" style="margin-top:12px">Loading…</div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:12px"><div class="h" style="margin:0">Candidates</div><input class="search" id="q" placeholder="Search name, e-mail, job, client…"></div>
+    <div class="tabs" id="tabs">
+      <button class="tab on" data-t="due">Due now</button><button class="tab" data-t="upcoming">Upcoming</button>
+      <button class="tab" data-t="sent">Sent</button><button class="tab" data-t="excluded">Excluded</button><button class="tab" data-t="failed">Failed</button>
+    </div>
+    <div id="list"></div>
+  </div>
+</div>
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var S = null, tab = 'due', items = [], pk = 'job';
+  async function api(method, path, body){
+    try {
+      var r = await fetch('/api/reengage' + path, {method: method, credentials: 'same-origin',
+        headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+      var j = await r.json().catch(function(){ return {}; });
+      if (!r.ok && j.ok === undefined) j.ok = false;
+      if (r.status === 401) { location.href = '/'; }
+      return j;
+    } catch(e){ return {ok: false, error: 'Network error'}; }
+  }
+  function fd(s){ if (!s) return ''; var d = new Date(String(s).slice(0,10) + 'T00:00:00'); return isNaN(d) ? s : d.toLocaleDateString('en-IN', {day: 'numeric', month: 'short', year: 'numeric'}); }
+  function msg(html, cls){ $('msg').innerHTML = html ? '<div class="' + (cls || 'note') + '">' + html + '</div>' : ''; }
+
+  for (var h = 0; h <= 24; h++) {
+    var lbl = (h % 12 || 12) + ':00 ' + (h < 12 || h === 24 ? 'AM' : 'PM');
+    if (h < 24) $('sh').insertAdjacentHTML('beforeend', '<option value="' + h + '">' + lbl + '</option>');
+    if (h > 0) $('eh').insertAdjacentHTML('beforeend', '<option value="' + h + '">' + (h === 24 ? 'Midnight' : lbl) + '</option>');
+  }
+
+  async function load(){
+    var r = await api('GET', '/summary');
+    if (!r.ok) { $('st-h').textContent = r.error || 'Could not load'; return; }
+    S = r;
+    var s = r.settings, k = r.kpis, on = !!s.enabled;
+    $('sw').classList.toggle('on', on);
+    $('st-h').innerHTML = (on ? '<span class="pill on">Running</span> ' : '<span class="pill off">Paused</span> ') +
+      ' Up to ' + s.daily_cap + ' e-mails a day, Mon–Sat, ' + $('sh').options[s.start_hour].text + ' – ' + $('eh').options[s.end_hour - 1].text;
+    $('st-s').textContent = on
+      ? (k.due ? k.due + ' candidates are due — at ' + s.daily_cap + '/day the backlog clears in about ' + r.days_to_clear + ' working day' + (r.days_to_clear === 1 ? '' : 's') + '.' : 'Nobody is due right now. New candidates become due ' + Math.round(s.interval_days / 30) + ' months after they enter HireLab.')
+      : 'Switch on to start sending. Check the preview and send yourself a test first.';
+    $('cap').value = s.daily_cap; $('interval').value = String(s.interval_days); $('sh').value = String(s.start_hour); $('eh').value = String(s.end_hour);
+    $('sender').textContent = r.sender ? 'Sends from ' + r.sender : '';
+    if (s.last_error) msg('⚠ Sending stopped: ' + esc(s.last_error) + '<br>Fix the company mailbox in Settings → Email Configuration; sending resumes by itself.', 'err');
+    else if (!r.sender) msg('⚠ The company mailbox is not set. Settings → Email Configuration → add your Gmail address and App Password.', 'err');
+    else msg('');
+    var tiles = [['due', 'Due now', k.due, 'waiting to be mailed'], ['up', 'Next 30 days', k.upcoming_30, k.upcoming + ' upcoming in all'],
+                 ['today', 'Sent today', k.sent_today, 'of ' + s.daily_cap + ' a day'], ['total', 'Sent in all', k.sent_total, k.failed ? k.failed + ' failed' : 'no failures'],
+                 ['upd', 'Profiles updated', k.updated, k.sent_total ? Math.round(100 * k.updated / k.sent_total) + '% of sent' : '—'],
+                 ['ex', 'Excluded', k.excluded, k.switched_off + ' switched off · ' + k.unsubscribed + ' unsubscribed via e-mail']];
+    $('kpis').innerHTML = tiles.map(function(t){ return '<div class="kpi"><span>' + t[1] + '</span><b>' + t[2] + '</b><i>' + esc(t[3]) + '</i></div>'; }).join('');
+    // chart
+    var d = r.per_day, max = Math.max(1, Math.max.apply(null, d.map(function(x){ return x.sent; })));
+    var W = 600, H = 150, bw = W / d.length;
+    var bars = d.map(function(x, i){
+      var bh = Math.round((x.sent / max) * (H - 24));
+      return '<rect x="' + (i * bw + 2) + '" y="' + (H - 16 - bh) + '" width="' + (bw - 4) + '" height="' + Math.max(bh, x.sent ? 2 : 0) + '" rx="2" fill="#0F6E56"><title>' + fd(x.day) + ': ' + x.sent + '</title></rect>';
+    }).join('');
+    var lab = '<text x="2" y="' + (H - 2) + '" font-size="10" fill="#6B6F76">' + fd(d[0].day) + '</text><text x="' + (W - 2) + '" y="' + (H - 2) + '" font-size="10" fill="#6B6F76" text-anchor="end">Today</text>' +
+              '<text x="2" y="10" font-size="10" fill="#6B6F76">' + max + '</text>';
+    $('chart').innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + bars + lab + '</svg>';
+    $('chart-sub').textContent = d.reduce(function(a, x){ return a + x.sent; }, 0) + ' in the last 30 days';
+    var f = [['Sent', k.sent_total], ['Opened', k.opened], ['Clicked link', k.clicked], ['Updated profile', k.updated], ['Unsubscribed', k.unsubscribed]];
+    $('funnel').innerHTML = f.map(function(x){ var p = k.sent_total ? Math.round(100 * x[1] / k.sent_total) : 0;
+      return '<div class="fr"><span>' + x[0] + '</span><div><s style="width:' + p + '%"></s></div><b>' + x[1] + '</b></div>'; }).join('');
+    var counts = {due: k.due, upcoming: k.upcoming, sent: k.sent_total, excluded: k.excluded, failed: k.failed};
+    document.querySelectorAll('#tabs .tab').forEach(function(b){ b.innerHTML = b.textContent.replace(/\s*\d+$/, '') + ' <em>' + (counts[b.dataset.t] || 0) + '</em>'; });
+  }
+
+  async function save(patch){
+    var body = Object.assign({enabled: S && S.settings.enabled, daily_cap: +$('cap').value, interval_days: +$('interval').value,
+                              start_hour: +$('sh').value, end_hour: +$('eh').value}, patch || {});
+    var r = await api('PUT', '/settings', body);
+    if (!r.ok) { msg(esc(r.error || 'Could not save'), 'err'); return; }
+    await load(); loadList();
+  }
+  $('sw').onclick = function(){
+    var on = !(S && S.settings.enabled);
+    if (on && !confirm('Start sending re-engagement e-mails? Up to ' + $('cap').value + ' a day go out automatically from your company mailbox.')) return;
+    save({enabled: on});
+  };
+  ['cap', 'interval', 'sh', 'eh'].forEach(function(id){ $(id).addEventListener('change', function(){ save(); }); });
+  $('test').onclick = async function(){
+    this.disabled = true;
+    var r = await api('POST', '/test', {kind: pk});
+    this.disabled = false;
+    msg(r.ok ? '✓ Test e-mail sent to ' + esc(r.to) + ' — check your inbox.' : esc(r.error || 'Test failed'), r.ok ? 'note' : 'err');
+  };
+  $('now').onclick = async function(){
+    if (!confirm('Send up to 5 due e-mails right now? They count towards today\'s limit.')) return;
+    this.disabled = true;
+    var r = await api('POST', '/run-now', {count: 5});
+    this.disabled = false;
+    msg(r.ok ? '✓ ' + r.sent + ' e-mail' + (r.sent === 1 ? '' : 's') + ' sent.' + (r.last_error ? ' ⚠ ' + esc(r.last_error) : '') : esc(r.error || 'Failed'), r.ok && !r.last_error ? 'note' : 'err');
+    load(); loadList();
+  };
+
+  async function preview(){
+    var r = await api('GET', '/preview?kind=' + pk);
+    $('preview').innerHTML = r.ok ? '<div class="subj">Subject: ' + esc(r.subject) + '</div>' + r.html : esc(r.error || '');
+  }
+  document.querySelectorAll('[data-pk]').forEach(function(b){ b.onclick = function(){
+    pk = b.dataset.pk; document.querySelectorAll('[data-pk]').forEach(function(x){ x.classList.toggle('on', x === b); }); preview(); }; });
+
+  async function loadList(){
+    $('list').innerHTML = '<div class="empty">Loading…</div>';
+    var r = await api('GET', '/people?tab=' + tab + '&q=' + encodeURIComponent($('q').value.trim()));
+    items = r.items || [];
+    render(r.total || 0);
+  }
+  function jobCell(i){
+    return i.kind === 'job' && i.role ? esc(i.role) + (i.client ? '<div class="m">' + esc(i.client) + '</div>' : '') : '<span class="tag">Central DB</span>';
+  }
+  function prof(i){ return '/#mandate/' + (i.mandate_id || '') + '/profiles/' + i.candidate_id; }
+  function render(total){
+    if (!items.length) { $('list').innerHTML = '<div class="empty">Nobody here.</div>'; return; }
+    var head, rows;
+    if (tab === 'sent' || tab === 'failed') {
+      head = '<tr><th>Candidate</th><th class="hide-m">Job mentioned</th><th>Sent</th><th>Result</th></tr>';
+      rows = items.map(function(i){
+        var res = tab === 'failed' ? '<span class="tag r">' + esc(i.error || 'failed') + '</span>'
+          : (i.updated ? '<span class="tag g">Updated profile</span> ' : '') + (i.clicked ? '<span class="tag b">Clicked</span> ' : '') +
+            (!i.clicked && i.opened ? '<span class="tag">Opened</span>' : '') + (!i.opened && !i.clicked && !i.updated ? '<span class="tag">No response yet</span>' : '');
+        return '<tr><td><a href="' + prof(i) + '" target="_blank">' + esc(i.name || i.email) + '</a><div class="m">' + esc(i.email) + '</div></td>' +
+          '<td class="hide-m">' + jobCell(i) + '</td><td>' + fd(i.sent_at) + '</td><td>' + res + '</td></tr>';
+      }).join('');
+    } else {
+      head = '<tr><th>Candidate</th><th class="hide-m">Job mentioned</th><th>' + (tab === 'excluded' ? 'Why' : 'In HireLab since') + '</th><th>' + (tab === 'due' ? 'Due since' : tab === 'upcoming' ? 'Due on' : 'Stage') + '</th><th>In campaign</th></tr>';
+      rows = items.map(function(i){
+        var locked = i.reason === 'Unsubscribed';
+        var tg = locked ? '<span class="tag r">Unsubscribed</span>'
+          : '<button class="tg" data-cid="' + i.candidate_id + '" data-off="' + (i.off ? 0 : 1) + '"><span class="switch' + (i.off ? '' : ' on') + '"></span>' + (i.off ? 'Off' : 'On') + '</button>';
+        return '<tr><td><a href="' + prof(i) + '" target="_blank">' + esc(i.name || i.email) + '</a><div class="m">' + esc(i.email) + '</div></td>' +
+          '<td class="hide-m">' + jobCell(i) + '</td><td>' + (tab === 'excluded' ? esc(i.reason) : fd(i.considered_on)) + '</td>' +
+          '<td>' + (tab === 'excluded' ? esc(i.stage || '') : fd(i.due_on)) + (i.last_sent ? '<div class="m">last mailed ' + fd(i.last_sent) + '</div>' : '') + '</td><td>' + tg + '</td></tr>';
+      }).join('');
+    }
+    $('list').innerHTML = '<table>' + head + rows + '</table>' + (total > items.length ? '<div class="more">Showing ' + items.length + ' of ' + total + ' — search to narrow down.</div>' : '');
+  }
+  $('list').addEventListener('click', async function(e){
+    var b = e.target.closest('[data-cid]'); if (!b) return;
+    b.disabled = true;
+    var r = await api('POST', '/toggle', {candidate_id: +b.dataset.cid, off: b.dataset.off === '1'});
+    if (r.ok) { load(); loadList(); } else { b.disabled = false; msg(esc(r.error || 'Failed'), 'err'); }
+  });
+  document.querySelectorAll('#tabs .tab').forEach(function(b){ b.onclick = function(){
+    tab = b.dataset.t; document.querySelectorAll('#tabs .tab').forEach(function(x){ x.classList.toggle('on', x === b); }); loadList(); }; });
+  var qt; $('q').addEventListener('input', function(){ clearTimeout(qt); qt = setTimeout(loadList, 250); });
+
+  load().then(function(){ preview(); loadList(); });
+})();
+</script>
+</body>
+</html>
