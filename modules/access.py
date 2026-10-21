@@ -306,13 +306,10 @@ ANY = ('GET', 'POST', 'PUT', 'PATCH', 'DELETE')
 W = ('POST', 'PUT', 'PATCH', 'DELETE')
 
 # Modules a recruiter never uses (decided with the owner, Sep 2026).
-# Email Box (/api/emailbox) left this list in Oct 2026: a recruiter now reads
-# their OWN mailbox there (server.py _box_uid scopes every query to them).
-_ADMIN_ONLY = [(ANY, r'^/api/(activity|audit|analytics|bd|billing|campaigns|command|crm|crm-link|'
+_ADMIN_ONLY = [(ANY, r'^/api/(activity|audit|analytics|bd|billing|campaigns|command|crm|crm-link|emailbox|'
                      r'expenses|export|import|invoices|movement|org|rme|rkg|users|freelancers|admin|ses|'
                      r'vector|my-team|team|diag|companies)(/|$)'),
                (ANY, r'^/api/email/(?!signature/?$)'),               # company mailbox setup / sync
-               (W,   r'^/api/emailbox/rethread/?$'),                 # mailbox repair stays with admins
                (W,   r'^/api/email/signature/?$'),
                (ANY, r'^/api/ai/(?!search/?$)'),                     # index/queue maintenance
                (W,   r'^/api/(settings|form-config|skill-graph)/?$'),   # templates: personal copies, see user_templates
@@ -365,15 +362,12 @@ _NUMERIC_OK = [re.compile(p) for p in [
     r'^/api/public/',
     r'^/api/notifications(/|$)',
     r'^/api/todo/(lists|tags|auto-rules)/',   # checked inside modules/todo.py (own/shared lists, admin rules)
-    r'^/api/emailbox/',                       # every query is scoped to the caller's own mailbox (server._box_where)
 ]]
 _HAS_ID = re.compile(r'/\d+(/|$)')
 
 # Pool candidates are read-only for recruiters, except being pulled into
 # one of their own mandates.
-_POOL_WRITE_OK = re.compile(r'^/api/candidates/\d+/(move|add-to-job)/?$')
-# Writing to someone in your own mailbox (reply, draft) only needs to SEE them.
-_EMAIL_CAND_OK = re.compile(r'^/api/emailbox/(send|draft)/?$')
+_POOL_WRITE_OK = re.compile(r'^/api/candidates/\d+/move/?$')
 
 # (table, id column, how to reach the mandate)
 _RESOLVE_SQL = {
@@ -494,7 +488,7 @@ def _check_ids(conn, pairs, write, path):
             if not can_see_mandate(conn, ident, write=write):
                 return False
         elif kind == 'candidate':
-            pool_ok = (not write) or bool(_POOL_WRITE_OK.match(path)) or bool(_EMAIL_CAND_OK.match(path))
+            pool_ok = (not write) or bool(_POOL_WRITE_OK.match(path))
             if not can_see_candidate(conn, ident, write=not pool_ok):
                 return False
         elif not _obj_ok(conn, kind, ident, write, path):

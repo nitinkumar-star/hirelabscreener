@@ -48,6 +48,7 @@ _MODULE_NAMES = [
     'google_meet',     # Google Calendar + Meet invites for Video bookings
     'assistant',       # HireLab Assistant side panel (paste / CV, never reads Naukri)
     'meeting_tasks',   # scheduler meetings -> Tasks, and 10-minute task alerts
+    'reengage',        # 6-monthly candidate re-engagement e-mails + dashboard (/reengage)
 ]
 
 _MIGRATIONS = []
