@@ -910,10 +910,11 @@ def public_reschedule(manage_token):
 #  /book/manage/<token>. Self-contained: no external CSS/JS, mobile-first.
 # ══════════════════════════════════════════════════════════════════════════
 _BOOK_CSS = """
-:root{--ink:#1b1a17;--muted:#8a857a;--line:#e9e6e0;--bg:#faf9f7;--em:#0f6e56;
---em-d:#0b5946;--em-l:#e7f2ee;--card:#fff;--warn:#b4541f;--radius:14px}
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap");
+:root{--ink:#0f172a;--muted:#5b6475;--line:#e4e7ec;--bg:#f5f6f8;--em:#0f766e;
+--em-d:#115e59;--em-l:#ecfdf5;--card:#fff;--warn:#b45309;--radius:14px}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+body{margin:0;font-family:"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
 background:var(--bg);color:var(--ink);line-height:1.5;font-size:15px}
 .wrap{max-width:560px;margin:0 auto;padding:20px 16px 60px}
 .brand{display:flex;align-items:center;gap:10px;margin-bottom:18px}
@@ -1181,17 +1182,18 @@ def manage_page(mtoken):
 #  Set availability, copy your public link, and manage all bookings.
 # ══════════════════════════════════════════════════════════════════════════
 _CONSOLE_CSS = """
-:root{--ink:#1b1a17;--muted:#8a857a;--soft:#5c5850;--line:#e9e6e0;--bg:#faf9f7;
---em:#0f6e56;--em-d:#0b5946;--em-l:#e7f2ee;--card:#fff;--warn:#b4541f;--wl:#fbeee6;--radius:12px}
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap");
+:root{--ink:#0f172a;--muted:#5b6475;--soft:#475063;--line:#e4e7ec;--bg:#f5f6f8;
+--em:#0f766e;--em-d:#115e59;--em-l:#ecfdf5;--card:#fff;--warn:#b45309;--wl:#fff7ed;--radius:12px}
 *{box-sizing:border-box}
-body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+body{margin:0;font-family:"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
 background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5}
 .top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
 padding:12px 18px;display:flex;align-items:center;gap:12px}
 .top a.back{color:var(--muted);text-decoration:none;font-size:13px;display:flex;align-items:center;gap:5px}
 .top .logo{width:26px;height:26px;border-radius:7px;background:var(--em);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px}
 .top h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.2px}
-.wrap{max-width:820px;margin:0 auto;padding:20px 16px 80px}
+.wrap{max-width:980px;margin:0 auto;padding:20px 24px 80px}
 .grid{display:grid;grid-template-columns:1fr;gap:16px}
 @media(min-width:720px){.grid{grid-template-columns:1fr 1fr}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 16px}
