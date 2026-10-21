@@ -3762,14 +3762,29 @@ def init_db():
             c.execute(f"ALTER TABLE agent_items ADD COLUMN {_col}")
         except sqlite3.OperationalError:
             pass
+    try:
+        c.execute("ALTER TABLE email_attachments ADD COLUMN user_id INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     # Email threading + Gmail-like metadata (additive; never drops existing data)
     for _col in ("in_reply_to TEXT DEFAULT ''", "refs TEXT DEFAULT ''", "thread_id TEXT DEFAULT ''",
                  "cc TEXT DEFAULT ''", "bcc TEXT DEFAULT ''", "is_draft INTEGER DEFAULT 0",
-                 "candidate_id INTEGER"):
+                 "candidate_id INTEGER",
+                 # Email Box phase B (Oct 2026): whose mailbox (0 = company), archive /
+                 # star / delete are ATS-side only (Gmail is opened read-only), and the
+                 # pending attachment ids a draft carries.
+                 "user_id INTEGER DEFAULT 0", "is_archived INTEGER DEFAULT 0",
+                 "is_starred INTEGER DEFAULT 0", "is_deleted INTEGER DEFAULT 0",
+                 "attach_ids TEXT DEFAULT ''"):
         try:
             c.execute(f"ALTER TABLE emails ADD COLUMN {_col}")
         except sqlite3.OperationalError:
             pass
+    try:
+        c.execute("CREATE INDEX IF NOT EXISTS idx_emails_box ON emails(owner_id, user_id, date_ts)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_emails_thread ON emails(owner_id, thread_id)")
+    except sqlite3.OperationalError:
+        pass
 
     # ── Mass email campaigns (Wave 1) ─────────────────────────────────────
     c.execute("""
@@ -4394,7 +4409,11 @@ def parse_json(text):
             if p.startswith('json'): p = p[4:].strip()
             if p.startswith(('{', '[')):
                 text = p; break
-    for bracket in [('[', ']'), ('{', '}')]:
+    # Whichever bracket opens FIRST is the value. Trying '[' first used to return
+    # just the inner array of an object such as {"name":..,"key_skills":[..]}.
+    _pairs = [('[', ']'), ('{', '}')]
+    _pairs.sort(key=lambda br: (text.find(br[0]) < 0, text.find(br[0])))
+    for bracket in _pairs:
         s = text.find(bracket[0])
         if s >= 0:
             e = text.rfind(bracket[1]) + 1
@@ -4452,15 +4471,22 @@ def _legal_page(title, body_html):
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<title>' + title + ' — HireLab Screener</title>'
-        '<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:760px;'
-        'margin:0 auto;padding:40px 22px;color:#1f2a37;line-height:1.6;font-size:15px}'
-        'h1{color:#0E2A47;font-size:26px;margin-bottom:4px}h2{color:#0E2A47;font-size:18px;'
-        'margin-top:28px}.upd{color:#8A92A0;font-size:12.5px;margin-bottom:24px}'
-        'a{color:#13A37E}.back{display:inline-block;margin-top:32px;font-size:13px}'
-        'ul{padding-left:20px}li{margin:5px 0}</style></head><body>'
+        '<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,600;9..40,700&display=swap" rel="stylesheet">'
+        '<style>body{font-family:"DM Sans",system-ui,-apple-system,Segoe UI,sans-serif;margin:0;'
+        'background:#f5f6f8;color:#0f172a;line-height:1.65;font-size:15.5px}'
+        '.bar{background:#fff;border-bottom:1px solid #e4e7ec}.bar div{max-width:760px;margin:0 auto;padding:14px 22px;'
+        'display:flex;align-items:center;gap:10px;font-weight:700}.bar span{width:32px;height:32px;border-radius:9px;'
+        'background:#0f766e;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:13px}'
+        'main{max-width:760px;margin:24px auto 48px;background:#fff;border:1px solid #e4e7ec;border-radius:14px;padding:32px 36px}'
+        'h1{font-size:28px;margin:0 0 4px;letter-spacing:-.3px}h2{font-size:18px;margin-top:28px}'
+        '.upd{color:#5b6475;font-size:13px;margin-bottom:24px}'
+        'a{color:#0f766e}.back{display:inline-block;margin-top:28px;font-size:14px;font-weight:600;text-decoration:none}'
+        'ul{padding-left:20px}li{margin:5px 0}'
+        '@media(max-width:600px){main{margin:12px;padding:22px 18px}}</style></head><body>'
+        '<header class="bar"><div><span>HL</span>HireLab Screener</div></header><main>'
         '<h1>' + title + '</h1><div class="upd">Last updated: ' + updated + '</div>'
         + body_html +
-        '<a class="back" href="/">&larr; Back to HireLab Screener</a></body></html>'
+        '<a class="back" href="/">&larr; Back to HireLab Screener</a></main></body></html>'
     )
 
 @app.route('/privacy')
@@ -5120,7 +5146,8 @@ def analytics():
     # Source effectiveness (of placed candidates, by source)
     SOURCE_LABELS = {'naukri': 'Naukri extension', 'referral': 'Employee referral',
                      'careers': 'Careers page', 'internal': 'Internal mobility',
-                     'orgmap': 'Org Map', 'bulk': 'Bulk paste', 'manual': 'Manual add'}
+                     'orgmap': 'Org Map', 'bulk': 'Bulk paste', 'manual': 'Manual add',
+                     'email': 'Email (CV received)'}
 
     def _source(row):
         """Prefer the recorded channel; fall back to the old free text."""
@@ -5789,6 +5816,41 @@ def _save_naukri_ref(conn, cid, ref):
         pass
 
 
+def _link_to_known_person(conn, cid):
+    """A NEW record for someone already in the database (same email or phone) is
+    linked to that person (copied_from), so they show once in Talent and their
+    profile lists every job. Never merges or changes the other records."""
+    try:
+        r = conn.execute('SELECT id, owner_id, email, phone, copied_from FROM candidates WHERE id=?', (cid,)).fetchone()
+        if not r or int(r['copied_from'] or 0):
+            return None
+        em = (r['email'] or '').strip().lower()
+        ph = _wa_norm_phone10(r['phone'] or '')
+        other = None
+        if em:
+            other = conn.execute("SELECT id, copied_from FROM candidates WHERE owner_id=? AND id!=? "
+                                 "AND LOWER(TRIM(COALESCE(email,'')))=? ORDER BY id LIMIT 1",
+                                 (r['owner_id'], cid, em)).fetchone()
+        if not other and len(ph) == 10:
+            for o in conn.execute("SELECT id, copied_from, phone FROM candidates WHERE owner_id=? AND id!=? "
+                                  "AND COALESCE(phone,'') LIKE ? ORDER BY id", (r['owner_id'], cid, '%' + ph[-4:] + '%')):
+                if _wa_norm_phone10(o['phone']) == ph:
+                    other = o; break
+        if not other:
+            return None
+        root = int(other['copied_from'] or 0) or int(other['id'])
+        if root == cid:
+            return None
+        # this record must not already be the root of others
+        if conn.execute('SELECT 1 FROM candidates WHERE copied_from=? LIMIT 1', (cid,)).fetchone():
+            return None
+        conn.execute('UPDATE candidates SET copied_from=? WHERE id=?', (root, cid))
+        return root
+    except Exception as _e:
+        print('[person-link]', _e)
+        return None
+
+
 @app.route('/api/extension/push', methods=['POST', 'OPTIONS'])
 def extension_push():
     """Receive a candidate pushed from the Naukri Chrome extension.
@@ -5957,6 +6019,7 @@ def extension_push():
         pass
     _save_naukri_ref(conn, cid, d.get('naukri_ref'))
     _save_wh_for(conn, cid, d.get('work_history'))
+    _link_to_known_person(conn, cid)
     conn.commit(); conn.close()
     _touch_mandate_usage(mid)
     queue_embedding_job(cid)  # async: enqueue, background worker embeds (never blocks add)
@@ -8739,18 +8802,20 @@ def embed_candidate_async(cid):
 @login_required
 def ai_index_status():
     conn = get_db()
-    total = conn.execute('SELECT COUNT(*) n FROM candidates').fetchone()['n']
-    done = conn.execute("SELECT COUNT(*) n FROM candidates WHERE embedding!='' AND embedding IS NOT NULL").fetchone()['n']
+    _oid = effective_company_id()   # counts are this workspace's only (they used to include every tenant)
+    total = conn.execute('SELECT COUNT(*) n FROM candidates WHERE owner_id=?', (_oid,)).fetchone()['n']
+    done = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND embedding!='' AND embedding IS NOT NULL",
+                        (_oid,)).fetchone()['n']
     # Optional metadata breakdown (additive — existing keys unchanged).
     by_status, by_model = {}, {}
     try:
         for r in conn.execute(
                 "SELECT COALESCE(NULLIF(embedding_status,''),'unknown') s, COUNT(*) n "
-                "FROM candidates GROUP BY s").fetchall():
+                "FROM candidates WHERE owner_id=? GROUP BY s", (_oid,)).fetchall():
             by_status[r['s']] = r['n']
         for r in conn.execute(
                 "SELECT COALESCE(NULLIF(embedding_model,''),'none') m, COUNT(*) n "
-                "FROM candidates GROUP BY m").fetchall():
+                "FROM candidates WHERE owner_id=? GROUP BY m", (_oid,)).fetchall():
             by_model[r['m']] = r['n']
     except sqlite3.OperationalError:
         pass  # metadata columns not present yet (pre-migration)
@@ -8758,6 +8823,7 @@ def ai_index_status():
     has_key = bool(get_setting('gemini_api_key'))
     return jsonify({'ok': True, 'total': total, 'indexed': done,
                     'pending': total - done, 'has_gemini_key': has_key,
+                    'has_embedding_key': bool(get_setting('embedding_api_key', '')),
                     'by_status': by_status, 'by_model': by_model,
                     'text_template': EMBED_TEXT_TEMPLATE, 'model': EMBEDDING_MODEL})
 
@@ -8839,16 +8905,19 @@ def ai_reindex():
         return jsonify({'error': 'Embedding (Jina) API key not set. Add your Jina key in Settings.'}), 400
 
     conn = get_db()
-    if force:
-        rows = conn.execute('SELECT * FROM candidates ORDER BY id LIMIT ?', (batch,)).fetchall()
-        # For force, also clear so they re-embed; but simplest: process those
-        # without embedding first; force re-embeds everything across calls by
-        # clearing embeddings up front on the first force call.
-        if d.get('reset'):
-            conn.execute("UPDATE candidates SET embedding='', embedding_status='pending'")
-            conn.commit()
-            rows = conn.execute('SELECT * FROM candidates ORDER BY id LIMIT ?', (batch,)).fetchall()
-    rows = conn.execute("SELECT * FROM candidates WHERE embedding='' OR embedding IS NULL ORDER BY id LIMIT ?", (batch,)).fetchall()
+    # TENANT ISOLATION: only this workspace's candidates are (re)indexed. Before,
+    # "Re-index all" cleared the embeddings of EVERY company on the platform and
+    # then embedded other companies' candidates with this workspace's key.
+    _oid = effective_company_id()
+    if force and d.get('reset'):
+        # Clearing a whole workspace's index is an admin decision.
+        if not (is_admin() or is_company_admin()):
+            conn.close()
+            return jsonify({'error': 'Only an admin can re-index the whole database.'}), 403
+        conn.execute("UPDATE candidates SET embedding='', embedding_status='pending' WHERE owner_id=?", (_oid,))
+        conn.commit()
+    rows = conn.execute("SELECT * FROM candidates WHERE owner_id=? AND (embedding='' OR embedding IS NULL) ORDER BY id LIMIT ?",
+                        (_oid, batch)).fetchall()
 
     done, failed, skipped = 0, 0, 0
     first_error = ''
@@ -8871,7 +8940,8 @@ def ai_reindex():
             done += 1
 
     # remaining count
-    pending = conn.execute("SELECT COUNT(*) n FROM candidates WHERE embedding='' OR embedding IS NULL").fetchone()['n']
+    pending = conn.execute("SELECT COUNT(*) n FROM candidates WHERE owner_id=? AND (embedding='' OR embedding IS NULL)",
+                           (_oid,)).fetchone()['n']
     conn.close()
     return jsonify({'ok': True, 'indexed': done, 'failed': failed, 'skipped': skipped,
                     'pending': pending, 'first_error': first_error})
@@ -9581,9 +9651,12 @@ def ai_search():
     no_cache    = bool(d.get('no_cache'))
     offset      = (page - 1) * page_size
 
-    api_key = get_setting('gemini_api_key')
-    if not api_key:
-        return jsonify({'error': 'Gemini API key not set. Add it in Settings.'}), 400
+    # Search embeds the query with the embedding provider (Jina by default, see
+    # embed_one) — the Gemini key is not used here. Checking for Gemini blocked
+    # search for workspaces that had a working Jina key.
+    if not get_setting('embedding_api_key', ''):
+        return jsonify({'error': 'AI search needs the embedding (Jina) API key. Add it in Settings → Admin → Knowledge Base.',
+                        'code': 'no_embedding_key'}), 400
 
     timing = {}
     _oid = effective_company_id()
@@ -12206,6 +12279,86 @@ def list_mandates():
         out.append(d)
     return jsonify(out)
 
+
+# ── Jobs page: per-mandate pipeline summary ────────────────────────────────
+# Read-only. Groups each mandate's candidates into the same buckets the
+# analytics funnel uses, so the Jobs table and Analytics never disagree.
+# Tenants can rename / add their own stages, so anything not recognised is
+# classified by keyword, and still-unknown stages count as "engaged" (live).
+JOB_SUMMARY_BUCKETS = {
+    'Screening': 'sourced',
+    'Not Contacted': 'engaged', 'Called': 'engaged',
+    'Follow Up 1': 'engaged', 'Follow Up 2': 'engaged',
+    'Interested': 'engaged', 'Updated CV awaited': 'engaged',
+    'Shared with Client': 'client',
+    'Interview Inprocess': 'interview',
+    'Placed': 'placed', 'Joined': 'placed',
+    'Not Interested': 'dropped', 'Not Suitable': 'dropped',
+    'Client Rejected on Paper': 'dropped', 'Client Rejected After Interview': 'dropped',
+}
+_JOB_SUMMARY_DROP_WORDS = ('reject', 'not interested', 'not suitable', 'backout',
+                           'back out', 'drop', 'declin', 'withdrew', 'withdrawn')
+
+
+def job_summary_bucket(stage):
+    """Bucket for one stored stage value. Never raises."""
+    s = (stage or '').strip()
+    if s in JOB_SUMMARY_BUCKETS:
+        return JOB_SUMMARY_BUCKETS[s]
+    low = s.lower()
+    if not low:
+        return 'sourced'
+    if any(w in low for w in _JOB_SUMMARY_DROP_WORDS):
+        return 'dropped'
+    if 'interview' in low:
+        return 'interview'
+    if 'shared' in low or 'submitted' in low:
+        return 'client'
+    if 'placed' in low or 'joined' in low or 'offer' in low:
+        return 'placed'
+    if 'screen' in low or 'sourced' in low or 'new' == low:
+        return 'sourced'
+    return 'engaged'
+
+
+@app.route('/api/mandates/pipeline-summary', methods=['GET'])
+@login_required
+def mandates_pipeline_summary():
+    """{mandate_id: {sourced, engaged, client, interview, placed, dropped,
+    total, last_activity}} for every mandate the caller can see.
+    Same visibility rule as list_mandates (admin: whole company; recruiter:
+    only assigned jobs). One grouped query, no per-mandate round trips."""
+    conn = get_db()
+    try:
+        cid = effective_company_id()
+        if is_company_admin():
+            scope_sql = ("SELECT id FROM mandates WHERE owner_id=? "
+                         "AND COALESCE(status,'')!='central'")
+            scope_args = [cid]
+        else:
+            scope_sql = ("SELECT id FROM mandates WHERE owner_id=? AND COALESCE(status,'')!='central' "
+                         "AND id IN (SELECT mandate_id FROM mandate_assignees WHERE user_id=? AND is_active=1)")
+            scope_args = [cid, real_user_id()]
+        rows = conn.execute(
+            'SELECT mandate_id, stage, COUNT(*) AS n, MAX(COALESCE(updated_at, created_at)) AS last_at '
+            'FROM candidates WHERE mandate_id IN (' + scope_sql + ') '
+            'GROUP BY mandate_id, stage', scope_args).fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        mid = r['mandate_id']
+        if mid is None:
+            continue
+        s = out.setdefault(str(mid), {'sourced': 0, 'engaged': 0, 'client': 0, 'interview': 0,
+                                      'placed': 0, 'dropped': 0, 'total': 0, 'last_activity': None})
+        n = int(r['n'] or 0)
+        s[job_summary_bucket(r['stage'])] += n
+        s['total'] += n
+        if r['last_at'] and (not s['last_activity'] or r['last_at'] > s['last_activity']):
+            s['last_activity'] = r['last_at']
+    return jsonify({'ok': True, 'summary': out})
+
 @app.route('/api/mandates/<int:mid>/client-notes', methods=['GET'])
 @login_required
 def get_client_notes(mid):
@@ -14778,6 +14931,11 @@ def list_invoices():
                     'amount': taxable, 'total': gross, 'gst_rate': d['gst_rate'],
                     'status': d['status'], 'due_date': d['due_date'], 'doc_type': d.get('doc_type') or 'tax',
                     'received_amount': d['received_amount'], 'received_date': d['received_date']})
+        # Overdue = unpaid tax invoice whose due date has passed (dates typed in any common format).
+        _due = _parse_invoice_date(d['due_date'])
+        out[-1]['is_overdue'] = bool(_due and (d.get('doc_type') or 'tax') == 'tax'
+                                     and (d['status'] or '').lower() != 'paid'
+                                     and _due < datetime.date.today())
     return jsonify({'ok': True, 'invoices': out})
 
 
@@ -14919,6 +15077,24 @@ def invoice_next_number():
     return jsonify({'ok': True, 'invoice_no': inv_no})
 
 
+def _parse_invoice_date(s):
+    """Read an invoice / due date the way people type it: 2026-10-18, 18-Oct-26,
+    18-Oct-2026, 18 Oct 2026, 18/10/2026 or 18.10.26. Returns a date or None.
+    (Comparing the raw text with today's ISO date wrongly flagged '18-Oct-26'
+    as overdue, because '1' sorts before '2'.)"""
+    import datetime as _dt
+    s = (s or '').strip()
+    if not s:
+        return None
+    for fmt in ('%Y-%m-%d', '%d-%b-%y', '%d-%b-%Y', '%d %b %Y', '%d %b %y', '%d/%m/%Y', '%d/%m/%y',
+                '%d-%m-%Y', '%d-%m-%y', '%d.%m.%Y', '%d.%m.%y', '%d %B %Y', '%d-%B-%Y'):
+        try:
+            return _dt.datetime.strptime(s[:10] if fmt == '%Y-%m-%d' else s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 @app.route('/api/invoices/summary', methods=['GET'])
 @login_required
 @agency_only
@@ -14944,13 +15120,15 @@ def invoicing_summary():
             received += (r['received_amount'] or gross); n_paid += 1
         else:
             outstanding += gross; unpaid_count += 1
-            due = (r['due_date'] or '')[:10]
-            is_over = bool(due and due < today)
+            due = (r['due_date'] or '').strip()
+            _dd = _parse_invoice_date(due)
+            is_over = bool(_dd and _dd.isoformat() < today)
             if is_over:
                 overdue_amt += gross; overdue_count += 1
             outstanding_list.append({'invoice_no': r['invoice_no'], 'buyer_name': r['buyer_name'],
                                      'total': gross, 'due_date': due, 'overdue': is_over})
-    outstanding_list.sort(key=lambda x: (not x['overdue'], x['due_date'] or '9999'))
+    outstanding_list.sort(key=lambda x: (not x['overdue'],
+                                         (_parse_invoice_date(x['due_date']) or _dt.date(9999, 1, 1)).isoformat()))
     exp_by_cat = {}; total_exp = 0.0
     for e in exps:
         exp_by_cat[e['category']] = exp_by_cat.get(e['category'], 0) + (e['amount'] or 0)
@@ -15094,15 +15272,39 @@ def _sync_mailbox(oid):
         return _sync_mailbox_impl(oid)
 
 
-def _sync_mailbox_impl(oid):
+def _sync_user_mailbox(oid, uid):
+    """A recruiter's (or admin's) OWN Gmail, read with their saved identity and
+    filed under their user id — never mixed into the company mailbox."""
+    with tenant_pin(oid), mail_sender(uid):
+        return _sync_mailbox_impl(oid, uid)
+
+
+def _sync_mailbox_impl(oid, box_uid=0):
     """Canonical IMAP sync -> emails table with full threading metadata + candidate
-    linkage. Mirrors incoming candidate mail into email_messages too. Returns (added, error)."""
+    linkage. Mirrors incoming candidate mail into email_messages too. Returns (added, error).
+    box_uid: 0 = the company mailbox, else the user whose own mailbox this is."""
+    box_uid = int(box_uid or 0)
     import imaplib, email as emaillib, email.utils, datetime as _dt
     host = get_setting('imap_host', 'imap.gmail.com') or 'imap.gmail.com'
     user = get_setting('smtp_email', ''); pw = (get_setting('smtp_app_password', '') or '').replace(' ', '')
     if not user or not pw:
         return 0, 'Email not configured. Settings -> Email Configuration.'
-    since = (_dt.date.today() - _dt.timedelta(days=30)).strftime('%d-%b-%Y')
+    # How far back: 30 days normally; a mailbox opened for the first time reaches
+    # back further (email_sync_days, default 90) so a new inbox is not near-empty.
+    try:
+        _c0 = get_db()
+        _first = not _c0.execute('SELECT 1 FROM emails WHERE owner_id=? AND COALESCE(user_id,0)=? LIMIT 1',
+                                 (oid, box_uid)).fetchone()
+        _c0.close()
+    except Exception:
+        _first = False
+    try:
+        _days = int(get_setting('email_sync_days', '90') or 90) if _first else 30
+    except (TypeError, ValueError):
+        _days = 90 if _first else 30
+    _days = max(7, min(_days, 365))
+    since = (_dt.date.today() - _dt.timedelta(days=_days)).strftime('%d-%b-%Y')
+    _SYNC_MORE[(oid, box_uid)] = False
     try:
         M = imaplib.IMAP4_SSL(host, timeout=20); M.login(user, pw)
     except imaplib.IMAP4.error as e:
@@ -15146,9 +15348,10 @@ def _sync_mailbox_impl(oid):
                         _mids = list(_num2mid.values())
                         for _i in range(0, len(_mids), 400):
                             _chunk = _mids[_i:_i + 400]
-                            for _r in conn.execute("SELECT msg_id FROM emails WHERE owner_id=? AND COALESCE(body,'')!='' "
+                            for _r in conn.execute("SELECT msg_id FROM emails WHERE owner_id=? AND COALESCE(user_id,0)=? "
+                                                   "AND COALESCE(body,'')!='' "
                                                    "AND msg_id IN (%s)" % ','.join('?' * len(_chunk)),
-                                                   [oid] + _chunk).fetchall():
+                                                   [oid, box_uid] + _chunk).fetchall():
                                 _have.add(_r[0])
                         _todo = set(n for n in ids if _num2mid.get(n) not in _have)
                 except Exception:
@@ -15158,6 +15361,7 @@ def _sync_mailbox_impl(oid):
                         if num not in _todo:
                             continue      # already in the ATS (see the batch check above)
                         if _budget[0] <= 0:
+                            _SYNC_MORE[(oid, box_uid)] = True
                             break         # rest comes in the next cycle
                         _budget[0] -= 1
                         typ, md = M.fetch(num, '(RFC822)')
@@ -15178,7 +15382,8 @@ def _sync_mailbox_impl(oid):
                         cid = email_to_cid.get((addr or '').lower()) or email_to_cid.get((taddr or '').lower())
                         other = addr if fname == 'Inbox' else (taddr or addr)
                         tid = _resolve_thread_id(conn, oid, irt, refs, subject) or _conv_thread_id(user, other, subject)
-                        ex = conn.execute('SELECT id FROM emails WHERE owner_id=? AND msg_id=?', (oid, mid)).fetchone()
+                        ex = conn.execute('SELECT id FROM emails WHERE owner_id=? AND msg_id=? AND COALESCE(user_id,0)=?',
+                                          (oid, mid, box_uid)).fetchone()
                         if ex:
                             conn.execute("UPDATE emails SET body=?, body_html=?, snippet=?, in_reply_to=?, refs=?, "
                                          "thread_id=CASE WHEN COALESCE(thread_id,'')='' THEN ? ELSE thread_id END, "
@@ -15186,10 +15391,12 @@ def _sync_mailbox_impl(oid):
                                          (text, htmlbody, snip, irt, refs, tid, cid, ex['id']))
                         else:
                             _icur = conn.execute('INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,subject,'
-                                'date_str,date_ts,snippet,body,body_html,in_reply_to,refs,thread_id,candidate_id,created_at) '
-                                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                                'date_str,date_ts,snippet,body,body_html,in_reply_to,refs,thread_id,candidate_id,created_at,is_read,'
+                                'cc,user_id) '
+                                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                                 (oid, mid, fname, addr, nm or addr, _email_decode(msg.get('To')), subject, dt, dts,
-                                 snip, text, htmlbody, irt, refs, tid, cid, ts()))
+                                 snip, text, htmlbody, irt, refs, tid, cid, ts(), 1 if fname == 'Sent' else 0,
+                                 _email_decode(msg.get('Cc') or ''), box_uid))
                             added += 1
                             # Capture real attachments once, on first insert.
                             _save_incoming_attachments(msg, conn, oid, _icur.lastrowid)
@@ -15206,6 +15413,13 @@ def _sync_mailbox_impl(oid):
                         except Exception: pass
                     except Exception:
                         continue
+                # Read status: mails already read in Gmail (\\Seen) are marked read here too.
+                # One-way on purpose — something read inside the ATS is never flipped
+                # back to unread, and the mailbox is opened read-only so Gmail is untouched.
+                try:
+                    _sync_seen_flags(M, conn, oid, ids, fname, locals().get('_num2mid') or {}, box_uid)
+                except Exception as _fe:
+                    print('[email-sync] flags:', _fe)
             except Exception:
                 continue
         conn.commit()
@@ -15216,13 +15430,115 @@ def _sync_mailbox_impl(oid):
     return added, None
 
 
+def _parse_seen_flags(lines):
+    """From an IMAP '(FLAGS)' fetch response, return the set of message numbers
+    (bytes) that carry \\Seen. Accepts the list imaplib returns (bytes lines or
+    tuples)."""
+    seen = set()
+    for part in (lines or []):
+        raw = part[0] if isinstance(part, tuple) else part
+        if not isinstance(raw, (bytes, bytearray)):
+            continue
+        m = re.match(rb'\s*(\d+)\s+\(.*?FLAGS\s*\(([^)]*)\)', raw)
+        if m and b'\\seen' in m.group(2).lower():
+            seen.add(m.group(1))
+    return seen
+
+
+def _sync_seen_flags(M, conn, oid, ids, fname, num2mid, box_uid=0):
+    if not ids or fname != 'Inbox':
+        return 0
+    typ, data = M.fetch(b','.join(ids).decode(), '(FLAGS)')
+    if typ != 'OK':
+        return 0
+    seen = _parse_seen_flags(data)
+    mids = [num2mid.get(n) or (fname + ':' + n.decode()) for n in seen]
+    n = 0
+    for i in range(0, len(mids), 400):
+        chunk = mids[i:i + 400]
+        if not chunk:
+            continue
+        cur = conn.execute('UPDATE emails SET is_read=1 WHERE owner_id=? AND COALESCE(user_id,0)=? AND is_read=0 '
+                           'AND msg_id IN (%s)' % ','.join('?' * len(chunk)), [oid, int(box_uid or 0)] + chunk)
+        n += cur.rowcount or 0
+    conn.commit()
+    return n
+
+
+# ── Email Box: whose mailbox ──────────────────────────────────────────────
+# Phase B (Oct 2026): every recruiter gets THEIR OWN inbox — the mail of the
+# Gmail they connected in Settings → My Account, filed under emails.user_id.
+# The company mailbox (user_id 0) stays the admins'. A recruiter never sees
+# the company mailbox or anyone else's; an admin sees the company mailbox and,
+# with ?box=me, their own.
+def _box_uid(box=None):
+    try:
+        if session.get('view_as_company'):
+            return 0
+        uid = int(session.get('user_id') or 0)
+    except Exception:
+        return 0
+    try:
+        from modules.access import scoped_user
+        if scoped_user():
+            return uid
+    except Exception:
+        pass
+    if box is None:
+        box = request.args.get('box')
+        if box is None and request.is_json:
+            box = (request.get_json(silent=True) or {}).get('box')
+    return uid if str(box or '') == 'me' else 0
+
+
+def _box_where(alias=''):
+    """(' owner_id=? AND COALESCE(user_id,0)=?', [oid, uid]) for this request's mailbox."""
+    a = (alias + '.') if alias else ''
+    return f'{a}owner_id=? AND COALESCE({a}user_id,0)=?', [effective_company_id(), _box_uid()]
+
+
+_SYNC_MORE = {}   # (company, box) -> True while older mail is still waiting to download
+
+
 @app.route('/api/emailbox/sync', methods=['POST'])
 @login_required
 def emailbox_sync():
-    added, err = _sync_mailbox(effective_company_id())
+    oid = effective_company_id(); uid = _box_uid()
+    if uid:
+        ident = _mail_identity(uid)
+        if not (ident and ident.get('mailbox')):
+            return jsonify({'error': 'Connect your Gmail first: Settings → My Account → Email.',
+                            'code': 'no_personal_mailbox'}), 400
+        added, err = _sync_user_mailbox(oid, uid)
+    else:
+        added, err = _sync_mailbox(oid)
     if err:
         return jsonify({'error': err}), 502
-    return jsonify({'ok': True, 'added': added})
+    return jsonify({'ok': True, 'added': added, 'more': bool(_SYNC_MORE.get((oid, uid)))})
+
+
+@app.route('/api/emailbox/me', methods=['GET'])
+@login_required
+def emailbox_me():
+    """What the Email Box should show this user: which mailboxes they have."""
+    uid = int(session.get('user_id') or 0)
+    try:
+        from modules.access import scoped_user
+        recruiter = bool(scoped_user())
+    except Exception:
+        recruiter = False
+    st = mail_identity_status(uid) if uid else {}
+    return jsonify({'ok': True, 'recruiter': recruiter, 'box': 'me' if _box_uid() else 'company',
+                    'own_mailbox': bool(st.get('own_mailbox')), 'own_email': st.get('email', ''),
+                    'company_email': '' if recruiter else (_company_mail_address() or '')})
+
+
+def _company_mail_address():
+    try:
+        with mail_sender(0):
+            return get_setting('smtp_email', '') or ''
+    except Exception:
+        return ''
 
 
 # ── Wave F: Email self-test / diagnostics ─────────────────────────────────
@@ -15359,60 +15675,170 @@ def email_roundtrip_check():
                     'steps': steps})
 
 
+_EB_LIST_COLS = ('e.id,e.folder,e.from_addr,e.from_name,e.to_addr,e.cc,e.subject,e.date_str,e.date_ts,e.snippet,'
+                 'e.is_read,e.is_draft,e.candidate_id,e.thread_id,COALESCE(e.is_starred,0) AS is_starred,'
+                 'COALESCE(e.is_archived,0) AS is_archived,k.name AS candidate_name,k.mandate_id AS candidate_mandate_id,'
+                 '(SELECT COUNT(*) FROM email_attachments a WHERE a.email_id=e.id AND a.owner_id=e.owner_id) AS n_attach,'
+                 # whole-conversation size (incl. your sent replies), like Gmail's "(3)"
+                 "CASE WHEN COALESCE(e.thread_id,'')='' THEN 1 ELSE (SELECT COUNT(*) FROM emails t WHERE t.owner_id=e.owner_id "
+                 "AND COALESCE(t.user_id,0)=COALESCE(e.user_id,0) AND t.thread_id=e.thread_id AND COALESCE(t.is_deleted,0)=0 "
+                 "AND COALESCE(t.is_draft,0)=0) END AS thread_n")
+
+
+def _eb_search_sql(q):
+    """Every word must appear in subject / sender / recipients / text (any order)."""
+    frag, params = '', []
+    for w in [w for w in re.split(r'\s+', (q or '').strip().lower()) if w][:8]:
+        like = '%' + w.replace('%', '').replace('_', '') + '%'
+        frag += (" AND (LOWER(COALESCE(e.subject,'')) LIKE ? OR LOWER(COALESCE(e.from_addr,'')) LIKE ? "
+                 "OR LOWER(COALESCE(e.from_name,'')) LIKE ? OR LOWER(COALESCE(e.to_addr,'')) LIKE ? "
+                 "OR LOWER(COALESCE(e.cc,'')) LIKE ? OR LOWER(COALESCE(e.snippet,'')) LIKE ? "
+                 "OR LOWER(COALESCE(e.body,'')) LIKE ? OR LOWER(COALESCE(k.name,'')) LIKE ?)")
+        params += [like] * 8
+    return frag, params
+
+
+def _eb_counts(conn, where, params):
+    live = " AND COALESCE(e.is_deleted,0)=0 AND COALESCE(e.is_archived,0)=0"
+    one = lambda extra: conn.execute('SELECT COUNT(*) n FROM emails e WHERE ' + where + live + extra,
+                                     params).fetchone()['n']
+    return {'unread': one(" AND e.is_read=0 AND e.folder='Inbox'"),
+            'starred': conn.execute('SELECT COUNT(*) n FROM emails e WHERE ' + where +
+                                    " AND COALESCE(e.is_deleted,0)=0 AND COALESCE(e.is_starred,0)=1",
+                                    params).fetchone()['n'],
+            'drafts': one(" AND e.folder='Drafts'")}
+
+
 @app.route('/api/emailbox/list', methods=['GET'])
 @login_required
 def emailbox_list():
-    conn = get_db(); folder = request.args.get('folder', '')
-    q = ('SELECT id,folder,from_addr,from_name,to_addr,subject,date_str,date_ts,snippet,is_read,'
-         'is_draft,candidate_id FROM emails WHERE owner_id=?')
-    params = [effective_company_id()]
-    if folder in ('Inbox', 'Sent', 'Drafts'):
-        q += ' AND folder=?'; params.append(folder)
-    elif folder == 'Unread':
-        q += " AND is_read=0 AND COALESCE(folder,'')!='Drafts'"
-    elif folder == 'Candidate':
-        q += ' AND candidate_id IS NOT NULL'
-    q += ' ORDER BY date_ts DESC LIMIT 500'
-    rows = conn.execute(q, tuple(params)).fetchall()
-    unread = conn.execute("SELECT COUNT(*) n FROM emails WHERE owner_id=? AND is_read=0 AND "
-                          "COALESCE(folder,'')!='Drafts' AND COALESCE(folder,'')!='Sent'",
-                          (effective_company_id(),)).fetchone()['n']
+    """One page of the mailbox. Server-side search (all of it, not just the newest
+    500), folders incl. starred / archived, unread counts, and the linked candidate."""
+    conn = get_db()
+    folder = request.args.get('folder', '')
+    try:
+        limit = max(1, min(int(request.args.get('limit', 100)), 300))
+        offset = max(0, int(request.args.get('offset', 0)))
+    except ValueError:
+        limit, offset = 100, 0
+    where, params = _box_where('e')
+    q = ('SELECT ' + _EB_LIST_COLS + ' FROM emails e LEFT JOIN candidates k ON k.id=e.candidate_id '
+         'AND k.owner_id=e.owner_id WHERE ' + where + ' AND COALESCE(e.is_deleted,0)=0')
+    p = list(params)
+    if folder == 'Archived':
+        q += ' AND COALESCE(e.is_archived,0)=1'
+    elif folder == 'Starred':
+        q += ' AND COALESCE(e.is_starred,0)=1'
+    else:
+        q += ' AND COALESCE(e.is_archived,0)=0'
+        if folder in ('Inbox', 'Sent', 'Drafts'):
+            q += ' AND e.folder=?'; p.append(folder)
+        elif folder == 'Unread':
+            q += " AND e.is_read=0 AND e.folder='Inbox'"
+        elif folder in ('Candidate', 'Candidates'):
+            q += ' AND e.candidate_id IS NOT NULL'
+    sf, sp = _eb_search_sql(request.args.get('q', ''))
+    q += sf; p += sp
+    q += ' ORDER BY e.date_ts DESC LIMIT ? OFFSET ?'
+    rows = conn.execute(q, p + [limit + 1, offset]).fetchall()
+    counts = _eb_counts(conn, where, params)
     conn.close()
-    return jsonify({'ok': True, 'emails': [dict(r) for r in rows], 'unread': unread})
+    more = len(rows) > limit
+    return jsonify({'ok': True, 'emails': [dict(r) for r in rows[:limit]], 'unread': counts['unread'],
+                    'counts': counts, 'has_more': more, 'offset': offset, 'limit': limit,
+                    'box': 'me' if params[1] else 'company'})
+
+
+@app.route('/api/emailbox/counts', methods=['GET'])
+@login_required
+def emailbox_counts():
+    conn = get_db(); where, params = _box_where('e')
+    counts = _eb_counts(conn, where, params); conn.close()
+    return jsonify({'ok': True, **counts})
 
 
 @app.route('/api/emailbox/mark-read', methods=['POST'])
 @login_required
 def emailbox_mark_read():
     d = request.json or {}
-    conn = get_db()
-    conn.execute('UPDATE emails SET is_read=? WHERE id=? AND owner_id=?',
-                 (1 if d.get('read', True) else 0, d.get('id'), effective_company_id()))
+    conn = get_db(); where, params = _box_where()
+    conn.execute('UPDATE emails SET is_read=? WHERE id=? AND ' + where,
+                 [1 if d.get('read', True) else 0, d.get('id')] + params)
     conn.commit(); conn.close()
     return jsonify({'ok': True})
+
+
+_EB_BULK = {'read': 'is_read=1', 'unread': 'is_read=0', 'archive': 'is_archived=1',
+            'unarchive': 'is_archived=0', 'star': 'is_starred=1', 'unstar': 'is_starred=0',
+            'delete': 'is_deleted=1', 'restore': 'is_deleted=0'}
+
+
+@app.route('/api/emailbox/bulk', methods=['POST'])
+@login_required
+def emailbox_bulk():
+    """Mark read/unread, star, archive or delete mails in the ATS. Gmail itself is
+    never changed (the mailbox is opened read-only). Deleting a draft removes it."""
+    d = request.json or {}
+    act = d.get('action', '')
+    if act not in _EB_BULK:
+        return jsonify({'error': 'Unknown action'}), 400
+    ids = []
+    for x in (d.get('ids') or [])[:1000]:
+        try: ids.append(int(x))
+        except (TypeError, ValueError): pass
+    if not ids:
+        return jsonify({'error': 'Nothing selected'}), 400
+    conn = get_db(); where, params = _box_where()
+    n = 0
+    for i in range(0, len(ids), 400):
+        chunk = ids[i:i + 400]
+        inn = ','.join('?' * len(chunk))
+        if act == 'delete':
+            n += conn.execute('DELETE FROM emails WHERE is_draft=1 AND id IN (' + inn + ') AND ' + where,
+                              chunk + params).rowcount or 0
+        n += conn.execute('UPDATE emails SET ' + _EB_BULK[act] + ' WHERE id IN (' + inn + ') AND ' + where,
+                          chunk + params).rowcount or 0
+    conn.commit()
+    counts = _eb_counts(conn, *_box_where('e'))
+    conn.close()
+    return jsonify({'ok': True, 'changed': n, 'counts': counts, 'unread': counts['unread']})
+
+
+def _eb_ids(v):
+    out = []
+    if isinstance(v, str):
+        try: v = json.loads(v or '[]')
+        except Exception: v = []
+    for x in (v or [])[:30]:
+        try: out.append(int(x))
+        except (TypeError, ValueError): pass
+    return out
 
 
 @app.route('/api/emailbox/draft', methods=['POST'])
 @login_required
 def emailbox_draft_save():
     d = request.json or {}
-    conn = get_db(); oid = effective_company_id()
+    conn = get_db(); oid = effective_company_id(); uid = _box_uid()
     frm = get_setting('smtp_email', '')
     body = (d.get('body') or '').strip()
-    fields = (d.get('to', ''), d.get('cc', ''), d.get('subject', ''), body,
-              d.get('body_html', ''), d.get('in_reply_to', ''), d.get('thread_id', ''))
+    att = json.dumps(_eb_ids(d.get('attachment_ids')))
+    fields = (d.get('to', ''), d.get('cc', ''), d.get('bcc', ''), d.get('subject', ''), body,
+              d.get('body_html', ''), d.get('in_reply_to', ''), d.get('thread_id', ''), att)
+    did = None
     if d.get('id'):
-        conn.execute("UPDATE emails SET to_addr=?, cc=?, subject=?, body=?, body_html=?, in_reply_to=?, "
-                     "thread_id=?, snippet=?, date_ts=?, created_at=? WHERE id=? AND owner_id=? AND is_draft=1",
-                     fields + (body[:200], time.time(), ts(), d['id'], oid))
-        did = d['id']
-    else:
-        cur = conn.execute("INSERT INTO emails (owner_id,folder,is_draft,from_addr,to_addr,cc,subject,body,"
-                           "body_html,in_reply_to,thread_id,snippet,date_str,date_ts,is_read,created_at) "
-                           "VALUES (?,?,1,?,?,?,?,?,?,?,?,?,?,?,1,?)",
-                           (oid, 'Drafts', frm, d.get('to', ''), d.get('cc', ''), d.get('subject', ''),
-                            body, d.get('body_html', ''), d.get('in_reply_to', ''), d.get('thread_id', ''),
-                            body[:200], ts(), time.time(), ts()))
+        cur = conn.execute("UPDATE emails SET to_addr=?, cc=?, bcc=?, subject=?, body=?, body_html=?, in_reply_to=?, "
+                           "thread_id=?, attach_ids=?, snippet=?, date_ts=?, created_at=? "
+                           "WHERE id=? AND owner_id=? AND COALESCE(user_id,0)=? AND is_draft=1",
+                           fields + (body[:200], time.time(), ts(), d['id'], oid, uid))
+        if cur.rowcount:
+            did = d['id']
+    if not did:
+        cur = conn.execute("INSERT INTO emails (owner_id,user_id,folder,is_draft,from_addr,to_addr,cc,bcc,subject,body,"
+                           "body_html,in_reply_to,thread_id,attach_ids,snippet,date_str,date_ts,is_read,created_at,"
+                           "candidate_id) VALUES (?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)",
+                           (oid, uid, 'Drafts', frm) + fields + (body[:200], ts(), time.time(), ts(),
+                                                                d.get('candidate_id') or None))
         did = cur.lastrowid
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'id': did})
@@ -15421,24 +15847,317 @@ def emailbox_draft_save():
 @app.route('/api/emailbox/draft/<int:did>/delete', methods=['POST'])
 @login_required
 def emailbox_draft_delete(did):
-    conn = get_db()
-    conn.execute("DELETE FROM emails WHERE id=? AND owner_id=? AND is_draft=1", (did, effective_company_id()))
+    conn = get_db(); where, params = _box_where()
+    conn.execute("DELETE FROM emails WHERE id=? AND is_draft=1 AND " + where, [did] + params)
     conn.commit(); conn.close()
     return jsonify({'ok': True})
+
+
+def _eb_candidate(conn, oid, cid):
+    if not cid:
+        return None
+    r = conn.execute('SELECT k.id,k.name,k.email,k.phone,k.stage,k.mandate_id,k.designation,k.company,'
+                     'm.role AS mandate_role,m.client AS mandate_client,m.status AS mandate_status '
+                     'FROM candidates k LEFT JOIN mandates m ON m.id=k.mandate_id WHERE k.id=? AND k.owner_id=?',
+                     (cid, oid)).fetchone()
+    if not r:
+        return None
+    d = dict(r)
+    d['central'] = (d.get('mandate_status') == 'central')
+    try:
+        from modules.access import can_see_candidate
+        d['can_open'] = bool(can_see_candidate(conn, cid))
+    except Exception:
+        d['can_open'] = True
+    return d
+
+
+def _eb_draft_attachments(conn, oid, row):
+    ids = _eb_ids(row['attach_ids'] if 'attach_ids' in row.keys() else '')
+    if not ids:
+        return []
+    return [dict(a) for a in conn.execute(
+        'SELECT id,filename,mime,size FROM email_attachments WHERE owner_id=? AND email_id IS NULL AND id IN (%s) '
+        'ORDER BY id' % ','.join('?' * len(ids)), [oid] + ids).fetchall()]
 
 
 @app.route('/api/emailbox/<int:eid>', methods=['GET'])
 @login_required
 def emailbox_get(eid):
-    conn = get_db(); oid = effective_company_id()
-    r = conn.execute('SELECT * FROM emails WHERE id=? AND owner_id=?', (eid, oid)).fetchone()
-    if r:
+    conn = get_db(); oid = effective_company_id(); where, params = _box_where()
+    r = conn.execute('SELECT * FROM emails WHERE id=? AND ' + where, [eid] + params).fetchone()
+    if r and request.args.get('peek') != '1':
         conn.execute('UPDATE emails SET is_read=1 WHERE id=?', (eid,)); conn.commit()
-    atts = [dict(a) for a in _attachments_for_email(conn, oid, eid)] if r else []
+    atts = []
+    if r:
+        atts = _eb_draft_attachments(conn, oid, r) if r['is_draft'] else \
+            [dict(a) for a in _attachments_for_email(conn, oid, eid)]
+    cand = _eb_candidate(conn, oid, r['candidate_id']) if r else None
     conn.close()
     if not r:
         return jsonify({'error': 'Not found'}), 404
-    return jsonify({'ok': True, 'email': dict(r), 'attachments': atts})
+    return jsonify({'ok': True, 'email': dict(r), 'attachments': atts, 'candidate': cand})
+
+
+_CV_EXTS = ('.pdf', '.doc', '.docx')
+
+
+def _eb_box_email(conn, eid):
+    where, params = _box_where()
+    return conn.execute('SELECT * FROM emails WHERE id=? AND ' + where, [eid] + params).fetchone()
+
+
+def _eb_link_thread(conn, oid, row, cid):
+    """Link this mail and the rest of its conversation (same mailbox) to a candidate."""
+    tid = (row['thread_id'] or '').strip()
+    where, params = _box_where()
+    if tid:
+        conn.execute('UPDATE emails SET candidate_id=? WHERE ' + where + ' AND thread_id=?', [cid] + params + [tid])
+    conn.execute('UPDATE emails SET candidate_id=? WHERE id=?', (cid, row['id']))
+
+
+def _eb_find_existing(conn, oid, email_addr, phone):
+    em = (email_addr or '').strip().lower()
+    ph = _wa_norm_phone10(phone or '')
+    if em:
+        r = conn.execute("SELECT id FROM candidates WHERE owner_id=? AND LOWER(TRIM(COALESCE(email,'')))=? "
+                         "ORDER BY id LIMIT 1", (oid, em)).fetchone()
+        if r:
+            return r['id']
+    if len(ph) == 10:
+        for r in conn.execute("SELECT id, phone FROM candidates WHERE owner_id=? AND COALESCE(phone,'') LIKE ?",
+                              (oid, '%' + ph[-4:] + '%')).fetchall():
+            if _wa_norm_phone10(r['phone']) == ph:
+                return r['id']
+    return None
+
+
+@app.route('/api/emailbox/<int:eid>/to-candidate', methods=['POST'])
+@login_required
+def emailbox_to_candidate(eid):
+    """CV attached to an email -> a candidate (Central Database, or a job the user
+    works on). The CV is read and parsed like an uploaded resume, the file is kept
+    as the candidate's CV, and the whole conversation is linked to them. Someone
+    already in the database (same email or phone) is linked, not duplicated."""
+    import shutil
+    d = request.json or {}
+    oid = effective_company_id()
+    conn = get_db()
+    try:
+        row = _eb_box_email(conn, eid)
+        if not row:
+            return jsonify({'error': 'Email not found'}), 404
+        att = None
+        if d.get('attachment_id'):
+            att = conn.execute('SELECT * FROM email_attachments WHERE id=? AND owner_id=? AND email_id=?',
+                               (d['attachment_id'], oid, eid)).fetchone()
+            if not att:
+                return jsonify({'error': 'Attachment not found'}), 404
+            if Path(att['filename'] or '').suffix.lower() not in _CV_EXTS:
+                return jsonify({'error': 'Only a PDF or Word CV can be added'}), 400
+            if not att['path'] or not os.path.exists(att['path']):
+                return jsonify({'error': 'The attachment file is missing on the server'}), 404
+
+        # Where to: a job (must be one this user may add to) or the Central Database.
+        mid = int(d.get('mandate_id') or 0)
+        if mid:
+            if not _tenant_owns_mandate(conn, mid):
+                return jsonify({'error': 'Job not found'}), 404
+            try:
+                from modules.access import can_see_mandate
+                if not can_see_mandate(conn, mid, write=True):
+                    return jsonify({'error': 'You are not assigned to this job'}), 403
+            except ImportError:
+                pass
+
+        # Read + parse the CV (best effort: without a key we still create the person).
+        parsed, note = {}, ''
+        if att:
+            with open(att['path'], 'rb') as fh:
+                raw = fh.read()
+            text, terr = extract_text_from_file(raw, att['filename'])
+            if text and len(text) >= 50:
+                ds_key = get_setting('deepseek_api_key')
+                if ds_key:
+                    parsed, perr, _c = _ai_parse_resume_text(text, ds_key)
+                    if perr:
+                        parsed, note = {}, 'CV could not be read by AI (' + perr + '); fill in the details.'
+                else:
+                    note = 'No DeepSeek key — details were not read from the CV. Fill them in.'
+            else:
+                note = 'Could not read text from this CV' + ((': ' + terr) if terr else '') + '.'
+        parsed = parsed or {}
+        inbound = (row['folder'] == 'Inbox')
+        sender_email = (row['from_addr'] if inbound else '') or ''
+        sender_name = (row['from_name'] if inbound else '') or ''
+        if sender_name and '@' in sender_name:
+            sender_name = ''
+        s = lambda k: str(parsed.get(k) or '').strip()
+        name = s('name') or sender_name or (sender_email.split('@')[0] if sender_email else '')
+        cemail = s('email') or sender_email
+        phone = s('phone')
+        if not name:
+            return jsonify({'error': 'Could not tell who this candidate is — add them manually.'}), 400
+
+        ex = _eb_find_existing(conn, oid, cemail, phone)
+        if ex and not d.get('force_new'):
+            try:
+                from modules.access import can_see_candidate
+                visible = bool(can_see_candidate(conn, ex))
+            except ImportError:
+                visible = True
+            msg = ('Already in your database — linked this conversation to them.' if visible
+                   else 'This person is already in the company database (on a job you are not on).')
+            if visible and mid:
+                # Phase D: the job picked in the dialog still gets them (moved from
+                # the pool, or a linked copy if they are on another job).
+                from modules.matching import place_in_job, load_src
+                how, placed = place_in_job(conn, load_src(conn, oid, ex), mid, 'Added from an email CV')
+                if how != 'already':
+                    ex = placed
+                    msg = 'Already in your database — ' + ('moved onto' if how == 'moved' else 'added to') + \
+                          ' this job too, and linked this conversation.'
+            if visible:
+                _eb_link_thread(conn, oid, row, ex)
+                conn.commit()
+            return jsonify({'ok': True, 'existing': True, 'linked': visible,
+                            'candidate': _eb_candidate(conn, oid, ex) if visible else None, 'message': msg})
+
+        to_central = not mid
+        if to_central:
+            conn.close(); conn = None
+            mid = get_or_create_central_mandate()
+            conn = get_db()
+        stage = CENTRAL_STAGE if to_central else 'Screening'
+        num = lambda k, f: (lambda v: f(v) if v not in (None, '') else 0)(parsed.get(k))
+        try: exp = float(num('experience', float))
+        except Exception: exp = 0.0
+        try: cc = float(num('ctc_current', float))
+        except Exception: cc = 0.0
+        try: ce = float(num('ctc_expected', float))
+        except Exception: ce = 0.0
+        try: npd = int(float(num('notice_period', float)))
+        except Exception: npd = 0
+        ks = parsed.get('key_skills') or []
+        ss = parsed.get('secondary_skills') or []
+        c = conn.cursor()
+        c.execute('INSERT INTO candidates (mandate_id,name,company,designation,experience,ctc_current,'
+                  'ctc_expected,notice_period,location,phone,email,career_summary,key_skills,'
+                  'screening_decision,ai_reasoning,stage,created_at,updated_at,owner_id) '
+                  'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                  (mid, name, s('company'), s('designation'), exp, cc, ce, npd, s('location'), phone, cemail,
+                   s('career_summary'), json.dumps(ks if isinstance(ks, list) else [str(ks)]),
+                   'worth_opening', 'Added from an email CV', stage, ts(), ts(), oid))
+        cid = c.lastrowid
+        for col, val in (('qualification', s('qualification')), ('preferred_location', s('preferred_location')),
+                         ('industry_background', s('industry_background')),
+                         ('secondary_skills', json.dumps(ss if isinstance(ss, list) else [str(ss)])),
+                         ('source_channel', 'email'), ('is_mnc', 1 if parsed.get('is_mnc') else 0)):
+            try:
+                c.execute('UPDATE candidates SET %s=? WHERE id=?' % col, (val, cid))
+            except sqlite3.OperationalError:
+                pass
+        if att:
+            ext = Path(att['filename']).suffix.lower()
+            fname = 'c' + str(cid) + '_' + datetime.datetime.now().strftime('%Y%m%d%H%M%S') + ext
+            shutil.copyfile(att['path'], os.path.join(CV_DIR, fname))
+            c.execute('UPDATE candidates SET cv_path=?, cv_original_name=? WHERE id=?', (fname, att['filename'], cid))
+        c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
+                  (cid, '', stage, 'Added from email: ' + (row['subject'] or '(no subject)')[:120], ts()))
+        _eb_link_thread(conn, oid, row, cid)
+        _link_to_known_person(conn, cid)
+        conn.commit()
+        return jsonify({'ok': True, 'existing': False, 'candidate': _eb_candidate(conn, oid, cid),
+                        'parsed': bool(parsed), 'note': note})
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.route('/api/emailbox/<int:eid>/link', methods=['POST'])
+@login_required
+def emailbox_link(eid):
+    """Link (cand = id) or unlink (cand = null) a conversation and a candidate."""
+    d = request.json or {}
+    oid = effective_company_id(); conn = get_db()
+    try:
+        row = _eb_box_email(conn, eid)
+        if not row:
+            return jsonify({'error': 'Email not found'}), 404
+        cid = d.get('cand')
+        if cid:
+            if not _tenant_owns_candidate(conn, cid):
+                return jsonify({'error': 'Candidate not found'}), 404
+            try:
+                from modules.access import can_see_candidate
+                if not can_see_candidate(conn, cid):
+                    return jsonify({'error': 'Candidate not found'}), 404
+            except ImportError:
+                pass
+            _eb_link_thread(conn, oid, row, int(cid))
+        else:
+            tid = (row['thread_id'] or '').strip()
+            where, params = _box_where()
+            if tid:
+                conn.execute('UPDATE emails SET candidate_id=NULL WHERE ' + where + ' AND thread_id=?', params + [tid])
+            conn.execute('UPDATE emails SET candidate_id=NULL WHERE id=?', (eid,))
+        conn.commit()
+        return jsonify({'ok': True, 'candidate': _eb_candidate(conn, oid, cid) if cid else None})
+    finally:
+        conn.close()
+
+
+@app.route('/api/emailbox/contacts', methods=['GET'])
+@login_required
+def emailbox_contacts():
+    """'To' autocomplete: candidates this user can see, client contacts (admins),
+    and people already in this mailbox."""
+    q = (request.args.get('q') or '').strip().lower()
+    if len(q) < 2:
+        return jsonify({'ok': True, 'contacts': []})
+    like = '%' + q.replace('%', '').replace('_', '') + '%'
+    oid = effective_company_id(); conn = get_db()
+    out, seen = [], set()
+
+    def add(name, email_addr, kind, extra=''):
+        em = (email_addr or '').strip()
+        if not em or '@' not in em or em.lower() in seen or len(out) >= 12:
+            return
+        seen.add(em.lower())
+        out.append({'name': (name or '').strip(), 'email': em, 'kind': kind, 'extra': extra or ''})
+    try:
+        try:
+            from modules.access import candidate_scope_sql, scoped_user
+            frag, fp = candidate_scope_sql('k.mandate_id')
+            recruiter = bool(scoped_user())
+        except ImportError:
+            frag, fp, recruiter = '', [], False
+        for r in conn.execute("SELECT k.name,k.email,k.designation,k.company FROM candidates k WHERE k.owner_id=? "
+                              "AND COALESCE(k.email,'')!='' AND (LOWER(k.name) LIKE ? OR LOWER(k.email) LIKE ?)" + frag +
+                              " ORDER BY k.updated_at DESC LIMIT 8", [oid, like, like] + fp).fetchall():
+            add(r['name'], r['email'], 'candidate', ' · '.join(x for x in (r['designation'], r['company']) if x))
+        if not recruiter:
+            try:
+                for r in conn.execute("SELECT name,email,designation FROM crm_contacts WHERE company_id=? "
+                                      "AND COALESCE(email,'')!='' AND (LOWER(name) LIKE ? OR LOWER(email) LIKE ?) "
+                                      "LIMIT 6", (oid, like, like)).fetchall():
+                    add(r['name'], r['email'], 'client', r['designation'])
+            except sqlite3.OperationalError:
+                pass
+        where, params = _box_where()
+        for r in conn.execute("SELECT from_name,from_addr FROM emails WHERE " + where + " AND folder='Inbox' "
+                              "AND (LOWER(from_addr) LIKE ? OR LOWER(from_name) LIKE ?) GROUP BY LOWER(from_addr) "
+                              "ORDER BY MAX(date_ts) DESC LIMIT 8", params + [like, like]).fetchall():
+            add(r['from_name'], r['from_addr'], 'mail')
+        import email.utils as _eu
+        for r in conn.execute("SELECT to_addr FROM emails WHERE " + where + " AND folder='Sent' "
+                              "AND LOWER(to_addr) LIKE ? ORDER BY date_ts DESC LIMIT 20", params + [like]).fetchall():
+            for nm, em in _eu.getaddresses([r['to_addr'] or '']):
+                if q in (nm or '').lower() or q in (em or '').lower():
+                    add(nm, em, 'mail')
+    finally:
+        conn.close()
+    return jsonify({'ok': True, 'contacts': out})
 
 
 def _norm_subject(s):
@@ -15459,18 +16178,30 @@ def emailbox_send():
     body = (d.get('body') or d.get('body_text') or '').strip()
     if not to or not subject or not body:
         return jsonify({'error': 'To, subject and message are all required'}), 400
-    ok, err, mid, tid = email_service_send(
-        to, subject, body,
-        body_html=(d.get('body_html') or None),
-        cc=(d.get('cc') or ''), bcc=(d.get('bcc') or ''),
-        in_reply_to=(d.get('in_reply_to') or d.get('reply_to_message_id') or ''),
-        references=(d.get('references') or ''),
-        thread_id=(d.get('thread_id') or ''),
-        candidate_id=d.get('candidate_id'),
-        attachment_ids=(d.get('attachment_ids') or []),
-        forward_from_email_id=(d.get('forward_from_email_id') or None))
+    uid = _box_uid()
+    conn = get_db(); where, params = _box_where()
+    fwd = d.get('forward_from_email_id') or None
+    if fwd and not conn.execute('SELECT 1 FROM emails WHERE id=? AND ' + where, [fwd] + params).fetchone():
+        fwd = None        # only mail from this user's own mailbox can be forwarded
+    conn.close()
+    # Reply from the mailbox being read: the company mailbox (0) or the user's own.
+    with mail_sender(uid):
+        ok, err, mid, tid = email_service_send(
+            to, subject, body,
+            body_html=(d.get('body_html') or None),
+            cc=(d.get('cc') or ''), bcc=(d.get('bcc') or ''),
+            in_reply_to=(d.get('in_reply_to') or d.get('reply_to_message_id') or ''),
+            references=(d.get('references') or ''),
+            thread_id=(d.get('thread_id') or ''),
+            candidate_id=d.get('candidate_id'),
+            attachment_ids=(d.get('attachment_ids') or []),
+            forward_from_email_id=fwd)
     if not ok:
         return jsonify({'error': err or 'Send failed'}), 400
+    if d.get('draft_id'):
+        conn = get_db(); where, params = _box_where()
+        conn.execute('DELETE FROM emails WHERE id=? AND is_draft=1 AND ' + where, [d['draft_id']] + params)
+        conn.commit(); conn.close()
     return jsonify({'ok': True, 'message_id': mid, 'thread_id': tid})
 
 
@@ -15508,20 +16239,40 @@ def emailbox_attach_upload():
         return jsonify({'error': 'Could not save file: ' + str(e)}), 500
     mime = f.mimetype or 'application/octet-stream'
     conn = get_db()
-    cur = conn.execute("INSERT INTO email_attachments (owner_id,email_id,direction,filename,mime,size,path,created_at) "
-                       "VALUES (?,?,?,?,?,?,?,?)", (oid, None, 'out', fname, mime, len(raw), disk, ts()))
+    cur = conn.execute("INSERT INTO email_attachments (owner_id,email_id,direction,filename,mime,size,path,created_at,"
+                       "user_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                       (oid, None, 'out', fname, mime, len(raw), disk, ts(), int(session.get('user_id') or 0)))
     aid = cur.lastrowid
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'id': aid, 'filename': fname, 'size': len(raw), 'mime': mime})
 
 
+def _eb_attachment_ok(conn, aid):
+    """The attachment row if this user may open it: it belongs to a mail in their
+    own mailbox, or it is a not-yet-sent file they uploaded themselves."""
+    oid = effective_company_id()
+    r = conn.execute('SELECT * FROM email_attachments WHERE id=? AND owner_id=?', (aid, oid)).fetchone()
+    if not r:
+        return None
+    try:
+        from modules.access import scoped_user
+        recruiter = bool(scoped_user())
+    except Exception:
+        recruiter = False
+    if not recruiter:
+        return r                      # admins: whole company (as before)
+    if r['email_id'] is None:
+        return r if int(r['user_id'] or 0) == int(session.get('user_id') or 0) else None
+    where, params = _box_where()
+    ok = conn.execute('SELECT 1 FROM emails WHERE id=? AND ' + where, [r['email_id']] + params).fetchone()
+    return r if ok else None
+
+
 @app.route('/api/emailbox/attachment/<int:aid>', methods=['GET'])
 @login_required
 def emailbox_attach_download(aid):
-    oid = effective_company_id()
     conn = get_db()
-    r = conn.execute("SELECT filename,mime,path FROM email_attachments WHERE id=? AND owner_id=?",
-                     (aid, oid)).fetchone()
+    r = _eb_attachment_ok(conn, aid)
     conn.close()
     if not r or not r['path'] or not os.path.exists(r['path']):
         return jsonify({'error': 'Not found'}), 404
@@ -15535,7 +16286,7 @@ def emailbox_attach_delete(aid):
     """Remove a still-pending (un-sent) attachment the user changed their mind on."""
     oid = effective_company_id()
     conn = get_db()
-    r = conn.execute("SELECT path,email_id FROM email_attachments WHERE id=? AND owner_id=?", (aid, oid)).fetchone()
+    r = _eb_attachment_ok(conn, aid)
     if r and r['email_id'] is None:
         try:
             if r['path'] and os.path.exists(r['path']):
@@ -15596,10 +16347,11 @@ def _save_incoming_attachments(msg, conn, oid, email_id):
 def emailbox_rethread():
     """One-time repair: regroup the whole mailbox by conversation (participants +
     subject), so existing emails thread correctly regardless of headers."""
-    oid = effective_company_id()
-    user = (get_setting('smtp_email', '') or '').lower()
-    conn = get_db()
-    rows = conn.execute("SELECT id,folder,from_addr,to_addr,subject FROM emails WHERE owner_id=?", (oid,)).fetchall()
+    uid = _box_uid()
+    with mail_sender(uid):
+        user = (get_setting('smtp_email', '') or '').lower()
+    conn = get_db(); where, params = _box_where()
+    rows = conn.execute("SELECT id,folder,from_addr,to_addr,subject FROM emails WHERE " + where, params).fetchall()
     n = 0
     for r in rows:
         other = r['from_addr'] if (r['folder'] == 'Inbox') else (r['to_addr'] or r['from_addr'])
@@ -15613,30 +16365,40 @@ def emailbox_rethread():
 @app.route('/api/emailbox/thread', methods=['GET'])
 @login_required
 def emailbox_thread():
+    """A whole conversation, oldest first, from this user's mailbox only. Opening it
+    marks it read (?mark=0 to just look). Carries the linked candidate."""
     eid = request.args.get('eid')
-    conn = get_db(); oid = effective_company_id()
-    base = conn.execute("SELECT subject, thread_id, msg_id FROM emails WHERE id=? AND owner_id=?",
-                        (eid, oid)).fetchone()
+    conn = get_db(); oid = effective_company_id(); where, params = _box_where()
+    base = conn.execute("SELECT subject, thread_id, msg_id, candidate_id FROM emails WHERE id=? AND " + where,
+                        [eid] + params).fetchone()
     if not base:
         conn.close(); return jsonify({'error': 'not found'}), 404
     tid = (base['thread_id'] or '').strip()
-    rows = conn.execute("SELECT id,folder,from_addr,from_name,to_addr,subject,date_ts,body,body_html,snippet,"
-                        "thread_id,msg_id,in_reply_to FROM emails WHERE owner_id=? ORDER BY date_ts ASC",
-                        (oid,)).fetchall()
-    conn.close()
+    cols = ("id,folder,from_addr,from_name,to_addr,cc,bcc,subject,date_ts,date_str,body,body_html,snippet,"
+            "thread_id,msg_id,in_reply_to,refs,is_read,is_draft,candidate_id,COALESCE(is_starred,0) AS is_starred,"
+            "COALESCE(is_archived,0) AS is_archived")
     if tid:
-        thread = [dict(r) for r in rows if (r['thread_id'] or '') == tid
-                  or r['msg_id'] == base['msg_id']]
+        rows = conn.execute("SELECT " + cols + " FROM emails WHERE " + where + " AND COALESCE(is_deleted,0)=0 "
+                            "AND (thread_id=? OR id=?) ORDER BY date_ts ASC", params + [tid, eid]).fetchall()
+        thread = [dict(r) for r in rows]
     else:
         key = _norm_subject(base['subject'])
-        thread = [dict(r) for r in rows if _norm_subject(r['subject']) == key]
-    # Attach any files per message (cheap: one small query per message shown).
-    if thread:
-        c2 = get_db()
-        for m in thread:
-            m['attachments'] = [dict(a) for a in _attachments_for_email(c2, oid, m['id'])]
-        c2.close()
-    return jsonify({'ok': True, 'thread': thread, 'subject': base['subject']})
+        rows = conn.execute("SELECT " + cols + " FROM emails WHERE " + where + " AND COALESCE(is_deleted,0)=0 "
+                            "AND COALESCE(thread_id,'')='' ORDER BY date_ts ASC LIMIT 2000", params).fetchall()
+        thread = [dict(r) for r in rows if _norm_subject(r['subject']) == key or str(r['id']) == str(eid)]
+    for m in thread:
+        m['attachments'] = [dict(a) for a in _attachments_for_email(conn, oid, m['id'])]
+    if request.args.get('mark', '1') != '0' and thread:
+        ids = [m['id'] for m in thread if not m['is_read']]
+        if ids:
+            conn.execute('UPDATE emails SET is_read=1 WHERE id IN (%s)' % ','.join('?' * len(ids)), ids)
+            conn.commit()
+    cid = base['candidate_id'] or next((m['candidate_id'] for m in thread if m['candidate_id']), None)
+    cand = _eb_candidate(conn, oid, cid)
+    counts = _eb_counts(conn, *_box_where('e'))
+    conn.close()
+    return jsonify({'ok': True, 'thread': thread, 'subject': base['subject'], 'candidate': cand,
+                    'counts': counts, 'unread': counts['unread']})
 
 
 # ── CEO Command Center (strategic brain toward the ₹100 Cr goal) ─────────────
@@ -15774,7 +16536,8 @@ def _collect_index_items(conn, oid):
     except Exception:
         pass
     try:
-        for e in conn.execute("SELECT id,folder,from_name,from_addr,subject,snippet,body FROM emails WHERE owner_id=?", (oid,)).fetchall():
+        for e in conn.execute("SELECT id,folder,from_name,from_addr,subject,snippet,body FROM emails WHERE owner_id=? "
+                              "AND COALESCE(user_id,0)=0 AND COALESCE(is_deleted,0)=0", (oid,)).fetchall():
             d = dict(e)
             body = (d.get('body') or d.get('snippet') or '')[:2500]
             txt = f"Email [{d.get('folder','')}] from {d.get('from_name','')} <{d.get('from_addr','')}> — {d.get('subject','')}\n{body}"
@@ -16209,7 +16972,8 @@ def _work_status_brief(conn, oid):
         pass
     # 5) Email signal — unread inbox
     try:
-        em = conn.execute("SELECT from_name, subject FROM emails WHERE owner_id=? AND folder='Inbox' AND is_read=0 ORDER BY date_ts DESC LIMIT 8", (oid,)).fetchall()
+        em = conn.execute("SELECT from_name, subject FROM emails WHERE owner_id=? AND COALESCE(user_id,0)=0 AND folder='Inbox' AND is_read=0 "
+                          "AND COALESCE(is_deleted,0)=0 AND COALESCE(is_archived,0)=0 ORDER BY date_ts DESC LIMIT 8", (oid,)).fetchall()
         if em:
             lines.append("UNREAD INBOX (may need reply): " + ' | '.join(f"{e['from_name']}: {e['subject']}" for e in em))
     except Exception:
@@ -17492,10 +18256,17 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
         except Exception:
             pass
 
-    rcpts = [to]
-    for extra in (cc, bcc):
-        if extra:
-            rcpts += [x.strip() for x in extra.split(',') if x.strip()]
+    # Every address in To / Cc / Bcc, names stripped ("Asha" <a@x.com>, b@y.com).
+    # Before, the whole To line went to the server as ONE recipient, so a mail to
+    # two people (or reply-all) failed or reached only the first.
+    import email.utils as _eu
+    rcpts, _seen_r = [], set()
+    for _nm, _ad in _eu.getaddresses([x for x in (to, cc, bcc) if (x or '').strip()]):   # 3.13: an empty field voids the whole list
+        _ad = (_ad or '').strip()
+        if _ad and '@' in _ad and _ad.lower() not in _seen_r:
+            _seen_r.add(_ad.lower()); rcpts.append(_ad)
+    if not rcpts:
+        return False, 'No valid recipient address', '', ''
     try:
         # SES's SMTP username is a generated credential, NOT the From address.
         server, _ = smtp_open(host, port, (smtp_override or {}).get('smtp_user') or email_addr, pw)
@@ -17521,11 +18292,16 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
         tid = _conv_thread_id(email_addr, to, subject)
     try:
         conn = get_db(); oid = effective_company_id()
+        # The sent copy lands in the mailbox it really went out of: the sender's own
+        # Gmail (user_id = them) or the company mailbox (0).
+        _suid = _mail_sender_uid()
+        _sid = _mail_identity(_suid) if _suid else None
+        _box = _suid if (_sid and _sid.get('mailbox')) else 0
         cur = conn.execute("INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,cc,bcc,subject,"
                      "date_str,date_ts,snippet,body,body_html,in_reply_to,refs,thread_id,candidate_id,is_read,"
-                     "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)",
+                     "created_at,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)",
                      (oid, mid, 'Sent', email_addr, dname or email_addr, to, cc or '', bcc or '', subject,
-                      ts(), time.time(), text[:200], text, html, in_reply_to, refs, tid, candidate_id, ts()))
+                      ts(), time.time(), text[:200], text, html, in_reply_to, refs, tid, candidate_id, ts(), _box))
         new_email_id = cur.lastrowid
         # Link the pending uploads to this sent email.
         if _pending_ids:
@@ -19911,6 +20687,14 @@ def public_save_candidate(token):
     if sets:
         vals += [ts(), cid]
         conn.execute('UPDATE candidates SET ' + ','.join(sets) + ',updated_at=? WHERE id=?', vals)
+        try:   # the person's records on their other jobs get the same details
+            _sync_person_fields(conn, cid, [s.split('=')[0] for s in sets])
+            if resume_saved:
+                _r0 = int(c['copied_from'] or 0) or cid
+                conn.execute("UPDATE candidates SET cv_path=?, cv_original_name=? WHERE owner_id=? AND id!=? "
+                             "AND (id=? OR copied_from=?)", (fname, f.filename, c['owner_id'], cid, _r0, _r0))
+        except Exception as _se:
+            print('[person-sync]', _se)
     conn.execute('UPDATE candidates SET update_submitted_at=? WHERE id=?', (ts(), cid))
     conn.commit(); conn.close()
 
@@ -19940,6 +20724,21 @@ def add_candidate_note(cid):
     return jsonify({'ok': True})
 
 
+def _journey_stage_text(frm, to, note):
+    """(text, icon, colour) for one stage_history row in the candidate journey."""
+    frm = (frm or '').strip()
+    to = (to or '').strip()
+    note = (note or '').strip()
+    if not to or (frm and frm == to):
+        if note:
+            return note, 'note', 'blue'
+        return (f'Stage: {to}' if to else 'Updated'), 'arrow-right', 'purple'
+    text = f'Stage changed — {frm} → {to}' if frm else f'Stage set to {to}'
+    if note:
+        text += f' · {note}'
+    return text, 'arrow-right', 'purple'
+
+
 @app.route('/api/candidates/<int:cid>/journey')
 @login_required
 def candidate_journey(cid):
@@ -19958,9 +20757,12 @@ def candidate_journey(cid):
     # Sourced / created
     add(c['created_at'], 'Candidate added to pipeline', 'user-plus', 'gray')
     # Stage changes
+    # stage_history doubles as an activity log: some writers store a note
+    # with empty or unchanged stages (CV uploaded, moved between jobs, a
+    # comment). Those used to render as "Stage changed — — to". Show what
+    # actually happened instead.
     for h in conn.execute('SELECT * FROM stage_history WHERE candidate_id=? ORDER BY created_at', (cid,)).fetchall():
-        frm = h['from_stage'] or '—'
-        add(h['created_at'], f"Stage changed — {frm} to {h['to_stage']}", 'arrow-right', 'purple')
+        add(h['created_at'], *_journey_stage_text(h['from_stage'], h['to_stage'], h['note']))
     # WhatsApp sends
     add(c['msg1_sent_at'], 'WhatsApp intro sent', 'brand-whatsapp', 'green')
     add(c['fu1_sent_at'], 'WhatsApp follow up 1 sent', 'brand-whatsapp', 'green')
@@ -20042,6 +20844,105 @@ def move_candidate(cid):
     return jsonify({'ok': True, 'mandate_id': target_mid})
 
 
+# ── One person, several jobs (Phase D, Oct 2026) ──────────────────────────
+# A candidate row is one person ON one job (its own stage, history, offers).
+# The same person on another job is a linked copy (candidates.copied_from,
+# see modules/matching.py place_in_job). These endpoints show and extend that.
+@app.route('/api/candidates/<int:cid>/person', methods=['GET'])
+@login_required
+def candidate_person(cid):
+    """All the jobs this person is on, for the profile's "Jobs" strip."""
+    from modules.matching import person_records
+    try:
+        from modules.access import can_see_candidate
+    except ImportError:
+        can_see_candidate = lambda *a, **k: True
+    oid = effective_company_id()
+    conn = get_db()
+    try:
+        if not _tenant_owns_candidate(conn, cid):
+            return jsonify({'error': 'Not found'}), 404
+        out, hidden = [], 0
+        for r in person_records(conn, oid, cid):
+            if not can_see_candidate(conn, r['id']):
+                hidden += 1; continue
+            central = (r['m_status'] == 'central')
+            out.append({'id': r['id'], 'mandate_id': r['mandate_id'], 'stage': r['stage'] or '',
+                        'role': 'Central Database' if central else (r['role'] or ''), 'client': '' if central else (r['client'] or ''),
+                        'central': central, 'job_status': r['m_status'] or '', 'current': r['id'] == cid,
+                        'updated_at': r['updated_at'] or ''})
+        return jsonify({'ok': True, 'records': out, 'hidden': hidden})
+    finally:
+        conn.close()
+
+
+@app.route('/api/candidates/<int:cid>/add-to-job', methods=['POST'])
+@login_required
+def candidate_add_to_job(cid):
+    """Put this person on another job too (copy), or onto a job from the pool (move).
+    Unlike /move, they stay on the job they are on."""
+    from modules.matching import place_in_job, load_src
+    d = request.json or {}
+    oid = effective_company_id()
+    try:
+        mid = int(d.get('mandate_id') or 0)
+    except (TypeError, ValueError):
+        mid = 0
+    conn = get_db()
+    try:
+        tgt = conn.execute('SELECT id, role, client, status FROM mandates WHERE id=? AND owner_id=?', (mid, oid)).fetchone()
+        if not tgt or (tgt['status'] or '') == 'central':
+            return jsonify({'error': 'Job not found'}), 404
+        src = load_src(conn, oid, cid)
+        if not src:
+            return jsonify({'error': 'Candidate not found'}), 404
+        how, new_id = place_in_job(conn, src, mid, 'Added to this job from the profile')
+        conn.commit()
+    finally:
+        conn.close()
+    if how != 'already':
+        try: log_candidate_event(new_id, 'note', 'Added to job: %s (%s)' % (tgt['role'], tgt['client']))
+        except Exception: pass
+    return jsonify({'ok': True, 'status': how, 'candidate_id': new_id, 'mandate_id': mid, 'job': tgt['role']})
+
+
+# Profile facts that belong to the PERSON: an edit on one job's record is copied
+# to their records on other jobs, so a new phone number or CTC is never stale on
+# the other pipeline. Stage, feedback, offers and billing stay per job.
+_PERSON_SYNC_COLS = ('name', 'company', 'designation', 'experience', 'ctc_current', 'ctc_expected', 'notice_period',
+                     'location', 'preferred_location', 'phone', 'email', 'qualification', 'specialization',
+                     'career_summary', 'key_skills', 'secondary_skills', 'linkedin_url')
+
+
+def _sync_person_fields(conn, cid, fields):
+    cols = [f for f in fields if f in _PERSON_SYNC_COLS]
+    if not cols:
+        return 0
+    r = conn.execute('SELECT * FROM candidates WHERE id=?', (cid,)).fetchone()
+    if not r:
+        return 0
+    root = int(r['copied_from'] or 0) or int(r['id'])
+    vals = [r[c] for c in cols]
+    cur = conn.execute('UPDATE candidates SET ' + ','.join(c + '=?' for c in cols) + ', updated_at=? '
+                       'WHERE owner_id=? AND id!=? AND (id=? OR copied_from=?)',
+                       vals + [ts(), r['owner_id'], cid, root, root])
+    return cur.rowcount or 0
+
+
+def _cv_file_shared(conn, fname, except_cid=None):
+    """True if a CV file is still used by another candidate record or an application
+    (copies on other jobs, and the Responses entry they came from, share one file)."""
+    if not fname:
+        return False
+    n = conn.execute('SELECT COUNT(*) n FROM candidates WHERE cv_path=? AND id!=?', (fname, except_cid or 0)).fetchone()['n']
+    if n:
+        return True
+    try:
+        return bool(conn.execute('SELECT 1 FROM submissions WHERE cv_path=? LIMIT 1', (fname,)).fetchone())
+    except sqlite3.OperationalError:
+        return False
+
+
 @app.route('/api/candidates/<int:cid>', methods=['PUT'])
 @login_required
 def update_candidate(cid):
@@ -20067,6 +20968,10 @@ def update_candidate(cid):
     if sets:
         vals += [ts(), cid]
         conn.execute('UPDATE candidates SET ' + ','.join(sets) + ',updated_at=? WHERE id=?', vals)
+        try:
+            _sync_person_fields(conn, cid, [f for f in fields if f in d])
+        except Exception as _se:
+            print('[person-sync]', _se)
 
         # Build a human-readable list of what changed, for the journey
         labels = {
@@ -20174,7 +21079,7 @@ def add_manual(mid):
     # Where this person came from. Referral matters most: it is the cheapest
     # channel in corporate hiring, and until now there was no way to say it.
     _ch = (d.get('source_channel') or ('orgmap' if to_central else 'manual')).strip().lower()
-    if _ch not in ('naukri', 'referral', 'careers', 'internal', 'orgmap', 'bulk', 'manual'):
+    if _ch not in ('naukri', 'referral', 'careers', 'internal', 'orgmap', 'bulk', 'manual', 'email'):
         _ch = 'manual'
     c.execute('UPDATE candidates SET source_channel=?, referrer_name=? WHERE id=?',
               (_ch, str(d.get('referrer_name') or '').strip()[:120], cid))
@@ -20183,6 +21088,7 @@ def add_manual(mid):
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
               (cid, '', stage,
                'Added to Central Database' if to_central else 'Manually added to pipeline', ts()))
+    _link_to_known_person(conn, cid)
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'id': cid, 'mandate_id': mid, 'central': to_central})
 
@@ -20208,11 +21114,17 @@ def upload_cv(cid):
     fname = 'c' + str(cid) + '_' + datetime.datetime.now().strftime('%Y%m%d%H%M%S') + ext
     f.save(os.path.join(CV_DIR, fname))
     conn = get_db()
-    old = conn.execute('SELECT cv_path FROM candidates WHERE id=?', (cid,)).fetchone()
-    if old and old['cv_path']:
+    old = conn.execute('SELECT cv_path, copied_from, owner_id FROM candidates WHERE id=?', (cid,)).fetchone()
+    # The new CV is the person's CV on every job they are on (copies share the file).
+    _root = (int(old['copied_from'] or 0) or cid) if old else cid
+    if old:
+        conn.execute("UPDATE candidates SET cv_path=?, cv_original_name=?, updated_at=? WHERE owner_id=? AND id!=? "
+                     "AND (id=? OR copied_from=?) AND (COALESCE(cv_path,'')='' OR cv_path=?)",
+                     (fname, f.filename, ts(), old['owner_id'], cid, _root, _root, old['cv_path'] or ''))
+    conn.execute('UPDATE candidates SET cv_path=?,cv_original_name=?,updated_at=? WHERE id=?', (fname, f.filename, ts(), cid))
+    if old and old['cv_path'] and not _cv_file_shared(conn, old['cv_path'], cid):
         op = os.path.join(CV_DIR, old['cv_path'])
         if os.path.exists(op): os.remove(op)
-    conn.execute('UPDATE candidates SET cv_path=?,cv_original_name=?,updated_at=? WHERE id=?', (fname, f.filename, ts(), cid))
     conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
                  (cid, '', '', 'CV uploaded: ' + f.filename, ts()))
     conn.commit(); conn.close()
@@ -20679,9 +21591,11 @@ def delete_cv(cid):
     if not r:
         conn.close(); return jsonify({'error': 'Not found'}), 404
     if r and r['cv_path']:
-        fp = os.path.join(CV_DIR, r['cv_path'])
-        if os.path.exists(fp): os.remove(fp)
         conn.execute('UPDATE candidates SET cv_path="",cv_original_name="",updated_at=? WHERE id=?', (ts(), cid))
+        # copies on other jobs / the application may still use this file
+        if not _cv_file_shared(conn, r['cv_path'], cid):
+            fp = os.path.join(CV_DIR, r['cv_path'])
+            if os.path.exists(fp): os.remove(fp)
         conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
                      (cid, '', '', 'CV removed', ts()))
         conn.commit()
@@ -20736,7 +21650,7 @@ def delete_candidate(cid):
     if not r:
         conn.close(); return jsonify({'error': 'Not found'}), 404
     if r:
-        if r['cv_path']:
+        if r['cv_path'] and not _cv_file_shared(conn, r['cv_path'], cid):
             fp = os.path.join(CV_DIR, r['cv_path'])
             if os.path.exists(fp):
                 try: os.remove(fp)
@@ -20834,6 +21748,15 @@ def parse_resume():
     if not text or len(text) < 50:
         return jsonify({'error': 'Could not extract text from file. Try PDF or DOCX format.'}), 400
 
+    parsed, perr, pcode = _ai_parse_resume_text(text, ds_key)
+    if perr:
+        return jsonify({'error': perr}), pcode
+    return jsonify({'ok': True, 'data': parsed, 'text_length': len(text)})
+
+
+def _ai_parse_resume_text(text, ds_key):
+    """Resume text -> candidate fields with DeepSeek. Returns (dict, error, http_code).
+    Shared by the CV upload form and Email Box "Add as candidate"."""
     system_msg = ('Extract candidate details from this resume/CV text. Return ONLY valid JSON with: '
                   'name, phone, email, company (current), designation (current title), '
                   'experience (float years total), ctc_current (float LPA, 0 if not found), '
@@ -20852,16 +21775,18 @@ def parse_resume():
                   'response_format': {'type': 'json_object'}},
             timeout=45, endpoint='resume-parse')
     except requests.Timeout:
-        return jsonify({'error': 'DeepSeek timeout — try again'}), 504
+        return None, 'DeepSeek timeout — try again', 504
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return None, str(e), 500
 
-    if resp.status_code == 401: return jsonify({'error': 'Invalid DeepSeek API key'}), 401
-    if resp.status_code != 200: return jsonify({'error': 'DeepSeek error: ' + resp.text[:150]}), 500
+    if resp.status_code == 401: return None, 'Invalid DeepSeek API key', 401
+    if resp.status_code != 200: return None, 'DeepSeek error: ' + resp.text[:150], 500
 
     raw = resp.json()['choices'][0]['message']['content']
     parsed = parse_json(raw)
-    return jsonify({'ok': True, 'data': parsed, 'text_length': len(text)}) if parsed else (jsonify({'error': 'Parse failed', 'raw': raw[:300]}), 500)
+    if not isinstance(parsed, dict):
+        return None, 'Parse failed', 500
+    return parsed, None, 200
 
 # ── Bulk Parse Multiple Naukri Snippets ───────────────────────────────────────
 @app.route('/api/parse-naukri-bulk', methods=['POST'])
@@ -21352,83 +22277,535 @@ def get_or_create_central_mandate():
     finally:
         conn.close()
 
+# ── Talent search (Phase C, Oct 2026) ─────────────────────────────────────
+# Filtering, sorting and paging now happen in SQL. Before, every request loaded
+# EVERY candidate of the company (with their profile text) into Python and
+# filtered there. The keyword box understands boolean search:
+#   solar AND (inverter OR "string inverter") NOT trainee      -sales      "site engineer"
+# Words next to each other mean AND, like before.
+_TALENT_TEXT = ("LOWER(COALESCE(c.name,'')||' '||COALESCE(c.company,'')||' '||COALESCE(c.designation,'')||' '||"
+                "COALESCE(c.key_skills,'')||' '||COALESCE(c.key_skill_tags,'')||' '||COALESCE(c.secondary_skills,'')||' '||"
+                "COALESCE(c.career_summary,'')||' '||COALESCE(c.location,'')||' '||COALESCE(c.industry_background,'')||' '||"
+                "COALESCE(c.qualification,'')||' '||COALESCE(c.email,'')||' '||COALESCE(c.phone,'')||' '||"
+                "COALESCE(c.status_tags,'')||' '||COALESCE(c.product_handles,'')||' '||COALESCE(c.function_tags,''))")
+_TALENT_SKILLS = ("LOWER(COALESCE(c.key_skills,'')||' '||COALESCE(c.key_skill_tags,'')||' '||"
+                  "COALESCE(c.secondary_skills,'')||' '||COALESCE(c.product_handles,'')||' '||COALESCE(c.designation,''))")
+
+
+def _bool_tokens(q):
+    toks = []
+    for m in re.finditer(r'"([^"]*)"|\(|\)|(-?)([^\s()"]+)', q or ''):
+        if m.group(0) in ('(', ')'):
+            toks.append(m.group(0))
+        elif m.group(1) is not None:
+            if m.group(1).strip():
+                toks.append(('W', m.group(1).strip().lower()))
+        else:
+            w = m.group(3)
+            up = w.upper()
+            if not m.group(2) and up in ('AND', 'OR', 'NOT'):
+                toks.append(up)
+            elif not m.group(2) and w in ('&&', '||'):
+                toks.append('AND' if w == '&&' else 'OR')
+            else:
+                if m.group(2):
+                    toks.append('NOT')
+                toks.append(('W', w.lower()))
+    return toks[:60]
+
+
+def boolean_query_sql(q, text_expr):
+    """Boolean keyword query -> (sql, params, words). Precedence NOT > AND > OR;
+    adjacent terms are ANDed; broken syntax degrades gracefully (never raises)."""
+    toks = _bool_tokens(q)
+    pos = [0]
+    words = []
+
+    def peek():
+        return toks[pos[0]] if pos[0] < len(toks) else None
+
+    def take():
+        pos[0] += 1
+        return toks[pos[0] - 1]
+
+    def factor():
+        tk = peek()
+        if tk is None:
+            return None
+        if tk == 'NOT':
+            take()
+            f = factor()
+            return None if f is None else ('NOT (' + f[0] + ')', f[1])
+        if tk == '(':
+            take()
+            ex = expr()
+            if peek() == ')':
+                take()
+            return None if ex is None else ('(' + ex[0] + ')', ex[1])
+        if isinstance(tk, tuple):
+            take()
+            w = tk[1].replace('%', '').replace('_', ' ')
+            if not w.strip():
+                return None
+            words.append(w)
+            return (text_expr + ' LIKE ?', ['%' + w + '%'])
+        take()          # stray AND / OR / ')' -> skip
+        return factor()
+
+    def term():
+        parts = []
+        while True:
+            tk = peek()
+            if tk is None or tk in ('OR', ')'):
+                break
+            if tk == 'AND':
+                take(); continue
+            f = factor()
+            if f is not None:
+                parts.append(f)
+        if not parts:
+            return None
+        return (' AND '.join(p[0] for p in parts), [x for p in parts for x in p[1]])
+
+    def expr():
+        parts = []
+        while True:
+            tt = term()
+            if tt is not None:
+                parts.append(tt)
+            if peek() == 'OR':
+                take(); continue
+            if peek() == ')' and pos[0] < len(toks):
+                return _join(parts)
+            if peek() is None:
+                return _join(parts)
+            take()      # unexpected token, keep going
+
+    def _join(parts):
+        if not parts:
+            return None
+        if len(parts) == 1:
+            return parts[0]
+        return ('(' + ' OR '.join('(' + p[0] + ')' for p in parts) + ')', [x for p in parts for x in p[1]])
+
+    out = None
+    while pos[0] < len(toks):
+        r = expr()
+        if r is not None:
+            out = r if out is None else ('(' + out[0] + ') AND (' + r[0] + ')', out[1] + r[1])
+        if pos[0] < len(toks):
+            take()          # unbalanced ')'
+    if out is None:
+        return '', [], []
+    return out[0], out[1], words
+
+
+def _num_arg(name, kind=float):
+    v = request.args.get(name, '')
+    if v in ('', None):
+        return None
+    try:
+        return kind(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _talent_where():
+    """WHERE fragment + params for the Talent filters in request.args."""
+    oid = effective_company_id()
+    where = ['c.owner_id = ?']
+    params = [oid]
+    sc, sp = _cs('c.mandate_id')
+    q = (request.args.get('q') or '').strip()
+    if q:
+        bsql, bpar, _w = boolean_query_sql(q, _TALENT_TEXT)
+        if bsql:
+            where.append('(' + bsql + ')'); params += bpar
+    for arg, col in (('company', 'c.company'), ('location', 'c.location')):
+        v = (request.args.get(arg) or '').strip().lower()
+        if v:
+            # "pune, mumbai" = either city
+            opts = [x.strip() for x in v.split(',') if x.strip()][:10]
+            where.append('(' + ' OR '.join("LOWER(COALESCE(%s,'')) LIKE ?" % col for _ in opts) + ')')
+            params += ['%' + x + '%' for x in opts]
+    ph = re.sub(r'\D', '', request.args.get('phone') or '')
+    if ph:
+        ph = ph[-10:]
+        where.append("REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone,''),' ',''),'-',''),'+',''),'(',''),')','') LIKE ?")
+        params.append('%' + ph + '%')
+    skills = [s.strip().lower() for s in re.split(r'[,;]', request.args.get('skills') or '') if s.strip()][:12]
+    if skills:
+        mode_any = (request.args.get('skills_mode') or '') == 'any'
+        frag = (' OR ' if mode_any else ' AND ').join(_TALENT_SKILLS + ' LIKE ?' for _ in skills)
+        where.append('(' + frag + ')'); params += ['%' + s + '%' for s in skills]
+    for arg, col, kind, op in (('ctc_min', 'c.ctc_current', float, '>='), ('ctc_max', 'c.ctc_current', float, '<='),
+                               ('exp_min', 'c.experience', float, '>='), ('exp_max', 'c.experience', float, '<='),
+                               ('notice', 'c.notice_period', int, '<=')):
+        v = _num_arg(arg, kind)
+        if v is not None:
+            where.append('COALESCE(%s,0) %s ?' % (col, op)); params.append(v)
+    stages = [s for s in (request.args.get('stage') or '').split('|') if s.strip()][:20]
+    if stages:
+        where.append('c.stage IN (%s)' % ','.join('?' * len(stages))); params += stages
+    job = (request.args.get('job') or '').strip()
+    if job == 'central':
+        where.append("COALESCE(m.status,'')='central'")
+    elif job == 'jobs':
+        where.append("COALESCE(m.status,'')!='central'")
+    elif job.isdigit():
+        where.append('c.mandate_id = ?'); params.append(int(job))
+    src = (request.args.get('source') or '').strip()
+    if src:
+        where.append("COALESCE(c.source_channel,'') = ?"); params.append('' if src == '__none__' else src)
+    cv = request.args.get('has_cv') or ''
+    if cv == '1':
+        where.append("COALESCE(c.cv_path,'') != ''")
+    elif cv == '0':
+        where.append("COALESCE(c.cv_path,'') = ''")
+    days = _num_arg('added_days', int)
+    if days:
+        since = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime('%Y-%m-%d')
+        where.append("COALESCE(c.created_at,'') >= ?"); params.append(since)
+    ids = [int(x) for x in (request.args.get('ids') or '').split(',') if x.strip().isdigit()][:2000]
+    if ids:
+        where.append('c.id IN (%s)' % ','.join('?' * len(ids))); params += ids
+    return ' AND '.join(where) + (sc or ''), params + (sp or [])
+
+
+_TALENT_SORTS = {'name': 'c.name', 'location': 'c.location', 'experience': 'c.experience',
+                 'ctc_current': 'c.ctc_current', 'ctc_expected': 'c.ctc_expected', 'stage': 'c.stage',
+                 'job': 'm.role', 'created_at': 'c.created_at', 'notice': 'c.notice_period',
+                 'updated_at': 'c.updated_at', 'company': 'c.company'}
+_TALENT_NUM = ('experience', 'ctc_current', 'ctc_expected', 'notice')
+
+
 @app.route('/api/central-db/search')
 @login_required
 def central_search():
-    q        = request.args.get('q', '').strip().lower()
-    company  = request.args.get('company', '').strip().lower()
-    location = request.args.get('location', '').strip().lower()
-    phone    = request.args.get('phone', '').strip()
-    ctc_min  = request.args.get('ctc_min', '')
-    ctc_max  = request.args.get('ctc_max', '')
-    exp_min  = request.args.get('exp_min', '')
-    exp_max  = request.args.get('exp_max', '')
-    notice   = request.args.get('notice', '')
-    page     = int(request.args.get('page', 1))
-    per_page = 30
-
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        page = 1
+    try:
+        per_page = max(10, min(int(request.args.get('per_page', 30)), 100))
+    except ValueError:
+        per_page = 30
+    skey = request.args.get('sort', '')
+    col = _TALENT_SORTS.get(skey)
+    sort_desc = (request.args.get('dir', 'desc') or 'desc').lower() != 'asc'
+    where, params = _talent_where()
+    base = 'FROM candidates c LEFT JOIN mandates m ON c.mandate_id = m.id WHERE ' + where
+    # Phase D: one row per PERSON (their records on several jobs are linked by
+    # copied_from). Among the records that match the filters, the most recently
+    # worked one is shown; the others are listed in "jobs".
+    pkey = 'COALESCE(NULLIF(c.copied_from,0), c.id)'
+    tcol = {'c.name': 't.name', 'c.location': 't.location', 'c.experience': 't.experience',
+            'c.ctc_current': 't.ctc_current', 'c.ctc_expected': 't.ctc_expected', 'c.stage': 't.stage',
+            'm.role': 't.mandate_role', 'c.created_at': 't.created_at', 'c.notice_period': 't.notice_period',
+            'c.updated_at': 't.updated_at', 'c.company': 't.company'}.get(col or '', '')
+    if tcol:
+        # unknown / empty values always go last, whichever way you sort
+        empty = ('COALESCE(%s,0)=0' % tcol) if skey in _TALENT_NUM else ("COALESCE(%s,'')=''" % tcol)
+        order = '%s, %s %s, t.id DESC' % (empty, (tcol if skey in _TALENT_NUM else 'LOWER(%s)' % tcol),
+                                          'DESC' if sort_desc else 'ASC')
+    else:
+        order = 't.created_at DESC, t.id DESC'
     conn = get_db()
-    # TENANT ISOLATION: only this company's candidates. owner_id stores the
-    # tenant (company) id, so this scopes the Central Database to the current
-    # agency. Without this filter, agencies would see each other's candidates.
-    # Recruiter sub-accounts: the Central Database pool + their own mandates.
-    rows = conn.execute(
-        'SELECT c.*, m.role as mandate_role, m.client as mandate_client '
-        'FROM candidates c LEFT JOIN mandates m ON c.mandate_id = m.id '
-        'WHERE c.owner_id = ? ' + _cs('c.mandate_id')[0] + ' '
-        'ORDER BY c.created_at DESC',
-        [effective_company_id()] + _cs('c.mandate_id')[1]
-    ).fetchall()
-    conn.close()
-
-    results = []
+    try:
+        total = conn.execute('SELECT COUNT(DISTINCT ' + pkey + ') n ' + base, params).fetchone()['n']
+        rows = conn.execute('SELECT * FROM (SELECT c.*, m.role AS mandate_role, m.client AS mandate_client, '
+                            'm.status AS mandate_status, ' + pkey + ' AS person_key, '
+                            'ROW_NUMBER() OVER (PARTITION BY ' + pkey + ' ORDER BY c.updated_at DESC, c.id DESC) AS _rn '
+                            + base + ') t WHERE t._rn=1 ORDER BY ' + order + ' LIMIT ? OFFSET ?',
+                            params + [per_page, (page - 1) * per_page]).fetchall()
+        others = _talent_other_jobs(conn, [r['person_key'] for r in rows])
+    finally:
+        conn.close()
+    out = []
     for r in rows:
-        d = _cand_public(r)   # drop embedding / embedding_text / embedding_vec (not needed by UI)
-        # Apply filters
-        if q:
-            searchable = ' '.join([
-                str(d.get('name') or ''),
-                str(d.get('company') or ''),
-                str(d.get('designation') or ''),
-                str(d.get('key_skills') or ''),
-                str(d.get('career_summary') or ''),
-                str(d.get('location') or ''),
-                str(d.get('industry_background') or ''),
-                str(d.get('email') or ''),
-                str(d.get('phone') or ''),
-            ]).lower()
-            if q not in searchable: continue
-        if company and company not in (d.get('company') or '').lower(): continue
-        if location and location not in (d.get('location') or '').lower(): continue
-        if phone and phone not in (d.get('phone') or ''): continue
-        if ctc_min:
-            try:
-                if (d.get('ctc_current') or 0) < float(ctc_min): continue
-            except: pass
-        if ctc_max:
-            try:
-                if (d.get('ctc_current') or 0) > float(ctc_max): continue
-            except: pass
-        if exp_min:
-            try:
-                if (d.get('experience') or 0) < float(exp_min): continue
-            except: pass
-        if exp_max:
-            try:
-                if (d.get('experience') or 0) > float(exp_max): continue
-            except: pass
-        if notice:
-            try:
-                if (d.get('notice_period') or 0) > int(notice): continue
-            except: pass
+        d = _cand_public(r)
         try: d['key_skills'] = json.loads(d['key_skills'] or '[]')
-        except: d['key_skills'] = []
-        results.append(d)
+        except Exception: d['key_skills'] = []
+        try: d['status_tags'] = json.loads(d.get('status_tags') or '[]')
+        except Exception: d['status_tags'] = []
+        d['central'] = (d.get('mandate_status') == 'central')
+        if d['central']:
+            d['mandate_role'] = None; d['mandate_client'] = None
+        d.pop('_rn', None)
+        d['other_jobs'] = [o for o in others.get(d['person_key'], []) if o['id'] != d['id']]
+        out.append(d)
+    return jsonify({'ok': True, 'total': total, 'page': page, 'per_page': per_page, 'candidates': out,
+                    'sort': skey if col else 'created_at', 'dir': 'desc' if sort_desc else 'asc'})
 
-    total = len(results)
-    start = (page - 1) * per_page
-    paginated = results[start:start + per_page]
-    return jsonify({'ok': True, 'total': total, 'page': page, 'candidates': paginated})
+
+def _talent_other_jobs(conn, keys):
+    """person_key -> [{id, mandate_id, role, client, stage, central}] the caller may see."""
+    keys = [int(k) for k in set(keys) if k]
+    if not keys:
+        return {}
+    sc, sp = _cs('c.mandate_id')
+    inn = ','.join('?' * len(keys))
+    out = {}
+    for r in conn.execute('SELECT c.id, c.mandate_id, c.stage, COALESCE(NULLIF(c.copied_from,0), c.id) AS pk, '
+                          'm.role, m.client, m.status FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id '
+                          'WHERE c.owner_id=? AND (c.id IN (%s) OR c.copied_from IN (%s))%s ORDER BY c.updated_at DESC'
+                          % (inn, inn, sc), [effective_company_id()] + keys + keys + sp).fetchall():
+        central = (r['status'] == 'central')
+        out.setdefault(r['pk'], []).append({'id': r['id'], 'mandate_id': r['mandate_id'], 'stage': r['stage'] or '',
+                                            'role': 'Central Database' if central else (r['role'] or ''),
+                                            'client': '' if central else (r['client'] or ''), 'central': central})
+    return out
+
+
+def _unlinked_duplicate_groups(conn, oid):
+    """Groups of candidate records that are the same person by email or phone but
+    are not linked yet (made before phase D). Union-find over email + phone."""
+    rows = conn.execute("SELECT id, email, phone, COALESCE(copied_from,0) AS cf FROM candidates WHERE owner_id=?",
+                        (oid,)).fetchall()
+    parent = {}
+
+    def find(x):
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+    by_key = {}
+    for r in rows:
+        find(r['id'])
+        if r['cf']:
+            union(r['id'], r['cf'])          # existing links stay together
+        em = (r['email'] or '').strip().lower()
+        ph = _wa_norm_phone10(r['phone'] or '')
+        for k in (('e', em) if '@' in em else None, ('p', ph) if len(ph) == 10 else None):
+            if k:
+                if k in by_key:
+                    union(r['id'], by_key[k])
+                else:
+                    by_key[k] = r['id']
+    groups = {}
+    for r in rows:
+        groups.setdefault(find(r['id']), []).append(r)
+    out = []
+    for root, members in groups.items():
+        if len(members) < 2:
+            continue
+        # needs work if any member is not already pointing at this root
+        if any((m['id'] != root and m['cf'] != root) or (m['id'] == root and m['cf']) for m in members):
+            out.append((root, [m['id'] for m in members]))
+    return out
+
+
+@app.route('/api/central-db/link-duplicates', methods=['GET', 'POST'])
+@login_required
+def central_link_duplicates():
+    """Admin: link old duplicate profiles (same email or phone) as ONE person, so
+    they show once in Talent and the profile lists every job. Nothing is merged
+    or deleted — each record keeps its own job, stage and history."""
+    try:
+        from modules.access import scoped_user
+        if scoped_user():
+            return jsonify({'error': 'Only an admin can do this.'}), 403
+    except ImportError:
+        pass
+    oid = effective_company_id()
+    conn = get_db()
+    try:
+        groups = _unlinked_duplicate_groups(conn, oid)
+        if request.method == 'GET':
+            sample = []
+            for root, ids in groups[:5]:
+                nm = conn.execute('SELECT name FROM candidates WHERE id=?', (root,)).fetchone()
+                sample.append({'name': nm['name'] if nm else '', 'records': len(ids)})
+            return jsonify({'ok': True, 'people': len(groups), 'records': sum(len(i) for _r, i in groups),
+                            'sample': sample})
+        n = 0
+        for root, ids in groups:
+            conn.execute('UPDATE candidates SET copied_from=0 WHERE id=?', (root,))
+            others = [i for i in ids if i != root]
+            conn.execute('UPDATE candidates SET copied_from=? WHERE id IN (%s)' % ','.join('?' * len(others)),
+                         [root] + others)
+            n += 1
+        conn.commit()
+        return jsonify({'ok': True, 'linked_people': n})
+    finally:
+        conn.close()
+
+
+@app.route('/api/central-db/facets')
+@login_required
+def central_facets():
+    """Values for the Talent filter menus: stages, jobs and sources in use."""
+    oid = effective_company_id()
+    sc, sp = _cs('c.mandate_id')
+    conn = get_db()
+    try:
+        stages = [dict(r) for r in conn.execute(
+            "SELECT c.stage AS value, COUNT(*) n FROM candidates c WHERE c.owner_id=? AND COALESCE(c.stage,'')!=''"
+            + sc + " GROUP BY c.stage ORDER BY n DESC", [oid] + sp).fetchall()]
+        jobs = [dict(r) for r in conn.execute(
+            "SELECT m.id, m.role, m.client, m.status, COUNT(c.id) n FROM candidates c JOIN mandates m ON m.id=c.mandate_id "
+            "WHERE c.owner_id=? AND COALESCE(m.status,'')!='central'" + sc +
+            " GROUP BY m.id ORDER BY (m.status='active') DESC, n DESC", [oid] + sp).fetchall()]
+        sources = [dict(r) for r in conn.execute(
+            "SELECT COALESCE(c.source_channel,'') AS value, COUNT(*) n FROM candidates c WHERE c.owner_id=?"
+            + sc + " GROUP BY COALESCE(c.source_channel,'') ORDER BY n DESC", [oid] + sp).fetchall()]
+        pool = conn.execute("SELECT COUNT(*) n FROM candidates c JOIN mandates m ON m.id=c.mandate_id "
+                            "WHERE c.owner_id=? AND m.status='central'" + sc, [oid] + sp).fetchone()['n']
+    finally:
+        conn.close()
+    labels = {'naukri': 'Naukri extension', 'referral': 'Employee referral', 'careers': 'Careers page',
+              'internal': 'Internal mobility', 'orgmap': 'Org Map', 'bulk': 'Bulk paste', 'manual': 'Manual add',
+              'email': 'Email (CV received)', '': 'Not recorded'}
+    for s in sources:
+        s['label'] = labels.get(s['value'], s['value'])
+    return jsonify({'ok': True, 'stages': stages, 'jobs': jobs, 'sources': sources, 'pool': pool})
+
+
+def _talent_ids(d):
+    ids = []
+    for x in (d.get('ids') or [])[:500]:
+        try: ids.append(int(x))
+        except (TypeError, ValueError): pass
+    return ids
+
+
+@app.route('/api/central-db/bulk-action', methods=['POST'])
+@login_required
+def central_bulk_action():
+    """Act on several Talent rows at once.
+      add_to_job {mandate_id}  — Central Database candidates go onto the job (starting
+                                 at Screening). People already working on another job
+                                 are left where they are and reported back, so a bulk
+                                 action never pulls someone off a live pipeline.
+      tag {tag}                — add a status tag
+      untag {tag}              — remove it
+    Recruiters only touch candidates they can see and jobs they are on."""
+    d = request.json or {}
+    act = d.get('action')
+    ids = _talent_ids(d)
+    if not ids:
+        return jsonify({'error': 'Nothing selected'}), 400
+    oid = effective_company_id()
+    conn = get_db()
+    try:
+        from modules.access import can_see_candidate, can_see_mandate
+    except ImportError:
+        can_see_candidate = can_see_mandate = lambda *a, **k: True
+    try:
+        rows = conn.execute('SELECT c.id, c.name, c.stage, c.mandate_id, c.status_tags, m.status AS mst, m.role AS mrole '
+                            'FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id WHERE c.owner_id=? AND c.id IN (%s)'
+                            % ','.join('?' * len(ids)), [oid] + ids).fetchall()
+        rows = [r for r in rows if can_see_candidate(conn, r['id'])]
+        if act == 'add_to_job':
+            mid = int(d.get('mandate_id') or 0)
+            tgt = conn.execute('SELECT id, role, client, status FROM mandates WHERE id=? AND owner_id=?',
+                               (mid, oid)).fetchone()
+            if not tgt or (tgt['status'] or '') == 'central':
+                return jsonify({'error': 'Job not found'}), 404
+            if not can_see_mandate(conn, mid, write=True):
+                return jsonify({'error': 'You are not assigned to this job'}), 403
+            # Phase D: pool people move onto the job; people on another job are
+            # COPIED (they stay there too), linked as one person.
+            from modules.matching import place_in_job, load_src, _people_in_mandate
+            in_keys, in_phones = _people_in_mandate(conn, mid, oid)
+            try:
+                central_mid = int(get_or_create_central_mandate() or 0)
+            except Exception:
+                central_mid = 0
+            moved, copied, already = [], [], []
+            for r in rows:
+                src = load_src(conn, oid, r['id'])
+                how, new_id = place_in_job(conn, src, mid, 'Picked from Talent', central_mid, in_keys, in_phones)
+                if how == 'already':
+                    already.append(r['name'])
+                else:
+                    (moved if how == 'moved' else copied).append(new_id)
+            conn.commit()
+            for cid in moved + copied:
+                try: log_candidate_event(cid, 'note', 'Added to job: %s (%s)' % (tgt['role'], tgt['client']))
+                except Exception: pass
+            return jsonify({'ok': True, 'moved': len(moved), 'copied': len(copied), 'added': len(moved) + len(copied),
+                            'already': already, 'elsewhere': [], 'job': tgt['role']})
+        if act in ('tag', 'untag'):
+            tag = str(d.get('tag') or '').strip()[:60]
+            if not tag:
+                return jsonify({'error': 'Tag required'}), 400
+            # a tag describes the person: put it on their records on every job you can see
+            from modules.matching import person_records
+            seen, recs = set(), []
+            for r in rows:
+                for pr in person_records(conn, oid, r['id']):
+                    if pr['id'] not in seen and can_see_candidate(conn, pr['id']):
+                        seen.add(pr['id'])
+                        recs.append(conn.execute('SELECT id, status_tags FROM candidates WHERE id=?', (pr['id'],)).fetchone())
+            rows = recs
+            n = 0
+            for r in rows:
+                try: cur = [str(x) for x in json.loads(r['status_tags'] or '[]')]
+                except Exception: cur = []
+                low = [x.lower() for x in cur]
+                if act == 'tag' and tag.lower() not in low:
+                    cur.append(tag)
+                elif act == 'untag' and tag.lower() in low:
+                    cur = [x for x in cur if x.lower() != tag.lower()]
+                else:
+                    continue
+                conn.execute('UPDATE candidates SET status_tags=?, updated_at=? WHERE id=?', (json.dumps(cur), ts(), r['id']))
+                n += 1
+            conn.commit()
+            return jsonify({'ok': True, 'changed': n})
+        return jsonify({'error': 'Unknown action'}), 400
+    finally:
+        conn.close()
+
+
+@app.route('/api/central-db/export')
+@login_required
+def central_export():
+    """CSV of the current Talent search (same filters), or of ?ids=. Admins only —
+    recruiters cannot take the database out (modules/access.py has /api/export too)."""
+    try:
+        from modules.access import scoped_user
+        if scoped_user():
+            return jsonify({'error': 'Only an admin can export.'}), 403
+    except ImportError:
+        pass
+    import csv
+    where, params = _talent_where()
+    conn = get_db()
+    rows = conn.execute('SELECT c.name, c.phone, c.email, c.company, c.designation, c.experience, c.ctc_current, '
+                        'c.ctc_expected, c.notice_period, c.location, c.stage, c.key_skills, c.status_tags, '
+                        "CASE WHEN m.status='central' THEN 'Central Database' ELSE m.role END AS job, m.client, "
+                        'c.source_channel, c.created_at FROM candidates c LEFT JOIN mandates m ON c.mandate_id=m.id '
+                        'WHERE ' + where + ' ORDER BY c.created_at DESC LIMIT 20000', params).fetchall()
+    conn.close()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    head = ['Name', 'Phone', 'Email', 'Company', 'Designation', 'Experience (yrs)', 'Current CTC (LPA)',
+            'Expected CTC (LPA)', 'Notice (days)', 'Location', 'Stage', 'Skills', 'Tags', 'Job', 'Client',
+            'Source', 'Added']
+    w.writerow(head)
+    for r in rows:
+        vals = []
+        for k in r.keys():
+            v = r[k]
+            if k in ('key_skills', 'status_tags'):
+                try: v = ', '.join(str(x) for x in json.loads(v or '[]'))
+                except Exception: pass
+            v = '' if v is None else str(v)
+            if v[:1] in ('=', '+', '-', '@'):
+                v = "'" + v          # no spreadsheet formulas from candidate data
+            vals.append(v)
+        w.writerow(vals)
+    from flask import Response
+    return Response('﻿' + buf.getvalue(), mimetype='text/csv',
+                    headers={'Content-Disposition': 'attachment; filename="talent-%s.csv"' % datetime.date.today().isoformat()})
+
 
 @app.route('/api/central-db/add', methods=['POST'])
 @login_required
@@ -21679,75 +23056,109 @@ def submit_form():
 @app.route('/api/submissions')
 @login_required
 def get_submissions():
-    q        = request.args.get('q', '').strip().lower()
+    """Applications from the public form / careers page. Filtered and paged in SQL
+    (Phase C); each row says which job it came for, through which channel, and
+    whether this person is already in the database."""
+    q        = request.args.get('q', '').strip()
     sf       = request.args.get('status', '')
     exp_r    = request.args.get('exp', '')      # e.g. "3-6"
     ctc_r    = request.args.get('ctc', '')      # e.g. "10-15"
     notice_r = request.args.get('notice', '')   # e.g. "1-30"
     loc_f    = request.args.get('loc', '').strip().lower()
-    page     = int(request.args.get('page', 1)); per = 30
+    job_f    = request.args.get('job', '').strip()
+    src_f    = request.args.get('source', '').strip()
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        page = 1
+    per = 30
+    oid = effective_company_id()
+    sc, sp = _ms('s.mandate_id')
+    where = ['s.owner_id=?']; params = [oid]
 
-    conn  = get_db()
-    rows  = conn.execute('SELECT * FROM submissions WHERE owner_id=?' + _ms('mandate_id')[0] +
-                         ' ORDER BY created_at DESC', [effective_company_id()] + _ms('mandate_id')[1]).fetchall()
-    conn.close()
+    def rng(s_):
+        try:
+            lo, hi = s_.split('-'); return float(lo), float(hi)
+        except Exception:
+            return None, None
+    if sf:
+        where.append('s.status=?'); params.append(sf)
+    for val, col in ((exp_r, 's.experience'), (ctc_r, 's.ctc_current'), (notice_r, 's.notice_period')):
+        lo, hi = rng(val) if val else (None, None)
+        if lo is not None:
+            where.append('COALESCE(%s,0) BETWEEN ? AND ?' % col); params += [lo, hi]
+    if loc_f:
+        where.append("LOWER(COALESCE(s.location,'')) LIKE ?"); params.append('%' + loc_f + '%')
+    if job_f == 'none':
+        where.append('COALESCE(s.mandate_id,0)=0')
+    elif job_f.isdigit():
+        where.append('s.mandate_id=?'); params.append(int(job_f))
+    if src_f:
+        where.append("COALESCE(s.source_channel,'')=?"); params.append('' if src_f == '__none__' else src_f)
+    if q:
+        txt = ("LOWER(COALESCE(s.name,'')||' '||COALESCE(s.company,'')||' '||COALESCE(s.designation,'')||' '||"
+               "COALESCE(s.location,'')||' '||COALESCE(s.email,'')||' '||COALESCE(s.phone,'')||' '||COALESCE(s.key_skills,''))")
+        bsql, bpar, _w = boolean_query_sql(q, txt)
+        if bsql:
+            where.append('(' + bsql + ')'); params += bpar
+    base = ('FROM submissions s LEFT JOIN mandates m ON m.id=s.mandate_id AND m.owner_id=s.owner_id WHERE '
+            + ' AND '.join(where) + sc)
+    conn = get_db()
+    try:
+        total = conn.execute('SELECT COUNT(*) n ' + base, params + sp).fetchone()['n']
+        rows = conn.execute('SELECT s.*, m.role AS mandate_role, m.client AS mandate_client ' + base +
+                            ' ORDER BY s.created_at DESC, s.id DESC LIMIT ? OFFSET ?',
+                            params + sp + [per, (page - 1) * per]).fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            try: d['key_skills'] = json.loads(d.get('key_skills') or '[]')
+            except Exception: d['key_skills'] = []
+            try: d['custom_fields'] = json.loads(d.get('custom_fields') or '{}')
+            except Exception: d['custom_fields'] = {}
+            ex = _existing_candidate(conn, oid, d.get('email'), d.get('phone'))
+            d['existing'] = ex
+            results.append(d)
+        jobs = [dict(x) for x in conn.execute(
+            'SELECT m.id, m.role, m.client, COUNT(*) n FROM submissions s JOIN mandates m ON m.id=s.mandate_id '
+            'WHERE s.owner_id=?' + sc + ' GROUP BY m.id ORDER BY n DESC', [oid] + sp).fetchall()]
+        sources = [x['v'] for x in conn.execute(
+            "SELECT DISTINCT COALESCE(s.source_channel,'') v FROM submissions s WHERE s.owner_id=?" + sc,
+            [oid] + sp).fetchall()]
+    finally:
+        conn.close()
+    return jsonify({'ok': True, 'total': total, 'page': page, 'submissions': results,
+                    'jobs': jobs, 'sources': sources})
 
-    def parse_range(s):
-        try: lo, hi = s.split('-'); return float(lo), float(hi)
-        except: return None, None
 
-    results = []
-    for r in rows:
-        d = dict(r)
-        try: d['key_skills'] = json.loads(d.get('key_skills') or '[]')
-        except: d['key_skills'] = []
-        try: d['custom_fields'] = json.loads(d.get('custom_fields') or '{}')
-        except: d['custom_fields'] = {}
+def _existing_candidate(conn, oid, email_addr, phone):
+    """{id,name,job,mandate_id,central} of someone already in the database with the
+    same email or phone, else None. Respects recruiter scope for what is shown."""
+    em = (email_addr or '').strip().lower()
+    ph = _wa_norm_phone10(phone or '')
+    row = None
+    if em:
+        row = conn.execute("SELECT c.id,c.name,c.mandate_id,m.role,m.status FROM candidates c LEFT JOIN mandates m "
+                           "ON m.id=c.mandate_id WHERE c.owner_id=? AND LOWER(TRIM(COALESCE(c.email,'')))=? "
+                           "ORDER BY c.id LIMIT 1", (oid, em)).fetchone()
+    if not row and len(ph) == 10:
+        for r in conn.execute("SELECT c.id,c.name,c.mandate_id,c.phone,m.role,m.status FROM candidates c LEFT JOIN "
+                              "mandates m ON m.id=c.mandate_id WHERE c.owner_id=? AND COALESCE(c.phone,'') LIKE ?",
+                              (oid, '%' + ph[-4:] + '%')).fetchall():
+            if _wa_norm_phone10(r['phone']) == ph:
+                row = r; break
+    if not row:
+        return None
+    try:
+        from modules.access import can_see_candidate
+        visible = bool(can_see_candidate(conn, row['id']))
+    except ImportError:
+        visible = True
+    central = (row['status'] == 'central')
+    return {'id': row['id'] if visible else None, 'name': row['name'] if visible else None,
+            'mandate_id': row['mandate_id'] if visible else None, 'central': central,
+            'job': ('Central Database' if central else row['role']) if visible else None, 'visible': visible}
 
-        # Status filter
-        if sf and d.get('status') != sf: continue
-
-        # Experience filter
-        if exp_r:
-            lo, hi = parse_range(exp_r)
-            if lo is not None:
-                exp = float(d.get('experience') or 0)
-                if not (lo <= exp <= hi): continue
-
-        # CTC filter
-        if ctc_r:
-            lo, hi = parse_range(ctc_r)
-            if lo is not None:
-                ctc = float(d.get('ctc_current') or 0)
-                if not (lo <= ctc <= hi): continue
-
-        # Notice period filter
-        if notice_r:
-            lo, hi = parse_range(notice_r)
-            if lo is not None:
-                notice = float(d.get('notice_period') or 0)
-                if not (lo <= notice <= hi): continue
-
-        # Location filter
-        if loc_f and loc_f not in (d.get('location') or '').lower(): continue
-
-        # Boolean text search
-        if q:
-            blob = ' '.join([d.get('name',''), d.get('company',''), d.get('designation',''),
-                             d.get('location',''), d.get('email',''),
-                             ' '.join(d.get('key_skills',[]))]).lower()
-            if ' or ' in q:
-                if not any(t.strip() in blob for t in q.split(' or ')): continue
-            elif ' and ' in q:
-                if not all(t.strip() in blob for t in q.split(' and ')): continue
-            else:
-                if q not in blob: continue
-
-        results.append(d)
-
-    total = len(results)
-    return jsonify({'ok': True, 'total': total, 'page': page,
-                    'submissions': results[(page-1)*per : page*per]})
 
 @app.route('/api/submissions/<int:sid>', methods=['PUT'])
 @login_required
@@ -21766,7 +23177,9 @@ def update_submission(sid):
 @login_required
 def add_submission_to_pipeline(sid):
     d   = request.json or {}
-    mid = d.get('mandate_id')
+    # 0 / "central" = park them in the Central Database (Phase C picker)
+    to_central = str(d.get('mandate_id', '')).strip() in ('0', 'central')
+    mid = get_or_create_central_mandate() if to_central else d.get('mandate_id')
     if not mid: return jsonify({'error': 'mandate_id required'}), 400
     conn = get_db()
     if not _tenant_owns_submission(conn, sid):
@@ -21775,6 +23188,30 @@ def add_submission_to_pipeline(sid):
         conn.close(); return jsonify({'error': 'Mandate not found'}), 404
     sub  = conn.execute('SELECT * FROM submissions WHERE id=?', (sid,)).fetchone()
     if not sub: conn.close(); return jsonify({'error': 'Not found'}), 404
+    # Same person already in the database: say so instead of silently duplicating.
+    _ex = _existing_candidate(conn, effective_company_id(), sub['email'], sub['phone'])
+    if _ex and _ex.get('visible') and d.get('use_existing'):
+        # Phase D: put the person we already know on this job (pool -> moved,
+        # another job -> linked copy) instead of making a second profile.
+        from modules.matching import place_in_job, load_src
+        src = load_src(conn, effective_company_id(), _ex['id'])
+        if to_central:
+            how, new_id = 'already', _ex['id']
+        else:
+            how, new_id = place_in_job(conn, src, mid, 'Applied again through the application form')
+        if sub['cv_path']:
+            # their newest CV, if the profile has none yet
+            conn.execute("UPDATE candidates SET cv_path=?, cv_original_name=? WHERE id=? AND COALESCE(cv_path,'')=''",
+                         (sub['cv_path'], sub['cv_original_name'], new_id))
+        conn.execute('UPDATE submissions SET status=? WHERE id=?', ('added_to_pipeline', sid))
+        conn.commit(); conn.close()
+        return jsonify({'ok': True, 'candidate_id': new_id, 'mandate_id': (src['mandate_id'] if to_central else mid),
+                        'central': bool(to_central and _ex.get('central')), 'existing': True, 'status': how})
+    if _ex and not d.get('force_new'):
+        conn.close()
+        return jsonify({'error': 'Already in your database' + ((': ' + _ex['name'] + ' (' + (_ex['job'] or '') + ')')
+                                                               if _ex.get('visible') else ' (on a job you are not on)'),
+                        'code': 'duplicate', 'existing': _ex}), 409
     c = conn.cursor()
     c.execute('INSERT INTO candidates (owner_id,mandate_id,name,company,designation,experience,ctc_current,'
               'ctc_expected,notice_period,location,phone,email,key_skills,screening_decision,'
@@ -21783,12 +23220,14 @@ def add_submission_to_pipeline(sid):
         (effective_company_id(), mid, sub['name'], sub['company'], sub['designation'], sub['experience'],
          sub['ctc_current'], sub['ctc_expected'], sub['notice_period'], sub['location'],
          sub['phone'], sub['email'], sub['key_skills'],
-         'worth_opening', 'Added from submission form', 'Screening',
+         'worth_opening', 'Added from submission form', (CENTRAL_STAGE if to_central else 'Screening'),
          sub['cv_path'], sub['cv_original_name'], ts(), ts()))
     cid = c.lastrowid
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) '
-              'VALUES (?,?,?,?,?)', (cid, '', 'Screening', 'Added from submission form', ts()))
+              'VALUES (?,?,?,?,?)', (cid, '', (CENTRAL_STAGE if to_central else 'Screening'),
+                                     'Added from submission form', ts()))
     conn.execute('UPDATE submissions SET status=? WHERE id=?', ('added_to_pipeline', sid))
+    _link_to_known_person(conn, cid)
     # Keep the channel the applicant actually arrived through, rather than
     # letting them all read as generic inbound once they reach the pipeline.
     try:
@@ -21798,7 +23237,7 @@ def add_submission_to_pipeline(sid):
     except sqlite3.OperationalError:
         pass
     conn.commit(); conn.close()
-    return jsonify({'ok': True, 'candidate_id': cid})
+    return jsonify({'ok': True, 'candidate_id': cid, 'mandate_id': mid, 'central': to_central})
 
 @app.route('/api/form-config', methods=['GET', 'POST'])
 def form_config():
