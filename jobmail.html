@@ -62,6 +62,13 @@ tr.off td{opacity:.55}
 .preview .subj{font-weight:700;margin-bottom:8px}
 .mailopt{display:flex;flex-direction:column;gap:10px;margin:10px 0 14px}
 .mailopt textarea{min-height:70px;resize:vertical}
+.txed{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#FCFCFA;margin-bottom:14px}
+.txed summary{cursor:pointer;font-weight:700;color:var(--navy);font-size:13.5px}
+.txed label.f{margin-top:10px}
+.txed input[type=text],.txed textarea{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;width:100%}
+.txed textarea{min-height:84px;resize:vertical;line-height:1.45}
+.ph{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.ph button{border:1px dashed #B9B5AA;background:#fff;border-radius:12px;padding:2px 8px;font-size:11.5px;cursor:pointer;color:var(--navy)}
 .empty{text-align:center;color:var(--muted);padding:26px}
 .list-row{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid #EFEDE7;cursor:pointer}
 .list-row:hover{background:#FAF9F5}
@@ -310,6 +317,18 @@ tr.off td{opacity:.55}
         + '<label class="f" id="m-label-wrap"' + (C.show_client ? ' style="display:none"' : '') + '>When hidden, describe the client as<input type="text" id="m-label" maxlength="120" placeholder="one of our clients" value="' + esc(C.client_label || '') + '"></label>'
         + '<label class="chk"><input type="checkbox" id="m-ctc"' + (C.show_ctc ? ' checked' : '') + '> Show the CTC band</label>'
         + '<label class="f">Personal note (optional)<textarea id="m-note" maxlength="1200" placeholder="e.g. Immediate joiners preferred. Site-based role.">' + esc(C.note || '') + '</textarea></label></div>';
+      var T = C.text || {}, DT = C.text_defaults || {};
+      var edited = Object.keys(T).some(function(k){ return T[k]; });
+      function tv(k){ return T[k] || DT[k] || ''; }
+      html += '<details class="txed" id="txed"' + (edited || window._txOpen ? ' open' : '') + '><summary>✎ Edit the e-mail text' + (edited ? ' <span class="tag b">edited</span>' : '') + '</summary>'
+        + '<div class="sub" style="margin-top:6px">Change any wording. Words in {curly brackets} are filled in for each person — click one to insert it where your cursor is. The role details table and the two buttons stay as they are.</div>'
+        + '<label class="f">Subject<input type="text" data-tx="subject_tpl" maxlength="200" value="' + esc(tv('subject_tpl')) + '"></label>'
+        + '<label class="f">Opening (after "Hi {first_name},") — leave a blank line between paragraphs<textarea data-tx="intro_tpl" rows="4">' + esc(tv('intro_tpl')) + '</textarea></label>'
+        + '<label class="f">Question above the buttons<input type="text" data-tx="ask_tpl" maxlength="300" value="' + esc(tv('ask_tpl')) + '"></label>'
+        + '<label class="f">Line after the buttons<textarea data-tx="after_tpl" rows="2">' + esc(tv('after_tpl')) + '</textarea></label>'
+        + '<div class="ph">' + (C.placeholders || []).map(function(p){ return '<button type="button" data-ph="' + esc(p.tag) + '" title="' + esc(p.means) + '">' + esc(p.tag) + '</button>'; }).join('') + '</div>'
+        + '<div class="row" style="margin-top:10px;justify-content:space-between"><button class="btn sm" id="txreset">Reset to default text</button>'
+        + (CFG && CFG.is_admin ? '<button class="btn sm" id="txdefault" title="New job mails will start with this text">Save as default for future job mails</button>' : '') + '</div></details>';
     }
     html += '<div class="preview" id="pv">Loading preview…</div>';
     if (d) {
@@ -349,8 +368,10 @@ tr.off td{opacity:.55}
     if (!$('pv')) return;
     $('pv').innerHTML = r.ok ? '<div class="sub">To: ' + esc(r.name || '') + (r.to ? ' &lt;' + esc(r.to) + '&gt;' : ' (sample)') + '</div><div class="subj">' + esc(r.subject) + '</div>' + r.html : esc(r.error || 'No preview');
   }
+  var lastTx = null;
+  function txBody(){ var t = {}; document.querySelectorAll('[data-tx]').forEach(function(el){ t[el.dataset.tx] = el.value; }); return t; }
   async function saveMail(){
-    var body = {show_client: $('m-client').checked, show_ctc: $('m-ctc').checked, client_label: $('m-label').value, note: $('m-note').value};
+    var body = {show_client: $('m-client').checked, show_ctc: $('m-ctc').checked, client_label: $('m-label').value, note: $('m-note').value, text: txBody()};
     var r = await api('PUT', '/campaign/' + C.id, body);
     if (r.ok) { C = r.campaign; loadPreview(); }
   }
@@ -387,6 +408,27 @@ tr.off td{opacity:.55}
       $('m-client').onchange = function(){ $('m-label-wrap').style.display = this.checked ? 'none' : ''; saveMail(); };
       $('m-ctc').onchange = saveMail;
       ['m-label', 'm-note'].forEach(function(id){ $(id).oninput = function(){ clearTimeout(pvTimer); pvTimer = setTimeout(saveMail, 600); }; });
+      document.querySelectorAll('[data-tx]').forEach(function(el){
+        el.oninput = function(){ clearTimeout(pvTimer); pvTimer = setTimeout(saveMail, 700); };
+        el.onfocus = function(){ lastTx = el; };
+      });
+      $('txed').ontoggle = function(){ window._txOpen = this.open; };
+      document.querySelectorAll('[data-ph]').forEach(function(b){ b.onmousedown = function(e){ e.preventDefault(); }; b.onclick = function(){
+        var el = lastTx || document.querySelector('[data-tx="intro_tpl"]'), tag = b.dataset.ph;
+        var a = el.selectionStart == null ? el.value.length : el.selectionStart, z = el.selectionEnd == null ? a : el.selectionEnd;
+        el.value = el.value.slice(0, a) + tag + el.value.slice(z); el.focus(); el.selectionStart = el.selectionEnd = a + tag.length;
+        clearTimeout(pvTimer); pvTimer = setTimeout(saveMail, 300);
+      }; });
+      $('txreset').onclick = async function(){
+        if (!confirm('Put the original wording back for this job mail?')) return;
+        window._txOpen = true;
+        var r = await api('PUT', '/campaign/' + C.id, {reset_text: true}); if (r.ok) { C = r.campaign; paint(); }
+      };
+      if ($('txdefault')) $('txdefault').onclick = async function(){
+        await saveMail();
+        var r = await api('PUT', '/campaign/' + C.id, {save_text_as_default: true});
+        msg(r.ok ? '✓ Saved. Every new job mail will now start with this text (you can still change it per job).' : esc(r.error || 'Could not save'), r.ok ? 'note' : 'err');
+      };
     }
     if ($('test')) $('test').onclick = async function(){
       this.disabled = true; var r = await api('POST', '/campaign/' + C.id + '/test'); this.disabled = false;

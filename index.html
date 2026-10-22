@@ -25721,4 +25721,20 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
   hook();
 })();
 </script>
+<!-- ═══ /?go=<item>: the ☰ Menu on separate pages opens the app straight on a sidebar view ═══ -->
+<script id="app-nav-go">
+(function(){
+  var go = new URLSearchParams(location.search).get('go');
+  if (!go || !/^[a-z]+$/.test(go)) return;
+  try { history.replaceState(null, '', location.pathname + location.hash); } catch(e) {}
+  var tries = 0;
+  (function wait(){
+    var ready = (typeof S !== 'undefined') && S && S.currentUser;
+    var el = document.getElementById('sb-' + go);
+    var app = document.getElementById('app');
+    if (ready && el && app && app.style.display !== 'none') { el.click(); return; }
+    if (++tries < 60) setTimeout(wait, 250);
+  })();
+})();
+</script>
 </body></html>

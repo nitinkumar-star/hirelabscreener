@@ -64,6 +64,13 @@ td .m{color:var(--muted);font-size:12px}
 .tg .switch{width:36px;height:20px}.tg .switch::after{width:14px;height:14px}.tg .switch.on::after{left:19px}
 .preview{border:1px solid var(--line);border-radius:10px;padding:14px 16px;background:#FCFCFA;font-size:13.5px}
 .preview .subj{font-weight:700;margin-bottom:8px}
+#list{overflow-x:auto}
+.txed{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#FCFCFA;margin-top:12px}
+.txed label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);margin-top:8px}
+.txed input,.txed textarea{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;width:100%;font:inherit;color:var(--ink)}
+.txed textarea{min-height:150px;resize:vertical;line-height:1.45}
+.ph{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.ph button{border:1px dashed #B9B5AA;background:#fff;border-radius:12px;padding:2px 8px;font-size:11.5px;cursor:pointer;color:var(--navy)}
 .empty{text-align:center;color:var(--muted);padding:26px}
 .more{color:var(--muted);font-size:12px;margin-top:8px}
 @media(max-width:900px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.two{grid-template-columns:1fr}.set{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -104,7 +111,15 @@ td .m{color:var(--muted);font-size:12px}
 
   <div class="card">
     <div class="row" style="justify-content:space-between"><div><div class="h">E-mail preview</div><div class="sub">Exactly what a candidate receives (your signature is added at the bottom).</div></div>
-      <div class="tabs" style="margin:0"><button class="tab on" data-pk="job">Considered for a job</button><button class="tab" data-pk="pool">Central DB</button></div></div>
+      <div class="row"><div class="tabs" style="margin:0"><button class="tab on" data-pk="job">Considered for a job</button><button class="tab" data-pk="pool">Central DB</button><button class="tab" data-pk="reminder">Reminder</button></div>
+      <button class="btn" id="txbtn">✎ Edit text</button></div></div>
+    <div class="txed" id="txed" style="display:none">
+      <div class="sub">Edit the wording of the <b id="tx-which"></b> e-mail. Words in {curly brackets} are filled in for each person — click one to insert it. Leave a blank line between paragraphs. The "Update my profile" button, signature and unsubscribe line are added automatically.</div>
+      <label>Subject<input id="tx-subj" maxlength="200"></label>
+      <label>Text (after "Hi {first_name},")<textarea id="tx-body"></textarea></label>
+      <div class="ph" id="tx-ph"></div>
+      <div class="row" style="margin-top:10px;justify-content:space-between"><button class="btn" id="tx-reset">Reset to original</button><span class="sub" id="tx-saved"></span><button class="btn pri" id="tx-save">Save text</button></div>
+    </div>
     <div class="preview" id="preview" style="margin-top:12px">Loading…</div>
   </div>
 
@@ -213,7 +228,27 @@ td .m{color:var(--muted);font-size:12px}
     $('preview').innerHTML = r.ok ? '<div class="subj">Subject: ' + esc(r.subject) + '</div>' + r.html : esc(r.error || '');
   }
   document.querySelectorAll('[data-pk]').forEach(function(b){ b.onclick = function(){
-    pk = b.dataset.pk; document.querySelectorAll('[data-pk]').forEach(function(x){ x.classList.toggle('on', x === b); }); preview(); }; });
+    pk = b.dataset.pk; document.querySelectorAll('[data-pk]').forEach(function(x){ x.classList.toggle('on', x === b); }); preview(); fillText(); }; });
+
+  // ── editable e-mail text ──
+  var TX = null, lastTx = null, KIND_NAME = {job: '"considered for a job"', pool: '"Central DB"', reminder: 'reminder'};
+  async function loadText(){ var r = await api('GET', '/text'); if (!r.ok) return; TX = r;
+    $('tx-ph').innerHTML = r.placeholders.map(function(p){ return '<button type="button" data-ph="' + esc(p.tag) + '" title="' + esc(p.means) + '">' + esc(p.tag) + '</button>'; }).join('');
+    document.querySelectorAll('#tx-ph [data-ph]').forEach(function(b){ b.onmousedown = function(e){ e.preventDefault(); }; b.onclick = function(){
+      var el = lastTx || $('tx-body'), tag = b.dataset.ph, a = el.selectionStart == null ? el.value.length : el.selectionStart, z = el.selectionEnd == null ? a : el.selectionEnd;
+      el.value = el.value.slice(0, a) + tag + el.value.slice(z); el.focus(); el.selectionStart = el.selectionEnd = a + tag.length; $('tx-saved').textContent = 'Not saved yet'; }; });
+    fillText(); }
+  function fillText(){ if (!TX) return; var t = TX.text[pk]; $('tx-which').textContent = KIND_NAME[pk]; $('tx-subj').value = t.subject; $('tx-body').value = t.body;
+    $('tx-saved').textContent = t.edited ? 'Your own wording' : 'Original wording';
+    $('txbtn').innerHTML = '✎ Edit text' + (['job', 'pool', 'reminder'].some(function(k){ return TX.text[k].edited; }) ? ' <span class="pill on" style="margin-left:4px">edited</span>' : ''); }
+  ['tx-subj', 'tx-body'].forEach(function(id){ $(id).onfocus = function(){ lastTx = $(id); }; $(id).oninput = function(){ $('tx-saved').textContent = 'Not saved yet'; }; });
+  $('txbtn').onclick = function(){ var o = $('txed').style.display === 'none'; $('txed').style.display = o ? 'block' : 'none'; if (o && !TX) loadText(); };
+  $('tx-save').onclick = async function(){ var r = await api('PUT', '/text', {kind: pk, subject: $('tx-subj').value, body: $('tx-body').value});
+    if (!r.ok) { $('tx-saved').textContent = r.error || 'Not saved'; return; }
+    TX.text[pk].subject = r.subject; TX.text[pk].body = r.body; TX.text[pk].edited = r.edited; fillText(); $('tx-saved').textContent = '✓ Saved — used for every e-mail from now on'; preview(); };
+  $('tx-reset').onclick = async function(){ if (!confirm('Put the original wording back for this e-mail?')) return;
+    var r = await api('PUT', '/text', {kind: pk, reset: true}); if (r.ok) { TX.text[pk].subject = r.subject; TX.text[pk].body = r.body; TX.text[pk].edited = false; fillText(); preview(); } };
+  loadText();
 
   async function loadList(){
     $('list').innerHTML = '<div class="empty">Loading…</div>';
