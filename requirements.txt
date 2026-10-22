@@ -17,6 +17,7 @@ openpyxl==3.1.5
 cryptography==50.0.0
 PyJWT==2.13.0
 numpy==2.5.2
+imageio-ffmpeg==0.6.0          # bundled ffmpeg: converts phone call recordings (.aac/.amr/.opus/.3gp) and shrinks long calls for transcription
 
 # ── Flask framework stack (pinned so a new Werkzeug/Jinja can't break Flask) ─
 Werkzeug==3.1.8

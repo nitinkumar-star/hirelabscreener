@@ -1778,8 +1778,17 @@ async function req(method,path,body){
   }
 }
 async function reqFile(path,fd){
-  try{const r=await fetch(API+path,{method:'POST',credentials:'include',body:fd});return r.json();}
-  catch(e){return{error:'Upload failed: '+e.message};}
+  let r;
+  try{ r=await fetch(API+path,{method:'POST',credentials:'include',body:fd}); }
+  catch(e){ return {error:'Upload failed: '+e.message}; }
+  try{ return await r.json(); }
+  catch(e){
+    // The server did not answer with JSON (e.g. it timed out or the file was too big) — say so plainly.
+    var why = r.status===413 ? 'the file is too large to upload (max 64 MB)'
+            : (r.status===502||r.status===504) ? 'the server took too long — a very long recording can do this; try a shorter one'
+            : 'the server returned an unexpected reply';
+    return {error:'Upload failed (HTTP '+r.status+'): '+why+'.'};
+  }
 }
 
 

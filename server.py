@@ -21876,7 +21876,12 @@ os.makedirs(CALL_DIR, exist_ok=True)
 _CALL_CONVERT_EXTS = {'.amr', '.3gp', '.aac', '.opus', '.awb', '.3ga', '.wma'}
 
 
-def _convert_audio_to_mp3(data, ext):
+# Groq Whisper takes at most 25 MB per file (free and dev tier, direct upload).
+_WHISPER_MAX_BYTES = 25 * 1024 * 1024
+_WHISPER_SAFE_BYTES = 24 * 1024 * 1024
+
+
+def _convert_audio_to_mp3(data, ext, bitrate='48k'):
     """Convert phone-recorder audio to mp3 with a bundled ffmpeg
     (imageio-ffmpeg wheel; falls back to a system ffmpeg). (bytes, None) or (None, error)."""
     import subprocess, tempfile, shutil as _sh
@@ -21894,8 +21899,8 @@ def _convert_audio_to_mp3(data, ext):
         with open(src, 'wb') as fh:
             fh.write(data)
         try:
-            r = subprocess.run([exe, '-y', '-loglevel', 'error', '-i', src, '-ac', '1', '-ar', '16000',
-                                '-b:a', '48k', dst], capture_output=True, timeout=180)
+            r = subprocess.run([exe, '-y', '-loglevel', 'error', '-i', src, '-vn', '-ac', '1', '-ar', '16000',
+                                '-b:a', bitrate, dst], capture_output=True, timeout=180)
         except Exception as e:
             return None, str(e)[:120]
         if r.returncode != 0 or not os.path.exists(dst):
@@ -21914,6 +21919,7 @@ def analyse_call(cid):
     if not _own or _own['owner_id'] != effective_company_id():
         return jsonify({'error': 'Candidate not in your workspace'}), 403
 
+    _t0 = time.time()
     language    = request.form.get('language', 'hi')   # hi = Hindi, en = English
     # Server keys (env var first, then DB) take priority over anything from frontend
     groq_key    = get_setting('groq_api_key') or request.form.get('groq_api_key', '').strip()
@@ -21945,18 +21951,32 @@ def analyse_call(cid):
     with open(fpath, 'wb') as out:
         out.write(file_bytes)
 
+    # Long calls: Groq accepts at most 25 MB. Re-encode a copy as compact speech audio
+    # (16 kHz mono mp3 — Whisper works at 16 kHz anyway); the original stays saved.
+    whisper_bytes, whisper_ext, whisper_name = file_bytes, ext, fname
+    if len(file_bytes) > _WHISPER_SAFE_BYTES:
+        small, serr = _convert_audio_to_mp3(file_bytes, ext, bitrate='24k')
+        if small is None:
+            return jsonify({'error': 'This recording is %d MB; the transcriber accepts at most 25 MB and the audio '
+                                     'converter could not shrink it (%s). Upload a shorter recording.'
+                                     % (len(file_bytes) // (1024 * 1024), (serr or 'unknown error')[:80])}), 400
+        whisper_bytes, whisper_ext, whisper_name = small, '.mp3', os.path.splitext(fname)[0] + '_whisper.mp3'
+    if len(whisper_bytes) > _WHISPER_MAX_BYTES:
+        return jsonify({'error': 'This recording is too long for the transcriber (over about 2 hours). '
+                                 'Upload a shorter part of the call.'}), 400
+
     # ── Step 1: Transcribe with Whisper ──────────────────────────────────────
     try:
         mime = {
             '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.mp4': 'audio/mp4',
             '.wav': 'audio/wav',  '.ogg': 'audio/ogg', '.webm': 'audio/webm',
             '.flac': 'audio/flac'
-        }.get(ext, 'audio/mpeg')
+        }.get(whisper_ext, 'audio/mpeg')
 
         whisper_resp = requests.post(
             'https://api.groq.com/openai/v1/audio/transcriptions',
             headers={'Authorization': 'Bearer ' + groq_key},
-            files={'file': (fname, file_bytes, mime)},
+            files={'file': (whisper_name, whisper_bytes, mime)},
             data={'model': 'whisper-large-v3', 'language': language,
                   'response_format': 'verbose_json',
                   'prompt': 'This is a recruiter call with a candidate discussing a job opportunity. '
@@ -21970,6 +21990,10 @@ def analyse_call(cid):
 
     if whisper_resp.status_code == 401:
         return jsonify({'error': 'Invalid Groq API key'}), 401
+    if whisper_resp.status_code == 413:
+        return jsonify({'error': 'The recording is larger than the transcriber accepts (25 MB). Upload a shorter recording.'}), 400
+    if whisper_resp.status_code == 429:
+        return jsonify({'error': 'Groq transcription limit reached for now (rate limit). Wait a few minutes and try again.'}), 429
     if whisper_resp.status_code != 200:
         try:
             err = whisper_resp.json().get('error', {}).get('message', whisper_resp.text[:200])
@@ -22095,7 +22119,8 @@ def analyse_call(cid):
             'response_format': {'type': 'json_object'},
             'messages': [{'role': 'system', 'content': system_msg},
                          {'role': 'user', 'content': user_msg}]},
-            timeout=120, endpoint='call-analysis')
+            # keep the whole request under the server's 180 s worker limit
+            timeout=max(30, min(120, int(165 - (time.time() - _t0)))), endpoint='call-analysis')
     except TokenCapError:
         raise
     except requests.Timeout:
