@@ -55,6 +55,7 @@ _MODULE_NAMES = [
     'hotlist',         # Hot List: engagement score + who to call today (/hotlist, callers: /my-calls)
     'backup_download', # Full database + CV backup download for the platform admin (/backup)
     'app_nav',         # the app menu (☰ Menu) on every separate page
+    'job_pulse',       # Jobs page: status line, whose move, next event, ₹ value, focus, SPOC view, chase, digest
 ]
 
 _MIGRATIONS = []
