@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Talent Pool · HireLab</title>
+<style>
+:root{--ink:#1F2328;--muted:#6B6F76;--line:#E3E1DA;--paper:#F7F6F2;--green:#0F6E56;--navy:#0E2A47;--red:#B3261E;--amber:#9A6512;--blue:#1a73e8;--soft:#E6F4EE}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--paper)}
+button,input,select{font:inherit;color:inherit}
+a{color:var(--blue)}
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.top a.back{text-decoration:none;color:var(--muted);font-size:13px}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--green);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.top h1{font-size:17px;margin:0}
+.top .sp{flex:1}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 20px 60px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px;min-width:0}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.h{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 4px}
+.sub{color:var(--muted);font-size:12.5px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.btn.sm{padding:5px 10px;font-size:12.5px}
+.btn:disabled{opacity:.5;cursor:default}
+.err{background:#FBE9E7;color:var(--red);border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
+.note{background:#EEF4FB;color:#185FA5;border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.kpi b{display:block;font-size:24px;font-variant-numeric:tabular-nums;color:var(--navy)}
+.kpi span{font-size:12px;color:var(--muted)}
+.kpi i{font-style:normal;font-size:11.5px;color:var(--muted)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11.5px;color:var(--muted);font-weight:600;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:8px;border-bottom:1px solid #EFEDE7;vertical-align:top}
+td .m{color:var(--muted);font-size:12px}
+.mx td.c{text-align:center;font-variant-numeric:tabular-nums;cursor:pointer;border-radius:6px}
+.mx td.c:hover{outline:2px solid var(--green);outline-offset:-2px}
+.mx td.lbl{font-weight:600;white-space:nowrap;cursor:pointer}
+.fresh{display:flex;align-items:center;gap:8px;min-width:140px}
+.fresh div{flex:1;height:8px;border-radius:4px;background:#F2E6E0;overflow:hidden}
+.fresh div s{display:block;height:100%;background:var(--green)}
+.fresh b{font-size:12px;font-variant-numeric:tabular-nums;width:36px;text-align:right}
+.bars{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.br{display:grid;grid-template-columns:170px 1fr 54px;gap:10px;align-items:center;font-size:13px;cursor:pointer}
+.br div{height:10px;border-radius:5px;background:#EEECE6;overflow:hidden}
+.br div s{display:block;height:100%;background:var(--navy)}
+.br b{text-align:right;font-variant-numeric:tabular-nums}
+.br:hover span{color:var(--green)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:16px;padding:4px 11px;font-size:12.5px;cursor:pointer}
+.chip.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.flbl{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.res{display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;margin:12px 0 6px;padding:12px 14px;background:#F7F6F2;border-radius:10px}
+.res b{font-size:22px;color:var(--navy);font-variant-numeric:tabular-nums}
+.res span{color:var(--muted);font-size:12.5px;margin-left:4px}
+.tag{font-size:11px;border-radius:10px;padding:2px 8px;background:#F2F0EA;color:var(--muted);white-space:nowrap;display:inline-block;margin:1px 2px 1px 0}
+.tag.g{background:var(--soft);color:var(--green)}.tag.r{background:#FBE9E7;color:var(--red)}.tag.b{background:#E8F0FE;color:var(--blue)}.tag.n{background:#E9EEF4;color:var(--navy)}
+.upd{padding:10px 0;border-bottom:1px solid #EFEDE7}
+.upd:last-child{border-bottom:none}
+.upd .ch{font-size:12.5px;color:var(--ink);margin-top:3px}
+.upd .ch s{text-decoration:none;color:var(--muted)}
+.empty{text-align:center;color:var(--muted);padding:22px}
+.modal{position:fixed;inset:0;background:rgba(14,42,71,.35);display:none;align-items:center;justify-content:center;z-index:20;padding:16px}
+.modal.on{display:flex}
+.modal .box{background:#fff;border-radius:14px;padding:18px;width:min(520px,100%)}
+.modal .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+.modal label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.modal input,.modal select{padding:8px 10px;border:1px solid var(--line);border-radius:8px}
+.chk{display:flex !important;flex-direction:row !important;align-items:center;gap:8px;font-size:13px !important;color:var(--ink) !important}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.two{grid-template-columns:1fr}.br{grid-template-columns:120px 1fr 44px}.hide-m{display:none}}
+</style>
+</head>
+<body>
+<div class="top"><a class="back" href="/">&#8592; App</a><div class="logo">H</div><h1>Talent Pool</h1><span class="sp"></span>
+  <span class="sub hide-m" id="scanned"></span><button class="btn sm" id="gear">⚙ Settings</button></div>
+<div class="wrap">
+  <div id="msg"></div>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><div><div class="h">Who is in your database</div>
+      <div class="sub">Industry × seniority, and how many have a CV fresher than <b id="fd-lbl">6 months</b>. Click any number to list those people below.</div></div></div>
+    <div class="scroll" style="margin-top:10px"><table class="mx" id="matrix"></table></div>
+  </div>
+
+  <div class="two">
+    <div class="card"><div class="h">Functions</div><div class="sub">A person can have up to three.</div><div class="bars" id="funs"></div></div>
+    <div class="card"><div class="h">Regions</div><div class="sub">From current location (preferred location if empty).</div><div class="bars" id="regs"></div></div>
+  </div>
+
+  <div class="card" id="builder">
+    <div class="h">Segment builder</div>
+    <div class="sub">Pick any mix — the newsletter (next wave) mails exactly these segments. Inside a group = any of them; across groups = all must match.</div>
+    <div class="flbl">Industry</div><div class="chips" data-g="industries"></div>
+    <div class="flbl">Function</div><div class="chips" data-g="functions"></div>
+    <div class="flbl">Seniority</div><div class="chips" data-g="seniority"></div>
+    <div class="flbl">Region</div><div class="chips" data-g="regions"></div>
+    <div class="row" style="margin-top:4px">
+      <select id="f-fresh" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px"><option value="">Any CV age</option><option value="fresh">CV fresh only</option><option value="stale">CV old / missing only</option></select>
+      <label class="chk" style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="f-mail" checked> Can be e-mailed</label>
+      <label class="chk" style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="f-live"> Leave out people live in a pipeline</label>
+      <label class="chk" style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="f-uncl"> Unclassified only</label>
+      <span class="sp" style="flex:1"></span><button class="btn sm" id="f-clear">Clear</button>
+    </div>
+    <div class="res" id="res"></div>
+    <div class="scroll"><table id="people"></table></div>
+  </div>
+
+  <div class="card"><div class="h">Recently updated profiles</div><div class="sub">Every time a candidate submits the update-profile form — what changed. New company, CTC or notice period is a good reason to call.</div>
+    <div id="updates" style="margin-top:6px"></div></div>
+</div>
+
+<div class="modal" id="setm"><div class="box">
+  <div class="h">Talent Pool settings</div>
+  <div class="grid">
+    <label>A CV counts as fresh for<select id="s-fd"><option value="90">3 months</option><option value="180">6 months</option><option value="270">9 months</option><option value="365">12 months</option></select></label>
+    <label>AI classifications per day<input type="number" id="s-aid" min="0" max="5000"></label>
+  </div>
+  <label class="chk"><input type="checkbox" id="s-ai"> Use AI (DeepSeek) for people the keyword rules cannot place</label>
+  <div class="sub" style="margin-top:6px">Rules run free in the background every 10 minutes. AI only looks at people with no industry or function, once each, inside the daily limit.</div>
+  <div id="s-msg"></div>
+  <div class="row" style="justify-content:space-between;margin-top:14px"><button class="btn" id="s-scan">↻ Re-scan now</button>
+    <div class="row"><button class="btn" id="s-close">Close</button><button class="btn pri" id="s-save">Save</button></div></div>
+</div></div>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var META = null, SUM = null, F = {industries: [], functions: [], seniority: [], regions: []}, L = {};
+  async function api(method, path, body){
+    try {
+      var r = await fetch('/api/segments' + path, {method: method, credentials: 'same-origin',
+        headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+      if (r.status === 401) { location.href = '/'; return {ok: false}; }
+      var j = await r.json().catch(function(){ return {}; });
+      if (!r.ok && j.ok === undefined) j.ok = false;
+      return j;
+    } catch(e){ return {ok: false, error: 'Network error'}; }
+  }
+  function pct(a, b){ return b ? Math.round(100 * a / b) : 0; }
+  function fd(s){ if (!s) return ''; var d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? s : d.toLocaleDateString('en-IN', {day: 'numeric', month: 'short', year: 'numeric'}); }
+  function age(days){ if (days == null) return 'No CV'; if (days < 1) return 'today'; if (days < 31) return days + 'd'; if (days < 365) return Math.round(days / 30) + ' mo'; return (days / 365).toFixed(1) + ' yrs'; }
+  function months(d){ return d % 30 === 0 && d < 365 ? (d / 30) + ' months' : d === 365 ? '12 months' : d + ' days'; }
+
+  async function init(){
+    var m = await api('GET', '/meta'); META = m;
+    ['industries', 'functions', 'seniority', 'regions'].forEach(function(g){ L[g] = {}; (m[g] || []).forEach(function(x){ L[g][x.key] = x.label; }); });
+    document.querySelectorAll('.chips').forEach(function(box){
+      var g = box.dataset.g;
+      box.innerHTML = (m[g] || []).map(function(x){ return '<button class="chip" data-k="' + x.key + '">' + esc(x.label) + '</button>'; }).join('');
+      box.onclick = function(e){ var b = e.target.closest('.chip'); if (!b) return;
+        var k = b.dataset.k, i = F[g].indexOf(k); if (i < 0) F[g].push(k); else F[g].splice(i, 1);
+        b.classList.toggle('on', i < 0); query(); };
+    });
+    await load();
+    query();
+  }
+
+  async function load(){
+    var r = await api('GET', '/summary');
+    if (!r.ok) { $('msg').innerHTML = '<div class="err">' + esc(r.error || 'Could not load') + '</div>'; return; }
+    SUM = r;
+    var k = r.kpis, s = r.settings;
+    $('fd-lbl').textContent = months(+s.fresh_days);
+    $('scanned').textContent = s.last_scan_at ? 'Last scan ' + fd(s.last_scan_at) + ' ' + String(s.last_scan_at).slice(11, 16) : '';
+    var tiles = [['People', k.people, 'one per e-mail address'], ['Can be e-mailed', k.emailable, pct(k.emailable, k.people) + '% of all'],
+                 ['CV fresh', pct(k.fresh, k.people) + '%', k.fresh + ' people · ' + k.no_cv + ' with no CV'],
+                 ['Classified', pct(k.classified, k.people) + '%', (k.people - k.classified) + ' have no industry yet'],
+                 ['Updated in 30 days', k.updated_30, 'via the update-profile link'],
+                 ['Chose own interests', k.by_candidate, k.manual + ' edited by you · ' + k.ai + ' by AI']];
+    $('kpis').innerHTML = tiles.map(function(t){ return '<div class="kpi"><span>' + t[0] + '</span><b>' + t[1] + '</b><i>' + esc(t[2]) + '</i></div>'; }).join('');
+    if (s.last_error) $('msg').innerHTML = '<div class="err">' + esc(s.last_error) + '</div>';
+    // matrix
+    var sen = META.seniority, inds = META.industries.concat([{key: '_none', label: 'Unclassified'}]);
+    var h = '<thead><tr><th>Industry</th>' + sen.map(function(x){ return '<th style="text-align:center">' + esc(x.label.replace(/ \(.*/, '')) + '</th>'; }).join('') + '<th style="text-align:center">Total</th><th>CV fresh</th></tr></thead><tbody>';
+    var maxCell = 1;
+    inds.forEach(function(i){ sen.forEach(function(x){ maxCell = Math.max(maxCell, (r.matrix[i.key] || {})[x.key] || 0); }); });
+    inds.forEach(function(i){
+      var row = r.matrix[i.key] || {}, tot = 0;
+      sen.forEach(function(x){ tot += row[x.key] || 0; });
+      var fr = r.fresh_by_industry[i.key] || [0, 0], fp = pct(fr[0], fr[0] + fr[1]);
+      h += '<tr><td class="lbl" data-ind="' + i.key + '">' + esc(i.label) + '</td>' + sen.map(function(x){
+        var v = row[x.key] || 0, a = v ? (0.08 + 0.5 * v / maxCell) : 0;
+        return '<td class="c" data-ind="' + i.key + '" data-sen="' + x.key + '" style="background:rgba(15,110,86,' + a.toFixed(2) + ');' + (a > 0.35 ? 'color:#fff;' : '') + '">' + (v || '·') + '</td>';
+      }).join('') + '<td class="c" data-ind="' + i.key + '"><b>' + tot + '</b></td>'
+        + '<td><div class="fresh"><div><s style="width:' + fp + '%"></s></div><b>' + fp + '%</b></div></td></tr>';
+    });
+    $('matrix').innerHTML = h + '</tbody>';
+    $('matrix').onclick = function(e){ var c = e.target.closest('[data-ind]'); if (!c) return;
+      var ind = c.dataset.ind; reset(); if (ind === '_none') $('f-uncl').checked = true; else F.industries = [ind];
+      if (c.dataset.sen) F.seniority = [c.dataset.sen]; paintChips(); query(); $('builder').scrollIntoView({behavior: 'smooth'}); };
+    bars('funs', META.functions, r.functions, 'functions');
+    bars('regs', META.regions, r.regions, 'regions');
+    // updates
+    var u = r.recent_updates || [];
+    $('updates').innerHTML = u.length ? u.map(function(x){
+      var ch = (x.changes || []).filter(function(c){ return c.field !== 'phone' && c.field !== 'email'; });
+      var href = x.mandate_id ? '/#mandate/' + x.mandate_id + '/profiles/' + x.candidate_id : '#';
+      return '<div class="upd"><div class="row" style="justify-content:space-between"><a href="' + href + '" target="_blank" style="font-weight:700;color:var(--ink);text-decoration:none">' + esc(x.name || x.email) + '</a><span class="sub">' + esc(fd(x.created_at)) + '</span></div>'
+        + '<div class="ch">' + (ch.length ? ch.map(function(c){ return esc(c.label) + ': <s>' + esc(c.from) + '</s> → <b>' + esc(c.to) + '</b>'; }).join(' &nbsp;·&nbsp; ') : '<span class="sub">Confirmed details, no change</span>')
+        + (x.with_cv ? ' &nbsp;<span class="tag g">New CV</span>' : '') + '</div></div>';
+    }).join('') : '<div class="empty">No profile updates yet. They appear here as candidates use the update-profile link.</div>';
+  }
+  function bars(id, list, counts, group){
+    var max = 1; list.forEach(function(x){ max = Math.max(max, counts[x.key] || 0); });
+    $(id).innerHTML = list.map(function(x){ var v = counts[x.key] || 0;
+      return '<div class="br" data-g="' + group + '" data-k="' + x.key + '"><span>' + esc(x.label) + '</span><div><s style="width:' + pct(v, max) + '%"></s></div><b>' + v + '</b></div>'; }).join('');
+    $(id).onclick = function(e){ var b = e.target.closest('.br'); if (!b) return; reset(); F[b.dataset.g] = [b.dataset.k]; paintChips(); query(); $('builder').scrollIntoView({behavior: 'smooth'}); };
+  }
+  function reset(){ F = {industries: [], functions: [], seniority: [], regions: []}; $('f-uncl').checked = false; $('f-fresh').value = ''; }
+  function paintChips(){ document.querySelectorAll('.chips').forEach(function(box){ var g = box.dataset.g;
+    box.querySelectorAll('.chip').forEach(function(b){ b.classList.toggle('on', F[g].indexOf(b.dataset.k) >= 0); }); }); }
+
+  var qSeq = 0;
+  async function query(){
+    var my = ++qSeq;
+    var f = Object.assign({}, F, {freshness: $('f-fresh').value, emailable_only: $('f-mail').checked, exclude_live: $('f-live').checked, unclassified_only: $('f-uncl').checked});
+    var r = await api('POST', '/query', {filter: f, limit: 100});
+    if (my !== qSeq) return;
+    if (!r.ok) { $('res').innerHTML = esc(r.error || 'Could not search'); return; }
+    $('res').innerHTML = '<div><b>' + r.total + '</b><span>people</span></div><div><b>' + r.emailable + '</b><span>can be e-mailed</span></div>'
+      + '<div><b>' + r.fresh + '</b><span>with a fresh CV (' + pct(r.fresh, r.total) + '%)</span></div>';
+    var p = r.people || [];
+    $('people').innerHTML = p.length ? '<thead><tr><th>Candidate</th><th>Segments</th><th>CV age</th><th></th></tr></thead><tbody>' + p.map(function(x){
+      var meta = [x.designation && x.company ? x.designation + ' @ ' + x.company : (x.designation || x.company), x.experience ? x.experience + ' yrs' : '', x.location].filter(Boolean).join(' · ');
+      var href = x.mandate_id ? '/#mandate/' + x.mandate_id + '/profiles/' + x.candidate_id : '#';
+      var seg = x.industries.map(function(k){ return '<span class="tag n">' + esc(L.industries[k] || k) + '</span>'; }).join('')
+        + x.functions.map(function(k){ return '<span class="tag">' + esc(L.functions[k] || k) + '</span>'; }).join('')
+        + '<span class="tag">' + esc(L.seniority[x.seniority] || '') + '</span><span class="tag">' + esc(L.regions[x.region] || '') + '</span>';
+      var src = {manual: 'set by you', candidate: 'chosen by candidate', ai: 'by AI', rules: 'by rules'}[x.source] || 'not classified';
+      return '<tr><td><a href="' + href + '" target="_blank" style="font-weight:700;color:var(--ink);text-decoration:none">' + esc(x.name || x.email) + '</a><div class="m">' + esc(meta) + '</div></td>'
+        + '<td>' + seg + '<div class="m">' + src + '</div></td>'
+        + '<td><span class="tag ' + (x.fresh ? 'g' : 'r') + '">' + age(x.cv_age_days) + '</span></td>'
+        + '<td>' + (x.live ? '<span class="tag b">In pipeline</span>' : '') + (!x.emailable ? '<span class="tag">No e-mail</span>' : '') + '</td></tr>';
+    }).join('') + '</tbody>' + (r.total > p.length ? '<tfoot><tr><td colspan="4" class="sub">Showing the first ' + p.length + ' of ' + r.total + '.</td></tr></tfoot>' : '')
+      : '<tbody><tr><td class="empty">Nobody matches this mix.</td></tr></tbody>';
+  }
+  ['f-fresh', 'f-mail', 'f-live', 'f-uncl'].forEach(function(id){ $(id).onchange = query; });
+  $('f-clear').onclick = function(){ reset(); paintChips(); query(); };
+
+  // settings
+  $('gear').onclick = function(){ var s = SUM.settings; $('s-fd').value = String(s.fresh_days); $('s-ai').checked = !!+s.ai_enabled; $('s-aid').value = s.ai_daily; $('s-msg').innerHTML = ''; $('setm').classList.add('on'); };
+  $('s-close').onclick = function(){ $('setm').classList.remove('on'); };
+  $('s-save').onclick = async function(){
+    var r = await api('PUT', '/settings', {fresh_days: +$('s-fd').value, ai_enabled: $('s-ai').checked, ai_daily: +$('s-aid').value});
+    if (!r.ok) { $('s-msg').innerHTML = '<div class="err">' + esc(r.error || 'Could not save') + '</div>'; return; }
+    $('setm').classList.remove('on'); await load(); query();
+  };
+  $('s-scan').onclick = async function(){
+    this.disabled = true; this.textContent = 'Scanning…';
+    var r = await api('POST', '/rescan', {with_ai: $('s-ai').checked});
+    this.disabled = false; this.textContent = '↻ Re-scan now';
+    $('s-msg').innerHTML = r.ok ? '<div class="note">Scanned ' + r.scan.people + ' people · ' + r.scan.reclassified + ' (re)classified' + (r.ai_classified ? ' · ' + r.ai_classified + ' sent to AI' : '') + '.</div>' : '<div class="err">' + esc(r.error || 'Failed') + '</div>';
+    await load(); query();
+  };
+  init();
+})();
+</script>
+</body>
+</html>

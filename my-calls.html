@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>My Calls · HireLab</title>
+<style>
+:root{--ink:#1F2328;--muted:#6B6F76;--line:#E3E1DA;--paper:#F7F6F2;--green:#0F6E56;--navy:#0E2A47;--red:#B3261E;--amber:#9A6512}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--paper)}
+button,input,textarea{font:inherit;color:inherit}
+.top{display:flex;align-items:center;gap:10px;padding:12px 16px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.top a.back{text-decoration:none;color:var(--muted);font-size:13px}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--green);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.top h1{font-size:17px;margin:0;flex:1}
+.wrap{max-width:640px;margin:0 auto;padding:14px 16px 60px}
+.sum{display:flex;gap:10px;margin-bottom:12px}
+.sum div{flex:1;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.sum b{display:block;font-size:22px;color:var(--navy)}
+.sum span{font-size:12px;color:var(--muted)}
+.c{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.c .nm{font-weight:700;font-size:16px}
+.c .m{color:var(--muted);font-size:13px}
+.why{margin:8px 0;padding:8px 10px;background:#FFF7ED;border-radius:10px;font-size:13px;color:#7C2D12}
+.why div{margin:2px 0}
+.call{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;background:var(--green);color:#fff;border:none;border-radius:11px;padding:13px;font-weight:700;font-size:16px;text-decoration:none;margin:8px 0}
+.outs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.outs button{border:1px solid var(--line);background:#fff;border-radius:10px;padding:10px 8px;font-weight:600;cursor:pointer}
+.outs button.g{border-color:#9FD3C2;background:#E6F4EE;color:var(--green)}
+.more{display:none;margin-top:8px}
+.more.on{display:block}
+.more input,.more textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px}
+.save{width:100%;background:var(--navy);color:#fff;border:none;border-radius:10px;padding:11px;font-weight:700;cursor:pointer}
+.tag{font-size:11px;border-radius:10px;padding:2px 8px;background:#F4EBDD;color:var(--amber)}
+.empty{text-align:center;color:var(--muted);padding:40px 16px;background:#fff;border:1px solid var(--line);border-radius:14px}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;display:none}
+</style>
+</head>
+<body>
+<div class="top"><a class="back" href="/">&#8592; App</a><div class="logo">H</div><h1>My calls</h1></div>
+<div class="wrap">
+  <div class="sum"><div><span>To call</span><b id="n-left">–</b></div><div><span>Done today</span><b id="n-done">–</b></div></div>
+  <div id="list"><div class="empty">Loading…</div></div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var OUT = [];
+  function toast(t){ var el = $('toast'); el.textContent = t; el.style.display = 'block'; setTimeout(function(){ el.style.display = 'none'; }, 2500); }
+  async function api(method, path, body){
+    try {
+      var r = await fetch('/api/hotlist' + path, {method: method, credentials: 'same-origin',
+        headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+      if (r.status === 401) { location.href = '/'; return {ok: false}; }
+      return await r.json();
+    } catch(e){ return {ok: false, error: 'Network error'}; }
+  }
+  async function load(){
+    var r = await api('GET', '/mine');
+    if (!r.ok) { $('list').innerHTML = '<div class="empty">' + esc(r.error || 'Could not load') + '</div>'; return; }
+    OUT = r.outcomes;
+    $('n-left').textContent = r.calls.length; $('n-done').textContent = r.done_today;
+    $('list').innerHTML = r.calls.length ? r.calls.map(function(c, i){
+      var meta = [c.designation && c.company ? c.designation + ' @ ' + c.company : (c.designation || c.company), c.experience ? c.experience + ' yrs' : '', c.location].filter(Boolean).join(' · ');
+      return '<div class="c" data-i="' + i + '" data-k="' + esc(c.key) + '"><div class="nm">' + esc(c.name) + (c.status === 'callback' ? ' <span class="tag">Call-back</span>' : '') + '</div><div class="m">' + esc(meta) + '</div>'
+        + '<div class="why"><b>Why call:</b>' + c.reasons.filter(function(x){ return x.pts > 0; }).map(function(x){ return '<div>• ' + esc(x.text) + ' <span style="opacity:.7">(' + esc(x.when) + ')</span></div>'; }).join('') + (c.note ? '<div>Note: ' + esc(c.note) + '</div>' : '') + '</div>'
+        + (c.phone ? '<a class="call" href="tel:' + esc(c.phone) + '">📞 Call ' + esc(c.phone) + '</a>' : '')
+        + '<div class="outs">' + OUT.map(function(o){ return '<button data-o="' + o.key + '"' + (o.key === 'interested' ? ' class="g"' : '') + '>' + esc(o.label) + '</button>'; }).join('') + '</div>'
+        + '<div class="more"><input type="datetime-local" class="cb" style="display:none"><textarea class="nt" rows="2" placeholder="Note — what did they say? (CTC, notice, interest)"></textarea><button class="save">Save</button></div></div>';
+    }).join('') : '<div class="empty">No calls assigned right now. 🎉<br><span style="font-size:13px">New calls appear here when your admin assigns them from the Hot List.</span></div>';
+  }
+  $('list').onclick = async function(e){
+    var card = e.target.closest('.c'); if (!card) return;
+    var o = e.target.closest('[data-o]');
+    if (o) {
+      card.dataset.out = o.dataset.o;
+      card.querySelectorAll('[data-o]').forEach(function(b){ b.style.outline = b === o ? '2px solid #0E2A47' : ''; });
+      card.querySelector('.more').classList.add('on');
+      var cb = card.querySelector('.cb');
+      cb.style.display = o.dataset.o === 'callback' ? 'block' : 'none';
+      if (o.dataset.o === 'callback' && !cb.value) { var d = new Date(Date.now() + 864e5); d.setHours(11, 0, 0, 0); cb.value = new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16); }
+      return;
+    }
+    if (e.target.closest('.save')) {
+      var body = {key: card.dataset.k, outcome: card.dataset.out, note: card.querySelector('.nt').value, callback_at: card.querySelector('.cb').value};
+      var r = await api('POST', '/mine/outcome', body);
+      if (!r.ok) return toast(r.error || 'Could not save');
+      toast('Saved ✓'); load();
+    }
+  };
+  load();
+})();
+</script>
+</body>
+</html>

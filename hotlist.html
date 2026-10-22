@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hot List · HireLab</title>
+<style>
+:root{--ink:#1F2328;--muted:#6B6F76;--line:#E3E1DA;--paper:#F7F6F2;--green:#0F6E56;--navy:#0E2A47;--red:#B3261E;--amber:#9A6512;--blue:#1a73e8;--hot:#C2410C}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--paper)}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--blue)}
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.top a.back{text-decoration:none;color:var(--muted);font-size:13px}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--green);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.top h1{font-size:17px;margin:0}
+.top .sp{flex:1}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 20px 60px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px;min-width:0}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.h{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 4px}
+.sub{color:var(--muted);font-size:12.5px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.btn.sm{padding:4px 9px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:default}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.kpi b{display:block;font-size:24px;font-variant-numeric:tabular-nums;color:var(--navy)}
+.kpi span{font-size:12px;color:var(--muted)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tab{border:1px solid var(--line);background:#fff;border-radius:18px;padding:5px 12px;font-weight:600;font-size:12.5px;cursor:pointer}
+.tab.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.tab em{font-style:normal;opacity:.7;margin-left:4px}
+.bar{position:sticky;top:56px;z-index:4;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.bar select{padding:6px 9px;border:1px solid var(--line);border-radius:8px}
+.p{display:grid;grid-template-columns:24px 58px 1fr 300px;gap:12px;padding:12px 6px;border-bottom:1px solid #EFEDE7;align-items:start}
+.p:last-child{border-bottom:none}
+.sc{width:52px;height:52px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:800;font-size:19px;color:#fff;font-variant-numeric:tabular-nums}
+.sc small{font-size:9.5px;font-weight:600;opacity:.85;letter-spacing:.04em}
+.nm{font-weight:700;color:var(--ink);text-decoration:none}
+.meta{color:var(--muted);font-size:12.5px}
+.why{margin:6px 0 0;padding:0;list-style:none;font-size:12.5px}
+.why li{display:flex;gap:6px;align-items:baseline}
+.why li i{font-style:normal;color:var(--muted);font-size:11.5px;white-space:nowrap}
+.why li b{font-weight:600}
+.why li.neg{color:var(--muted)}
+.tag{font-size:11px;border-radius:10px;padding:2px 8px;background:#F2F0EA;color:var(--muted);white-space:nowrap;display:inline-block;margin-right:3px}
+.tag.b{background:#E8F0FE;color:var(--blue)}.tag.g{background:#E6F4EE;color:var(--green)}.tag.a{background:#F4EBDD;color:var(--amber)}.tag.r{background:#FBE9E7;color:var(--red)}
+.act{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.act select{padding:5px 8px;border:1px solid var(--line);border-radius:8px;max-width:100%}
+.empty{text-align:center;color:var(--muted);padding:26px}
+.note{background:#EEF4FB;color:#185FA5;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:12px}
+.err{background:#FBE9E7;color:var(--red);border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:12px}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.p{grid-template-columns:24px 52px 1fr}.act{grid-column:2/4;align-items:flex-start;flex-direction:row;flex-wrap:wrap}.hide-m{display:none}}
+</style>
+</head>
+<body>
+<div class="top"><a class="back" href="/">&#8592; App</a><div class="logo">H</div><h1>Hot List</h1><span class="sp"></span>
+  <a class="btn sm" href="/my-calls">📞 My calls</a></div>
+<div class="wrap">
+  <div id="msg"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:10px"><div><div class="h">Who to call today</div>
+      <div class="sub">Ranked by engagement score — what each person did with HireLab's e-mails and forms, fading over 30 days. People live in a pipeline, unsubscribed or without a phone are left out. A new signal brings a handled person back.</div></div>
+      <div class="row"><label class="sub">Min score <select id="min"><option>10</option><option selected>20</option><option>30</option><option>50</option></select></label></div></div>
+    <div class="tabs" id="tabs"></div>
+  </div>
+  <div class="bar" id="bar"></div>
+  <div class="card" id="list"><div class="empty">Loading…</div></div>
+</div>
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var D = null, tab = 'open', sel = {};
+  async function api(method, path, body){
+    try {
+      var r = await fetch('/api/hotlist' + path, {method: method, credentials: 'same-origin',
+        headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+      if (r.status === 401) { location.href = '/'; return {ok: false}; }
+      var j = await r.json().catch(function(){ return {}; });
+      if (!r.ok && j.ok === undefined) j.ok = false;
+      return j;
+    } catch(e){ return {ok: false, error: 'Network error'}; }
+  }
+  function heat(s){ return s >= 70 ? '#B42318' : s >= 50 ? '#C2410C' : s >= 35 ? '#D97706' : '#A16207'; }
+  function msg(h, cls){ $('msg').innerHTML = h ? '<div class="' + (cls || 'note') + '">' + h + '</div>' : ''; if (h) setTimeout(function(){ $('msg').innerHTML = ''; }, 5000); }
+  function inTab(r){
+    if (tab === 'hidden') return !!r.hidden;
+    if (r.hidden) return false;
+    if (tab === 'open') return r.state === 'open';
+    if (tab === 'assigned') return r.state === 'assigned';
+    if (tab === 'later') return r.state === 'callback' || r.state === 'snoozed';
+    if (tab === 'done') return r.state === 'done';
+    return true;
+  }
+  async function load(){
+    var r = await api('GET', '/list?min=' + $('min').value);
+    if (!r.ok) { $('list').innerHTML = '<div class="err">' + esc(r.error || 'Could not load') + '</div>'; return; }
+    D = r; sel = {};
+    var k = r.kpis;
+    var tiles = [['To call now', k.open], ['Very hot (50+)', k.very_hot], ['With a caller', k.assigned], ['Call-backs due later', k.callback],
+                 ['Calls logged · 7 days', k.done_7d], ['Interested · 7 days', k.interested_7d]];
+    $('kpis').innerHTML = tiles.map(function(t){ return '<div class="kpi"><span>' + t[0] + '</span><b>' + t[1] + '</b></div>'; }).join('');
+    paint();
+  }
+  function paint(){
+    var rows = D.rows, cnt = {};
+    ['open', 'assigned', 'later', 'done', 'hidden'].forEach(function(t){ var o = tab; tab = t; cnt[t] = rows.filter(inTab).length; tab = o; });
+    var names = {open: 'To call', assigned: 'With a caller', later: 'Later', done: 'Handled', hidden: 'Left out'};
+    $('tabs').innerHTML = Object.keys(names).map(function(t){ return '<button class="tab' + (t === tab ? ' on' : '') + '" data-t="' + t + '">' + names[t] + ' <em>' + cnt[t] + '</em></button>'; }).join('');
+    var list = rows.filter(inTab);
+    var nSel = list.filter(function(r){ return sel[r.person_key]; }).length;
+    var users = D.users.map(function(u){ return '<option value="' + u.id + '">' + esc(u.name) + (u.caller ? ' (freelance)' : '') + '</option>'; }).join('');
+    $('bar').innerHTML = '<label class="row" style="gap:6px;font-size:13px"><input type="checkbox" id="all"' + (nSel && nSel === list.length ? ' checked' : '') + '> ' + nSel + ' selected</label>'
+      + '<select id="to"><option value="">Assign to…</option>' + users + '</select><button class="btn pri" id="assign"' + (nSel ? '' : ' disabled') + '>Assign</button>'
+      + '<button class="btn" id="snooze"' + (nSel ? '' : ' disabled') + '>Snooze 30 days</button>'
+      + (tab === 'assigned' ? '<button class="btn" id="unassign"' + (nSel ? '' : ' disabled') + '>Take back</button>' : '');
+    $('bar').style.display = (tab === 'done' || tab === 'hidden') ? 'none' : 'flex';
+    $('list').innerHTML = list.length ? list.map(function(r){
+      var meta = [r.designation && r.company ? r.designation + ' @ ' + r.company : (r.designation || r.company), r.experience ? r.experience + ' yrs' : '', r.location].filter(Boolean).join(' · ');
+      var href = r.mandate_id ? '/#mandate/' + r.mandate_id + '/profiles/' + r.candidate_id : '#';
+      var why = r.reasons.map(function(x){ return '<li class="' + (x.pts < 0 ? 'neg' : '') + '"><b>' + esc(x.text) + '</b><i>' + esc(x.when) + '</i></li>'; }).join('');
+      var st = r.state === 'assigned' ? '<span class="tag b">With ' + esc(r.assigned_name || 'caller') + '</span>'
+        : r.state === 'callback' ? '<span class="tag a">Call back ' + esc(String(r.callback_at).replace('T', ' ')) + '</span>'
+        : r.state === 'snoozed' ? '<span class="tag">Snoozed</span>'
+        : r.state === 'done' ? '<span class="tag g">' + esc((D.outcomes.find(function(o){ return o.key === r.outcome; }) || {}).label || r.outcome) + '</span>' + (r.note ? '<div class="meta">' + esc(r.note) + '</div>' : '') : '';
+      var act = (tab === 'hidden') ? '<span class="tag r">' + esc(r.hidden) + '</span>'
+        : '<div class="row" style="justify-content:flex-end">' + st + (r.phone ? '<a class="btn sm" href="tel:' + esc(r.phone) + '">📞 ' + esc(r.phone) + '</a>' : '') + '</div>'
+          + (tab !== 'done' ? '<select data-out="' + esc(r.person_key) + '"><option value="">Log call outcome…</option>' + D.outcomes.map(function(o){ return '<option value="' + o.key + '">' + esc(o.label) + '</option>'; }).join('') + '</select>' : '');
+      return '<div class="p">' + (tab === 'done' || tab === 'hidden' ? '<span></span>' : '<input type="checkbox" data-k="' + esc(r.person_key) + '"' + (sel[r.person_key] ? ' checked' : '') + '>')
+        + '<div class="sc" style="background:' + heat(r.score) + '">' + r.score + '<small>SCORE</small></div>'
+        + '<div><a class="nm" href="' + href + '" target="_blank">' + esc(r.name || r.email) + '</a> ' + r.industries.map(function(i){ return '<span class="tag">' + esc(i) + '</span>'; }).join('')
+        + '<div class="meta">' + esc(meta) + '</div><ul class="why">' + why + '</ul></div>'
+        + '<div class="act">' + act + '</div></div>';
+    }).join('') : '<div class="empty">' + ({open: 'Nobody to call right now. As candidates open, click and update, they appear here.', assigned: 'Nothing with a caller.', later: 'No call-backs or snoozed people.', done: 'No calls logged yet.', hidden: 'Nobody left out.'}[tab]) + '</div>';
+    bind(list);
+  }
+  function bind(list){
+    $('tabs').onclick = function(e){ var b = e.target.closest('[data-t]'); if (!b) return; tab = b.dataset.t; sel = {}; paint(); };
+    if ($('all')) $('all').onchange = function(){ list.forEach(function(r){ sel[r.person_key] = $('all').checked; }); paint(); };
+    $('list').onchange = async function(e){
+      var c = e.target.closest('[data-k]');
+      if (c) { sel[c.dataset.k] = c.checked; return paint(); }
+      var s = e.target.closest('[data-out]');
+      if (s && s.value) {
+        var body = {key: s.dataset.out, outcome: s.value};
+        if (s.value === 'callback') { var d = prompt('Call back on (YYYY-MM-DD HH:MM)', new Date(Date.now() + 864e5).toISOString().slice(0, 10) + ' 11:00'); if (!d) { s.value = ''; return; } body.callback_at = d.replace(' ', 'T'); }
+        body.note = prompt('Note (optional)') || '';
+        var r = await api('POST', '/outcome', body);
+        if (!r.ok) { s.value = ''; return msg(esc(r.error || 'Failed'), 'err'); }
+        msg('✓ Logged on the candidate\'s journey.'); load();
+      }
+    };
+    function keys(){ return list.filter(function(r){ return sel[r.person_key]; }).map(function(r){ return r.person_key; }); }
+    if ($('assign')) $('assign').onclick = async function(){
+      if (!$('to').value) return msg('Pick who should call.', 'err');
+      var r = await api('POST', '/assign', {user_id: +$('to').value, keys: keys()});
+      if (r.ok) { msg('✓ ' + r.assigned + ' assigned — each one is also a call task for that person, and shows on their My Calls page.'); load(); }
+    };
+    if ($('snooze')) $('snooze').onclick = async function(){ var r = await api('POST', '/snooze', {keys: keys(), days: 30}); if (r.ok) { msg('✓ Snoozed ' + r.snoozed + '.'); load(); } };
+    if ($('unassign')) $('unassign').onclick = async function(){ var r = await api('POST', '/assign', {user_id: 0, keys: keys()}); if (r.ok) { msg('✓ Taken back.'); load(); } };
+  }
+  $('min').onchange = load;
+  load();
+})();
+</script>
+</body>
+</html>

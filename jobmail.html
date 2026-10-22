@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Job-Match Mail · HireLab</title>
+<style>
+:root{--ink:#1F2328;--muted:#6B6F76;--line:#E3E1DA;--paper:#F7F6F2;--green:#0F6E56;--navy:#0E2A47;--red:#B3261E;--amber:#9A6512;--blue:#1a73e8}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--paper)}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--blue)}
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.top a.back{text-decoration:none;color:var(--muted);font-size:13px}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--green);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.top h1{font-size:17px;margin:0}
+.top .sp{flex:1}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 20px 60px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.h{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 4px}
+.sub{color:var(--muted);font-size:12.5px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.btn.navy{background:var(--navy);border-color:var(--navy);color:#fff}
+.btn.sm{padding:5px 10px;font-size:12.5px}
+.btn:disabled{opacity:.5;cursor:default}
+.pill{font-size:11.5px;font-weight:700;border-radius:20px;padding:3px 10px;white-space:nowrap}
+.pill.draft{background:#F4EBDD;color:var(--amber)}.pill.sending{background:#E8F0FE;color:var(--blue)}
+.pill.done{background:#E6F4EE;color:var(--green)}.pill.stopped,.pill.cancelled{background:#F2F0EA;color:var(--muted)}
+.err{background:#FBE9E7;color:var(--red);border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
+.note{background:#EEF4FB;color:#185FA5;border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
+.steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.step{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:12.5px;color:var(--muted)}
+.step b{display:block;color:var(--navy);font-size:13px}
+.step.on{border-color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}
+.step.ok b::after{content:" ✓";color:var(--green)}
+.filters{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-top:12px;align-items:end}
+.filters label,.mailopt label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.filters select,.filters input,.mailopt input[type=text],.mailopt textarea{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.chk{display:flex !important;flex-direction:row !important;align-items:center;gap:7px;font-size:13px !important;color:var(--ink) !important;cursor:pointer}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.kpi b{display:block;font-size:22px;font-variant-numeric:tabular-nums;color:var(--navy)}
+.kpi span{font-size:12px;color:var(--muted)}
+.two{display:grid;grid-template-columns:1.25fr .75fr;gap:16px;align-items:start}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tab{border:1px solid var(--line);background:#fff;border-radius:18px;padding:5px 12px;font-weight:600;font-size:12.5px;cursor:pointer}
+.tab.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.tab em{font-style:normal;opacity:.7;margin-left:4px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11.5px;color:var(--muted);font-weight:600;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:9px 8px;border-bottom:1px solid #EFEDE7;vertical-align:top}
+td .m{color:var(--muted);font-size:12px}
+tr.off td{opacity:.55}
+.tag{font-size:11px;border-radius:10px;padding:2px 8px;background:#F2F0EA;color:var(--muted);white-space:nowrap;display:inline-block}
+.tag.g{background:#E6F4EE;color:var(--green)}.tag.b{background:#E8F0FE;color:var(--blue)}.tag.r{background:#FBE9E7;color:var(--red)}.tag.a{background:#F4EBDD;color:var(--amber)}
+.score{font-weight:700;font-variant-numeric:tabular-nums;color:var(--navy)}
+.bar{height:8px;border-radius:4px;background:#EEECE6;overflow:hidden;margin-top:8px}
+.bar s{display:block;height:100%;background:var(--green);transition:width .3s}
+.preview{border:1px solid var(--line);border-radius:10px;padding:14px 16px;background:#FCFCFA;font-size:13.5px;max-height:560px;overflow:auto}
+.preview .subj{font-weight:700;margin-bottom:8px}
+.mailopt{display:flex;flex-direction:column;gap:10px;margin:10px 0 14px}
+.mailopt textarea{min-height:70px;resize:vertical}
+.empty{text-align:center;color:var(--muted);padding:26px}
+.list-row{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid #EFEDE7;cursor:pointer}
+.list-row:hover{background:#FAF9F5}
+.list-row .grow{flex:1;min-width:0}
+.list-row .nums{display:flex;gap:14px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.list-row .nums b{color:var(--navy)}
+.modal{position:fixed;inset:0;background:rgba(14,42,71,.35);display:none;align-items:center;justify-content:center;z-index:20;padding:16px}
+.modal.on{display:flex}
+.modal .box{background:#fff;border-radius:14px;padding:18px;width:min(520px,100%)}
+.modal .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+.modal label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.modal input,.modal select{padding:8px 10px;border:1px solid var(--line);border-radius:8px}
+@media(max-width:900px){.two{grid-template-columns:1fr}.filters{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .steps{grid-template-columns:repeat(2,minmax(0,1fr))}.hide-m{display:none}}
+</style>
+</head>
+<body>
+<div class="top"><a class="back" href="/">&#8592; App</a><div class="logo">H</div><h1>Job-Match Mail</h1><span class="sp"></span>
+  <span class="sub hide-m" id="sender"></span><button class="btn sm" id="gear" style="display:none">⚙ Settings</button></div>
+<div class="wrap" id="app"><div class="empty">Loading…</div></div>
+
+<div class="modal" id="setm"><div class="box">
+  <div class="h">Job-mail settings</div>
+  <div class="sub">Apply to every job mail your company sends.</div>
+  <div class="grid">
+    <label>E-mails per day<input type="number" id="s-cap" min="1" max="500"></label>
+    <label>Gap between any two HireLab mails to one person<select id="s-gap"><option value="0">No gap</option><option value="3">3 days</option><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option></select></label>
+    <label>Send from (IST)<select id="s-sh"></select></label>
+    <label>Send until (IST)<select id="s-eh"></select></label>
+    <label>Default minimum match %<input type="number" id="s-min" min="0" max="100"></label>
+    <label>Default people per job<input type="number" id="s-lim" min="1" max="150"></label>
+  </div>
+  <div id="s-msg"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn" id="s-close">Close</button><button class="btn pri" id="s-save">Save</button></div>
+</div></div>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var CFG = null, C = null, R = [], tab = 'elig', poll = null, pvTimer = null;
+  var STATUS = {draft: 'Draft', sending: 'Sending', done: 'Finished', stopped: 'Stopped', cancelled: 'Cancelled'};
+
+  async function api(method, path, body){
+    try {
+      var r = await fetch('/api/jobmail' + path, {method: method, credentials: 'same-origin',
+        headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+      if (r.status === 401) { location.href = '/'; return {ok: false}; }
+      var j = await r.json().catch(function(){ return {}; });
+      if (!r.ok && j.ok === undefined) j.ok = false;
+      return j;
+    } catch(e){ return {ok: false, error: 'Network error'}; }
+  }
+  function fd(s){ if (!s) return ''; var d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? s : d.toLocaleDateString('en-IN', {day: 'numeric', month: 'short'}) + ', ' + d.toLocaleTimeString('en-IN', {hour: 'numeric', minute: '2-digit'}); }
+  function hourLbl(h){ return h === 24 ? 'Midnight' : (h % 12 || 12) + ':00 ' + (h < 12 ? 'AM' : 'PM'); }
+  function jobLine(j){ if (!j) return ''; return [j.location, (j.exp_min || j.exp_max) ? (j.exp_min + '–' + j.exp_max + ' yrs') : '', j.ctc_max ? ('budget ' + (j.ctc_min ? j.ctc_min + '–' : 'up to ') + j.ctc_max + ' LPA') : ''].filter(Boolean).join(' · '); }
+  function go(q){ history.pushState(null, '', '/jobmail' + (q ? '?' + q : '')); route(); }
+  window.addEventListener('popstate', route);
+
+  // ── settings ──────────────────────────────────────────────────────────
+  for (var h = 0; h <= 24; h++) {
+    if (h < 24) $('s-sh').insertAdjacentHTML('beforeend', '<option value="' + h + '">' + hourLbl(h) + '</option>');
+    if (h > 0) $('s-eh').insertAdjacentHTML('beforeend', '<option value="' + h + '">' + hourLbl(h) + '</option>');
+  }
+  async function loadCfg(){
+    CFG = await api('GET', '/settings');
+    if (!CFG.ok) return;
+    $('sender').textContent = CFG.sender ? 'Sends from ' + CFG.sender : '';
+    $('gear').style.display = CFG.is_admin ? '' : 'none';
+  }
+  $('gear').onclick = function(){
+    var s = CFG.settings;
+    $('s-cap').value = s.daily_cap; $('s-gap').value = String(s.gap_days); $('s-sh').value = String(s.start_hour); $('s-eh').value = String(s.end_hour);
+    $('s-min').value = s.default_min; $('s-lim').value = s.default_limit; $('s-msg').innerHTML = '';
+    $('setm').classList.add('on');
+  };
+  $('s-close').onclick = function(){ $('setm').classList.remove('on'); };
+  $('s-save').onclick = async function(){
+    var r = await api('PUT', '/settings', {daily_cap: +$('s-cap').value, gap_days: +$('s-gap').value, start_hour: +$('s-sh').value,
+      end_hour: +$('s-eh').value, default_min: +$('s-min').value, default_limit: +$('s-lim').value});
+    if (!r.ok) { $('s-msg').innerHTML = '<div class="err">' + esc(r.error || 'Could not save') + '</div>'; return; }
+    await loadCfg(); $('setm').classList.remove('on');
+  };
+
+  // ── list view ─────────────────────────────────────────────────────────
+  async function showList(){
+    stopPoll();
+    $('app').innerHTML = '<div class="empty">Loading…</div>';
+    var [jobs, camps] = await Promise.all([api('GET', '/jobs'), api('GET', '/campaigns')]);
+    var opts = (jobs.jobs || []).map(function(j){ return '<option value="' + j.id + '">' + esc(j.role + (j.client ? ' — ' + j.client : '') + (j.location ? ' (' + j.location + ')' : '')) + '</option>'; }).join('');
+    var html = '<div class="card"><div class="h">E-mail a job to matching candidates</div>'
+      + '<div class="sub">AI ranks your whole database against the job\'s JD (resume + profile vectors), removes anyone who should not get it, checks every profile, and waits for your approval. Nothing is sent until you approve.</div>'
+      + (CFG && !CFG.sender ? '<div class="err">⚠ The company mailbox is not set. Settings → Email Configuration.</div>' : '')
+      + '<div class="row" style="margin-top:12px"><select id="newjob" style="flex:1;min-width:240px;padding:9px 10px;border:1px solid var(--line);border-radius:9px">'
+      + (opts || '<option value="">No active jobs</option>') + '</select><button class="btn pri" id="newgo"' + (opts ? '' : ' disabled') + '>Find matching candidates →</button></div></div>';
+    var list = camps.campaigns || [];
+    html += '<div class="card"><div class="h">Job mails</div>';
+    if (!list.length) html += '<div class="empty">No job mails yet. Pick a job above to start.</div>';
+    html += list.map(function(c){
+      var k = c.counts, j = c.job || {};
+      var nums = c.status === 'draft'
+        ? '<span><b>' + k.selected + '</b> ticked</span><span><b>' + k.eligible + '</b> on list</span><span><b>' + (k.total - k.eligible) + '</b> excluded</span>'
+        : '<span><b>' + k.sent + '</b> sent</span>' + (k.queued ? '<span><b>' + k.queued + '</b> queued</span>' : '') + '<span><b>' + k.opened + '</b> opened</span><span><b>' + k.interested + '</b> interested</span><span><b>' + k.not_now + '</b> not now</span>';
+      return '<div class="list-row" data-c="' + c.id + '"><div class="grow"><div style="font-weight:700">' + esc((j.role || 'Job') + (j.client ? ' — ' + j.client : '')) + '</div>'
+        + '<div class="nums">' + nums + '<span>' + esc(fd(c.approved_at || c.created_at)) + '</span></div></div>'
+        + '<span class="pill ' + c.status + '">' + (STATUS[c.status] || c.status) + '</span></div>';
+    }).join('') + '</div>';
+    $('app').innerHTML = html;
+    if ($('newgo')) $('newgo').onclick = function(){ if ($('newjob').value) go('job=' + $('newjob').value); };
+    document.querySelectorAll('.list-row').forEach(function(el){ el.onclick = function(){ go('c=' + el.dataset.c); }; });
+  }
+
+  // ── campaign view ─────────────────────────────────────────────────────
+  async function openJob(jobId){
+    $('app').innerHTML = '<div class="empty">Ranking your database against this job with AI…</div>';
+    var r = await api('POST', '/campaigns', {job_id: +jobId});
+    if (!r.ok) { $('app').innerHTML = '<div class="card"><div class="err">' + esc(r.error || 'Could not open') + '</div><p><a href="/jobmail">← All job mails</a></p></div>'; return; }
+    history.replaceState(null, '', '/jobmail?c=' + r.campaign.id);
+    await openCampaign(r.campaign.id, r.message);
+  }
+  async function openCampaign(id, message){
+    var r = await api('GET', '/campaign/' + id);
+    if (!r.ok) { $('app').innerHTML = '<div class="card"><div class="err">' + esc(r.error || 'Not found') + '</div><p><a href="/jobmail">← All job mails</a></p></div>'; return; }
+    C = r.campaign; R = r.recipients || [];
+    paint(message);
+    if (C.ai_status === 'running') startPoll();
+    else stopPoll();
+  }
+  function stopPoll(){ if (poll) { clearInterval(poll); poll = null; } }
+  function startPoll(){
+    if (poll) return;
+    poll = setInterval(async function(){
+      var r = await api('GET', '/campaign/' + C.id);
+      if (!r.ok) return stopPoll();
+      C = r.campaign; R = r.recipients || [];
+      if (C.ai_status !== 'running') { stopPoll(); paint(); } else paintAi();
+    }, 2000);
+  }
+
+  function steps(){
+    var k = C.counts, d = C.status === 'draft';
+    var s = [['1 · Find matches', 'Vector search + filters', true],
+             ['2 · AI check', C.ai_status === 'done' ? (k.ai_fit + ' fit · ' + k.ai_maybe + ' maybe · ' + k.ai_not_fit + ' not fit') : 'DeepSeek reads each profile', C.ai_status === 'done'],
+             ['3 · Review & approve', d ? k.selected + ' ticked' : 'Approved ' + fd(C.approved_at), !d],
+             ['4 · Responses', d ? 'Interested → pipeline + call task' : k.interested + ' interested · ' + k.not_now + ' not now', C.status === 'done']];
+    var cur = d ? (C.ai_status === 'done' ? 2 : 1) : 3;
+    return '<div class="steps">' + s.map(function(x, i){ return '<div class="step' + (i === cur ? ' on' : '') + (x[2] ? ' ok' : '') + '"><b>' + x[0] + '</b>' + esc(x[1]) + '</div>'; }).join('') + '</div>';
+  }
+
+  function header(){
+    var j = C.job || {};
+    return '<div class="card"><div class="row"><a href="/jobmail" id="toList" style="font-size:13px;text-decoration:none">← All job mails</a></div>'
+      + '<div class="row" style="margin-top:6px;justify-content:space-between"><div><div class="h" style="font-size:17px">' + esc((j.role || '') + (j.client ? ' — ' + j.client : '')) + '</div>'
+      + '<div class="sub">' + esc(jobLine(j)) + (j.status && j.status !== 'active' ? ' · <b style="color:var(--red)">job is ' + esc(j.status) + '</b>' : '') + '</div></div>'
+      + '<span class="pill ' + C.status + '">' + (STATUS[C.status] || C.status) + '</span></div><div id="msg"></div></div>';
+  }
+
+  function filtersCard(){
+    var f = C.filters, s = (CFG && CFG.settings) || {default_min: 70, default_limit: 30};
+    var mn = f.min_score == null ? s.default_min : f.min_score, lim = f.limit == null ? s.default_limit : f.limit;
+    function sel(id, vals, cur, fmt){ return '<select id="' + id + '">' + vals.map(function(v){ return '<option value="' + v + '"' + (+cur === v ? ' selected' : '') + '>' + fmt(v) + '</option>'; }).join('') + '</select>'; }
+    var mins = [50, 55, 60, 65, 70, 75, 80, 85, 90]; if (mins.indexOf(+mn) < 0) mins.push(+mn); mins.sort(function(a, b){ return a - b; });
+    var lims = [10, 20, 30, 50, 75, 100, 150]; if (lims.indexOf(+lim) < 0) lims.push(+lim); lims.sort(function(a, b){ return a - b; });
+    return '<div class="card"><div class="h">1 · Who should get it</div>'
+      + '<div class="sub">Ranked only by AI similarity between the JD and each candidate\'s profile + resume. Always removed: no e-mail, unsubscribed, already in this job, live in another pipeline (Shared / Interview / Offer / Placed), already mailed about this job, or mailed by HireLab in the last ' + ((CFG && CFG.settings.gap_days) || 7) + ' days.</div>'
+      + '<div class="filters">'
+      + '<label>Minimum AI match' + sel('f-min', mins, mn, function(v){ return v + '%+'; }) + '</label>'
+      + '<label>Max people' + sel('f-lim', lims, lim, function(v){ return 'Top ' + v; }) + '</label>'
+      + '<label><span class="chk"><input type="checkbox" id="f-exp"' + (f.use_exp ? ' checked' : '') + '> Experience in range</span>' + sel('f-tol', [0, 1, 2, 3, 5], f.exp_tolerance, function(v){ return '± ' + v + ' yrs'; }) + '</label>'
+      + '<label class="chk" style="padding-bottom:9px"><input type="checkbox" id="f-ctc"' + (f.use_ctc ? ' checked' : '') + '> Current CTC within budget</label>'
+      + '<label class="chk" style="padding-bottom:9px"><input type="checkbox" id="f-loc"' + (f.use_location ? ' checked' : '') + '> Location matches</label>'
+      + '</div><div class="row" style="margin-top:12px;justify-content:space-between"><span class="sub">Searched ' + (C.scanned || 0) + ' candidates with an AI profile' + (C.built_at ? ' · ' + esc(fd(C.built_at)) : '') + '</span>'
+      + '<button class="btn navy" id="rebuild">↻ Search again</button></div></div>';
+  }
+
+  function aiCard(){
+    var k = C.counts;
+    var html = '<div class="card" id="aicard"><div class="row" style="justify-content:space-between"><div><div class="h">2 · AI check</div>'
+      + '<div class="sub">DeepSeek reads the JD and each person\'s profile/resume and says fit / maybe / not fit. "Not fit" is un-ticked for you — you can tick anyone back.</div></div>'
+      + '<button class="btn pri" id="aigo"' + (C.ai_status === 'running' || !k.eligible ? ' disabled' : '') + '>' + (C.ai_status === 'done' ? '↻ Check again' : '✦ Run AI check on ' + k.eligible) + '</button></div>';
+    html += '<div id="aiprog">' + aiProg() + '</div></div>';
+    return html;
+  }
+  function aiProg(){
+    if (C.ai_status === 'running') { var p = C.ai_total ? Math.round(100 * C.ai_done / C.ai_total) : 0;
+      return '<div class="sub" style="margin-top:10px">Checking ' + C.ai_done + ' of ' + C.ai_total + '…</div><div class="bar"><s style="width:' + p + '%"></s></div>'; }
+    if (C.ai_status === 'failed') return '<div class="err">AI check failed: ' + esc(C.ai_error || '') + '</div>';
+    if (C.ai_status === 'done') { var k = C.counts;
+      return '<div class="row" style="margin-top:10px"><span class="tag g">' + k.ai_fit + ' fit</span><span class="tag a">' + k.ai_maybe + ' maybe</span><span class="tag r">' + k.ai_not_fit + ' not fit</span>'
+        + (C.ai_error ? '<span class="sub">Some profiles could not be checked: ' + esc(C.ai_error) + '</span>' : '') + '</div>'; }
+    return '';
+  }
+  function paintAi(){
+    if ($('aiprog')) $('aiprog').innerHTML = aiProg();
+  }
+
+  function verdict(r){
+    if (!r.ai_verdict) return '';
+    var cls = r.ai_verdict === 'fit' ? 'g' : r.ai_verdict === 'maybe' ? 'a' : 'r';
+    return '<span class="tag ' + cls + '">' + (r.ai_verdict === 'not_fit' ? 'not fit' : r.ai_verdict) + '</span>' + (r.ai_reason ? '<div class="m" style="margin-top:3px">' + esc(r.ai_reason) + '</div>' : '');
+  }
+  function statusTag(r){
+    if (r.response === 'interested') return '<span class="tag g">Interested</span>';
+    if (r.response === 'not_now') return '<span class="tag a">Not now</span>' + (r.response_reason ? '<div class="m">' + esc(r.response_reason) + '</div>' : '');
+    var map = {queued: ['b', 'Queued'], sending: ['b', 'Sending'], sent: ['', 'Sent'], failed: ['r', 'Failed'], skipped: ['a', 'Skipped'], cancelled: ['', 'Cancelled'], not_selected: ['', 'Not ticked']};
+    var t = map[r.status] || ['', r.status];
+    var extra = r.status === 'sent' ? [r.opened_at ? 'opened' : '', r.clicked_at ? 'clicked' : ''].filter(Boolean).join(' · ') : (r.skip_reason || r.error || '');
+    return '<span class="tag ' + t[0] + '">' + t[1] + '</span>' + (extra ? '<div class="m">' + esc(extra) + '</div>' : '');
+  }
+  function who(r){
+    var meta = [r.designation && r.company ? r.designation + ' @ ' + r.company : (r.designation || r.company), r.experience ? r.experience + ' yrs' : '', r.location, r.ctc_current ? r.ctc_current + ' LPA' : ''].filter(Boolean).join(' · ');
+    var href = r.job_candidate_id ? '/#mandate/' + C.mandate_id + '/profiles/' + r.job_candidate_id
+             : (r.cand_mandate_id ? '/#mandate/' + r.cand_mandate_id + '/profiles/' + r.candidate_id : '#');
+    return '<a href="' + href + '" target="_blank" style="font-weight:700;color:var(--ink);text-decoration:none">' + esc(r.name || r.email) + '</a><div class="m">' + esc(meta) + '</div><div class="m">' + esc(r.email) + '</div>';
+  }
+
+  function listCard(){
+    var d = C.status === 'draft';
+    var elig = R.filter(function(r){ return r.eligible; }), excl = R.filter(function(r){ return !r.eligible; });
+    var html = '<div class="card"><div class="row" style="justify-content:space-between;margin-bottom:10px"><div class="h" style="margin:0">' + (d ? '3 · Review the list' : 'Recipients') + '</div><div class="tabs">'
+      + '<button class="tab' + (tab === 'elig' ? ' on' : '') + '" data-tab="elig">' + (d ? 'To be mailed' : 'On the list') + ' <em>' + elig.length + '</em></button>'
+      + '<button class="tab' + (tab === 'excl' ? ' on' : '') + '" data-tab="excl">Excluded <em>' + excl.length + '</em></button></div></div>';
+    var rows = tab === 'elig' ? elig : excl;
+    if (!rows.length) {
+      html += '<div class="empty">' + (tab === 'elig' ? 'Nobody passed the filters. Try a lower match % or switch a filter off, then Search again.' : 'Nobody was excluded.') + '</div>';
+    } else if (tab === 'elig') {
+      var nSel = elig.filter(function(r){ return r.selected; }).length;
+      html += '<table><thead><tr>' + (d ? '<th style="width:28px"><input type="checkbox" id="selall"' + (nSel === elig.length ? ' checked' : '') + '></th>' : '') + '<th>Candidate</th><th>AI match</th><th>AI check</th>' + (d ? '' : '<th>Status</th>') + '</tr></thead><tbody>'
+        + rows.map(function(r){
+          return '<tr class="' + (d && !r.selected ? 'off' : '') + '">' + (d ? '<td><input type="checkbox" data-sel="' + r.id + '"' + (r.selected ? ' checked' : '') + '></td>' : '')
+            + '<td>' + who(r) + '</td><td class="score">' + (+r.score).toFixed(1) + '%</td><td style="max-width:260px">' + verdict(r) + '</td>' + (d ? '' : '<td>' + statusTag(r) + '</td>') + '</tr>';
+        }).join('') + '</tbody></table>';
+    } else {
+      html += '<table><thead><tr><th>Candidate</th><th>AI match</th><th>Why not mailed</th></tr></thead><tbody>'
+        + rows.map(function(r){ return '<tr><td>' + who(r) + '</td><td class="score">' + (+r.score).toFixed(1) + '%</td><td>' + esc(r.skip_reason) + '</td></tr>'; }).join('') + '</tbody></table>';
+    }
+    return html + '</div>';
+  }
+
+  function mailCard(){
+    var d = C.status === 'draft', k = C.counts;
+    var html = '<div class="card"><div class="h">' + (d ? '4 · The e-mail' : 'The e-mail') + '</div><div class="sub">Personalised for each person. Your signature is added at the bottom.</div>';
+    if (d) {
+      html += '<div class="mailopt">'
+        + '<label class="chk"><input type="checkbox" id="m-client"' + (C.show_client ? ' checked' : '') + '> Show the client\'s name (' + esc((C.job || {}).client || '') + ')</label>'
+        + '<label class="f" id="m-label-wrap"' + (C.show_client ? ' style="display:none"' : '') + '>When hidden, describe the client as<input type="text" id="m-label" maxlength="120" placeholder="one of our clients" value="' + esc(C.client_label || '') + '"></label>'
+        + '<label class="chk"><input type="checkbox" id="m-ctc"' + (C.show_ctc ? ' checked' : '') + '> Show the CTC band</label>'
+        + '<label class="f">Personal note (optional)<textarea id="m-note" maxlength="1200" placeholder="e.g. Immediate joiners preferred. Site-based role.">' + esc(C.note || '') + '</textarea></label></div>';
+    }
+    html += '<div class="preview" id="pv">Loading preview…</div>';
+    if (d) {
+      html += '<div class="row" style="margin-top:12px;justify-content:space-between"><button class="btn" id="test">✉ Send a test to me</button>'
+        + '<button class="btn pri" id="approve"' + (k.selected && C.ai_status !== 'running' ? '' : ' disabled') + '>Approve &amp; send to ' + k.selected + '</button></div>'
+        + '<div class="sub" style="margin-top:8px">Goes out from the company mailbox, Mon–Sat between ' + (CFG ? hourLbl(CFG.settings.start_hour) + ' and ' + hourLbl(CFG.settings.end_hour) : 'office hours') + ', up to ' + (CFG ? CFG.settings.daily_cap : 40) + ' a day.'
+        + (C.ai_status !== 'done' ? ' <b>Tip: run the AI check first.</b>' : '') + '</div>'
+        + '<div style="margin-top:10px"><button class="btn sm" id="discard">Discard this draft</button></div>';
+    }
+    return html + '</div>';
+  }
+
+  function resultsCard(){
+    var k = C.counts;
+    var tiles = [['Queued', k.queued], ['Sent', k.sent], ['Opened', k.opened], ['Interested', k.interested], ['Not now', k.not_now], ['Skipped / failed', k.skipped + k.failed]];
+    var html = '<div class="kpis">' + tiles.map(function(t){ return '<div class="kpi"><span>' + t[0] + '</span><b>' + t[1] + '</b></div>'; }).join('') + '</div>';
+    if (C.status === 'sending') html += '<div class="card"><div class="row" style="justify-content:space-between"><div class="sub">Sending in the background inside the sending window. "Interested" replies land in the job\'s pipeline at stage <b>Interested</b> with a call task for you.</div>'
+      + '<div class="row"><button class="btn navy" id="sendnow">Send 5 now</button><button class="btn" id="stop">Stop sending</button></div></div></div>';
+    return html;
+  }
+
+  function paint(message){
+    var d = C.status === 'draft';
+    var html = header() + steps();
+    if (d) html += filtersCard() + aiCard() + '<div class="two">' + listCard() + mailCard() + '</div>';
+    else html += resultsCard() + '<div class="two">' + listCard() + mailCard() + '</div>';
+    $('app').innerHTML = html;
+    if (message) msg(esc(message), 'err');
+    else if (CFG && CFG.settings.last_error) msg('⚠ Sending paused: ' + esc(CFG.settings.last_error) + ' — fix the company mailbox in Settings → Email Configuration.', 'err');
+    bind();
+    loadPreview();
+  }
+  function msg(h, cls){ if ($('msg')) $('msg').innerHTML = h ? '<div class="' + (cls || 'note') + '">' + h + '</div>' : ''; }
+
+  async function loadPreview(){
+    var r = await api('GET', '/campaign/' + C.id + '/preview');
+    if (!$('pv')) return;
+    $('pv').innerHTML = r.ok ? '<div class="sub">To: ' + esc(r.name || '') + (r.to ? ' &lt;' + esc(r.to) + '&gt;' : ' (sample)') + '</div><div class="subj">' + esc(r.subject) + '</div>' + r.html : esc(r.error || 'No preview');
+  }
+  async function saveMail(){
+    var body = {show_client: $('m-client').checked, show_ctc: $('m-ctc').checked, client_label: $('m-label').value, note: $('m-note').value};
+    var r = await api('PUT', '/campaign/' + C.id, body);
+    if (r.ok) { C = r.campaign; loadPreview(); }
+  }
+
+  function bind(){
+    if ($('toList')) $('toList').onclick = function(e){ e.preventDefault(); go(''); };
+    document.querySelectorAll('[data-tab]').forEach(function(b){ b.onclick = function(){ tab = b.dataset.tab; paint(); }; });
+    if ($('rebuild')) $('rebuild').onclick = async function(){
+      this.disabled = true; this.textContent = 'Searching…';
+      var f = {min_score: +$('f-min').value, limit: +$('f-lim').value, use_exp: $('f-exp').checked, exp_tolerance: +$('f-tol').value,
+               use_ctc: $('f-ctc').checked, use_location: $('f-loc').checked};
+      var r = await api('PUT', '/campaign/' + C.id, {filters: f, rebuild: true});
+      if (!r.ok) { this.disabled = false; this.textContent = '↻ Search again'; return msg(esc(r.error || 'Could not search'), 'err'); }
+      tab = 'elig'; openCampaign(C.id);
+    };
+    if ($('aigo')) $('aigo').onclick = async function(){
+      this.disabled = true;
+      var r = await api('POST', '/campaign/' + C.id + '/ai-check');
+      if (!r.ok) { this.disabled = false; return msg(esc(r.error || 'Could not start'), 'err'); }
+      C = r.campaign;
+      if (C.ai_status === 'running') { paintAi(); startPoll(); } else openCampaign(C.id);
+    };
+    var all = $('selall');
+    if (all) all.onchange = async function(){
+      var sel = {}; R.forEach(function(r){ if (r.eligible) { sel[r.id] = all.checked; r.selected = all.checked ? 1 : 0; } });
+      var x = await api('PUT', '/campaign/' + C.id, {selection: sel}); if (x.ok) C = x.campaign; paint();
+    };
+    document.querySelectorAll('[data-sel]').forEach(function(cb){ cb.onchange = async function(){
+      var id = +cb.dataset.sel, sel = {}; sel[id] = cb.checked;
+      R.forEach(function(r){ if (r.id === id) r.selected = cb.checked ? 1 : 0; });
+      var x = await api('PUT', '/campaign/' + C.id, {selection: sel}); if (x.ok) C = x.campaign; paint();
+    }; });
+    if ($('m-client')) {
+      $('m-client').onchange = function(){ $('m-label-wrap').style.display = this.checked ? 'none' : ''; saveMail(); };
+      $('m-ctc').onchange = saveMail;
+      ['m-label', 'm-note'].forEach(function(id){ $(id).oninput = function(){ clearTimeout(pvTimer); pvTimer = setTimeout(saveMail, 600); }; });
+    }
+    if ($('test')) $('test').onclick = async function(){
+      this.disabled = true; var r = await api('POST', '/campaign/' + C.id + '/test'); this.disabled = false;
+      msg(r.ok ? '✓ Test e-mail sent to ' + esc(r.to) + ' — check your inbox.' : esc(r.error || 'Test failed'), r.ok ? 'note' : 'err');
+    };
+    if ($('approve')) $('approve').onclick = async function(){
+      var n = C.counts.selected;
+      if (!confirm('Send this job to ' + n + ' candidate' + (n === 1 ? '' : 's') + '?\n\nMails go out from the company mailbox in the background, up to ' + (CFG ? CFG.settings.daily_cap : 40) + ' a day.')) return;
+      this.disabled = true;
+      var r = await api('POST', '/campaign/' + C.id + '/approve');
+      if (!r.ok) { this.disabled = false; return msg(esc(r.error || 'Could not approve'), 'err'); }
+      await openCampaign(C.id);
+      msg('✓ Approved. ' + r.queued + ' e-mail' + (r.queued === 1 ? '' : 's') + ' queued' + (r.days > 1 ? ' — about ' + r.days + ' working days at the daily limit' : '') + '.', 'note');
+    };
+    if ($('discard')) $('discard').onclick = async function(){
+      if (!confirm('Discard this draft? Nothing has been sent.')) return;
+      await api('POST', '/campaign/' + C.id + '/cancel'); go('');
+    };
+    if ($('sendnow')) $('sendnow').onclick = async function(){
+      this.disabled = true; var r = await api('POST', '/campaign/' + C.id + '/send-now');
+      await loadCfg(); await openCampaign(C.id);
+      msg(r.ok ? (r.sent + ' sent now.' + (r.last_error ? ' ⚠ ' + esc(r.last_error) : '')) : esc(r.error || 'Failed'), r.ok && !r.last_error ? 'note' : 'err');
+    };
+    if ($('stop')) $('stop').onclick = async function(){
+      if (!confirm('Stop sending? Mails already sent stay sent; the rest will not go.')) return;
+      await api('POST', '/campaign/' + C.id + '/cancel'); openCampaign(C.id);
+    };
+  }
+
+  async function route(){
+    stopPoll();
+    var p = new URLSearchParams(location.search);
+    if (p.get('job')) return openJob(p.get('job'));
+    if (p.get('c')) { tab = 'elig'; return openCampaign(+p.get('c')); }
+    return showList();
+  }
+  loadCfg().then(route);
+})();
+</script>
+</body>
+</html>

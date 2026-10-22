@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Market Pulse · HireLab</title>
+<style>
+:root{--ink:#1F2328;--muted:#6B6F76;--line:#E3E1DA;--paper:#F7F6F2;--green:#0F6E56;--navy:#0E2A47;--red:#B3261E;--amber:#9A6512;--blue:#1a73e8}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--paper)}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--blue)}
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.top a.back{text-decoration:none;color:var(--muted);font-size:13px}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--green);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.top h1{font-size:17px;margin:0}
+.top .sp{flex:1}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 20px 60px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px;min-width:0}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.h{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 4px}
+.sub{color:var(--muted);font-size:12.5px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.btn.navy{background:var(--navy);border-color:var(--navy);color:#fff}
+.btn.sm{padding:5px 10px;font-size:12.5px}
+.btn:disabled{opacity:.5;cursor:default}
+.pill{font-size:11.5px;font-weight:700;border-radius:20px;padding:3px 10px;white-space:nowrap}
+.pill.draft{background:#F4EBDD;color:var(--amber)}.pill.sending{background:#E8F0FE;color:var(--blue)}
+.pill.done{background:#E6F4EE;color:var(--green)}.pill.stopped{background:#F2F0EA;color:var(--muted)}
+.err{background:#FBE9E7;color:var(--red);border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
+.note{background:#EEF4FB;color:#185FA5;border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
+.ed{display:grid;grid-template-columns:1.05fr .95fr;gap:16px;align-items:start}
+.sticky{position:sticky;top:70px}
+.fl{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);margin-bottom:10px}
+.fl input,.fl textarea,.fl select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.fl textarea{resize:vertical;min-height:64px;line-height:1.45}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:16px;padding:4px 11px;font-size:12.5px;cursor:pointer}
+.chip.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.flbl{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.reach{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;padding:11px 13px;background:#F7F6F2;border-radius:10px;font-size:12.5px;color:var(--muted)}
+.reach b{font-size:20px;color:var(--navy);font-variant-numeric:tabular-nums;margin-right:4px}
+.sec{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px;background:#FCFCFA}
+.sec .row{justify-content:space-between}
+.preview{border:1px solid var(--line);border-radius:10px;padding:14px 16px;background:#fff;font-size:13.5px;max-height:72vh;overflow:auto}
+.preview .subj{font-weight:700;margin-bottom:8px}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.kpi b{display:block;font-size:22px;font-variant-numeric:tabular-nums;color:var(--navy)}
+.kpi span{font-size:12px;color:var(--muted)}
+.kpi i{font-style:normal;font-size:11.5px;color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11.5px;color:var(--muted);font-weight:600;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:8px;border-bottom:1px solid #EFEDE7;vertical-align:top}
+td .m{color:var(--muted);font-size:12px}
+.tag{font-size:11px;border-radius:10px;padding:2px 8px;background:#F2F0EA;color:var(--muted);white-space:nowrap;display:inline-block}
+.tag.g{background:#E6F4EE;color:var(--green)}.tag.b{background:#E8F0FE;color:var(--blue)}.tag.r{background:#FBE9E7;color:var(--red)}.tag.a{background:#F4EBDD;color:var(--amber)}
+.list-row{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid #EFEDE7;cursor:pointer}
+.list-row:hover{background:#FAF9F5}
+.list-row .grow{flex:1;min-width:0}
+.nums{display:flex;gap:14px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.nums b{color:var(--navy)}
+.empty{text-align:center;color:var(--muted);padding:24px}
+.saved{font-size:12px;color:var(--muted)}
+.modal{position:fixed;inset:0;background:rgba(14,42,71,.35);display:none;align-items:center;justify-content:center;z-index:20;padding:16px}
+.modal.on{display:flex}
+.modal .box{background:#fff;border-radius:14px;padding:18px;width:min(460px,100%)}
+@media(max-width:900px){.ed{grid-template-columns:1fr}.sticky{position:static}.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.hide-m{display:none}}
+</style>
+</head>
+<body>
+<div class="top"><a class="back" href="/">&#8592; App</a><div class="logo">H</div><h1>Market Pulse</h1><span class="sp"></span>
+  <span class="sub hide-m" id="sender"></span><button class="btn sm" id="gear">⚙ Settings</button></div>
+<div class="wrap" id="app"><div class="empty">Loading…</div></div>
+
+<div class="modal" id="setm"><div class="box">
+  <div class="h">Newsletter settings</div>
+  <div class="sub" id="s-info"></div>
+  <div class="row" style="margin-top:12px">
+    <label class="fl" style="flex:1">E-mails per day<input type="number" id="s-cap" min="1" max="2000"></label>
+    <label class="fl" style="flex:1">From (IST)<select id="s-sh"></select></label>
+    <label class="fl" style="flex:1">Until (IST)<select id="s-eh"></select></label>
+  </div>
+  <div id="s-msg"></div>
+  <div class="row" style="justify-content:flex-end"><button class="btn" id="s-close">Close</button><button class="btn pri" id="s-save">Save</button></div>
+</div></div>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var CFG = null, META = null, I = null, R = [], saveT = null, reachT = null;
+  var STATUS = {draft: 'Draft', sending: 'Sending', done: 'Finished', stopped: 'Stopped'};
+  async function api(method, path, body, base){
+    try {
+      var r = await fetch((base || '/api/newsletter') + path, {method: method, credentials: 'same-origin',
+        headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+      if (r.status === 401) { location.href = '/'; return {ok: false}; }
+      var j = await r.json().catch(function(){ return {}; });
+      if (!r.ok && j.ok === undefined) j.ok = false;
+      return j;
+    } catch(e){ return {ok: false, error: 'Network error'}; }
+  }
+  function fd(s){ if (!s) return ''; var d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? s : d.toLocaleDateString('en-IN', {day: 'numeric', month: 'short', year: 'numeric'}); }
+  function hourLbl(h){ return h === 24 ? 'Midnight' : (h % 12 || 12) + ':00 ' + (h < 12 ? 'AM' : 'PM'); }
+  function go(q){ history.pushState(null, '', '/newsletter' + (q ? '?' + q : '')); route(); }
+  window.addEventListener('popstate', route);
+  function msg(h, cls){ if ($('msg')) $('msg').innerHTML = h ? '<div class="' + (cls || 'note') + '">' + h + '</div>' : ''; }
+  function audWords(a){
+    var p = [];
+    ['industries', 'functions', 'seniority', 'regions'].forEach(function(g){ if (a[g] && a[g].length) p.push(a[g].map(function(k){ var x = (META[g] || []).find(function(y){ return y.key === k; }); return x ? x.label.replace(/ \(.*/, '') : k; }).join(' / ')); });
+    if (a.freshness) p.push(a.freshness === 'stale' ? 'old/missing CV' : 'fresh CV');
+    return p.join(' · ') || 'Everyone who can be e-mailed';
+  }
+
+  // settings
+  for (var h = 0; h <= 24; h++) {
+    if (h < 24) $('s-sh').insertAdjacentHTML('beforeend', '<option value="' + h + '">' + hourLbl(h) + '</option>');
+    if (h > 0) $('s-eh').insertAdjacentHTML('beforeend', '<option value="' + h + '">' + hourLbl(h) + '</option>');
+  }
+  async function loadCfg(){
+    CFG = await api('GET', '/settings');
+    if (!CFG.ok) return;
+    $('sender').textContent = CFG.sender ? 'Sends from ' + CFG.sender : '';
+  }
+  $('gear').onclick = function(){ var s = CFG.settings; $('s-cap').value = s.daily_cap; $('s-sh').value = String(s.start_hour); $('s-eh').value = String(s.end_hour);
+    $('s-info').textContent = 'Gap between any two HireLab mails to one person: ' + CFG.gap_days + ' days (set on the Job Mail page). A CV counts as fresh for ' + CFG.fresh_days + ' days (Talent Pool settings).';
+    $('s-msg').innerHTML = ''; $('setm').classList.add('on'); };
+  $('s-close').onclick = function(){ $('setm').classList.remove('on'); };
+  $('s-save').onclick = async function(){
+    var r = await api('PUT', '/settings', {daily_cap: +$('s-cap').value, start_hour: +$('s-sh').value, end_hour: +$('s-eh').value});
+    if (!r.ok) { $('s-msg').innerHTML = '<div class="err">' + esc(r.error || 'Could not save') + '</div>'; return; }
+    await loadCfg(); $('setm').classList.remove('on');
+  };
+
+  // list
+  async function showList(){
+    var r = await api('GET', '/issues');
+    if (!r.ok) { $('app').innerHTML = '<div class="card"><div class="err">' + esc(r.error || 'Could not load') + '</div></div>'; return; }
+    var html = '<div class="card"><div class="row" style="justify-content:space-between"><div><div class="h">Market Pulse</div>'
+      + '<div class="sub">A short monthly e-mail to a Talent Pool segment: market news that builds the HireLab name, plus a personal "refresh your CV" ask that keeps your database fresh. Nothing goes out before you approve.</div></div>'
+      + '<button class="btn pri" id="new">+ New issue</button></div>'
+      + (CFG && !CFG.sender ? '<div class="err">⚠ The company mailbox is not set. Settings → Email Configuration.</div>' : '') + '</div>';
+    var list = r.issues || [];
+    html += '<div class="card"><div class="h">Issues</div>' + (list.length ? '' : '<div class="empty">No issues yet. Start with "New issue".</div>')
+      + list.map(function(i){
+        var k = i.counts;
+        var nums = i.status === 'draft' ? '<span>' + esc(audWords(i.audience)) + '</span>'
+          : '<span><b>' + k.sent + '</b> sent</span>' + (k.queued ? '<span><b>' + k.queued + '</b> queued</span>' : '') + '<span><b>' + k.opened + '</b> opened</span><span><b>' + k.clicked + '</b> clicked</span><span><b>' + k.updated + '</b> profiles updated</span>';
+        return '<div class="list-row" data-i="' + i.id + '"><div class="grow"><div style="font-weight:700">' + esc(i.title || 'Untitled') + '</div><div class="nums">' + nums + '<span>' + esc(fd(i.approved_at || i.created_at)) + '</span></div></div>'
+          + '<span class="pill ' + i.status + '">' + (STATUS[i.status] || i.status) + '</span></div>';
+      }).join('') + '</div>';
+    $('app').innerHTML = html;
+    $('new').onclick = async function(){ var x = await api('POST', '/issues', {}); if (x.ok) go('i=' + x.issue.id); };
+    document.querySelectorAll('.list-row').forEach(function(el){ el.onclick = function(){ go('i=' + el.dataset.i); }; });
+  }
+
+  // editor
+  async function openIssue(id){
+    var r = await api('GET', '/issue/' + id);
+    if (!r.ok) { $('app').innerHTML = '<div class="card"><div class="err">' + esc(r.error || 'Not found') + '</div><p><a href="/newsletter">← All issues</a></p></div>'; return; }
+    I = r.issue; R = r.recipients || [];
+    $('app').oninput = null;
+    if (I.status === 'draft') paintEditor(); else paintSent();
+  }
+  function head(){
+    return '<div class="card"><div class="row" style="justify-content:space-between"><div><a href="/newsletter" id="toList" style="font-size:13px;text-decoration:none">← All issues</a>'
+      + '<div class="h" style="font-size:17px;margin-top:4px">' + esc(I.title || 'Untitled') + '</div><div class="sub">' + esc(audWords(I.audience)) + '</div></div>'
+      + '<span class="pill ' + I.status + '">' + (STATUS[I.status] || I.status) + '</span></div><div id="msg"></div></div>';
+  }
+  function paintEditor(){
+    var a = I.audience;
+    var groups = [['industries', 'Industry'], ['functions', 'Function'], ['seniority', 'Seniority'], ['regions', 'Region']];
+    var aud = '<div class="card"><div class="h">1 · Who gets it</div><div class="sub">Talent Pool segments. Inside a group = any; across groups = all. Only people who can be e-mailed are counted.</div>'
+      + groups.map(function(g){ return '<div class="flbl">' + g[1] + '</div><div class="chips" data-g="' + g[0] + '">' + (META[g[0]] || []).map(function(x){
+          return '<button class="chip' + ((a[g[0]] || []).indexOf(x.key) >= 0 ? ' on' : '') + '" data-k="' + x.key + '">' + esc(x.label) + '</button>'; }).join('') + '</div>'; }).join('')
+      + '<div class="row" style="margin-top:6px"><select id="a-fresh" style="padding:7px 10px;border:1px solid var(--line);border-radius:8px"><option value="">Any CV age</option><option value="stale"' + (a.freshness === 'stale' ? ' selected' : '') + '>Only old / missing CV</option><option value="fresh"' + (a.freshness === 'fresh' ? ' selected' : '') + '>Only fresh CV</option></select>'
+      + '<label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="a-live"' + (a.exclude_live ? ' checked' : '') + '> Leave out people live in a pipeline</label></div>'
+      + '<div class="reach" id="reach">Counting…</div></div>';
+    var secs = (I.sections || []).map(function(s, i){
+      return '<div class="sec" data-s="' + i + '"><div class="row"><b style="font-size:12px;color:var(--muted)">Section ' + (i + 1) + '</b><span>'
+        + (i ? '<button class="btn sm" data-up="' + i + '">↑</button> ' : '') + '<button class="btn sm" data-del="' + i + '">Remove</button></span></div>'
+        + '<label class="fl" style="margin-top:6px">Heading<input data-f="heading" value="' + esc(s.heading) + '" maxlength="120"></label>'
+        + '<label class="fl" style="margin:0">Text<textarea data-f="body" rows="4">' + esc(s.body) + '</textarea></label></div>'; }).join('');
+    var content = '<div class="card"><div class="h">2 · Content</div>'
+      + '<label class="fl">Your points for this month — news, hiring trends, salary moves, policy changes (the AI uses only these)<textarea id="c-points" rows="5" placeholder="e.g. 3 new hyperscale DC campuses announced in Navi Mumbai and Chennai&#10;Solar EPC hiring up after ALMM changes; O&amp;M engineers in short supply&#10;Notice periods for senior electrical roles moving to 60 days">' + esc(I.points) + '</textarea></label>'
+      + '<div class="row" style="margin-bottom:12px"><button class="btn pri" id="ai">✦ ' + (I.subject ? 'Re-draft' : 'Draft') + ' with AI</button><span class="sub">or write it yourself below — everything is editable.</span></div>'
+      + '<label class="fl">Issue name (only you see this)<input id="c-title" value="' + esc(I.title) + '" maxlength="140"></label>'
+      + '<label class="fl">Subject — {first_name} is replaced per person<input id="c-subject" value="' + esc(I.subject) + '" maxlength="140" placeholder="{first_name}, what moved in Solar hiring this month"></label>'
+      + '<label class="fl">Preview line (shown after the subject in the inbox)<input id="c-pre" value="' + esc(I.preheader) + '" maxlength="200"></label>'
+      + '<label class="fl">Intro<textarea id="c-intro" rows="3">' + esc(I.intro) + '</textarea></label>'
+      + '<div id="secs">' + secs + '</div><button class="btn sm" id="addsec">+ Add section</button>'
+      + '<label class="fl" style="margin-top:12px">Closing<textarea id="c-closing" rows="2">' + esc(I.closing) + '</textarea></label>'
+      + '<div class="sub">Every e-mail ends with a personal profile box: people with an old or missing CV are asked to refresh it (personal link); people with a fresh CV are invited to update their preferences.</div></div>';
+    var right = '<div class="sticky"><div class="card"><div class="row" style="justify-content:space-between"><div class="h" style="margin:0">3 · Preview</div><span class="saved" id="saved"></span></div>'
+      + '<div class="preview" id="pv" style="margin-top:10px">Loading…</div>'
+      + '<div class="row" style="margin-top:12px;justify-content:space-between"><button class="btn" id="test">✉ Send a test to me</button><button class="btn pri" id="approve">Approve &amp; send</button></div>'
+      + '<div class="sub" style="margin-top:8px" id="sendinfo"></div><div style="margin-top:10px"><button class="btn sm" id="discard">Delete draft</button></div></div></div>';
+    $('app').innerHTML = head() + '<div class="ed"><div>' + aud + content + '</div>' + right + '</div>';
+    bindEditor(); reach(); preview();
+  }
+  function collect(){
+    var secs = Array.prototype.map.call(document.querySelectorAll('.sec'), function(el){ return {heading: el.querySelector('[data-f=heading]').value, body: el.querySelector('[data-f=body]').value}; });
+    return {title: $('c-title').value, points: $('c-points').value, subject: $('c-subject').value, preheader: $('c-pre').value,
+            intro: $('c-intro').value, closing: $('c-closing').value, sections: secs};
+  }
+  function audience(){
+    var a = {freshness: $('a-fresh').value, exclude_live: $('a-live').checked};
+    document.querySelectorAll('.chips').forEach(function(box){ a[box.dataset.g] = Array.prototype.map.call(box.querySelectorAll('.chip.on'), function(b){ return b.dataset.k; }); });
+    return a;
+  }
+  async function save(withAud){
+    var body = collect(); if (withAud) body.audience = audience();
+    $('saved').textContent = 'Saving…';
+    var r = await api('PUT', '/issue/' + I.id, body);
+    if (r.ok) { I = r.issue; $('saved').textContent = 'Saved'; preview(); if (withAud) reach(); }
+    else $('saved').textContent = r.error || 'Not saved';
+  }
+  async function reach(){
+    var r = await api('GET', '/issue/' + I.id + '/audience');
+    if (!r.ok) { $('reach').textContent = r.error || ''; return; }
+    $('reach').innerHTML = '<span><b>' + r.will_send + '</b>will get it</span><span><b>' + r.reach + '</b>in this audience</span>'
+      + '<span><b>' + r.held_by_guard + '</b>held back (HireLab mail in last ' + r.gap_days + ' days)</span><span><b>' + r.stale_cv + '</b>will be asked to refresh their CV</span>';
+    $('sendinfo').textContent = r.will_send ? 'At ' + CFG.settings.daily_cap + ' a day this takes about ' + r.days_to_send + ' working day' + (r.days_to_send === 1 ? '' : 's') + ', Mon–Sat ' + hourLbl(CFG.settings.start_hour) + '–' + hourLbl(CFG.settings.end_hour) + '.' : 'Nobody to send to with this audience.';
+    $('approve').disabled = !r.will_send;
+    $('approve').innerHTML = 'Approve &amp; send to ' + r.will_send;
+  }
+  async function preview(){
+    var r = await api('GET', '/issue/' + I.id + '/preview');
+    if (!$('pv')) return;
+    $('pv').innerHTML = r.ok ? '<div class="sub">Sample: ' + esc(r.name || '') + (r.to ? ' &lt;' + esc(r.to) + '&gt;' : '') + '</div><div class="subj">' + esc(r.subject) + '</div>' + r.html : esc(r.error || '');
+  }
+  function bindEditor(){
+    $('toList').onclick = function(e){ e.preventDefault(); go(''); };
+    document.querySelectorAll('.chips').forEach(function(box){ box.onclick = function(e){ var b = e.target.closest('.chip'); if (!b) return; b.classList.toggle('on'); save(true); }; });
+    $('a-fresh').onchange = function(){ save(true); }; $('a-live').onchange = function(){ save(true); };
+    $('app').oninput = function(e){ if (e.target.closest('.card') && e.target.matches('input:not([type=checkbox]),textarea')) { clearTimeout(saveT); $('saved').textContent = '…'; saveT = setTimeout(function(){ save(false); }, 700); } };
+    $('addsec').onclick = async function(){ var b = collect(); b.sections.push({heading: 'New section', body: ''}); var r = await api('PUT', '/issue/' + I.id, b); if (r.ok) { I = r.issue; paintEditor(); } };
+    $('secs').onclick = async function(e){
+      var d = e.target.closest('[data-del]'), u = e.target.closest('[data-up]'); if (!d && !u) return;
+      var b = collect(), i = +(d || u).getAttribute(d ? 'data-del' : 'data-up');
+      if (d) b.sections.splice(i, 1); else { var t = b.sections[i]; b.sections[i] = b.sections[i - 1]; b.sections[i - 1] = t; }
+      if (!b.sections.length) b.sections = [];
+      var r = await api('PUT', '/issue/' + I.id, b); if (r.ok) { I = r.issue; paintEditor(); }
+    };
+    $('ai').onclick = async function(){
+      if (I.subject && !confirm('Replace the current subject and text with a new AI draft?')) return;
+      this.disabled = true; this.textContent = 'Drafting…';
+      await save(false);
+      var r = await api('POST', '/issue/' + I.id + '/draft', {points: $('c-points').value});
+      if (!r.ok) { this.disabled = false; this.textContent = '✦ Draft with AI'; return msg(esc(r.error || 'Failed'), 'err'); }
+      I = r.issue; paintEditor(); msg('✓ Draft ready — read it through and edit anything before approving.');
+    };
+    $('test').onclick = async function(){ await save(false); this.disabled = true; var r = await api('POST', '/issue/' + I.id + '/test'); this.disabled = false;
+      msg(r.ok ? '✓ Test sent to ' + esc(r.to) + '.' : esc(r.error || 'Test failed'), r.ok ? 'note' : 'err'); };
+    $('approve').onclick = async function(){
+      await save(false);
+      if (!confirm('Send "' + (I.subject || I.title) + '" to this audience?\n\nMails go out in the background from the company mailbox, up to ' + CFG.settings.daily_cap + ' a day.')) return;
+      this.disabled = true;
+      var r = await api('POST', '/issue/' + I.id + '/approve');
+      if (!r.ok) { this.disabled = false; return msg(esc(r.error || 'Could not approve'), 'err'); }
+      await openIssue(I.id);
+      msg('✓ Approved. ' + r.queued + ' queued' + (r.held_by_guard ? ', ' + r.held_by_guard + ' held back by the gap rule' : '') + (r.days > 1 ? ' — about ' + r.days + ' working days at the daily limit.' : '.'));
+    };
+    $('discard').onclick = async function(){ if (!confirm('Delete this draft?')) return; await api('POST', '/issue/' + I.id + '/cancel'); go(''); };
+  }
+
+  function paintSent(){
+    var k = I.counts;
+    var tiles = [['Sent', k.sent, k.queued ? k.queued + ' still queued' : 'of ' + I.queued + ' queued'], ['Opened', k.opened, k.sent ? Math.round(100 * k.opened / k.sent) + '% of sent' : ''],
+                 ['Clicked', k.clicked, 'profile link'], ['Profiles updated', k.updated, 'after this mail'], ['Unsubscribed', k.unsubscribed, ''],
+                 ['Skipped / failed', k.skipped + k.failed, I.skipped_guard ? I.skipped_guard + ' held at approval' : '']];
+    var html = head() + '<div class="kpis">' + tiles.map(function(t){ return '<div class="kpi"><span>' + t[0] + '</span><b>' + t[1] + '</b><i>' + esc(t[2]) + '</i></div>'; }).join('') + '</div>';
+    html += '<div class="card"><div class="row" style="justify-content:space-between"><div class="sub">' + (I.status === 'sending' ? 'Sending in the background inside the sending window.' : 'Finished ' + esc(fd(I.finished_at))) + '</div><div class="row">'
+      + (I.status === 'sending' ? '<button class="btn navy" id="sendnow">Send 10 now</button><button class="btn" id="stop">Stop sending</button>' : '')
+      + '<button class="btn" id="dup">Duplicate as new draft</button></div></div></div>';
+    html += '<div class="ed"><div class="card"><div class="h">Recipients</div><table><thead><tr><th>Candidate</th><th>Status</th></tr></thead><tbody>'
+      + (R.length ? R.map(function(r){
+        var href = r.mandate_id ? '/#mandate/' + r.mandate_id + '/profiles/' + r.candidate_id : '#';
+        var t = {queued: ['b', 'Queued'], sending: ['b', 'Sending'], sent: ['', 'Sent'], failed: ['r', 'Failed'], skipped: ['a', 'Skipped'], cancelled: ['', 'Cancelled']}[r.status] || ['', r.status];
+        var extra = r.status === 'sent' ? [r.opened_at ? 'opened' : '', r.clicked_at ? 'clicked' : ''].filter(Boolean).join(' · ') : (r.skip_reason || r.error || '');
+        return '<tr><td><a href="' + href + '" target="_blank" style="font-weight:700;color:var(--ink);text-decoration:none">' + esc(r.name || r.email) + '</a><div class="m">' + esc(r.email) + '</div></td><td><span class="tag ' + t[0] + '">' + t[1] + '</span>' + (extra ? '<div class="m">' + esc(extra) + '</div>' : '') + '</td></tr>';
+      }).join('') : '<tr><td colspan="2" class="empty">Nobody</td></tr>') + '</tbody></table></div>'
+      + '<div class="sticky"><div class="card"><div class="h">The e-mail</div><div class="preview" id="pv">Loading…</div></div></div></div>';
+    $('app').innerHTML = html;
+    $('toList').onclick = function(e){ e.preventDefault(); go(''); };
+    if ($('sendnow')) $('sendnow').onclick = async function(){ this.disabled = true; var r = await api('POST', '/issue/' + I.id + '/send-now'); await openIssue(I.id); msg(r.ok ? r.sent + ' sent now.' + (r.last_error ? ' ⚠ ' + esc(r.last_error) : '') : esc(r.error || 'Failed'), r.ok && !r.last_error ? 'note' : 'err'); };
+    if ($('stop')) $('stop').onclick = async function(){ if (!confirm('Stop sending? Mails already sent stay sent.')) return; await api('POST', '/issue/' + I.id + '/cancel'); openIssue(I.id); };
+    $('dup').onclick = async function(){ var r = await api('POST', '/issues', {copy_of: I.id}); if (r.ok) go('i=' + r.issue.id); };
+    preview();
+  }
+
+  async function route(){
+    var p = new URLSearchParams(location.search);
+    if (p.get('i')) return openIssue(+p.get('i'));
+    return showList();
+  }
+  (async function(){
+    await loadCfg();
+    if (!CFG.ok) { $('app').innerHTML = '<div class="card"><div class="err">' + esc(CFG.error || 'Could not load') + '</div></div>'; return; }
+    META = await api('GET', '/meta', null, '/api/segments');
+    route();
+  })();
+})();
+</script>
+</body>
+</html>

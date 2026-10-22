@@ -32,7 +32,7 @@ a{color:var(--blue)}
 .switch::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .15s}
 .switch.on{background:var(--green)}
 .switch.on::after{left:23px}
-.set{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}
+.set{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-top:14px}
 .set label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
 .set input,.set select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
 .err{background:#FBE9E7;color:var(--red);border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
@@ -87,6 +87,7 @@ td .m{color:var(--muted);font-size:12px}
     <div class="set">
       <label>E-mails per day<input type="number" id="cap" min="1" max="500"></label>
       <label>Mail again every<select id="interval"><option value="90">3 months</option><option value="180">6 months</option><option value="270">9 months</option><option value="365">12 months</option></select></label>
+      <label>Reminder if not updated<select id="remind"><option value="0">No reminder</option><option value="5">After 5 days</option><option value="7">After 7 days</option><option value="10">After 10 days</option><option value="14">After 14 days</option></select></label>
       <label>Send from (IST)<select id="sh"></select></label>
       <label>Send until (IST)<select id="eh"></select></label>
     </div>
@@ -151,13 +152,13 @@ td .m{color:var(--muted);font-size:12px}
     $('st-s').textContent = on
       ? (k.due ? k.due + ' candidates are due — at ' + s.daily_cap + '/day the backlog clears in about ' + r.days_to_clear + ' working day' + (r.days_to_clear === 1 ? '' : 's') + '.' : 'Nobody is due right now. New candidates become due ' + Math.round(s.interval_days / 30) + ' months after they enter HireLab.')
       : 'Switch on to start sending. Check the preview and send yourself a test first.';
-    $('cap').value = s.daily_cap; $('interval').value = String(s.interval_days); $('sh').value = String(s.start_hour); $('eh').value = String(s.end_hour);
+    $('cap').value = s.daily_cap; $('interval').value = String(s.interval_days); $('remind').value = String(s.reminder_days == null ? 7 : s.reminder_days); $('sh').value = String(s.start_hour); $('eh').value = String(s.end_hour);
     $('sender').textContent = r.sender ? 'Sends from ' + r.sender : '';
     if (s.last_error) msg('⚠ Sending stopped: ' + esc(s.last_error) + '<br>Fix the company mailbox in Settings → Email Configuration; sending resumes by itself.', 'err');
     else if (!r.sender) msg('⚠ The company mailbox is not set. Settings → Email Configuration → add your Gmail address and App Password.', 'err');
     else msg('');
     var tiles = [['due', 'Due now', k.due, 'waiting to be mailed'], ['up', 'Next 30 days', k.upcoming_30, k.upcoming + ' upcoming in all'],
-                 ['today', 'Sent today', k.sent_today, 'of ' + s.daily_cap + ' a day'], ['total', 'Sent in all', k.sent_total, k.failed ? k.failed + ' failed' : 'no failures'],
+                 ['today', 'Sent today', k.sent_today, 'of ' + s.daily_cap + ' a day'], ['total', 'Sent in all', k.sent_total, (k.reminders ? k.reminders + ' reminders · ' : '') + (k.failed ? k.failed + ' failed' : 'no failures')],
                  ['upd', 'Profiles updated', k.updated, k.sent_total ? Math.round(100 * k.updated / k.sent_total) + '% of sent' : '—'],
                  ['ex', 'Excluded', k.excluded, k.switched_off + ' switched off · ' + k.unsubscribed + ' unsubscribed via e-mail']];
     $('kpis').innerHTML = tiles.map(function(t){ return '<div class="kpi"><span>' + t[1] + '</span><b>' + t[2] + '</b><i>' + esc(t[3]) + '</i></div>'; }).join('');
@@ -180,7 +181,7 @@ td .m{color:var(--muted);font-size:12px}
   }
 
   async function save(patch){
-    var body = Object.assign({enabled: S && S.settings.enabled, daily_cap: +$('cap').value, interval_days: +$('interval').value,
+    var body = Object.assign({enabled: S && S.settings.enabled, daily_cap: +$('cap').value, interval_days: +$('interval').value, reminder_days: +$('remind').value,
                               start_hour: +$('sh').value, end_hour: +$('eh').value}, patch || {});
     var r = await api('PUT', '/settings', body);
     if (!r.ok) { msg(esc(r.error || 'Could not save'), 'err'); return; }
@@ -191,7 +192,7 @@ td .m{color:var(--muted);font-size:12px}
     if (on && !confirm('Start sending re-engagement e-mails? Up to ' + $('cap').value + ' a day go out automatically from your company mailbox.')) return;
     save({enabled: on});
   };
-  ['cap', 'interval', 'sh', 'eh'].forEach(function(id){ $(id).addEventListener('change', function(){ save(); }); });
+  ['cap', 'interval', 'remind', 'sh', 'eh'].forEach(function(id){ $(id).addEventListener('change', function(){ save(); }); });
   $('test').onclick = async function(){
     this.disabled = true;
     var r = await api('POST', '/test', {kind: pk});

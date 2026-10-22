@@ -55,6 +55,10 @@ a{color:var(--teal)}
 #upext{font-size:14px;color:var(--teal);font-weight:600}
 @media(max-width:560px){.body{padding:18px 16px}}
 .topbar .in,.hero .in{max-width:640px}
+.pick{display:flex;flex-wrap:wrap;gap:8px}
+.pick label{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:20px;padding:7px 13px;font-size:13.5px;cursor:pointer;background:#fff;user-select:none}
+.pick label.on{border-color:var(--teal);background:var(--teal-s);color:var(--teal-d);font-weight:600}
+.pick input{display:none}
 </style>
 </head>
 <body>
@@ -127,12 +131,42 @@ function renderForm(c){
     + '<div class="g2">' + field('ctc_current','Current CTC (LPA)', c.ctc_current, 'number') + field('ctc_expected','Expected CTC (LPA)', c.ctc_expected, 'number') + '</div>'
     + field('notice_period','Notice period (days)', c.notice_period, 'number')
     + '<label class="fld"><span>Key skills <i>(comma separated)</i></span><textarea id="key_skills" rows="2">'+esc(skills)+'</textarea></label>'
+    + '<div id="interests"></div>'
     + '<div class="fld"><span>Latest resume <i>(PDF / Word)</i></span>'
     + '<label class="upload" id="upbox"><span class="ui"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></svg></span><div id="upext">Tap to choose your resume file</div>'
     + '<input type="file" id="resume" accept=".pdf,.doc,.docx" style="display:none" onchange="onFile()"></label></div>'
     + '<div class="err" id="up-err" role="alert"></div>'
     + '<button class="btn block" id="submitBtn" onclick="submitForm()">Submit updated profile</button>'
     + '</div>';
+  loadInterests();
+}
+
+// What the candidate wants to hear about (Talent Pool segments) — optional; hidden if unavailable.
+var INTERESTS = null;
+async function loadInterests(){
+  try{
+    var r = await fetch('/api/public/talent-interests/' + TOKEN);
+    var j = await r.json();
+    if(!j.ok) return;
+    INTERESTS = j;
+    function group(name, list, chosen){
+      return '<div class="pick" data-grp="'+name+'">' + list.map(function(x){
+        var on = chosen.indexOf(x.key) >= 0;
+        return '<label class="'+(on?'on':'')+'"><input type="checkbox" value="'+esc(x.key)+'"'+(on?' checked':'')+'>'+esc(x.label)+'</label>';
+      }).join('') + '</div>';
+    }
+    document.getElementById('interests').innerHTML =
+      '<div class="sec">What would you like to hear about?</div>'
+      + '<label class="fld"><span>Industries <i>(pick any)</i></span></label>' + group('ind', j.industries, j.chosen_industries || [])
+      + '<label class="fld" style="margin-top:14px"><span>Kind of roles <i>(pick any)</i></span></label>' + group('fun', j.functions, j.chosen_functions || [])
+      + '<div style="height:18px"></div>';
+    document.querySelectorAll('.pick label').forEach(function(l){
+      l.addEventListener('click', function(e){ e.preventDefault(); var i = l.querySelector('input'); i.checked = !i.checked; l.classList.toggle('on', i.checked); });
+    });
+  }catch(e){}
+}
+function picked(grp){
+  return Array.prototype.map.call(document.querySelectorAll('.pick[data-grp="'+grp+'"] input:checked'), function(i){ return i.value; });
 }
 
 function onFile(){
@@ -154,6 +188,7 @@ async function submitForm(){
   fd.append('key_skills', JSON.stringify(ks));
   var rf = document.getElementById('resume').files[0];
   if(rf) fd.append('resume', rf);
+  if(INTERESTS){ fd.append('interest_industries', JSON.stringify(picked('ind'))); fd.append('interest_functions', JSON.stringify(picked('fun'))); }
 
   try{
     var res = await fetch(API, { method:'POST', body: fd });
