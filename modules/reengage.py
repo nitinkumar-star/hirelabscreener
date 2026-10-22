@@ -35,6 +35,7 @@ import hmac
 import html
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -98,6 +99,15 @@ def _migrate_reengage(conn):
         conn.execute('ALTER TABLE candidates ADD COLUMN reengage_off INTEGER DEFAULT 0')
     except Exception:
         pass
+    conn.execute('''CREATE TABLE IF NOT EXISTS reengage_text (
+        company_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        subject TEXT DEFAULT '',
+        body TEXT DEFAULT '',
+        updated_by INTEGER DEFAULT 0,
+        updated_at TEXT DEFAULT '',
+        PRIMARY KEY (company_id, kind)
+    )''')
     try:      # Wave 2: one soft reminder N days after the e-mail (0 = off)
         conn.execute('ALTER TABLE reengage_settings ADD COLUMN reminder_days INTEGER DEFAULT 7')
     except Exception:
@@ -234,41 +244,91 @@ def build_people(conn, oid, settings=None, now=None):
 
 
 # ── the e-mail ─────────────────────────────────────────────────────────────
-def compose(p, link, unsub, pixel='', has_signature=True):
-    """(subject, plain, html) for one person."""
-    fn = first_name(p['name'])
-    when = nice_date(p['considered_on'])
+# ── editable e-mail text (empty = built-in default) ────────────────────────
+_ASK = ('We already have most of your details with us — we only need a quick refresh with your latest '
+        'information (current role and company, CTC, notice period, location and an updated CV). '
+        'It takes about 2 minutes, and it helps us put the right opportunity in front of you.')
+DEFAULT_TEXT = {
+    'job': {'subject': '{first_name}, a quick update on your profile with HireLab',
+            'body': 'On {date}, HireLab considered your profile for the {role} position{with_client}. Unfortunately, '
+                    'due to some reasons, things did not move forward at that time.\n\n'
+                    'HireLab is a recruitment agency specialising in {domains} hiring, and we regularly work on new '
+                    'openings in these areas.\n\n' + _ASK},
+    'pool': {'subject': '{first_name}, is your HireLab profile up to date?',
+             'body': 'Your profile has been part of the HireLab talent network{since_date}.\n\n'
+                     'HireLab is a recruitment agency that hires for {domains_detail} companies — engineering, project, '
+                     'O&M, sales and leadership roles.\n\n' + _ASK},
+    'reminder': {'subject': '{first_name}, 2 minutes to refresh your HireLab profile',
+                 'body': 'A quick reminder about our note last week — we are keeping your profile ready for new '
+                         '{domains} openings, and a refreshed CV helps us put the right role in front of you.\n\n'
+                         'Just confirm your current role, CTC, notice period and location, and upload your latest CV.'},
+}
+TEXT_KINDS = ('job', 'pool', 'reminder')
+PLACEHOLDERS = [('{first_name}', 'Asha'), ('{role}', 'job they were considered for'), ('{client}', 'that client'),
+                ('{with_client}', '" with Azure Power" or nothing'), ('{date}', '12 April 2026'),
+                ('{since_date}', '" since 12 April 2026" or nothing'), ('{domains}', 'your four sectors, one line'),
+                ('{domains_detail}', 'your sectors with example roles')]
+_PH_RX = re.compile(r'\{([a-z_]+)\}')
+
+
+def fill(text, values):
+    return _PH_RX.sub(lambda m: str(values[m.group(1)]) if m.group(1) in values else m.group(0), str(text or ''))
+
+
+def get_text(conn, oid, kind):
+    t = dict(DEFAULT_TEXT[kind])
+    try:
+        r = conn.execute('SELECT subject, body FROM reengage_text WHERE company_id=? AND kind=?', (oid, kind)).fetchone()
+        if r:
+            if (r['subject'] or '').strip():
+                t['subject'] = r['subject']
+            if (r['body'] or '').strip():
+                t['body'] = r['body']
+    except Exception:
+        pass
+    return t
+
+
+def _values(p):
+    when = nice_date(p.get('considered_on'))
+    return {'first_name': first_name(p.get('name')), 'role': p.get('role') or '', 'client': p.get('client') or '',
+            'with_client': (' with %s' % p['client']) if p.get('client') else '', 'date': when or 'an earlier date',
+            'since_date': (' since %s' % when) if when else '', 'domains': DOMAINS_LINE, 'domains_detail': DOMAINS_DETAIL}
+
+
+def _paras(text):
+    return [x.strip() for x in re.split(r'\n\s*\n', str(text or '')) if x.strip()]
+
+
+def kind_of(p):
+    return 'job' if (p.get('kind') == 'job' and p.get('role')) else 'pool'
+
+
+def _render(fn, subject, paras, link, unsub, pixel, has_signature, validity=True):
     sign_off = 'Warm regards,' if has_signature else 'Warm regards,\nTeam HireLab'
-    if p['kind'] == 'job' and p['role']:
-        subject = '%s, a quick update on your profile with HireLab' % fn
-        opening = ('On %s, HireLab considered your profile for the %s position%s. Unfortunately, due to some reasons, '
-                   'things did not move forward at that time.'
-                   % (when or 'an earlier date', p['role'], (' with %s' % p['client']) if p['client'] else ''))
-        about = ('HireLab is a recruitment agency specialising in %s hiring, and we regularly work on new openings '
-                 'in these areas.' % DOMAINS_LINE)
-    else:
-        subject = '%s, is your HireLab profile up to date?' % fn
-        opening = ('Your profile has been part of the HireLab talent network%s.'
-                   % ((' since %s' % when) if when else ''))
-        about = ('HireLab is a recruitment agency that hires for %s companies — engineering, project, O&M, sales '
-                 'and leadership roles.' % DOMAINS_DETAIL)
-    ask = ('We already have most of your details with us — we only need a quick refresh with your latest '
-           'information (current role and company, CTC, notice period, location and an updated CV). '
-           'It takes about 2 minutes, and it helps us put the right opportunity in front of you.')
-    plain = ('Hi %s,\n\n%s\n\n%s\n\n%s\n\nUpdate your profile: %s\n\nThis link is personal to you and stays valid '
-             'for 14 days.\n\n%s\n\n---\nYou are receiving this because your profile is with HireLab. '
-             'To stop these e-mails: %s' % (fn, opening, about, ask, link, sign_off, unsub))
+    note = '\n\nThis link is personal to you and stays valid for 14 days.' if validity else ''
+    plain = ('Hi %s,\n\n%s\n\nUpdate your profile: %s%s\n\n%s\n\n---\nYou are receiving this because your profile is '
+             'with HireLab. To stop these e-mails: %s' % (fn, '\n\n'.join(paras), link, note, sign_off, unsub))
     e = html.escape
-    body = ('<p>Hi %s,</p><p>%s</p><p>%s</p><p>%s</p>'
+    body = ('<p>Hi %s,</p>%s'
             '<p><a href="%s" style="display:inline-block;background:#0F6E56;color:#fff;padding:11px 22px;'
             'border-radius:8px;text-decoration:none;font-weight:600">Update my profile</a></p>'
-            '<p style="font-size:12px;color:#666">This link is personal to you and stays valid for 14 days.</p>'
-            '<p>%s</p>'
+            '%s<p>%s</p>'
             '<p style="font-size:11px;color:#888;margin-top:22px">You are receiving this because your profile is '
             'with HireLab. <a href="%s" style="color:#888">Unsubscribe</a></p>%s'
-            % (e(fn), e(opening), e(about), e(ask), e(link), e(sign_off).replace('\n', '<br>'), e(unsub),
+            % (e(fn), ''.join('<p>%s</p>' % e(x).replace('\n', '<br>') for x in paras), e(link),
+               '<p style="font-size:12px;color:#666">This link is personal to you and stays valid for 14 days.</p>' if validity else '',
+               e(sign_off).replace('\n', '<br>'), e(unsub),
                ('<img src="%s" width="1" height="1" alt="" style="display:block">' % e(pixel)) if pixel else ''))
     return subject, plain, body
+
+
+def compose(p, link, unsub, pixel='', has_signature=True, text=None):
+    """(subject, plain, html) for one person. `text` = {'subject','body'} (editable); default if None."""
+    t = text or DEFAULT_TEXT[kind_of(p)]
+    v = _values(p)
+    subject = re.sub(r'\s+', ' ', fill(t['subject'], v)).strip()[:180]
+    return _render(v['first_name'], subject, _paras(fill(t['body'], v)), link, unsub, pixel, has_signature)
 
 
 def _base():
@@ -314,7 +374,8 @@ def send_one(conn, oid, p):
         tt = track_token(lid)
         link = '%s/re/c/%s' % (base, tt)
         unsub = '%s/u/%s' % (base, core._unsub_token(oid, p['candidate_id']))
-        subject, plain, body = compose(p, link, unsub, '%s/re/o/%s.gif' % (base, tt), _has_signature())
+        subject, plain, body = compose(p, link, unsub, '%s/re/o/%s.gif' % (base, tt), _has_signature(),
+                                       get_text(conn, oid, kind_of(p)))
         ok, err, _mid, _tid = core.email_service_send(
             p['email'], subject, plain, body_html=body, candidate_id=p['candidate_id'],
             extra_headers={'List-Unsubscribe': '<%s>' % unsub, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'})
@@ -446,24 +507,11 @@ def reminders_due(conn, oid, s=None, now=None):
     return out
 
 
-def compose_reminder(p, link, unsub, pixel='', has_signature=True):
-    fn = first_name(p['name'])
-    subject = '%s, 2 minutes to refresh your HireLab profile' % fn
-    line1 = ('A quick reminder about our note last week — we are keeping your profile ready for new %s openings, '
-             'and a refreshed CV helps us put the right role in front of you.' % DOMAINS_LINE)
-    ask = 'Just confirm your current role, CTC, notice period and location, and upload your latest CV.'
-    sign_off = 'Warm regards,' if has_signature else 'Warm regards,\nTeam HireLab'
-    plain = ('Hi %s,\n\n%s\n\n%s\n\nUpdate your profile: %s\n\n%s\n\n---\nTo stop these e-mails: %s'
-             % (fn, line1, ask, link, sign_off, unsub))
-    e = html.escape
-    body = ('<p>Hi %s,</p><p>%s</p><p>%s</p>'
-            '<p><a href="%s" style="display:inline-block;background:#0F6E56;color:#fff;padding:11px 22px;'
-            'border-radius:8px;text-decoration:none;font-weight:600">Update my profile</a></p><p>%s</p>'
-            '<p style="font-size:11px;color:#888;margin-top:22px">You are receiving this because your profile is '
-            'with HireLab. <a href="%s" style="color:#888">Unsubscribe</a></p>%s'
-            % (e(fn), e(line1), e(ask), e(link), e(sign_off).replace('\n', '<br>'), e(unsub),
-               ('<img src="%s" width="1" height="1" alt="" style="display:block">' % e(pixel)) if pixel else ''))
-    return subject, plain, body
+def compose_reminder(p, link, unsub, pixel='', has_signature=True, text=None):
+    t = text or DEFAULT_TEXT['reminder']
+    v = _values(p)
+    subject = re.sub(r'\s+', ' ', fill(t['subject'], v)).strip()[:180]
+    return _render(v['first_name'], subject, _paras(fill(t['body'], v)), link, unsub, pixel, has_signature, validity=False)
 
 
 def run_reminders(conn, oid, s, limit, now=None):
@@ -487,7 +535,7 @@ def run_reminders(conn, oid, s, limit, now=None):
             tt = track_token(lid)
             unsub = '%s/u/%s' % (base, core._unsub_token(oid, p['candidate_id']))
             subject, plain, body = compose_reminder(p, '%s/re/c/%s' % (base, tt), unsub, '%s/re/o/%s.gif' % (base, tt),
-                                                    _has_signature())
+                                                    _has_signature(), get_text(conn, oid, 'reminder'))
             ok, err, _m, _t = core.email_service_send(
                 p['email'], subject, plain, body_html=body, candidate_id=p['candidate_id'],
                 extra_headers={'List-Unsubscribe': '<%s>' % unsub, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'})
@@ -704,6 +752,77 @@ def _person_for(conn, oid, cid):
     return None
 
 
+def _sample(conn, oid, want, cid=None):
+    p = _person_for(conn, oid, cid) if cid else None
+    base_kind = 'job' if want in ('job', 'reminder') else 'pool'
+    if not p:
+        ppl = build_people(conn, oid)
+        p = next((x for x in ppl if x['state'] == 'due' and x['kind'] == base_kind), None) \
+            or next((x for x in ppl if x['kind'] == base_kind), None)
+    return p or {'name': 'Asha Verma', 'kind': base_kind, 'role': 'Solar O&M Engineer', 'client': 'Azure Power',
+                 'considered_on': '2026-04-12'}
+
+
+def _compose_kind(conn, oid, want, p, link, unsub):
+    if want == 'reminder':
+        return compose_reminder(p, link, unsub, '', _has_signature(), get_text(conn, oid, 'reminder'))
+    return compose(p, link, unsub, '', _has_signature(), get_text(conn, oid, kind_of(p)))
+
+
+@bp.route('/text', methods=['GET'])
+@login_required
+def text_get():
+    e = _admin()
+    if e:
+        return e
+    oid = effective_company_id()
+    conn = get_db()
+    try:
+        out = {}
+        for k in TEXT_KINDS:
+            t = get_text(conn, oid, k)
+            out[k] = {'subject': t['subject'], 'body': t['body'], 'default_subject': DEFAULT_TEXT[k]['subject'],
+                      'default_body': DEFAULT_TEXT[k]['body'],
+                      'edited': t['subject'] != DEFAULT_TEXT[k]['subject'] or t['body'] != DEFAULT_TEXT[k]['body']}
+        return jsonify({'ok': True, 'text': out, 'placeholders': [{'tag': a, 'means': b} for a, b in PLACEHOLDERS]})
+    finally:
+        conn.close()
+
+
+@bp.route('/text', methods=['PUT', 'POST'])
+@login_required
+def text_save():
+    e = _admin()
+    if e:
+        return e
+    d = request.get_json(silent=True) or {}
+    k = d.get('kind')
+    if k not in TEXT_KINDS:
+        return jsonify({'ok': False, 'error': 'Unknown e-mail'}), 400
+    oid = effective_company_id()
+    conn = get_db()
+    try:
+        if d.get('reset'):
+            conn.execute('DELETE FROM reengage_text WHERE company_id=? AND kind=?', (oid, k))
+        else:
+            subj = str(d.get('subject') or '').strip()[:200]
+            body = str(d.get('body') or '').strip()[:4000]
+            if not subj or not body:
+                return jsonify({'ok': False, 'error': 'Subject and text cannot be empty (use Reset for the original).'}), 400
+            subj = '' if subj == DEFAULT_TEXT[k]['subject'] else subj
+            body = '' if body == DEFAULT_TEXT[k]['body'] else body
+            conn.execute('INSERT INTO reengage_text (company_id, kind, subject, body, updated_by, updated_at) VALUES (?,?,?,?,?,?) '
+                         'ON CONFLICT(company_id, kind) DO UPDATE SET subject=excluded.subject, body=excluded.body, '
+                         'updated_by=excluded.updated_by, updated_at=excluded.updated_at',
+                         (oid, k, subj, body, real_user_id(), ts()))
+        conn.commit()
+        t = get_text(conn, oid, k)
+        return jsonify({'ok': True, 'subject': t['subject'], 'body': t['body'],
+                        'edited': t['subject'] != DEFAULT_TEXT[k]['subject'] or t['body'] != DEFAULT_TEXT[k]['body']})
+    finally:
+        conn.close()
+
+
 @bp.route('/preview', methods=['GET'])
 @login_required
 def preview():
@@ -714,15 +833,9 @@ def preview():
     conn = get_db()
     try:
         cid = request.args.get('candidate_id', type=int)
-        p = _person_for(conn, oid, cid) if cid else None
-        if not p:
-            ppl = build_people(conn, oid)
-            p = next((x for x in ppl if x['state'] == 'due' and x['kind'] == request.args.get('kind', 'job')), None) \
-                or next((x for x in ppl if x['kind'] == request.args.get('kind', 'job')), None)
-        if not p:
-            p = {'name': 'Asha Verma', 'kind': request.args.get('kind', 'job'), 'role': 'Solar O&M Engineer',
-                 'client': 'Azure Power', 'considered_on': '2026-04-12'}
-        subject, plain, body = compose(p, _base() + '/update-profile?token=…', _base() + '/u/…', '', _has_signature())
+        want = request.args.get('kind', 'job')
+        p = _sample(conn, oid, want, cid)
+        subject, plain, body = _compose_kind(conn, oid, want, p, _base() + '/update-profile?token=…', _base() + '/u/…')
         return jsonify({'ok': True, 'subject': subject, 'html': body, 'text': plain, 'to': p.get('email', ''),
                         'name': p.get('name', '')})
     finally:
@@ -744,11 +857,9 @@ def send_test():
         sender = core._smtp_params()[0]
         if not sender:
             return jsonify({'ok': False, 'error': 'Company mailbox is not set. Settings → Email Configuration.'}), 400
-        ppl = build_people(conn, oid)
-        p = next((x for x in ppl if x['kind'] == d.get('kind', 'job')), None) or \
-            {'name': 'Asha Verma', 'kind': d.get('kind', 'job'), 'role': 'Solar O&M Engineer', 'client': 'Azure Power',
-             'considered_on': '2026-04-12'}
-        subject, plain, body = compose(p, _base() + '/update-profile?token=TEST', _base() + '/u/TEST', '', _has_signature())
+        want = d.get('kind', 'job')
+        p = _sample(conn, oid, want)
+        subject, plain, body = _compose_kind(conn, oid, want, p, _base() + '/update-profile?token=TEST', _base() + '/u/TEST')
         ok, err, _m, _t = core.email_service_send(sender, '[TEST] ' + subject, plain, body_html=body)
         return jsonify({'ok': bool(ok), 'error': err or '', 'to': sender})
     finally:

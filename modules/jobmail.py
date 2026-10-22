@@ -142,6 +142,12 @@ def _migrate_jobmail(conn):
         task_id INTEGER DEFAULT 0,
         created_at TEXT DEFAULT ''
     )''')
+    for tbl in ('jobmail_campaigns', 'jobmail_settings'):          # editable e-mail text (empty = built-in default)
+        for col in TPL_KEYS:
+            try:
+                conn.execute("ALTER TABLE %s ADD COLUMN %s TEXT DEFAULT ''" % (tbl, col))
+            except Exception:
+                pass
     for sql in ('CREATE INDEX IF NOT EXISTS idx_jm_rec_campaign ON jobmail_recipients(campaign_id)',
                 'CREATE INDEX IF NOT EXISTS idx_jm_rec_email ON jobmail_recipients(company_id, email, status)',
                 'CREATE INDEX IF NOT EXISTS idx_jm_rec_status ON jobmail_recipients(company_id, status)',
@@ -582,18 +588,52 @@ def job_facts(m, camp):
             'skills': _skills(m, 'must_have_skills')[:6]}
 
 
-def compose(p, facts, yes_link, no_link, unsub, note='', pixel='', has_signature=True):
+# Editable e-mail text. Placeholders are filled per person; an empty field uses the default.
+TPL_KEYS = ('subject_tpl', 'intro_tpl', 'ask_tpl', 'after_tpl')
+DEFAULT_TPL = {
+    'subject_tpl': '{first_name}, {role} opening{in_location} — matches your profile',
+    'intro_tpl': 'We are hiring for a {role} position with {client}{in_location}. Your background{as_current_role} '
+                 'looks like a close match, so we wanted you to hear about it first.',
+    'ask_tpl': 'Are you open to exploring this?',
+    'after_tpl': 'If you say yes, a HireLab recruiter will call you within one working day to share the full details.',
+}
+PLACEHOLDERS = [('{first_name}', 'Asha'), ('{role}', 'job title'), ('{client}', 'client name or your description'),
+                ('{location}', 'job location'), ('{in_location}', '" in Noida" or nothing'),
+                ('{as_current_role}', '" as Project Engineer at Tata Power" or nothing'),
+                ('{designation}', 'their designation'), ('{company}', 'their company'), ('{experience}', 'job experience range')]
+_PH_RX = re.compile(r'\{([a-z_]+)\}')
+
+
+def fill(text, values):
+    """Replace known {placeholders}; unknown ones are left as typed."""
+    return _PH_RX.sub(lambda m: str(values[m.group(1)]) if m.group(1) in values else m.group(0), str(text or ''))
+
+
+def tpl_of(camp):
+    """The four text pieces for a campaign — its own text, else the built-in default."""
+    camp = camp or {}
+    return {k: (str(camp.get(k) or '').strip() or DEFAULT_TPL[k]) for k in TPL_KEYS}
+
+
+def _paras(text):
+    return [x.strip() for x in re.split(r'\n\s*\n', str(text or '')) if x.strip()]
+
+
+def compose(p, facts, yes_link, no_link, unsub, note='', pixel='', has_signature=True, tpl=None):
     """(subject, plain, html) for one person."""
     fn = first_name(p.get('name'))
     role = facts['role'] or 'a new role'
-    subject = '%s, %s opening%s — matches your profile' % (fn, role, (' in %s' % facts['location']) if facts['location'] else '')
+    t = tpl or tpl_of(None)
     bg = ''
     if p.get('designation') and p.get('company'):
         bg = ' as %s at %s' % (p['designation'], p['company'])
     elif p.get('designation'):
         bg = ' as %s' % p['designation']
-    opening = ('We are hiring for a %s position with %s%s. Your background%s looks like a close match, so we wanted '
-               'you to hear about it first.' % (role, facts['who'], (' in %s' % facts['location']) if facts['location'] else '', bg))
+    values = {'first_name': fn, 'role': role, 'client': facts['who'], 'location': facts['location'] or '',
+              'in_location': (' in %s' % facts['location']) if facts['location'] else '', 'as_current_role': bg,
+              'designation': p.get('designation') or '', 'company': p.get('company') or '', 'experience': facts['exp'] or ''}
+    subject = re.sub(r'\s+', ' ', fill(t['subject_tpl'], values)).strip()[:180]
+    opening = fill(t['intro_tpl'], values).strip()
     rows = [('Role', role)]
     if facts['location']:
         rows.append(('Location', facts['location']))
@@ -603,8 +643,8 @@ def compose(p, facts, yes_link, no_link, unsub, note='', pixel='', has_signature
         rows.append(('Key skills', ', '.join(facts['skills'])))
     if facts['ctc']:
         rows.append(('Compensation', facts['ctc']))
-    ask = 'Are you open to exploring this?'
-    after = 'If you say yes, a HireLab recruiter will call you within one working day to share the full details.'
+    ask = fill(t['ask_tpl'], values).strip()
+    after = fill(t['after_tpl'], values).strip()
     sign_off = 'Warm regards,' if has_signature else 'Warm regards,\nTeam HireLab'
     note = (note or '').strip()
     plain = 'Hi %s,\n\n%s\n\n%s\n\n%s%s\n\nYes, I am interested: %s\nNot right now: %s\n\n%s\n\n%s\n\n---\n' \
@@ -615,19 +655,20 @@ def compose(p, facts, yes_link, no_link, unsub, note='', pixel='', has_signature
     e = html.escape
     table = ''.join('<tr><td style="padding:6px 14px 6px 0;color:#6B6F76;white-space:nowrap;vertical-align:top">%s</td>'
                     '<td style="padding:6px 0;font-weight:600">%s</td></tr>' % (e(k), e(v)) for k, v in rows)
-    body = ('<p>Hi %s,</p><p>%s</p>'
+    para = lambda txt: ''.join('<p>%s</p>' % e(x).replace('\n', '<br>') for x in _paras(txt))
+    body = ('<p>Hi %s,</p>%s'
             '<table style="border-collapse:collapse;margin:6px 0 14px;font-size:14px">%s</table>'
             '%s<p><b>%s</b></p>'
             '<p><a href="%s" style="display:inline-block;background:#0F6E56;color:#fff;padding:11px 22px;border-radius:8px;'
             'text-decoration:none;font-weight:600;margin:0 8px 8px 0">Yes, I\'m interested</a>'
             '<a href="%s" style="display:inline-block;background:#fff;color:#0E2A47;padding:10px 20px;border-radius:8px;'
             'text-decoration:none;font-weight:600;border:1px solid #C9C6BC;margin:0 0 8px">Not right now</a></p>'
-            '<p style="font-size:13px;color:#555">%s</p><p>%s</p>'
+            '<div style="font-size:13px;color:#555">%s</div><p>%s</p>'
             '<p style="font-size:11px;color:#888;margin-top:22px">You are receiving this because your profile is with '
             'HireLab, a recruitment agency for Data Center, Solar, Electrical and Automation roles. '
             '<a href="%s" style="color:#888">Unsubscribe</a></p>%s'
-            % (e(fn), e(opening), table, ('<p>%s</p>' % e(note).replace('\n', '<br>')) if note else '', e(ask),
-               e(yes_link), e(no_link), e(after), e(sign_off).replace('\n', '<br>'), e(unsub),
+            % (e(fn), para(opening), table, ('<p>%s</p>' % e(note).replace('\n', '<br>')) if note else '', e(ask),
+               e(yes_link), e(no_link), para(after), e(sign_off).replace('\n', '<br>'), e(unsub),
                ('<img src="%s" width="1" height="1" alt="" style="display:block">' % e(pixel)) if pixel else ''))
     return subject, plain, body
 
@@ -668,7 +709,7 @@ def send_one(conn, oid, rec, m, camp):
     try:
         yes, no, unsub, pixel = _links(rec['id'], oid, rec['candidate_id'])
         subject, plain, body = compose(rec, job_facts(m, camp), yes, no, unsub, camp.get('note') or '', pixel,
-                                       _has_signature())
+                                       _has_signature(), tpl_of(camp))
         ok, err, _mid, _tid = core.email_service_send(
             rec['email'], subject, plain, body_html=body, candidate_id=rec['candidate_id'],
             extra_headers={'List-Unsubscribe': '<%s>' % unsub, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'})
@@ -937,6 +978,9 @@ def _camp_out(conn, camp, m=None):
                                 'approved_at', 'finished_at')}
     out['filters'] = _filters(camp)
     out['counts'] = _counts(conn, camp['id'])
+    out['text'] = {k: str(camp.get(k) or '') for k in TPL_KEYS}
+    out['text_defaults'] = DEFAULT_TPL
+    out['placeholders'] = [{'tag': a, 'means': b} for a, b in PLACEHOLDERS]
     if m:
         out['job'] = {'id': m['id'], 'role': m['role'] or '', 'client': m['client'] or '',
                       'location': _mval(m, 'location', '') or '', 'status': m['status'] or '',
@@ -1047,8 +1091,12 @@ def campaign_create():
             camp = _campaign(conn, oid, r['id'])
             fresh = False
         else:
-            cur = conn.execute('INSERT INTO jobmail_campaigns (company_id, mandate_id, status, filters, created_by, created_at) '
-                               'VALUES (?,?,?,?,?,?)', (oid, mid, 'draft', '{}', int(real_user_id() or 0), ts()))
+            dflt = conn.execute('SELECT * FROM jobmail_settings WHERE company_id=?', (oid,)).fetchone()
+            dt = {k: (str(dflt[k] or '') if dflt and k in dflt.keys() else '') for k in TPL_KEYS}
+            cur = conn.execute('INSERT INTO jobmail_campaigns (company_id, mandate_id, status, filters, created_by, created_at, '
+                               'subject_tpl, intro_tpl, ask_tpl, after_tpl) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                               (oid, mid, 'draft', '{}', int(real_user_id() or 0), ts(),
+                                dt['subject_tpl'], dt['intro_tpl'], dt['ask_tpl'], dt['after_tpl']))
             conn.commit()
             camp = _campaign(conn, oid, cur.lastrowid)
             fresh = True
@@ -1111,8 +1159,23 @@ def campaign_update(cid):
         for k, n in (('client_label', 120), ('note', 1200)):
             if k in d:
                 sets[k] = str(d[k] or '').strip()[:n]
+        txt = d.get('text') if isinstance(d.get('text'), dict) else {}
+        for k in TPL_KEYS:
+            if k in txt:
+                v = str(txt[k] or '').strip()
+                sets[k] = '' if v == DEFAULT_TPL[k] else v[:200 if k == 'subject_tpl' else 2500]
+        if d.get('reset_text'):
+            for k in TPL_KEYS:
+                sets[k] = ''
         conn.execute('UPDATE jobmail_campaigns SET %s WHERE id=?' % ','.join(k + '=?' for k in sets),
                      list(sets.values()) + [cid])
+        if d.get('save_text_as_default'):
+            if not is_company_admin():
+                return _err('Only an admin can change the default text for everyone.', 403)
+            cur_c = _campaign(conn, _oid(), cid)
+            conn.execute('INSERT OR IGNORE INTO jobmail_settings (company_id) VALUES (?)', (_oid(),))
+            conn.execute('UPDATE jobmail_settings SET subject_tpl=?, intro_tpl=?, ask_tpl=?, after_tpl=? WHERE company_id=?',
+                         tuple(cur_c[k] or '' for k in TPL_KEYS) + (_oid(),))
         sel = d.get('selection')
         if isinstance(sel, dict):
             for rid, on in list(sel.items())[:1000]:
@@ -1184,7 +1247,7 @@ def campaign_preview(cid):
             p = dict(r) if r else p
         b = _base()
         subject, plain, body = compose(p, job_facts(m, camp), b + '/jm/r/…?a=yes', b + '/jm/r/…?a=no', b + '/u/…',
-                                       camp['note'] or '', '', _has_signature())
+                                       camp['note'] or '', '', _has_signature(), tpl_of(camp))
         return jsonify({'ok': True, 'subject': subject, 'html': body, 'text': plain, 'to': p.get('email', ''),
                         'name': p.get('name', '')})
     finally:
@@ -1207,7 +1270,7 @@ def campaign_test(cid):
         p = _sample_person(conn, cid)
         b = _base()
         subject, plain, body = compose(p, job_facts(m, camp), b + '/jm/test?a=yes', b + '/jm/test?a=no', b + '/u/TEST',
-                                       camp['note'] or '', '', _has_signature())
+                                       camp['note'] or '', '', _has_signature(), tpl_of(camp))
         ok, err, _m, _t = core.email_service_send(sender, '[TEST] ' + subject, plain, body_html=body)
         return jsonify({'ok': bool(ok), 'error': err or '', 'to': sender})
     finally:
