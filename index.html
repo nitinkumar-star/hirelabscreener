@@ -25999,4 +25999,38 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
   }
 })();
 </script>
+<script id="finance-tab-script">
+/* Invoicing → "Expenses & profit" now shows the Profit & Cash page (/finance) for admins:
+   real P&L without GST, GST/TDS, cash forecast, collections, freelancer commission.
+   Non-admins (and any load failure) keep the old expenses view. Additive only. */
+(function(){
+  var oldRender = window.renderExpenses, oldOpen = window.openExpenseForm;
+  if (typeof oldRender !== 'function') return;
+  function admin(){ try { return !!(S.currentUser && (S.currentUser.role === 'admin' || S.currentUser.is_company_admin)); } catch(e){ return false; } }
+  var finOk = null;   // is the finance module deployed? (checked once; old view if not)
+  window.renderExpenses = async function(el){
+    if (!admin()) return oldRender(el);
+    if (finOk === null) {
+      try { var r = await fetch('/api/finance/setup', {credentials: 'same-origin'}); finOk = r.ok; } catch(e){ finOk = false; }
+    }
+    if (!finOk) return oldRender(el);
+    window._invTab = 'expenses';
+    el.innerHTML = _invHeader('expenses')
+      + '<div class="w3-inv" style="padding-top:8px"><div style="display:flex;justify-content:flex-end;margin:0 0 6px"><a href="/finance" target="_blank" rel="noopener" style="font-size:12.5px">Open full screen ↗</a> &nbsp;·&nbsp; <a href="#" id="fin-old" style="font-size:12.5px;color:var(--muted,#6B6F76)">Old view</a></div>'
+      + '<iframe id="fin-frame" src="/finance?embed=1" title="Profit and cash" style="width:100%;min-height:600px;height:900px;border:0;display:block;background:transparent"></iframe></div>';
+    var o = document.getElementById('fin-old');
+    if (o) o.onclick = function(ev){ ev.preventDefault(); oldRender(el); };
+  };
+  window.openExpenseForm = function(){
+    var f = document.getElementById('fin-frame');
+    if (f && f.contentWindow) { f.contentWindow.postMessage({hlFinance: 'add'}, location.origin); return; }
+    return oldOpen.apply(this, arguments);
+  };
+  window.addEventListener('message', function(e){
+    if (e.origin !== location.origin || !e.data || !e.data.hlFinanceHeight) return;
+    var f = document.getElementById('fin-frame');
+    if (f) f.style.height = Math.max(600, e.data.hlFinanceHeight + 10) + 'px';
+  });
+})();
+</script>
 </body></html>

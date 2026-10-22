@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Profit &amp; Cash · HireLab</title>
+<style>
+:root{--ink:#1F2328;--muted:#6B6F76;--line:#E3E1DA;--paper:#F7F6F2;--green:#0F6E56;--navy:#0E2A47;--red:#B3261E;--amber:#9A6512;--blue:#1a73e8;
+  --s1:#13866a;--s2:#5B6BD5}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--paper)}
+body.embed{background:transparent}
+body.embed .top,body.embed #hln-btn,body.embed #add{display:none !important}
+body.embed .wrap{padding:4px 0 20px;max-width:none}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--blue)}
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--green);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.top h1{font-size:17px;margin:0}.top .sp{flex:1}
+.wrap{max-width:1240px;margin:0 auto;padding:18px 20px 60px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px;min-width:0}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.h{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 4px}
+.sub{color:var(--muted);font-size:12.5px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.btn.navy{background:var(--navy);border-color:var(--navy);color:#fff}
+.btn.sm{padding:4px 9px;font-size:12.5px}
+.btn:disabled{opacity:.5;cursor:default}
+.ctl{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.ctl select,.ctl input,.fm input,.fm select,.fm textarea,td input,td select{padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff}
+.seg button{border:0;background:none;padding:7px 12px;font-weight:600;cursor:pointer;color:var(--muted)}
+.seg button.on{background:var(--navy);color:#fff}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.tab{border:1px solid var(--line);background:#fff;border-radius:18px;padding:6px 13px;font-weight:600;font-size:13px;cursor:pointer}
+.tab.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.tab em{font-style:normal;background:#FBE9E7;color:var(--red);border-radius:9px;padding:0 6px;margin-left:5px;font-size:11.5px}
+.tab.on em{background:#fff}
+.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px;min-width:0}
+.kpi .l{font-size:12px;color:var(--muted)}
+.kpi b{display:block;font-size:22px;font-variant-numeric:tabular-nums;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .s{font-size:12px;color:var(--muted)}
+.kpi.neg b{color:var(--red)}.kpi.pos b{color:var(--green)}
+.two{display:grid;grid-template-columns:1.3fr .7fr;gap:16px;align-items:start}
+.half{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11.5px;color:var(--muted);font-weight:600;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:8px;border-bottom:1px solid #EFEDE7;vertical-align:top}
+th.r,td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td .m{color:var(--muted);font-size:12px}
+.scroll{overflow-x:auto}
+.tag{font-size:11px;border-radius:10px;padding:2px 8px;background:#F2F0EA;color:var(--muted);white-space:nowrap;display:inline-block}
+.tag.g{background:#E6F4EE;color:var(--green)}.tag.b{background:#E8F0FE;color:var(--blue)}.tag.r{background:#FBE9E7;color:var(--red)}.tag.a{background:#F4EBDD;color:var(--amber)}
+button.tag{border:0;cursor:pointer}
+.bar{height:10px;border-radius:5px;background:#EEECE6;overflow:hidden}
+.bar s{display:block;height:100%;background:var(--green);border-radius:5px}
+.cbar{display:grid;grid-template-columns:150px 1fr 90px;gap:10px;align-items:center;font-size:13px;margin:6px 0}
+.cbar .bar s{background:var(--s2)}
+.alerts{display:flex;flex-direction:column;gap:8px}
+.al{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;font-size:13px;cursor:pointer;border:1px solid transparent}
+.al:hover{border-color:var(--line)}
+.al.r{background:#FBE9E7}.al.a{background:#FBF3E6}.al.b{background:#EEF4FB}.al.g{background:#E6F4EE}
+.al i{font-style:normal;font-weight:700;min-width:16px}
+.ins{white-space:pre-wrap;font-size:13.5px;line-height:1.6}
+.note{background:#EEF4FB;color:#185FA5;border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
+.err{background:#FBE9E7;color:var(--red);border-radius:10px;padding:10px 12px;font-size:13px;margin-top:10px}
+.empty{color:var(--muted);font-size:13px;padding:14px 4px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin:4px 0 8px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px}
+.legend i.t{height:0;border-top:2px dashed var(--muted);border-radius:0;width:16px}
+.chart{position:relative}
+.chart svg{display:block;width:100%;height:auto}
+.tip{position:absolute;pointer-events:none;background:#1F2328;color:#fff;font-size:12px;border-radius:8px;padding:7px 9px;white-space:nowrap;display:none;z-index:3}
+.bg{position:fixed;inset:0;background:rgba(14,42,71,.35);display:flex;align-items:flex-start;justify-content:center;padding:30px 12px;z-index:50;overflow:auto}
+.dlg{background:#fff;border-radius:14px;max-width:640px;width:100%;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.2)}
+.dlg.w{max-width:980px}
+.fm{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+.fm label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);min-width:0}
+.fm label.full{grid-column:1/-1}
+.fm .chk{flex-direction:row;align-items:center;gap:7px;color:var(--ink);font-size:13px}
+.drop{border:1.5px dashed var(--line);border-radius:10px;padding:12px;text-align:center;color:var(--muted);font-size:13px;cursor:pointer;grid-column:1/-1}
+.drop.on{border-color:var(--green);color:var(--green)}
+.sect{font-size:13px;font-weight:700;color:var(--navy);margin:18px 0 8px}
+.mini{width:90px}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.two,.half{grid-template-columns:1fr}.cbar{grid-template-columns:110px 1fr 80px}.fm{grid-template-columns:1fr}}
+@media(max-width:520px){.wrap{padding:12px 16px 40px}.kpi b{font-size:18px}}
+</style>
+</head>
+<body>
+<div class="top"><div class="logo">₹</div><div><h1>Profit &amp; Cash</h1><div class="sub">Real profit, GST/TDS, cash forecast and collections</div></div><div class="sp"></div><a href="/?go=invoicing" class="btn sm" style="text-decoration:none;color:var(--navy)">← Invoices</a></div>
+<div class="wrap">
+  <div class="ctl">
+    <select id="per" aria-label="Period">
+      <option value="this_month">This month</option><option value="last_month">Last month</option>
+      <option value="this_quarter">This quarter</option><option value="fy">This financial year</option>
+      <option value="last_fy">Last financial year</option><option value="custom">Custom dates…</option>
+    </select>
+    <span id="cust" style="display:none" class="row"><input type="date" id="pf" aria-label="From"><input type="date" id="pt" aria-label="To"><button class="btn sm" id="pgo">Show</button></span>
+    <div class="seg" role="group" aria-label="View"><button id="vb" class="on" title="By invoice date: revenue without GST minus costs">Profit view</button><button id="vc" title="Money actually received and paid out">Cash view</button></div>
+    <span class="sub" id="plabel"></span>
+    <div style="flex:1"></div>
+    <button class="btn pri" id="add">+ Add expense</button>
+    <button class="btn" id="xl" title="Excel for your CA: P&amp;L, invoices, expenses, GST, TDS">⬇ Excel for CA</button>
+    <button class="btn" id="setup">⚙ Setup</button>
+  </div>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div id="body"><div class="empty">Loading…</div></div>
+  <p class="sub" style="margin-top:14px">All GST/TDS figures are management estimates from your invoices and expenses. Please check them with your CA before filing.</p>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  var EMBED = /[?&]embed=1/.test(location.search);
+  if (EMBED) document.body.classList.add('embed');
+  var D = null, EXP = [], SETUP = null, tab = 'overview', view = 'billing', expCat = '';
+  try { tab = sessionStorage.getItem('fin_tab') || 'overview'; } catch(e){}
+
+  async function api(method, path, body){
+    try {
+      var r = await fetch('/api/finance' + path, {method: method, credentials: 'same-origin',
+        headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+      if (r.status === 401) { (EMBED ? parent : window).location.href = '/'; return {ok: false}; }
+      var j = await r.json().catch(function(){ return {ok: false, error: 'Server error (' + r.status + ')'}; });
+      if (!r.ok && j.ok === undefined) j.ok = false;
+      return j;
+    } catch(e){ return {ok: false, error: 'Network error'}; }
+  }
+  function inr(v){
+    v = Number(v || 0); var neg = v < 0; v = Math.abs(v);
+    var t = v >= 1e7 ? '₹' + (v / 1e7).toFixed(2) + ' Cr' : v >= 1e5 ? '₹' + (v / 1e5).toFixed(2) + ' L' : '₹' + Math.round(v).toLocaleString('en-IN');
+    return (neg ? '−' : '') + t;
+  }
+  function full(v){ return '₹' + Math.round(Number(v || 0)).toLocaleString('en-IN'); }
+  function fdate(s){ if (!s) return '—'; var d = new Date(String(s).slice(0, 10) + 'T00:00:00'); return isNaN(d) ? s : d.toLocaleDateString('en-IN', {day: 'numeric', month: 'short', year: '2-digit'}); }
+  function qs(){
+    var p = $('per').value, q = '?period=' + p;
+    if (p === 'custom') q += '&from=' + encodeURIComponent($('pf').value) + '&to=' + encodeURIComponent($('pt').value);
+    return q;
+  }
+  // inside the Invoicing tab the page is an iframe as tall as its content, so a
+  // fixed dialog would open at the top of the frame; move it to what is visible.
+  function place(bg){
+    document.body.appendChild(bg);
+    if (!EMBED) return;
+    try { var r = window.frameElement.getBoundingClientRect(); bg.style.paddingTop = (Math.max(0, -r.top) + 30) + 'px'; } catch(e){}
+    setTimeout(height, 30);
+  }
+  var lastH = 0;
+  function height(){
+    if (!EMBED) return;
+    // measure the content, not the frame (the frame's own height would feed back and keep growing)
+    var h = Math.ceil(document.querySelector('.wrap').getBoundingClientRect().height);
+    var dlg = document.querySelector('.bg .dlg');
+    if (dlg) h = Math.max(h, Math.ceil(dlg.getBoundingClientRect().bottom + window.scrollY + 30));
+    if (Math.abs(h - lastH) < 4) return;
+    lastH = h;
+    try { parent.postMessage({hlFinanceHeight: h}, location.origin); } catch(e){}
+  }
+  new MutationObserver(function(){ setTimeout(height, 30); }).observe(document.body, {childList: true, subtree: true});
+  window.addEventListener('resize', height);
+  window.addEventListener('message', function(e){
+    if (e.origin !== location.origin || !e.data) return;
+    if (e.data.hlFinance === 'add') openExpense(null);
+  });
+
+  async function load(){
+    var j = await api('GET', '/summary' + qs() + '&view=' + view);
+    if (!j.ok) { $('body').innerHTML = '<div class="err">' + esc(j.error || 'Could not load') + '</div>'; return; }
+    D = j;
+    var e = await api('GET', '/expenses' + qs());
+    EXP = (e && e.expenses) || [];
+    $('plabel').textContent = j.period.label + ' · ' + fdate(j.period.from) + ' – ' + fdate(j.period.to);
+    paint();
+  }
+
+  // ── tabs ───────────────────────────────────────────────────────────────
+  function paint(){
+    var overdue = D.aging.invoices.filter(function(x){ return x.overdue_days > 0; }).length;
+    var T = [['overview', 'Overview', 0], ['expenses', 'Expenses', 0], ['cash', 'Cash & collections', overdue + D.not_invoiced.length],
+             ['tax', 'GST & TDS', 0], ['profit', 'Who makes money', 0]];
+    $('tabs').innerHTML = T.map(function(t){ return '<button class="tab' + (tab === t[0] ? ' on' : '') + '" role="tab" aria-selected="' + (tab === t[0]) + '" data-t="' + t[0] + '">' + t[1] + (t[2] ? '<em>' + t[2] + '</em>' : '') + '</button>'; }).join('');
+    $('tabs').querySelectorAll('.tab').forEach(function(b){ b.onclick = function(){ tab = b.dataset.t; try { sessionStorage.setItem('fin_tab', tab); } catch(e){} paint(); }; });
+    ({overview: pOverview, expenses: pExpenses, cash: pCash, tax: pTax, profit: pProfit}[tab] || pOverview)();
+    height();
+  }
+  function kpi(l, v, s, cls, title){ return '<div class="kpi ' + (cls || '') + '"' + (title ? ' title="' + esc(title) + '"' : '') + '><div class="l">' + l + '</div><b>' + v + '</b><div class="s">' + (s || '&nbsp;') + '</div></div>'; }
+
+  // ── overview ───────────────────────────────────────────────────────────
+  function pOverview(){
+    var p = D.pnl, c = D.cash, h = '';
+    if (view === 'cash') {
+      h += '<div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr))">'
+        + kpi('Money in', inr(c.money_in), 'payments received (after TDS)', 'pos', full(c.money_in))
+        + kpi('Money out', inr(c.money_out), c.expenses_paid + ' expenses paid', 'neg', full(c.money_out))
+        + kpi('Net cash', inr(c.net_cash), 'in − out', c.net_cash >= 0 ? 'pos' : 'neg', full(c.net_cash))
+        + kpi('GST inside money in', inr(c.gst_inside_money_in), 'belongs to the government', '', full(c.gst_inside_money_in)) + '</div>';
+    } else {
+      h += '<div class="kpis">'
+        + kpi('Revenue', inr(p.revenue), p.invoices + ' invoice' + (p.invoices === 1 ? '' : 's') + ' · without GST', '', full(p.revenue))
+        + kpi('Direct costs', inr(p.direct_costs), 'freelancers, job boards', '', full(p.direct_costs))
+        + kpi('Gross profit', inr(p.gross_profit), p.gross_margin == null ? '—' : p.gross_margin + '% margin', p.gross_profit >= 0 ? 'pos' : 'neg', full(p.gross_profit))
+        + kpi('Operating costs', inr(p.operating_costs), 'salaries, tools, office…', '', full(p.operating_costs))
+        + kpi('Net profit', inr(p.net_profit), p.net_margin == null ? '—' : p.net_margin + '% margin', p.net_profit >= 0 ? 'pos' : 'neg', full(p.net_profit)) + '</div>';
+    }
+    // target + alerts
+    var t = D.target, pct = Math.min(100, t.pct || 0);
+    var tg = '<div class="card"><div class="row" style="justify-content:space-between"><div><div class="h">' + esc(t.month) + ' target</div>'
+      + '<div class="sub">Billing (without GST) against your ' + inr(t.target) + ' monthly target</div></div><b style="font-size:20px;color:var(--navy)">' + (t.pct || 0) + '%</b></div>'
+      + '<div class="bar" style="margin:12px 0 8px" role="progressbar" aria-valuenow="' + Math.round(t.pct || 0) + '" aria-valuemin="0" aria-valuemax="100"><s style="width:' + pct + '%"></s></div>'
+      + '<div class="row sub" style="justify-content:space-between"><span>Billed <b style="color:var(--ink)">' + inr(t.billed) + '</b></span><span>Gap <b style="color:var(--ink)">' + inr(t.gap) + '</b></span><span>' + t.days_left + ' days left</span></div>'
+      + (t.gap ? '<div class="note">You need about <b>' + t.placements_needed + ' more placement' + (t.placements_needed === 1 ? '' : 's') + '</b> this month (your average fee is ' + inr(t.avg_fee) + (t.avg_from ? ', from ' + t.avg_from + ' invoices in the last 12 months' : ', an assumed figure until you have invoices') + ').</div>' : '<div class="note" style="background:#E6F4EE;color:var(--green)">Target reached. 🎉</div>')
+      + '</div>';
+    var A = [];
+    var od = D.aging.invoices.filter(function(x){ return x.overdue_days > 0; });
+    if (od.length) A.push(['r', '!', od.length + ' invoice' + (od.length === 1 ? ' is' : 's are') + ' overdue: ' + inr(od.reduce(function(s, x){ return s + x.amount; }, 0)) + ' to collect', 'cash']);
+    if (D.not_invoiced.length) A.push(['a', '₹', D.not_invoiced.length + ' joined candidate' + (D.not_invoiced.length === 1 ? ' has' : 's have') + ' no invoice yet (about ' + inr(D.not_invoiced.reduce(function(s, x){ return s + x.expected_fee; }, 0)) + ')', 'cash']);
+    D.budgets.filter(function(b){ return b.state !== 'ok'; }).forEach(function(b){ A.push([b.state === 'over' ? 'r' : 'a', '◔', b.category + ': ' + inr(b.spent) + ' of ' + inr(b.budget) + ' budget used (' + b.pct + '%)', 'expenses']); });
+    if (p.unpaid_expenses) A.push(['b', '⏳', inr(p.unpaid_expenses) + ' of expenses in this period are still unpaid', 'expenses']);
+    if (D.short_paid.length) A.push(['a', '≠', D.short_paid.length + ' paid invoice' + (D.short_paid.length === 1 ? ' was' : 's were') + ' short-paid (more than TDS was cut)', 'tax']);
+    var al = '<div class="card"><div class="h">Needs attention</div><div class="alerts" style="margin-top:10px">'
+      + (A.length ? A.map(function(a){ return '<div class="al ' + a[0] + '" data-go="' + a[3] + '"><i>' + a[1] + '</i><span>' + esc(a[2]) + '</span></div>'; }).join('') : '<div class="al g"><i>✓</i><span>All clear: nothing overdue, no missing invoices, budgets fine.</span></div>')
+      + '</div></div>';
+    h += '<div class="two"><div>' + tg + trendCard() + '</div><div>' + al + insightCard() + catCard() + '</div></div>';
+    $('body').innerHTML = h;
+    $('body').querySelectorAll('.al[data-go]').forEach(function(x){ x.onclick = function(){ tab = x.dataset.go; paint(); }; });
+    bindChart(); bindInsight();
+    $('body').querySelectorAll('[data-cat]').forEach(function(b){ b.onclick = function(){ expCat = b.dataset.cat; tab = 'expenses'; paint(); }; });
+  }
+  function catCard(){
+    var c = D.pnl.costs_by_category || {}, k = Object.keys(c), mx = Math.max.apply(null, k.map(function(x){ return c[x]; }).concat([1]));
+    return '<div class="card"><div class="h">Where the money went</div><div class="sub">Cost without GST, ' + esc(D.period.label) + '. Click to see the entries.</div>'
+      + (k.length ? k.map(function(x){ return '<div class="cbar" style="cursor:pointer" data-cat="' + esc(x) + '"><span>' + esc(x) + '</span><span class="bar"><s style="width:' + Math.max(2, Math.round(c[x] / mx * 100)) + '%"></s></span><span style="text-align:right;font-variant-numeric:tabular-nums">' + inr(c[x]) + '</span></div>'; }).join('') : '<div class="empty">No expenses in this period.</div>')
+      + '</div>';
+  }
+  function insightCard(){
+    var i = D.insight;
+    return '<div class="card"><div class="row" style="justify-content:space-between"><div class="h">AI summary</div><button class="btn sm" id="ins">' + (i ? '↻ Refresh' : '✨ Write summary') + '</button></div>'
+      + '<div class="ins" id="instxt">' + (i ? esc(i.text) + '\n\n<span class="sub">Written ' + fdate(i.day) + '</span>' : '<span class="sub">A short read-out of this period: what changed, who pays slowly, and what to do next. Uses only your numbers.</span>') + '</div></div>';
+  }
+  function bindInsight(){
+    var b = $('ins'); if (!b) return;
+    b.onclick = async function(){
+      b.disabled = true; b.textContent = 'Writing…';
+      var r = await api('POST', '/insight', {period: $('per').value, from: $('pf').value, to: $('pt').value});
+      b.disabled = false; b.textContent = '↻ Refresh';
+      if (r.ok) { D.insight = {text: r.text, day: new Date().toISOString().slice(0, 10)}; $('instxt').textContent = r.text; }
+      else $('instxt').innerHTML = '<div class="err">' + esc(r.error || 'Failed') + '</div>';
+    };
+  }
+
+  // ── 12-month chart (revenue vs net profit, target line) ────────────────
+  function trendCard(){
+    return '<div class="card"><div class="row" style="justify-content:space-between"><div><div class="h">Last 12 months</div><div class="sub">Revenue (without GST) and net profit per month' + (window.innerWidth < 560 ? ' · last 6 shown; Table has all 12' : '') + '</div></div>'
+      + '<button class="btn sm" id="tbl">Table</button></div>'
+      + '<div class="legend"><span><i style="background:var(--s1)"></i>Revenue</span><span><i style="background:var(--s2)"></i>Net profit</span><span><i class="t"></i>Monthly target</span></div>'
+      + '<div class="chart" id="chart">' + chartSvg() + '</div><div id="ttab" style="display:none" class="scroll"></div></div>';
+  }
+  function chartSvg(){
+    var NARROW = window.innerWidth < 560, OFF = NARROW ? Math.max(0, D.trend.months.length - 6) : 0;
+    var M = D.trend.months.slice(OFF), tgt = D.trend.target || 0, W = NARROW ? 360 : 640, H = 240, L = 54, R = 8, T = 10, B = 26;
+    var vals = []; M.forEach(function(m){ vals.push(m.revenue, m.profit); });
+    var max = Math.max.apply(null, vals.concat([tgt, 1])), min = Math.min.apply(null, vals.concat([0]));
+    var step = nice((max - min) / 4), top = Math.ceil(max / step) * step, bot = Math.floor(min / step) * step;
+    var y = function(v){ return T + (top - v) / (top - bot) * (H - T - B); };
+    var gw = (W - L - R) / M.length, bw = Math.max(4, Math.min(18, (gw - 8) / 2));
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Revenue and net profit for the last 12 months">';
+    for (var v = bot; v <= top + 1; v += step) {
+      s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="' + (v === 0 ? '#C9C6BD' : '#EEECE6') + '" stroke-width="1"/>'
+        + '<text x="' + (L - 6) + '" y="' + (y(v) + 4) + '" text-anchor="end" font-size="10.5" fill="#6B6F76">' + short(v) + '</text>';
+    }
+    M.forEach(function(m, i){
+      var x0 = L + i * gw + (gw - 2 * bw - 2) / 2;
+      [[m.revenue, 'var(--s1)'], [m.profit, 'var(--s2)']].forEach(function(p, k){
+        var v = p[0], ya = y(Math.max(0, v)), yb = y(Math.min(0, v)), hgt = Math.max(v ? 1 : 0, yb - ya), x = x0 + k * (bw + 2), r = Math.min(4, bw / 2, hgt);
+        if (!hgt) return;
+        // rounded data-end only (away from the baseline)
+        s += v >= 0
+          ? '<path d="M' + x + ',' + yb + 'V' + (ya + r) + 'Q' + x + ',' + ya + ' ' + (x + r) + ',' + ya + 'H' + (x + bw - r) + 'Q' + (x + bw) + ',' + ya + ' ' + (x + bw) + ',' + (ya + r) + 'V' + yb + 'Z" fill="' + p[1] + '"/>'
+          : '<path d="M' + x + ',' + ya + 'V' + (yb - r) + 'Q' + x + ',' + yb + ' ' + (x + r) + ',' + yb + 'H' + (x + bw - r) + 'Q' + (x + bw) + ',' + yb + ' ' + (x + bw) + ',' + (yb - r) + 'V' + ya + 'Z" fill="' + p[1] + '"/>';
+      });
+      s += '<text x="' + (L + i * gw + gw / 2) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10.5" fill="#6B6F76">' + esc(m.month) + '</text>';
+      s += '<rect class="hit" data-i="' + (i + OFF) + '" x="' + (L + i * gw) + '" y="' + T + '" width="' + gw + '" height="' + (H - T - B) + '" fill="transparent"/>';
+    });
+    if (tgt) s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(tgt) + '" y2="' + y(tgt) + '" stroke="#6B6F76" stroke-width="1.5" stroke-dasharray="5 4" pointer-events="none"/>';
+    return s + '</svg>';
+  }
+  function nice(x){ if (x <= 0) return 100000; var p = Math.pow(10, Math.floor(Math.log10(x))), f = x / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; }
+  function short(v){ var a = Math.abs(v), s = a >= 1e7 ? (a / 1e7).toFixed(1).replace(/\.0$/, '') + 'Cr' : a >= 1e5 ? (a / 1e5).toFixed(1).replace(/\.0$/, '') + 'L' : a >= 1e3 ? Math.round(a / 1e3) + 'k' : Math.round(a); return (v < 0 ? '−' : '') + '₹' + s; }
+  function bindChart(){
+    var ch = $('chart'), tip = $('tip'); if (!ch) return;
+    ch.querySelectorAll('.hit').forEach(function(r){
+      r.addEventListener('mousemove', function(ev){
+        var m = D.trend.months[+r.dataset.i];
+        tip.innerHTML = '<b>' + esc(m.month) + '</b><br>Revenue ' + inr(m.revenue) + '<br>Costs ' + inr(m.costs) + '<br>Net profit ' + inr(m.profit) + '<br>Cash in ' + inr(m.cash_in);
+        tip.style.display = 'block';
+        var x = ev.pageX + 14, w = tip.offsetWidth; if (x + w > window.innerWidth - 8) x = ev.pageX - w - 14;
+        tip.style.left = x + 'px'; tip.style.top = (ev.pageY - 20) + 'px';
+        r.setAttribute('fill', 'rgba(14,42,71,.05)');
+      });
+      r.addEventListener('mouseleave', function(){ tip.style.display = 'none'; r.setAttribute('fill', 'transparent'); });
+    });
+    $('tbl').onclick = function(){
+      var t = $('ttab'), on = t.style.display === 'none';
+      t.style.display = on ? 'block' : 'none'; ch.style.display = on ? 'none' : 'block'; $('tbl').textContent = on ? 'Chart' : 'Table';
+      t.innerHTML = '<table><thead><tr><th>Month</th><th class="r">Revenue</th><th class="r">Costs</th><th class="r">Net profit</th><th class="r">Cash in</th></tr></thead><tbody>'
+        + D.trend.months.map(function(m){ return '<tr><td>' + esc(m.month) + '</td><td class="r">' + full(m.revenue) + '</td><td class="r">' + full(m.costs) + '</td><td class="r">' + full(m.profit) + '</td><td class="r">' + full(m.cash_in) + '</td></tr>'; }).join('') + '</tbody></table>';
+      height();
+    };
+  }
+
+  // ── expenses ───────────────────────────────────────────────────────────
+  function pExpenses(){
+    var cats = D.categories, rows = expCat ? EXP.filter(function(e){ return e.category === expCat; }) : EXP;
+    var tot = rows.reduce(function(s, e){ return s + e.amount; }, 0), gst = rows.reduce(function(s, e){ return s + e.gst_amount; }, 0);
+    var h = '<div class="card"><div class="row" style="justify-content:space-between"><div><div class="h">Expenses · ' + esc(D.period.label) + '</div>'
+      + '<div class="sub">' + rows.length + ' entries · paid ' + inr(tot) + ' incl. GST · GST you can claim back ' + inr(gst) + '</div></div>'
+      + '<div class="row"><select id="ecat" aria-label="Category"><option value="">All categories</option>' + cats.map(function(c){ return '<option' + (c === expCat ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>'
+      + '<button class="btn pri sm" id="eadd">+ Add expense</button></div></div>'
+      + '<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Date</th><th>Category</th><th>Paid to · note</th><th>Linked to</th><th class="r">GST</th><th class="r">Amount</th><th>Status</th><th></th></tr></thead><tbody>'
+      + (rows.length ? rows.map(function(e){
+          var link = [e.client_name, e.candidate_id ? 'candidate #' + e.candidate_id : '', e.recurring_id ? 'monthly' : '', e.source_key && e.source_key.indexOf('flc:') === 0 ? 'auto commission' : ''].filter(Boolean).join(' · ');
+          return '<tr><td class="nw">' + fdate(e.date) + '</td><td><span class="tag ' + (e.kind === 'direct' ? 'b' : '') + '">' + esc(e.category) + '</span></td>'
+            + '<td><b>' + esc(e.payee || '—') + '</b>' + (e.note ? '<div class="m">' + esc(e.note) + '</div>' : '') + '</td>'
+            + '<td class="m">' + esc(link || '—') + '</td><td class="r">' + (e.gst_amount ? full(e.gst_amount) : '—') + '</td><td class="r"><b>' + full(e.amount) + '</b></td>'
+            + '<td><button class="tag ' + (e.status === 'paid' ? 'g' : 'a') + '" data-st="' + e.id + '" title="Click to mark ' + (e.status === 'paid' ? 'unpaid' : 'paid') + '">' + (e.status === 'paid' ? 'Paid' : 'Unpaid') + '</button></td>'
+            + '<td class="nw">' + (e.has_receipt ? '<a class="btn sm" href="/api/finance/receipt/' + e.id + '" target="_blank" title="Bill">📎</a> ' : '')
+            + '<button class="btn sm" data-ed="' + e.id + '" aria-label="Edit">✎</button> <button class="btn sm" data-del="' + e.id + '" aria-label="Delete" style="color:var(--red)">✕</button></td></tr>';
+        }).join('') : '<tr><td colspan="8" class="empty">No expenses here. Add one, or upload a bill and let AI fill it.</td></tr>')
+      + '</tbody></table></div></div>';
+    if (D.budgets.length) h += '<div class="card"><div class="h">Budgets this month</div>' + D.budgets.map(function(b){
+        return '<div class="cbar"><span>' + esc(b.category) + '</span><span class="bar"><s style="width:' + Math.min(100, b.pct) + '%;background:' + (b.state === 'over' ? 'var(--red)' : b.state === 'near' ? 'var(--amber)' : 'var(--green)') + '"></s></span><span style="text-align:right">' + inr(b.spent) + ' / ' + inr(b.budget) + '</span></div>'; }).join('') + '</div>';
+    $('body').innerHTML = h;
+    $('ecat').onchange = function(){ expCat = this.value; pExpenses(); };
+    $('eadd').onclick = function(){ openExpense(null); };
+    $('body').querySelectorAll('[data-ed]').forEach(function(b){ b.onclick = function(){ openExpense(EXP.find(function(e){ return e.id == b.dataset.ed; })); }; });
+    $('body').querySelectorAll('[data-del]').forEach(function(b){ b.onclick = async function(){ if (!confirm('Delete this expense?')) return; var r = await api('DELETE', '/expense/' + b.dataset.del); if (r.ok) load(); else alert(r.error || 'Failed'); }; });
+    $('body').querySelectorAll('[data-st]').forEach(function(b){ b.onclick = async function(){ var e = EXP.find(function(x){ return x.id == b.dataset.st; }); var r = await api('PUT', '/expense/' + e.id, {status: e.status === 'paid' ? 'unpaid' : 'paid'}); if (r.ok) load(); }; });
+  }
+
+  async function ensureSetup(){ if (!SETUP) SETUP = await api('GET', '/setup'); return SETUP; }
+  async function openExpense(e){
+    await ensureSetup();
+    e = e || {date: new Date().toISOString().slice(0, 10), category: 'Tools & Subscriptions', status: 'paid'};
+    var opt = function(list, cur){ return list.map(function(c){ return '<option' + (c === cur ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join(''); };
+    var fl = (SETUP.freelancers || []).map(function(f){ return '<option value="' + f.id + '"' + (f.id == e.freelancer_user_id ? ' selected' : '') + '>' + esc(f.name) + '</option>'; }).join('');
+    var bg = document.createElement('div'); bg.className = 'bg';
+    bg.innerHTML = '<div class="dlg" role="dialog" aria-modal="true" aria-label="Expense"><div class="row" style="justify-content:space-between;margin-bottom:12px"><div class="h">' + (e.id ? 'Edit expense' : 'Add expense') + '</div><button class="btn sm" data-x>✕</button></div>'
+      + '<div class="fm">'
+      + (e.id ? '' : '<div class="drop" id="drop">📎 <b>Upload the bill</b> (PDF / photo): AI reads date, vendor, amount and GST<input type="file" id="file" accept=".pdf,.jpg,.jpeg,.png,.webp" hidden></div><div id="dmsg" style="grid-column:1/-1"></div>')
+      + '<label>Date<input type="date" id="f-date" value="' + esc(String(e.date || '').slice(0, 10)) + '"></label>'
+      + '<label>Category<select id="f-cat">' + opt(D.categories, e.category) + '</select></label>'
+      + '<label>Paid to<input id="f-payee" value="' + esc(e.payee || '') + '" placeholder="Vendor / person"></label>'
+      + '<label>Payment mode<select id="f-mode"><option value=""></option>' + opt(D.pay_modes, e.payment_mode) + '</select></label>'
+      + '<label>Amount paid, incl. GST (₹)<input type="number" min="0" step="0.01" id="f-amt" value="' + (e.amount || '') + '"></label>'
+      + '<label>GST in it (₹) <span>if the bill shows your GSTIN</span><input type="number" min="0" step="0.01" id="f-gst" value="' + (e.gst_amount || '') + '"></label>'
+      + '<label>Status<select id="f-st"><option value="paid"' + (e.status !== 'unpaid' ? ' selected' : '') + '>Paid</option><option value="unpaid"' + (e.status === 'unpaid' ? ' selected' : '') + '>Unpaid (to pay)</option></select></label>'
+      + '<label>For client (optional)<input id="f-client" list="f-clients" value="' + esc(e.client_name || '') + '"><datalist id="f-clients">' + (SETUP.clients || []).map(function(c){ return '<option value="' + esc(c.client) + '">'; }).join('') + '</datalist></label>'
+      + '<label>Freelancer (optional)<select id="f-fl"><option value="0"></option>' + fl + '</select></label>'
+      + '<label>Candidate id (optional)<input type="number" id="f-cand" value="' + (e.candidate_id || '') + '"></label>'
+      + '<label class="full">Note<input id="f-note" value="' + esc(e.note || '') + '"></label>'
+      + (e.id ? '' : '<label class="chk full"><input type="checkbox" id="f-rec"> Repeats every month (rent, salary, subscriptions). It will be added automatically on this day each month.</label>')
+      + '</div><div id="fmsg"></div><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" data-x>Cancel</button><button class="btn pri" id="fsave">Save</button></div></div>';
+    place(bg);
+    var close = function(){ bg.remove(); height(); };
+    bg.querySelectorAll('[data-x]').forEach(function(b){ b.onclick = close; });
+    bg.addEventListener('keydown', function(ev){ if (ev.key === 'Escape') close(); });
+    $('f-amt').focus();
+    var receipt = {path: '', name: ''};
+    if (!e.id) {
+      var drop = $('drop'), file = $('file');
+      drop.onclick = function(){ file.click(); };
+      drop.ondragover = function(ev){ ev.preventDefault(); drop.classList.add('on'); };
+      drop.ondragleave = function(){ drop.classList.remove('on'); };
+      drop.ondrop = function(ev){ ev.preventDefault(); drop.classList.remove('on'); if (ev.dataTransfer.files[0]) up(ev.dataTransfer.files[0]); };
+      file.onchange = function(){ if (file.files[0]) up(file.files[0]); };
+    }
+    async function up(f){
+      $('dmsg').innerHTML = '<div class="note">Reading the bill…</div>';
+      var fd = new FormData(); fd.append('file', f);
+      var j = {};
+      try { var r = await fetch('/api/finance/receipt', {method: 'POST', body: fd, credentials: 'same-origin'}); j = await r.json().catch(function(){ return {ok: false, error: 'Server error (' + r.status + ')'}; }); }
+      catch(e2){ j = {ok: false, error: 'Network error'}; }
+      if (!j.ok) { $('dmsg').innerHTML = '<div class="err">' + esc(j.error || 'Upload failed') + '</div>'; return; }
+      receipt = {path: j.receipt_path, name: j.receipt_name};
+      $('drop').innerHTML = '📎 ' + esc(j.receipt_name) + ' attached';
+      var x = j.fields;
+      if (x) {
+        if (x.date) $('f-date').value = x.date;
+        if (x.payee) $('f-payee').value = x.payee;
+        if (x.amount) $('f-amt').value = x.amount;
+        if (x.gst_amount) $('f-gst').value = x.gst_amount;
+        if (x.category) $('f-cat').value = x.category;
+        if (x.note && !$('f-note').value) $('f-note').value = x.note;
+        $('dmsg').innerHTML = '<div class="note">Filled from the bill. Please check the numbers before saving.</div>';
+      } else $('dmsg').innerHTML = '<div class="note">' + esc(j.note || 'Bill attached. Fill the fields by hand.') + '</div>';
+    }
+    $('fsave').onclick = async function(){
+      var b = {date: $('f-date').value, category: $('f-cat').value, payee: $('f-payee').value, payment_mode: $('f-mode').value,
+        amount: parseFloat($('f-amt').value) || 0, gst_amount: parseFloat($('f-gst').value) || 0, status: $('f-st').value,
+        client_name: $('f-client').value, freelancer_user_id: +$('f-fl').value || 0, candidate_id: +$('f-cand').value || 0, note: $('f-note').value};
+      if (!e.id) { b.receipt_path = receipt.path; b.receipt_name = receipt.name; b.recurring = $('f-rec').checked; }
+      this.disabled = true;
+      var r = e.id ? await api('PUT', '/expense/' + e.id, b) : await api('POST', '/expenses', b);
+      this.disabled = false;
+      if (r.ok) { close(); load(); } else $('fmsg').innerHTML = '<div class="err">' + esc(r.error || 'Failed') + '</div>';
+    };
+  }
+
+  // ── cash & collections ─────────────────────────────────────────────────
+  function pCash(){
+    var f = D.forecast, a = D.aging, h = '';
+    h += '<div class="kpis">' + kpi('Expected in · 90 days', inr(f.total_in), 'unpaid invoices + joinings', 'pos', full(f.total_in))
+      + kpi('Going out · 90 days', inr(f.total_out), 'monthly costs + unpaid bills', 'neg', full(f.total_out))
+      + kpi('Net · 90 days', inr(f.total_in - f.total_out), 'if clients pay on time', (f.total_in - f.total_out) >= 0 ? 'pos' : 'neg')
+      + kpi('To collect now', inr(a.total), a.invoices.length + ' unpaid invoice' + (a.invoices.length === 1 ? '' : 's'), '', full(a.total))
+      + kpi('Older than 60 days', inr((a.buckets['61-90'] || 0) + (a.buckets['90+'] || 0)), 'chase these first', ((a.buckets['61-90'] || 0) + (a.buckets['90+'] || 0)) ? 'neg' : '') + '</div>';
+    var mx = Math.max.apply(null, f.weeks.map(function(w){ return Math.max(w['in'], w.out); }).concat([1]));
+    h += '<div class="two"><div class="card"><div class="h">Next 13 weeks</div><div class="sub">Money expected in and going out each week, and the running total</div>'
+      + '<div class="scroll" style="margin-top:8px"><table><thead><tr><th>Week of</th><th>In</th><th class="r"></th><th>Out</th><th class="r"></th><th class="r">Running</th></tr></thead><tbody>'
+      + f.weeks.map(function(w){
+          return '<tr><td class="nw">' + fdate(w.from) + '</td><td style="width:22%"><div class="bar"><s style="width:' + Math.round(w['in'] / mx * 100) + '%;background:var(--s1)"></s></div></td><td class="r">' + (w['in'] ? inr(w['in']) : '—') + '</td>'
+            + '<td style="width:22%"><div class="bar"><s style="width:' + Math.round(w.out / mx * 100) + '%;background:var(--red)"></s></div></td><td class="r">' + (w.out ? inr(w.out) : '—') + '</td>'
+            + '<td class="r" style="color:' + (w.net_running < 0 ? 'var(--red)' : 'var(--ink)') + '"><b>' + inr(w.net_running) + '</b></td></tr>';
+        }).join('') + '</tbody></table></div></div>'
+      + '<div class="card"><div class="h">Money expected</div>' + list(f.inflows, true) + '<div class="h" style="margin-top:14px">Money going out</div>' + list(f.outflows, false) + '</div></div>';
+    h += '<div class="card"><div class="row" style="justify-content:space-between"><div><div class="h">Collections</div><div class="sub">Unpaid invoices, oldest first. Amounts are after TDS.</div></div>'
+      + '<div class="row">' + ['0-30', '31-60', '61-90', '90+'].map(function(k){ return '<span class="tag ' + (k === '0-30' ? '' : k === '31-60' ? 'a' : 'r') + '">' + k + ' days: ' + inr(a.buckets[k]) + '</span>'; }).join('') + '</div></div>'
+      + '<div class="scroll" style="margin-top:8px"><table><thead><tr><th>Invoice</th><th>Client</th><th>Invoice date</th><th>Due</th><th class="r">Amount</th><th>Reminders</th><th></th></tr></thead><tbody>'
+      + (a.invoices.length ? a.invoices.map(function(x){
+          return '<tr><td><b>' + esc(x.no || '#' + x.id) + '</b></td><td>' + esc(x.client) + '</td><td class="nw">' + fdate(x.invoice_date) + '</td>'
+            + '<td class="nw">' + fdate(x.due_date) + (x.overdue_days ? ' <span class="tag r">' + x.overdue_days + ' days late</span>' : '') + '</td>'
+            + '<td class="r"><b>' + full(x.amount) + '</b></td><td class="m">' + (x.reminders ? x.reminders + ' sent · last ' + fdate(x.last_reminder_at) : '—') + '</td>'
+            + '<td><button class="btn sm" data-rem="' + x.id + '">✉ Remind</button></td></tr>';
+        }).join('') : '<tr><td colspan="7" class="empty">Nothing to collect. 👍</td></tr>') + '</tbody></table></div></div>';
+    h += '<div class="card"><div class="h">Joined but not invoiced</div><div class="sub">Candidates marked Joined/Placed (or past their joining date) with no invoice. This is money you have earned but not billed.</div>'
+      + '<div class="scroll" style="margin-top:8px"><table><thead><tr><th>Candidate</th><th>Job</th><th>Client</th><th>Joining</th><th class="r">Expected fee</th></tr></thead><tbody>'
+      + (D.not_invoiced.length ? D.not_invoiced.map(function(x){ return '<tr><td><b>' + esc(x.name) + '</b> <span class="m">' + esc(x.stage) + '</span></td><td>' + esc(x.role) + '</td><td>' + esc(x.client) + '</td><td class="nw">' + fdate(x.joining_date) + '</td><td class="r">' + (x.expected_fee ? full(x.expected_fee) : '<span class="m">CTC missing</span>') + '</td></tr>'; }).join('')
+         : '<tr><td colspan="5" class="empty">Every joining has an invoice.</td></tr>') + '</tbody></table></div></div>';
+    $('body').innerHTML = h;
+    $('body').querySelectorAll('[data-rem]').forEach(function(b){ b.onclick = function(){ remind(+b.dataset.rem); }; });
+  }
+  function list(arr, inflow){
+    if (!arr.length) return '<div class="empty">Nothing in the next 90 days.</div>';
+    return '<table><tbody>' + arr.slice(0, 12).map(function(x){ return '<tr><td class="nw m">' + fdate(x.when) + '</td><td>' + esc(x.what) + (x.overdue ? ' <span class="tag r">overdue</span>' : '') + '</td><td class="r">' + inr(x.amount) + '</td></tr>'; }).join('') + '</tbody></table>'
+      + (arr.length > 12 ? '<div class="sub">+ ' + (arr.length - 12) + ' more</div>' : '');
+  }
+  async function remind(id){
+    var d = await api('GET', '/reminder?invoice_id=' + id);
+    if (!d.ok) { alert(d.error || 'Failed'); return; }
+    var bg = document.createElement('div'); bg.className = 'bg';
+    bg.innerHTML = '<div class="dlg" role="dialog" aria-modal="true" aria-label="Payment reminder"><div class="row" style="justify-content:space-between;margin-bottom:12px"><div class="h">Payment reminder · ' + esc(d.client) + '</div><button class="btn sm" data-x>✕</button></div>'
+      + '<div class="fm"><label class="full">To (client accounts e-mail)<input id="r-to" value="' + esc(d.to) + '" placeholder="accounts@client.com"></label>'
+      + '<label class="full">Subject<input id="r-sub" value="' + esc(d.subject) + '"></label>'
+      + '<label class="full">Message<textarea id="r-body" rows="10">' + esc(d.body) + '</textarea></label></div>'
+      + (d.reminders ? '<div class="note">' + d.reminders + ' reminder' + (d.reminders === 1 ? '' : 's') + ' already sent, last on ' + fdate(d.last_reminder_at) + '.</div>' : '')
+      + '<div id="rmsg"></div><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" data-x>Cancel</button><button class="btn pri" id="rsend">Send</button></div></div>';
+    place(bg);
+    var close = function(){ bg.remove(); };
+    bg.querySelectorAll('[data-x]').forEach(function(b){ b.onclick = close; });
+    $('rsend').onclick = async function(){
+      this.disabled = true; this.textContent = 'Sending…';
+      var r = await api('POST', '/reminder', {invoice_id: id, to: $('r-to').value, subject: $('r-sub').value, body: $('r-body').value});
+      if (r.ok) { close(); load(); } else { this.disabled = false; this.textContent = 'Send'; $('rmsg').innerHTML = '<div class="err">' + esc(r.error || 'Failed') + '</div>'; }
+    };
+  }
+
+  // ── GST & TDS ──────────────────────────────────────────────────────────
+  function pTax(){
+    var g = D.gst, t = D.tds, s = D.settings, h = '';
+    var out = g.reduce(function(a, x){ return a + x.output_gst; }, 0), inp = g.reduce(function(a, x){ return a + x.input_gst; }, 0), pay = g.reduce(function(a, x){ return a + x.payable; }, 0);
+    h += '<div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr))">' + kpi('GST on your invoices', inr(out), 'output GST · ' + esc(D.period.label), '', full(out))
+      + kpi('GST on your expenses', inr(inp), 'input credit you can claim', '', full(inp))
+      + kpi('Estimated GST to pay', inr(pay), 'output − input', pay ? 'neg' : '', full(pay))
+      + kpi('TDS cut by clients', inr(D.pnl.tds), 'you get this back as tax credit', '', full(D.pnl.tds)) + '</div>';
+    h += '<div class="half"><div class="card"><div class="h">GST by month</div><div class="sub">GST rate is taken from each invoice (18% by default). Only expenses with a GST amount count as input credit.</div>'
+      + '<div class="scroll" style="margin-top:8px"><table><thead><tr><th>Month</th><th class="r">Output</th><th class="r">Input</th><th class="r">To pay</th><th class="r">Credit carried</th></tr></thead><tbody>'
+      + (g.length ? g.map(function(x){ return '<tr><td>' + esc(x.month) + '</td><td class="r">' + full(x.output_gst) + '</td><td class="r">' + full(x.input_gst) + '</td><td class="r"><b>' + full(x.payable) + '</b></td><td class="r">' + (x.credit_carry ? full(x.credit_carry) : '—') + '</td></tr>'; }).join('') : '<tr><td colspan="5" class="empty">No invoices or GST expenses in this period.</td></tr>')
+      + '</tbody></table></div></div>'
+      + '<div class="card"><div class="h">TDS register · FY ' + esc((t[0] && t[0].fy) || '') + '</div><div class="sub">Default ' + s.tds_percent + '% of the invoice value (without GST); change it per client in ⚙ Setup. Match "deducted" with Form 26AS.</div>'
+      + '<div class="scroll" style="margin-top:8px"><table><thead><tr><th>Client</th><th class="r">TDS %</th><th class="r">Invoiced</th><th class="r">Deducted</th><th class="r">Still to come</th></tr></thead><tbody>'
+      + (t.length ? t.map(function(x){ return '<tr><td>' + esc(x.client) + ' <span class="m">' + x.invoices + ' inv.</span></td><td class="r">' + x.tds_percent + '%</td><td class="r">' + full(x.invoiced) + '</td><td class="r"><b>' + full(x.deducted) + '</b></td><td class="r">' + full(x.expected_unpaid) + '</td></tr>'; }).join('') : '<tr><td colspan="5" class="empty">No invoices this FY.</td></tr>')
+      + '</tbody></table></div></div></div>';
+    if (D.short_paid.length) h += '<div class="card"><div class="h">Short-paid invoices</div><div class="sub">The client paid less than invoice − TDS. Check whether they cut extra TDS or anything is still due.</div><table style="margin-top:8px"><tbody>'
+      + D.short_paid.map(function(x){ return '<tr><td><b>' + esc(x.no) + '</b></td><td>' + esc(x.client) + '</td><td class="r">' + full(x.short) + ' short</td></tr>'; }).join('') + '</tbody></table></div>';
+    $('body').innerHTML = h;
+  }
+
+  // ── who makes money ────────────────────────────────────────────────────
+  function pProfit(){
+    var c = D.clients, pl = D.placements, pe = D.people, cph = D.cost_per_hire, h = '';
+    h += '<div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr))">' + kpi('Placements billed', pl.length, esc(D.period.label))
+      + kpi('Average fee', inr(pl.length ? pl.reduce(function(a, x){ return a + x.fee; }, 0) / pl.length : 0), 'without GST')
+      + kpi('Job-board spend', inr(cph.job_board_spend), 'Naukri etc. in this period')
+      + kpi('Job-board cost per hire', cph.per_hire == null ? '—' : inr(cph.per_hire), cph.placements + ' placement' + (cph.placements === 1 ? '' : 's')) + '</div>';
+    h += '<div class="card"><div class="h">Clients</div><div class="sub">Revenue in this period, costs linked to the client, unpaid money and how many days they take to pay</div>'
+      + '<div class="scroll" style="margin-top:8px"><table><thead><tr><th>Client</th><th class="r">Revenue</th><th class="r">Direct costs</th><th class="r">Profit</th><th class="r">Margin</th><th class="r">Unpaid</th><th class="r">Pays in</th></tr></thead><tbody>'
+      + (c.length ? c.map(function(x){ return '<tr><td><b>' + esc(x.client) + '</b></td><td class="r">' + full(x.revenue) + '</td><td class="r">' + full(x.direct_costs) + '</td><td class="r"><b>' + full(x.net) + '</b></td><td class="r">' + (x.margin == null ? '—' : x.margin + '%') + '</td>'
+          + '<td class="r">' + (x.outstanding ? full(x.outstanding) + (x.overdue ? ' <span class="tag r">' + inr(x.overdue) + ' late</span>' : '') : '—') + '</td><td class="r">' + (x.avg_pay_days == null ? '—' : '<span class="tag ' + (x.avg_pay_days > 60 ? 'r' : x.avg_pay_days > 30 ? 'a' : 'g') + '">' + x.avg_pay_days + ' days</span>') + '</td></tr>'; }).join('')
+         : '<tr><td colspan="7" class="empty">No invoices in this period.</td></tr>') + '</tbody></table></div></div>';
+    h += '<div class="half"><div class="card"><div class="h">Per placement</div><div class="sub">Fee minus the costs linked to that candidate (e.g. freelancer commission)</div>'
+      + '<div class="scroll" style="margin-top:8px"><table><thead><tr><th>Candidate</th><th class="r">Fee</th><th class="r">Costs</th><th class="r">Profit</th></tr></thead><tbody>'
+      + (pl.length ? pl.map(function(x){ return '<tr><td><b>' + esc(x.candidate) + '</b><div class="m">' + esc([x.role, x.client].filter(Boolean).join(' · ')) + '</div></td><td class="r">' + full(x.fee) + '</td><td class="r">' + (x.costs ? full(x.costs) : '—') + '</td><td class="r"><b>' + full(x.net) + '</b></td></tr>'; }).join('') : '<tr><td colspan="4" class="empty">No placements billed in this period.</td></tr>')
+      + '</tbody></table></div></div>'
+      + '<div class="card"><div class="h">Per person</div><div class="sub">Who sourced the billed candidates, minus their commission</div>'
+      + '<div class="scroll" style="margin-top:8px"><table><thead><tr><th>Person</th><th class="r">Placements</th><th class="r">Revenue</th><th class="r">Commission</th><th class="r">Net</th></tr></thead><tbody>'
+      + (pe.length ? pe.map(function(x){ return '<tr><td><b>' + esc(x.name) + '</b>' + (x.freelancer ? ' <span class="tag b">freelancer</span>' : '') + '</td><td class="r">' + x.placements + '</td><td class="r">' + full(x.revenue) + '</td><td class="r">' + (x.costs ? full(x.costs) : '—') + '</td><td class="r"><b>' + full(x.net) + '</b></td></tr>'; }).join('') : '<tr><td colspan="5" class="empty">Nothing yet.</td></tr>')
+      + '</tbody></table></div></div></div>';
+    $('body').innerHTML = h;
+  }
+
+  // ── setup ──────────────────────────────────────────────────────────────
+  async function openSetup(){
+    SETUP = await api('GET', '/setup');
+    if (!SETUP.ok) { alert(SETUP.error || 'Failed'); return; }
+    var s = SETUP.settings, cats = SETUP.categories;
+    var bud = {}; (SETUP.budgets || []).forEach(function(b){ bud[b.category] = b.monthly_amount; });
+    var bg = document.createElement('div'); bg.className = 'bg';
+    bg.innerHTML = '<div class="dlg w" role="dialog" aria-modal="true" aria-label="Finance setup"><div class="row" style="justify-content:space-between"><div class="h">Finance setup</div><button class="btn sm" data-x>✕</button></div>'
+      + '<div class="sect">Basics</div><div class="fm" style="grid-template-columns:repeat(3,minmax(0,1fr))">'
+      + '<label>Monthly billing target (₹, without GST)<input type="number" id="s-tg" value="' + s.monthly_target + '"></label>'
+      + '<label>Default TDS by clients (%)<input type="number" step="0.01" id="s-tds" value="' + s.tds_percent + '"></label>'
+      + '<label>Freelancer commission, default (% of fee)<input type="number" step="0.01" id="s-flp" value="' + s.freelancer_percent + '"></label>'
+      + '<label>Auto-commission for joinings from<input type="date" id="s-cf" value="' + esc(s.commission_from) + '"></label>'
+      + '<label>Default fee % (when CTC is known)<input type="number" step="0.01" id="s-fee" value="' + s.default_fee_percent + '"></label>'
+      + '<label>Clients pay in (days, default)<input type="number" id="s-pd" value="' + s.default_payment_days + '"></label>'
+      + '<label class="chk"><input type="checkbox" id="s-gst"' + (s.gst_registered ? ' checked' : '') + '> GST registered (invoice GST 18% unless the invoice says otherwise)</label></div>'
+      + '<div class="sect">Freelancers <span class="sub">— leave blank to use the default ' + s.freelancer_percent + '%; put 0 for no commission</span></div>'
+      + ((SETUP.freelancers || []).length ? '<div class="scroll"><table><thead><tr><th>Freelancer</th><th>Type</th><th>Value</th></tr></thead><tbody>' + SETUP.freelancers.map(function(f){
+          return '<tr data-fl="' + f.id + '"><td>' + esc(f.name) + '</td><td><select class="fm-mode"><option value="percent"' + (f.mode !== 'fixed' ? ' selected' : '') + '>% of fee</option><option value="fixed"' + (f.mode === 'fixed' ? ' selected' : '') + '>Fixed ₹ per placement</option></select></td><td><input class="fm-val mini" type="number" step="0.01" value="' + (f.value == null ? '' : f.value) + '" placeholder="' + s.freelancer_percent + '"></td></tr>'; }).join('') + '</tbody></table></div>'
+        : '<div class="empty">No freelancer logins yet.</div>')
+      + '<div class="sect">Clients <span class="sub">— TDS % (blank = default), payment days and accounts e-mail for reminders</span></div>'
+      + ((SETUP.clients || []).length ? '<div class="scroll"><table><thead><tr><th>Client</th><th>TDS %</th><th>Pays in (days)</th><th>Accounts e-mail</th></tr></thead><tbody>' + SETUP.clients.map(function(c){
+          return '<tr data-cl="' + esc(c.client) + '"><td>' + esc(c.client) + '</td><td><input class="c-tds mini" type="number" step="0.01" value="' + (c.tds_percent == null ? '' : c.tds_percent) + '" placeholder="' + s.tds_percent + '"></td><td><input class="c-pd mini" type="number" value="' + (c.payment_days || '') + '" placeholder="' + s.default_payment_days + '"></td><td><input class="c-em" value="' + esc(c.reminder_email || '') + '" placeholder="accounts@…"></td></tr>'; }).join('') + '</tbody></table></div>'
+        : '<div class="empty">Clients appear here after your first invoice.</div>')
+      + '<div class="sect">Monthly expenses that repeat</div><div class="scroll"><table><thead><tr><th>Category</th><th>Paid to</th><th>Amount</th><th>GST</th><th>Day</th><th>Until (month)</th><th></th></tr></thead><tbody id="recb">'
+      + (SETUP.recurring || []).filter(function(r){ return r.active; }).map(recRow).join('') + '</tbody></table></div><button class="btn sm" id="radd" style="margin-top:6px">+ Add a monthly expense</button>'
+      + '<div class="sect">Monthly budgets <span class="sub">— you get an alert at 80% and when crossed; blank = no budget</span></div><div class="fm" style="grid-template-columns:repeat(4,minmax(0,1fr))">'
+      + cats.map(function(c){ return '<label>' + esc(c) + '<input type="number" class="b-v" data-c="' + esc(c) + '" value="' + (bud[c] || '') + '"></label>'; }).join('') + '</div>'
+      + '<div id="smsg"></div><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" data-x>Cancel</button><button class="btn pri" id="ssave">Save</button></div></div>';
+    place(bg);
+    var close = function(){ bg.remove(); };
+    bg.querySelectorAll('[data-x]').forEach(function(b){ b.onclick = close; });
+    $('radd').onclick = function(){ $('recb').insertAdjacentHTML('beforeend', recRow({id: 0, category: 'Rent', payee: '', amount: '', gst_amount: '', day_of_month: 1, end_month: ''})); bindDel(); };
+    function bindDel(){ bg.querySelectorAll('[data-rdel]').forEach(function(b){ b.onclick = function(){ var tr = b.closest('tr'); if (+tr.dataset.id) { tr.dataset.del = '1'; tr.style.display = 'none'; } else tr.remove(); }; }); }
+    bindDel();
+    $('ssave').onclick = async function(){
+      var q = function(tr, c){ return tr.querySelector(c).value; };
+      var body = {settings: {monthly_target: +$('s-tg').value, tds_percent: +$('s-tds').value, freelancer_percent: +$('s-flp').value,
+          commission_from: $('s-cf').value, default_fee_percent: +$('s-fee').value, default_payment_days: +$('s-pd').value, gst_registered: $('s-gst').checked},
+        freelancers: [].map.call(bg.querySelectorAll('[data-fl]'), function(tr){ return {id: +tr.dataset.fl, mode: q(tr, '.fm-mode'), value: q(tr, '.fm-val')}; }),
+        clients: [].map.call(bg.querySelectorAll('[data-cl]'), function(tr){ return {client: tr.dataset.cl, tds_percent: q(tr, '.c-tds'), payment_days: q(tr, '.c-pd'), reminder_email: q(tr, '.c-em')}; }),
+        recurring: [].map.call(bg.querySelectorAll('#recb tr'), function(tr){ return {id: +tr.dataset.id, delete: tr.dataset.del === '1', category: q(tr, '.r-cat'), payee: q(tr, '.r-pay'), amount: q(tr, '.r-amt'), gst_amount: q(tr, '.r-gst'), day_of_month: q(tr, '.r-day'), end_month: q(tr, '.r-end')}; }),
+        budgets: [].map.call(bg.querySelectorAll('.b-v'), function(i){ return {category: i.dataset.c, monthly_amount: i.value}; })};
+      this.disabled = true;
+      var r = await api('PUT', '/setup', body);
+      this.disabled = false;
+      if (r.ok) { close(); SETUP = null; load(); } else $('smsg').innerHTML = '<div class="err">' + esc(r.error || 'Failed') + '</div>';
+    };
+    function recRow(r){
+      return '<tr data-id="' + (r.id || 0) + '"><td><select class="r-cat">' + cats.map(function(c){ return '<option' + (c === r.category ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select></td>'
+        + '<td><input class="r-pay" value="' + esc(r.payee || '') + '"></td><td><input class="r-amt mini" type="number" value="' + (r.amount || '') + '"></td><td><input class="r-gst mini" type="number" value="' + (r.gst_amount || '') + '"></td>'
+        + '<td><input class="r-day" type="number" min="1" max="28" style="width:60px" value="' + (r.day_of_month || 1) + '"></td><td><input class="r-end" type="month" value="' + esc(r.end_month || '') + '"></td>'
+        + '<td><button class="btn sm" data-rdel style="color:var(--red)" aria-label="Remove">✕</button></td></tr>';
+    }
+  }
+
+  // ── controls ───────────────────────────────────────────────────────────
+  $('per').onchange = function(){ $('cust').style.display = this.value === 'custom' ? 'inline-flex' : 'none'; if (this.value !== 'custom') load(); };
+  $('pgo').onclick = load;
+  $('vb').onclick = function(){ view = 'billing'; $('vb').classList.add('on'); $('vc').classList.remove('on'); if (D) paint(); };
+  $('vc').onclick = function(){ view = 'cash'; $('vc').classList.add('on'); $('vb').classList.remove('on'); if (D) paint(); };
+  $('add').onclick = function(){ openExpense(null); };
+  $('setup').onclick = openSetup;
+  $('xl').onclick = function(){ location.href = '/api/finance/export' + qs(); };
+  load();
+})();
+</script>
+</body>
+</html>
