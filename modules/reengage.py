@@ -54,7 +54,8 @@ DOMAINS_LINE = 'Data Center, Solar & Renewable Energy, Electrical and Industrial
 DOMAINS_DETAIL = ('Data Center (critical facilities, MEP, electrical and project roles), Solar & Renewable Energy '
                   '(EPC, O&M, design and sales), Electrical (switchgear, power distribution, substations) and '
                   'Industrial Automation (PLC, SCADA, DCS, BMS)')
-DEFAULTS = {'enabled': 0, 'daily_cap': 50, 'interval_days': 180, 'start_hour': 10, 'end_hour': 19}
+DEFAULTS = {'enabled': 0, 'daily_cap': 50, 'interval_days': 180, 'start_hour': 10, 'end_hour': 19, 'reminder_days': 7}
+REMINDER_WINDOW_DAYS = 14   # a reminder is only sent within this many days after it falls due
 TICK_SECONDS = 300
 MAX_PER_TICK = 5
 
@@ -95,6 +96,10 @@ def _migrate_reengage(conn):
     conn.execute('CREATE INDEX IF NOT EXISTS idx_reengage_log_co ON reengage_log(company_id, sent_at)')
     try:
         conn.execute('ALTER TABLE candidates ADD COLUMN reengage_off INTEGER DEFAULT 0')
+    except Exception:
+        pass
+    try:      # Wave 2: one soft reminder N days after the e-mail (0 = off)
+        conn.execute('ALTER TABLE reengage_settings ADD COLUMN reminder_days INTEGER DEFAULT 7')
     except Exception:
         pass
     conn.commit()
@@ -181,6 +186,13 @@ def build_people(conn, oid, settings=None, now=None):
     for r in _rows(conn, "SELECT email, MAX(sent_at) AS last FROM reengage_log WHERE company_id=? AND status='sent' "
                          "GROUP BY email", (oid,)):
         sent[r['email']] = r['last']
+    upd_log = {}      # Wave 2: durable update-profile log (update_submitted_at is cleared when its task is dismissed)
+    try:
+        for r in _rows(conn, "SELECT LOWER(TRIM(email)) AS em, MAX(created_at) AS last FROM talent_updates "
+                             "WHERE company_id=? AND email<>'' GROUP BY em", (oid,)):
+            upd_log[r['em']] = r['last']
+    except Exception:
+        pass
     groups = {}
     for c in cands:
         em = c['email'].strip().lower()
@@ -198,7 +210,7 @@ def build_people(conn, oid, settings=None, now=None):
              'role': '' if is_pool else (m['role'] or ''), 'client': '' if is_pool else (m['client'] or ''),
              'considered_on': str(latest['created_at'] or ''), 'stage': latest['stage'] or '',
              'last_sent': sent.get(em, ''), 'off': any(c['off'] for c in rows)}
-        anchors = [d for d in (_dt(latest['created_at']), _dt(sent.get(em)),
+        anchors = [d for d in (_dt(latest['created_at']), _dt(sent.get(em)), _dt(upd_log.get(em)),
                                max([_dt(c['update_submitted_at']) or datetime.datetime.min for c in rows])) if d]
         anchor = max(anchors) if anchors else None
         p['anchor'] = anchor.strftime('%Y-%m-%d') if anchor else ''
@@ -344,6 +356,17 @@ def run_company(conn, oid, force=False, limit=None):
         limit = min(MAX_PER_TICK, max(1, math.ceil(left / ticks)))
     limit = min(limit, left)
     due = [p for p in build_people(conn, oid, s, now) if p['state'] == 'due']
+    try:      # frequency guard: someone who just got (or is about to get) a job-match mail waits
+        from modules.jobmail import mailed_recently
+        recent = mailed_recently(conn, oid)
+        try:      # Wave 3: the newsletter already carries the CV ask — wait for its recipients too
+            from modules.newsletter import mailed_recently as nl_recent
+            recent |= nl_recent(conn, oid)
+        except Exception:
+            pass
+        due = [p for p in due if p['email'] not in recent]
+    except Exception:
+        pass
     n = 0
     for p in due:
         if n >= limit:
@@ -356,8 +379,130 @@ def run_company(conn, oid, force=False, limit=None):
             conn.execute('UPDATE reengage_settings SET last_error=? WHERE company_id=?', (err[:300], oid))
             conn.commit()
             break
+    if n < limit and int(s.get('reminder_days') or 0) > 0:
+        try:
+            n += run_reminders(conn, oid, s, limit - n, now)
+        except Exception as exc:
+            print('[reengage] reminders failed for %s: %s' % (oid, exc))
     if n:
         conn.execute("UPDATE reengage_settings SET last_error='' WHERE company_id=?", (oid,))
+        conn.commit()
+    return n
+
+
+# ── Wave 2: one soft reminder when the profile was not updated ─────────────
+def reminders_due(conn, oid, s=None, now=None):
+    """First e-mails sent `reminder_days`..+14 days ago whose person has not updated
+    since, is still mailable, and has had no reminder for that cycle."""
+    s = s or get_settings(conn, oid)
+    now = now or now_ist()
+    rd = int(s.get('reminder_days') or 0)
+    if rd <= 0:
+        return []
+    hi = (now - datetime.timedelta(days=rd)).strftime('%Y-%m-%dT%H:%M:%S')
+    lo = (now - datetime.timedelta(days=rd + REMINDER_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%S')
+    logs = _rows(conn, "SELECT * FROM reengage_log WHERE company_id=? AND status='sent' AND kind IN ('job','pool') "
+                       "AND sent_at<=? AND sent_at>=? ORDER BY sent_at", (oid, hi, lo))
+    if not logs:
+        return []
+    people = {p['email']: p for p in build_people(conn, oid, s, now)}
+    done = {r['cycle_key'] for r in _rows(conn, "SELECT cycle_key FROM reengage_log WHERE company_id=? AND kind='reminder'", (oid,))}
+    later = {}
+    for r in _rows(conn, "SELECT email, MAX(sent_at) AS last FROM reengage_log WHERE company_id=? AND status='sent' "
+                         "GROUP BY email", (oid,)):
+        later[r['email']] = r['last']
+    try:
+        from modules.jobmail import mailed_recently
+        recent = mailed_recently(conn, oid)
+    except Exception:
+        recent = set()
+    try:
+        from modules.newsletter import mailed_recently as nl_recent
+        recent |= nl_recent(conn, oid)
+    except Exception:
+        pass
+    out = []
+    for l in logs:
+        em = l['email']
+        p = people.get(em)
+        if not p or p['state'] == 'excluded' or em in recent:
+            continue
+        if (l['cycle_key'] + ':r') in done or str(later.get(em) or '') > str(l['sent_at']):
+            continue                                         # reminded already / a newer mail went out
+        # updated since the mail?  (anchor moves past the mail date when they update)
+        if p['anchor'] and p['anchor'] > str(l['sent_at'])[:10]:
+            continue
+        rows = conn.execute("SELECT MAX(COALESCE(update_submitted_at,'')) FROM candidates WHERE owner_id=? AND LOWER(TRIM(email))=?",
+                            (oid, em)).fetchone()[0]
+        if rows and str(rows) > str(l['sent_at']):
+            continue
+        try:
+            tu = conn.execute("SELECT MAX(created_at) FROM talent_updates WHERE company_id=? AND email=?", (oid, em)).fetchone()[0]
+        except Exception:
+            tu = None
+        if tu and str(tu) > str(l['sent_at']):
+            continue
+        out.append(dict(p, base_log=l))
+    return out
+
+
+def compose_reminder(p, link, unsub, pixel='', has_signature=True):
+    fn = first_name(p['name'])
+    subject = '%s, 2 minutes to refresh your HireLab profile' % fn
+    line1 = ('A quick reminder about our note last week — we are keeping your profile ready for new %s openings, '
+             'and a refreshed CV helps us put the right role in front of you.' % DOMAINS_LINE)
+    ask = 'Just confirm your current role, CTC, notice period and location, and upload your latest CV.'
+    sign_off = 'Warm regards,' if has_signature else 'Warm regards,\nTeam HireLab'
+    plain = ('Hi %s,\n\n%s\n\n%s\n\nUpdate your profile: %s\n\n%s\n\n---\nTo stop these e-mails: %s'
+             % (fn, line1, ask, link, sign_off, unsub))
+    e = html.escape
+    body = ('<p>Hi %s,</p><p>%s</p><p>%s</p>'
+            '<p><a href="%s" style="display:inline-block;background:#0F6E56;color:#fff;padding:11px 22px;'
+            'border-radius:8px;text-decoration:none;font-weight:600">Update my profile</a></p><p>%s</p>'
+            '<p style="font-size:11px;color:#888;margin-top:22px">You are receiving this because your profile is '
+            'with HireLab. <a href="%s" style="color:#888">Unsubscribe</a></p>%s'
+            % (e(fn), e(line1), e(ask), e(link), e(sign_off).replace('\n', '<br>'), e(unsub),
+               ('<img src="%s" width="1" height="1" alt="" style="display:block">' % e(pixel)) if pixel else ''))
+    return subject, plain, body
+
+
+def run_reminders(conn, oid, s, limit, now=None):
+    core = _core()
+    n = 0
+    for p in reminders_due(conn, oid, s, now):
+        if n >= limit:
+            break
+        l = p['base_log']
+        cur = conn.execute('INSERT OR IGNORE INTO reengage_log (company_id, candidate_id, email, cycle_key, kind, mandate_id, '
+                           'role, client, considered_on, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                           (oid, p['candidate_id'], p['email'], l['cycle_key'] + ':r', 'reminder', p['mandate_id'],
+                            p['role'], p['client'], p['considered_on'], 'sending', ts()))
+        conn.commit()
+        if cur.rowcount != 1:
+            continue
+        lid = cur.lastrowid
+        try:
+            _ensure_link(conn, p['candidate_id'])
+            base = _base()
+            tt = track_token(lid)
+            unsub = '%s/u/%s' % (base, core._unsub_token(oid, p['candidate_id']))
+            subject, plain, body = compose_reminder(p, '%s/re/c/%s' % (base, tt), unsub, '%s/re/o/%s.gif' % (base, tt),
+                                                    _has_signature())
+            ok, err, _m, _t = core.email_service_send(
+                p['email'], subject, plain, body_html=body, candidate_id=p['candidate_id'],
+                extra_headers={'List-Unsubscribe': '<%s>' % unsub, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'})
+        except Exception as exc:
+            ok, err = False, '%s: %s' % (type(exc).__name__, exc)
+        if ok:
+            conn.execute("UPDATE reengage_log SET status='sent', sent_at=? WHERE id=?", (ts(), lid))
+            try:
+                conn.execute('INSERT INTO candidate_events (candidate_id,event_type,detail,created_at) VALUES (?,?,?,?)',
+                             (p['candidate_id'], 'note', 'Re-engagement reminder sent to %s' % p['email'], ts()))
+            except Exception:
+                pass
+            n += 1
+        else:
+            conn.execute("UPDATE reengage_log SET status='failed', error=? WHERE id=?", (str(err or '')[:300], lid))
         conn.commit()
     return n
 
@@ -469,6 +614,8 @@ def summary():
             'unsubscribed': unsub,
             'failed': sum(1 for l in logs if l['status'] == 'failed'),
             'people': len(people),
+            'reminders': sum(1 for l in sent if l.get('kind') == 'reminder'),
+            'reminders_due': len(reminders_due(conn, oid, s)) if s.get('reminder_days') else 0,
         }
         days_to_clear = math.ceil(k['due'] / max(1, int(s['daily_cap']))) if k['due'] else 0
         return jsonify({'ok': True, 'settings': s, 'kpis': k, 'per_day': [{'day': d, 'sent': per_day[d]} for d in days],
@@ -529,6 +676,7 @@ def save_settings():
                 return s[k]
         enabled = 1 if d.get('enabled', s['enabled']) in (1, True, '1', 'true') else 0
         cap, interval = num('daily_cap', 1, 500), num('interval_days', 30, 730)
+        reminder = num('reminder_days', 0, 30)
         sh, eh = num('start_hour', 0, 23), num('end_hour', 1, 24)
         if eh <= sh:
             return jsonify({'ok': False, 'error': 'End hour must be after start hour.'}), 400
@@ -538,6 +686,7 @@ def save_settings():
                         interval_days=excluded.interval_days, start_hour=excluded.start_hour, end_hour=excluded.end_hour,
                         updated_by=excluded.updated_by, updated_at=excluded.updated_at''',
                      (oid, enabled, cap, interval, sh, eh, real_user_id(), ts()))
+        conn.execute('UPDATE reengage_settings SET reminder_days=? WHERE company_id=?', (reminder, oid))
         conn.commit()
         return jsonify({'ok': True, 'settings': get_settings(conn, oid)})
     finally:

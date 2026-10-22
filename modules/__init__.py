@@ -49,6 +49,11 @@ _MODULE_NAMES = [
     'assistant',       # HireLab Assistant side panel (paste / CV, never reads Naukri)
     'meeting_tasks',   # scheduler meetings -> Tasks, and 10-minute task alerts
     'reengage',        # 6-monthly candidate re-engagement e-mails + dashboard (/reengage)
+    'jobmail',         # Job-Match Mail: vector match + AI check + approve + send (/jobmail)
+    'segments',        # Talent Pool: segmentation + CV freshness + update log (/talent-pool)
+    'newsletter',      # Market Pulse newsletter to Talent Pool segments (/newsletter)
+    'hotlist',         # Hot List: engagement score + who to call today (/hotlist, callers: /my-calls)
+    'backup_download', # Full database + CV backup download for the platform admin (/backup)
 ]
 
 _MIGRATIONS = []

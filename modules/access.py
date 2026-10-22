@@ -366,6 +366,7 @@ _NUMERIC_OK = [re.compile(p) for p in [
     r'^/api/notifications(/|$)',
     r'^/api/todo/(lists|tags|auto-rules)/',   # checked inside modules/todo.py (own/shared lists, admin rules)
     r'^/api/emailbox/',                       # every query is scoped to the caller's own mailbox (server._box_where)
+    r'^/api/jobmail/',                        # every campaign is checked against can_see_mandate inside modules/jobmail.py
 ]]
 _HAS_ID = re.compile(r'/\d+(/|$)')
 
