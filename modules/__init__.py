@@ -56,6 +56,7 @@ _MODULE_NAMES = [
     'backup_download', # Full database + CV backup download for the platform admin (/backup)
     'app_nav',         # the app menu (☰ Menu) on every separate page
     'job_pulse',       # Jobs page: status line, whose move, next event, ₹ value, focus, SPOC view, chase, digest
+    'finance',         # Invoicing → Profit & Cash: real P&L, GST/TDS, cash forecast, collections, freelancer commission (/finance)
 ]
 
 _MIGRATIONS = []

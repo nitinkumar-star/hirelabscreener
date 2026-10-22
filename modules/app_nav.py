@@ -24,7 +24,7 @@ from flask import Blueprint, Response, request
 
 bp = Blueprint('app_nav', __name__)
 
-NAV_PAGES = re.compile(r'^/(jobmail|talent-pool|newsletter|hotlist|my-calls|reengage|backup|schedule|orgmap|admin/storage)/?$')
+NAV_PAGES = re.compile(r'^/(jobmail|talent-pool|newsletter|hotlist|my-calls|reengage|backup|schedule|orgmap|admin/storage|finance)/?$')
 _TAG = b'<script src="/app-nav.js" defer></script>'
 
 
@@ -85,6 +85,7 @@ _JS = r"""(function(){
     ['Clients (CRM)', '/?go=crm', 'crm', 'a'],
     ['BD Command Center', '/?go=bd', 'bd', 'a'],
     ['Invoicing', '/?go=invoicing', 'inv', 'a'],
+    ['Profit & Cash', '/finance', 'inv', 'a'],
     ['Freelancers', '/?go=freelancers', 'team', 'a'],
     ['Candidate engagement', null],
     ['Job Mail', '/jobmail', 'jm', 'r'],
