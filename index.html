@@ -25746,4 +25746,257 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
   })();
 })();
 </script>
+<!-- ═══ Job Pulse on the Jobs page: whose move · what is happening · next · ₹ · Focus today · SPOC view · peek · chase · digest ═══ -->
+<script id="job-pulse-script">
+(function(){
+  'use strict';
+  var JP = {data:null, at:0, loading:false, spoc:'', showSpocs:false};
+  try { JP.spoc = localStorage.getItem('jp_spoc') || ''; JP.showSpocs = localStorage.getItem('jp_spocs') === '1'; } catch(e){}
+  function esc(x){ return String(x == null ? '' : x).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function api(m, p, b){ return fetch('/api/job-pulse' + p, {method: m, credentials: 'same-origin', headers: b ? {'Content-Type': 'application/json'} : {}, body: b ? JSON.stringify(b) : undefined})
+    .then(function(r){ return r.json().catch(function(){ return {ok: false, error: 'HTTP ' + r.status}; }); }).catch(function(){ return {ok: false, error: 'Network error'}; }); }
+  var BALL = {client: ['#FFF1E6', '#C2410C', 'Client'], us: ['#E8F0FE', '#1D4ED8', 'Us'], candidate: ['#E6F4EE', '#0F6E56', 'Candidate']};
+  function css(){
+    if (document.getElementById('jp-css')) return;
+    var s = document.createElement('style'); s.id = 'jp-css';
+    s.textContent = ''
+      + '.jp-panel{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:12px}'
+      + '.jp-card{background:#fff;border:1px solid #E4E7EC;border-radius:12px;padding:12px 14px;min-width:0}'
+      + '.jp-h{font-size:13px;font-weight:700;color:#101828;display:flex;align-items:center;gap:8px;margin-bottom:6px}'
+      + '.jp-h small{font-weight:500;color:#667085;font-size:11.5px}'
+      + '.jp-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}'
+      + '.jp-tile{border:1px solid #EEF0F3;border-radius:10px;padding:8px 10px;cursor:default}'
+      + '.jp-tile b{display:block;font-size:19px;color:#101828;font-variant-numeric:tabular-nums}.jp-tile span{font-size:11.5px;color:#5B6475}'
+      + '.jp-tile.money{background:#F0FDF4;border-color:#BBF7D0}.jp-tile.money b{color:#15803D}'
+      + '.jp-tile.cl{background:#FFF7ED;border-color:#FED7AA}.jp-tile.cl b{color:#C2410C}'
+      + '.jp-f{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid #F0F1F4}'
+      + '.jp-f:first-of-type{border-top:none}'
+      + '.jp-n{width:22px;height:22px;border-radius:7px;background:#FFF1E6;color:#C2410C;font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center;flex:none}'
+      + '.jp-f .t{flex:1;min-width:0}.jp-f .t b{font-size:13px;color:#101828}.jp-f .t div{font-size:12px;color:#5B6475;margin-top:1px}'
+      + '.jp-why{color:#C2410C!important;font-weight:600}'
+      + '.jp-btn{border:1px solid #D0D5DD;background:#fff;border-radius:7px;font:inherit;font-size:11.5px;font-weight:600;padding:3px 8px;cursor:pointer;color:#344054;white-space:nowrap}'
+      + '.jp-btn:hover{border-color:#98A2B3}.jp-btn.o{border-color:#FDBA74;color:#C2410C;background:#FFF7ED}'
+      + '.jp-ball{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:2px 9px;font-size:11.5px;font-weight:700;white-space:nowrap}'
+      + 'tr.jp-line td{padding:0 12px 10px;border-bottom:1px solid #F0F1F4;background:#fff}'
+      + 'tr.jt-row:has(+ tr.jp-line) td{border-bottom:none;padding-bottom:4px}'
+      + '.jp-l{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:#344054;cursor:pointer;padding:6px 10px;border-radius:9px;background:#F9FAFB}'
+      + '.jp-l:hover{background:#F2F4F7}'
+      + '.jp-l .s{flex:1 1 260px;min-width:0}'
+      + '.jp-l .nx{color:#B45309;font-weight:600;white-space:nowrap}'
+      + '.jp-l .mv{color:#667085;font-size:11.5px;white-space:nowrap}'
+      + '.jp-l .money{font-weight:700;color:#15803D;white-space:nowrap}'
+      + '.jp-sp{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin-top:4px}'
+      + '.jp-spc{border:1px solid #EEF0F3;border-radius:10px;padding:9px 11px;cursor:pointer;background:#fff}'
+      + '.jp-spc:hover{border-color:#98A2B3}.jp-spc.on{border:2px solid #101828;padding:8px 10px}'
+      + '.jp-spc b{font-size:13px}.jp-spc .c{font-size:11.5px;color:#667085}.jp-spc .k{display:flex;gap:10px;flex-wrap:wrap;font-size:11.5px;color:#344054;margin-top:5px}'
+      + '.jp-ov{position:fixed;inset:0;background:rgba(16,24,40,.35);z-index:9500;display:none}.jp-ov.on{display:block}'
+      + '.jp-dr{position:fixed;top:0;right:0;bottom:0;width:440px;max-width:94vw;background:#fff;z-index:9501;transform:translateX(102%);transition:transform .18s;display:flex;flex-direction:column;box-shadow:-6px 0 24px rgba(0,0,0,.14)}'
+      + '.jp-dr.on{transform:none}.jp-dr .hd{padding:14px 16px;border-bottom:1px solid #E4E7EC;display:flex;gap:10px;align-items:flex-start}'
+      + '.jp-dr .bd{padding:12px 16px 30px;overflow-y:auto;font-size:13px}.jp-dr h4{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:#667085;margin:16px 0 6px}'
+      + '.jp-ev{padding:5px 0;border-bottom:1px solid #F2F4F7;font-size:12.5px}.jp-ev i{font-style:normal;color:#98A2B3;font-size:11.5px;margin-left:6px}'
+      + '.jp-x{margin-left:auto;border:none;background:none;font-size:22px;cursor:pointer;color:#667085;line-height:1}'
+      + '.jp-m{position:fixed;inset:0;z-index:9600;display:none;align-items:center;justify-content:center;background:rgba(16,24,40,.4);padding:14px}.jp-m.on{display:flex}'
+      + '.jp-m .bx{background:#fff;border-radius:14px;padding:16px;width:min(620px,100%);max-height:92vh;overflow:auto}'
+      + '.jp-m label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#667085;margin-top:10px}'
+      + '.jp-m input,.jp-m textarea,.jp-m select{font:inherit;font-size:13px;padding:8px 10px;border:1px solid #D0D5DD;border-radius:8px;color:#101828}'
+      + '.jp-m textarea{min-height:200px;resize:vertical;line-height:1.45}'
+      + '.jp-pri{background:#0F6E56;color:#fff;border:none;border-radius:9px;padding:9px 16px;font-weight:700;cursor:pointer;font:inherit;font-size:13px}'
+      + '.jp-sec{background:#fff;color:#344054;border:1px solid #D0D5DD;border-radius:9px;padding:8px 14px;font-weight:600;cursor:pointer;font:inherit;font-size:13px}'
+      + '@media(max-width:900px){.jp-panel{grid-template-columns:1fr}.jp-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}';
+    document.head.appendChild(s);
+  }
+  function load(force){
+    if (JP.loading || (!force && JP.data && Date.now() - JP.at < 60000)) return;
+    JP.loading = true;
+    api('GET', '').then(function(r){
+      JP.loading = false; JP.at = Date.now();
+      if (r && r.ok) { JP.data = r; var jv = document.getElementById('jobs-view'); if (jv && jv.style.display !== 'none') window.renderJobs(); }
+    });
+  }
+  function job(id){ return JP.data && JP.data.jobs[String(id)]; }
+  function ballChip(b){ var c = BALL[b.who] || BALL.us; return '<span class="jp-ball" style="background:' + c[0] + ';color:' + c[1] + '" title="' + esc(b.label) + '">● ' + esc(b.label.split(' · ')[0]) + (b.who !== 'us' && b.days ? ' · ' + b.days + 'd' : '') + '</span>'; }
+  function moves(m){ var p = []; if (m.added) p.push('+' + m.added + ' added'); if (m.client) p.push(m.client + '→client'); if (m.interview) p.push(m.interview + '→interview'); if (m.offer) p.push(m.offer + '→offer'); if (m.placed) p.push(m.placed + ' placed'); return p.length ? '7d: ' + p.join(' · ') : '7d: no movement'; }
+  function lineHtml(j, wide){
+    var ch = j.chase_ready && j.chase_ready.length ? '<button class="jp-btn o" data-jp-chase="' + j.id + '" title="Draft a feedback chaser to the SPOC">✉ Chase client</button>' : '';
+    return '<div class="jp-l" data-jp-peek="' + j.id + '" title="Click for a quick look (does not open the job)">' + ballChip(j.ball)
+      + '<span class="s">' + esc(j.status_line) + '</span>'
+      + (j.next && j.next.kind !== 'interview' ? '<span class="nx">' + esc(j.next.text) + '</span>' : '')
+      + '<span class="mv">' + esc(moves(j.moves7)) + '</span>'
+      + (j.value.full_fee ? '<span class="money" data-jp-fee="' + j.id + '" title="Expected fee = ' + j.value.fee_percent + '% (' + esc(j.value.fee_source) + ') × ₹' + j.value.ctc_lpa + 'L × ' + j.value.chance + '% chance. Click to change the fee %.">' + esc(j.value.expected_txt) + ' <small style="color:#667085;font-weight:500">of ' + esc(j.value.full_fee_txt) + '</small></span>'
+                         : '<span class="mv" data-jp-fee="' + j.id + '" title="Add a CTC band to the job to see the ₹ value">₹ —</span>')
+      + (j.spoc && wide ? '<span class="mv">SPOC: ' + esc(j.spoc.name) + '</span>' : '')
+      + ch + '<button class="jp-btn" data-jp-peek="' + j.id + '">Quick look</button></div>';
+  }
+  function panelHtml(d){
+    var t = d.totals;
+    var tiles = '<div class="jp-tiles">'
+      + '<div class="jp-tile money" title="Sum over active jobs of fee × chance"><span>₹ likely in pipeline</span><b>' + esc(t.expected_txt) + '</b><span>of ' + esc(t.full_fee_txt) + ' if every job closes</span></div>'
+      + '<div class="jp-tile cl"><span>Waiting on client</span><b>' + t.ball_client + '</b><span>' + t.chase_ready + ' ready to chase</span></div>'
+      + '<div class="jp-tile"><span>Our move</span><b>' + t.ball_us + '</b><span>' + t.ball_candidate + ' waiting on candidate</span></div>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;font-size:12px;color:#5B6475">'
+      + (t.stalled ? '<span>⏸ ' + t.stalled + ' job' + (t.stalled === 1 ? '' : 's') + ' with no movement for 7+ days</span>' : '<span>Every active job moved this week</span>')
+      + '<span style="margin-left:auto"></span><button class="jp-btn" data-jp-spocs="1">' + (JP.showSpocs ? 'Hide' : 'Show') + ' SPOC view</button>'
+      + (d.is_admin ? '<button class="jp-btn" data-jp-settings="1" title="Default fee %, morning digest">⚙ Pulse settings</button>' : '') + '</div>';
+    var focus = (d.focus || []).map(function(id, i){ var j = d.jobs[String(id)]; if (!j) return '';
+      return '<div class="jp-f"><span class="jp-n">' + (i + 1) + '</span><div class="t"><b>' + esc(j.role) + '</b> <span style="color:#667085;font-size:12px">' + esc(j.client) + '</span>'
+        + '<div>' + (j.focus_reasons.length ? '<span class="jp-why">' + esc(j.focus_reasons.join(' · ')) + '</span> · ' : '') + esc(j.value.expected_txt) + ' likely</div></div>'
+        + '<div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end">' + (j.chase_ready.length ? '<button class="jp-btn o" data-jp-chase="' + j.id + '">Chase</button>' : '')
+        + '<button class="jp-btn" data-jp-peek="' + j.id + '">Look</button><button class="jp-btn" onclick="openJobCard(' + j.id + ')">Open</button></div></div>';
+    }).join('') || '<div style="font-size:12.5px;color:#667085;padding:6px 0">Nothing urgent — add CTC bands to jobs to rank them by ₹.</div>';
+    var html = '<div class="jp-panel"><div class="jp-card"><div class="jp-h">🎯 Focus today <small>₹ likely × urgency (client waiting, interview soon, stalled, overdue)</small></div>' + focus + '</div>'
+      + '<div class="jp-card"><div class="jp-h">Job pulse <small>active jobs' + (JP.spoc ? ' · this SPOC' : '') + '</small></div>' + tiles + '</div></div>';
+    if (JP.showSpocs) {
+      html += '<div class="jp-card"><div class="jp-h">By client SPOC <small>click one to filter the jobs below · ' + (JP.spoc ? '<a href="#" data-jp-spoc="">show all</a>' : 'set a job\'s SPOC in Mandate Setup') + '</small></div><div class="jp-sp">'
+        + d.spocs.map(function(s){
+          return '<div class="jp-spc' + (JP.spoc === s.key ? ' on' : '') + '" data-jp-spoc="' + esc(s.key) + '"><b>' + esc(s.name) + '</b><div class="c">' + esc(s.client) + (s.email ? ' · ' + esc(s.email) : '') + '</div>'
+            + '<div class="k"><span><b>' + s.jobs.length + '</b> job' + (s.jobs.length === 1 ? '' : 's') + '</span><span style="color:' + (s.with_client ? '#C2410C' : '#344054') + '"><b>' + s.with_client + '</b> with client' + (s.oldest_days ? ' (' + s.oldest_days + 'd)' : '') + '</span>'
+            + '<span><b>' + s.interviews + '</b> interview' + (s.interviews === 1 ? '' : 's') + '</span><span style="color:#15803D"><b>' + esc(rupee(s.expected)) + '</b></span></div></div>';
+        }).join('') + '</div></div>';
+    }
+    return '<div id="jp-panel" style="display:flex;flex-direction:column;gap:12px">' + html + '</div>';
+  }
+  function rupee(v){ v = +v || 0; return v >= 1e7 ? '₹' + (v / 1e7).toFixed(1) + 'Cr' : v >= 1e5 ? '₹' + (v / 1e5).toFixed(1) + 'L' : v >= 1e3 ? '₹' + Math.round(v / 1e3) + 'K' : '₹' + Math.round(v); }
+  function spocIds(){
+    if (!JP.spoc || !JP.data) return null;
+    var g = JP.data.spocs.filter(function(s){ return s.key === JP.spoc; })[0];
+    return g ? g.jobs.map(String) : null;
+  }
+
+  // ── wrap the Jobs page renderer ──
+  var orig = window.renderJobs;
+  if (typeof orig !== 'function' || orig.__jp) return;
+  var wrapped = function(){
+    css(); load(false);
+    var ids = spocIds(), saved = null;
+    if (ids && typeof S !== 'undefined' && S.mandates) { saved = S.mandates; S.mandates = S.mandates.filter(function(m){ return ids.indexOf(String(m.id)) >= 0; }); }
+    try { orig.apply(this, arguments); } finally { if (saved) S.mandates = saved; }
+    try { decorate(); } catch(e){ console.warn('[job-pulse]', e); }
+  };
+  wrapped.__jp = true; window.renderJobs = wrapped;
+
+  function decorate(){
+    var body = document.getElementById('jobs-body'); if (!body) return;
+    var d = JP.data;
+    // SPOC filter in the toolbar
+    var bar = body.querySelector('.jt-bar');
+    if (bar && d && !bar.querySelector('#jp-spoc-sel')) {
+      var sel = document.createElement('select'); sel.id = 'jp-spoc-sel'; sel.className = 'jt-sel'; sel.setAttribute('aria-label', 'Client SPOC');
+      sel.innerHTML = '<option value="">SPOC: All</option>' + d.spocs.map(function(s){ return '<option value="' + esc(s.key) + '"' + (JP.spoc === s.key ? ' selected' : '') + '>' + esc(s.name) + (s.name === 'No SPOC set' ? ' — ' + esc(s.client) : ' (' + esc(s.client) + ')') + ' · ' + s.jobs.length + '</option>'; }).join('');
+      sel.onchange = function(){ setSpoc(sel.value); };
+      var right = bar.lastElementChild; (right && right.tagName === 'DIV' ? right : bar).insertBefore(sel, right && right.tagName === 'DIV' ? right.firstChild : null);
+    }
+    if (!d) return;
+    var kpis = body.querySelector('.jt-kpis');
+    if (kpis && !document.getElementById('jp-panel')) kpis.insertAdjacentHTML('afterend', panelHtml(d));
+    // one pulse line under each job row
+    body.querySelectorAll('tr.jt-row').forEach(function(tr){
+      var m = /openJobCard\((\d+)\)/.exec(tr.getAttribute('onclick') || ''); if (!m) return;
+      var j = job(m[1]); if (!j || (tr.nextElementSibling && tr.nextElementSibling.classList.contains('jp-line'))) return;
+      tr.insertAdjacentHTML('afterend', '<tr class="jp-line"><td colspan="' + tr.children.length + '">' + lineHtml(j, true) + '</td></tr>');
+    });
+    body.querySelectorAll('.db-mandate-card').forEach(function(card){
+      var m = /openJobCard\((\d+)\)/.exec(card.getAttribute('onclick') || ''); if (!m || card.querySelector('.jp-l')) return;
+      var j = job(m[1]); if (!j) return;
+      card.insertAdjacentHTML('beforeend', '<div style="padding:0 12px 12px">' + lineHtml(j, false) + '</div>');
+    });
+  }
+  function setSpoc(k){ JP.spoc = k || ''; try { localStorage.setItem('jp_spoc', JP.spoc); } catch(e){} window.renderJobs(); }
+
+  // ── clicks (delegated) ──
+  document.addEventListener('click', function(e){
+    var t = e.target.closest && e.target.closest('[data-jp-peek],[data-jp-chase],[data-jp-fee],[data-jp-spoc],[data-jp-spocs],[data-jp-settings]');
+    if (!t) return;
+    e.preventDefault(); e.stopPropagation();
+    if (t.hasAttribute('data-jp-chase')) return chase(+t.getAttribute('data-jp-chase'));
+    if (t.hasAttribute('data-jp-fee')) return fee(+t.getAttribute('data-jp-fee'));
+    if (t.hasAttribute('data-jp-spoc')) { var k = t.getAttribute('data-jp-spoc'); return setSpoc(JP.spoc === k ? '' : k); }
+    if (t.hasAttribute('data-jp-spocs')) { JP.showSpocs = !JP.showSpocs; try { localStorage.setItem('jp_spocs', JP.showSpocs ? '1' : '0'); } catch(x){} return window.renderJobs(); }
+    if (t.hasAttribute('data-jp-settings')) return settings();
+    if (t.hasAttribute('data-jp-peek')) return peek(+t.getAttribute('data-jp-peek'));
+  }, true);
+
+  // ── quick look drawer ──
+  function shell(){
+    var ov = document.getElementById('jp-ov');
+    if (!ov) { document.body.insertAdjacentHTML('beforeend', '<div class="jp-ov" id="jp-ov"></div><div class="jp-dr" id="jp-dr"></div><div class="jp-m" id="jp-m"><div class="bx" id="jp-mb"></div></div>');
+      document.getElementById('jp-ov').onclick = closeAll; document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeAll(); }); }
+  }
+  function closeAll(){ ['jp-ov', 'jp-dr', 'jp-m'].forEach(function(i){ var x = document.getElementById(i); if (x) x.classList.remove('on'); }); }
+  function peek(id){
+    shell(); var dr = document.getElementById('jp-dr');
+    dr.innerHTML = '<div class="bd">Loading…</div>'; dr.classList.add('on'); document.getElementById('jp-ov').classList.add('on');
+    api('GET', '/peek?mandate_id=' + id).then(function(r){
+      if (!r.ok) { dr.innerHTML = '<div class="bd">' + esc(r.error || 'Could not load') + '</div>'; return; }
+      var j = r.pulse, h = '';
+      h += '<div class="hd"><div><div style="font-size:16px;font-weight:700;color:#101828">' + esc(j.role) + '</div><div style="font-size:12.5px;color:#667085">' + esc(j.client) + (j.spoc ? ' · SPOC ' + esc(j.spoc.name) + (j.spoc.phone ? ' · ' + esc(j.spoc.phone) : '') : '') + '</div></div><button class="jp-x" aria-label="Close">&times;</button></div><div class="bd">';
+      h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + ballChip(j.ball) + '<span style="font-size:12px;color:#5B6475">' + esc(j.ball.label) + '</span></div>';
+      h += '<div style="margin-top:8px;font-size:13.5px;color:#101828">' + esc(j.status_line) + '</div>';
+      h += '<div style="margin-top:8px;display:flex;gap:12px;flex-wrap:wrap;font-size:12.5px"><span style="color:#15803D;font-weight:700">' + esc(j.value.expected_txt) + ' likely</span><span style="color:#667085">full fee ' + esc(j.value.full_fee_txt) + ' · ' + j.value.fee_percent + '% · ' + j.value.chance + '% chance</span></div>';
+      h += '<div style="margin-top:4px;font-size:12px;color:#667085">' + esc(moves(j.moves7)) + (j.stalled_days != null ? ' · last movement ' + (j.stalled_days ? j.stalled_days + ' days ago' : 'today') : '') + '</div>';
+      if (j.team && j.team.length) h += '<div style="margin-top:4px;font-size:12px;color:#667085">This week: ' + j.team.map(function(t){ return esc(t.name) + ' (' + [t.added ? t.added + ' added' : '', t.calls ? t.calls + ' calls analysed' : ''].filter(Boolean).join(', ') + ')'; }).join(' · ') + '</div>';
+      h += '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="jp-pri" onclick="(function(){document.getElementById(\'jp-dr\').classList.remove(\'on\');document.getElementById(\'jp-ov\').classList.remove(\'on\');openJobCard(' + j.id + ');})()">Open job</button>'
+        + (j.pending_feedback.length ? '<button class="jp-sec" data-jp-chase="' + j.id + '">✉ Chase client</button>' : '') + '</div>';
+      if (j.pending_feedback.length) h += '<h4>Waiting for client feedback</h4>' + j.pending_feedback.map(function(p){ return '<div class="jp-ev">' + esc(p.name) + '<i>shared ' + p.days + ' day' + (p.days === 1 ? '' : 's') + ' ago</i></div>'; }).join('');
+      if (r.interviews.length) h += '<h4>Interviews</h4>' + r.interviews.map(function(i){ return '<div class="jp-ev">' + esc(i.name || '') + ' · ' + esc(i.round_name || 'Interview') + '<i>' + esc(i.when) + (i.result ? ' · ' + esc(i.result) : '') + '</i></div>'; }).join('');
+      if (r.tasks.length) h += '<h4>Open tasks</h4>' + r.tasks.map(function(t){ return '<div class="jp-ev" style="' + (t.overdue ? 'color:#B42318' : '') + '">' + esc(t.note) + (t.candidate_name ? ' — ' + esc(t.candidate_name) : '') + '<i>' + esc(t.when) + (t.overdue ? ' · overdue' : '') + '</i></div>'; }).join('');
+      if (r.interested.length) h += '<h4>Said Interested to job mail</h4>' + r.interested.map(function(x){ return '<div class="jp-ev">' + esc(x.name) + '</div>'; }).join('');
+      h += '<h4>Recent activity</h4>' + (r.events.length ? r.events.map(function(e){ return '<div class="jp-ev"><b>' + esc(e.name) + '</b> ' + (e.from_stage ? esc(e.from_stage) + ' → ' : '') + esc(e.to_stage || '') + (e.note ? ' · <span style="color:#667085">' + esc(String(e.note).slice(0, 90)) + '</span>' : '') + '<i>' + esc(e.when) + '</i></div>'; }).join('') : '<div class="jp-ev">No activity yet.</div>');
+      h += '</div>';
+      dr.innerHTML = h; dr.querySelector('.jp-x').onclick = closeAll;
+    });
+  }
+  // ── chase client ──
+  function modal(html){ shell(); document.getElementById('jp-mb').innerHTML = html; document.getElementById('jp-m').classList.add('on'); }
+  function chase(id){
+    modal('Preparing the e-mail…');
+    api('GET', '/chase?mandate_id=' + id).then(function(r){
+      if (!r.ok) { modal('<div>' + esc(r.error || 'Could not prepare') + '</div><div style="text-align:right;margin-top:12px"><button class="jp-sec" id="jp-c0">Close</button></div>'); document.getElementById('jp-c0').onclick = closeAll; return; }
+      modal('<div style="font-size:16px;font-weight:700;color:#101828">Chase client for feedback</div>'
+        + '<div style="font-size:12.5px;color:#667085;margin-top:2px">' + r.candidates.length + ' profile' + (r.candidates.length === 1 ? '' : 's') + ' waiting. Edit anything, then send from the company mailbox.'
+        + (r.has_spoc ? '' : ' <b style="color:#B42318">No SPOC e-mail on this job — type it, or set the SPOC in Mandate Setup.</b>') + '</div>'
+        + '<label>To' + (r.spoc_name ? ' (' + esc(r.spoc_name) + ')' : '') + '<input id="jp-to" value="' + esc(r.to) + '" placeholder="spoc@client.com"></label>'
+        + '<label>Subject<input id="jp-su" value="' + esc(r.subject) + '"></label><label>Message<textarea id="jp-bo">' + esc(r.body) + '</textarea></label>'
+        + '<div id="jp-cm" style="font-size:12.5px;margin-top:8px"></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="jp-sec" id="jp-cc">Cancel</button><button class="jp-pri" id="jp-cs">Send</button></div>');
+      document.getElementById('jp-cc').onclick = closeAll;
+      document.getElementById('jp-cs').onclick = function(){
+        var b = this; b.disabled = true; b.textContent = 'Sending…';
+        api('POST', '/chase', {mandate_id: id, to: document.getElementById('jp-to').value, subject: document.getElementById('jp-su').value,
+                               body: document.getElementById('jp-bo').value, candidate_ids: r.candidates.map(function(c){ return c.id; })}).then(function(x){
+          if (!x.ok) { b.disabled = false; b.textContent = 'Send'; document.getElementById('jp-cm').innerHTML = '<span style="color:#B42318">' + esc(x.error || 'Failed') + '</span>'; return; }
+          closeAll(); if (typeof toast === 'function') toast('OK', 'Chaser sent — noted on the job'); load(true);
+        });
+      };
+    });
+  }
+  // ── fee % ──
+  function fee(id){
+    var j = job(id); if (!j) return;
+    modal('<div style="font-size:16px;font-weight:700;color:#101828">Fee for this job</div><div style="font-size:12.5px;color:#667085;margin-top:2px">' + esc(j.role) + ' · ' + esc(j.client) + '. Now ' + j.value.fee_percent + '% (' + esc(j.value.fee_source) + '). CTC used: ₹' + j.value.ctc_lpa + 'L (mid of the job\'s CTC band).</div>'
+      + '<label>Fee % of CTC (leave empty to use the client\'s past placements or the default)<input id="jp-fe" type="number" step="0.01" min="0" max="50" value="' + (j.value.fee_source === 'job' ? j.value.fee_percent : '') + '"></label>'
+      + '<div id="jp-fm" style="font-size:12.5px;margin-top:8px"></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="jp-sec" id="jp-fc">Cancel</button><button class="jp-pri" id="jp-fs">Save</button></div>');
+    document.getElementById('jp-fc').onclick = closeAll;
+    document.getElementById('jp-fs').onclick = function(){ api('POST', '/fee', {mandate_id: id, fee_percent: +document.getElementById('jp-fe').value || 0}).then(function(x){
+      if (!x.ok) { document.getElementById('jp-fm').innerHTML = '<span style="color:#B42318">' + esc(x.error) + '</span>'; return; } closeAll(); load(true); }); };
+  }
+  // ── settings (admin) ──
+  function settings(){
+    var s = (JP.data && JP.data.settings) || {};
+    var hrs = [6, 7, 8, 9, 10, 11].map(function(h){ return '<option value="' + h + '"' + (+s.digest_hour === h ? ' selected' : '') + '>' + h + ':00 AM</option>'; }).join('');
+    modal('<div style="font-size:16px;font-weight:700;color:#101828">Job Pulse settings</div>'
+      + '<label>Default fee % (used when a job has none and the client has no past placements)<input id="jp-sf" type="number" step="0.01" min="0.1" max="50" value="' + (s.default_fee || 8.33) + '"></label>'
+      + '<label style="flex-direction:row;align-items:center;gap:8px;color:#101828;font-size:13px"><input type="checkbox" id="jp-sd"' + (+s.digest_enabled ? ' checked' : '') + '> E-mail the morning digest (Mon–Sat)</label>'
+      + '<label>At<select id="jp-sh">' + hrs + '</select></label>'
+      + '<label style="flex-direction:row;align-items:center;gap:8px;color:#101828;font-size:13px"><input type="checkbox" id="jp-sr"' + (+s.digest_recruiters ? ' checked' : '') + '> Recruiters also get it (only their own jobs)</label>'
+      + '<div style="font-size:12px;color:#667085;margin-top:6px">Sent to each user\'s e-mail from the company mailbox. Admins get every active job.</div>'
+      + '<div id="jp-sm" style="font-size:12.5px;margin-top:8px"></div><div style="display:flex;gap:8px;justify-content:space-between;margin-top:12px;flex-wrap:wrap"><button class="jp-sec" id="jp-st">✉ Send me today\'s digest now</button><span><button class="jp-sec" id="jp-sc">Close</button> <button class="jp-pri" id="jp-ss">Save</button></span></div>');
+    document.getElementById('jp-sc').onclick = closeAll;
+    document.getElementById('jp-st').onclick = function(){ var b = this; b.disabled = true; api('POST', '/digest/test').then(function(x){ b.disabled = false;
+      document.getElementById('jp-sm').innerHTML = x.ok ? '<span style="color:#0F6E56">✓ Sent to ' + esc(x.to) + '</span>' : '<span style="color:#B42318">' + esc(x.error || 'Failed') + '</span>'; }); };
+    document.getElementById('jp-ss').onclick = function(){ api('PUT', '/settings', {default_fee: +document.getElementById('jp-sf').value, digest_enabled: document.getElementById('jp-sd').checked,
+      digest_hour: +document.getElementById('jp-sh').value, digest_recruiters: document.getElementById('jp-sr').checked}).then(function(x){
+      if (!x.ok) { document.getElementById('jp-sm').innerHTML = '<span style="color:#B42318">' + esc(x.error) + '</span>'; return; } closeAll(); load(true); }); };
+  }
+})();
+</script>
 </body></html>
