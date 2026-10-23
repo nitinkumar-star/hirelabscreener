@@ -7032,7 +7032,7 @@ function pqPill(icon, text) {
 }
 
 function keyFactsCardHTML(c){
-  var phoneClean=(c.phone||'').replace(/[^0-9]/g,''); var waNum=phoneClean?(phoneClean.length===10?'91'+phoneClean:phoneClean):'';
+  var phoneClean=(c.phone||'').replace(/[^0-9]/g,''); var waNum=waNumber(phoneClean);
   var waButtonsHtml = ''
     +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="msg1">&#128075; Intro</button>'
     +'<button class="wa-type-btn wa-pop-item" data-cid="'+c.id+'" data-type="fu1">&#128260; Follow Up 1</button>'
@@ -7124,11 +7124,12 @@ function renderProfileDetail(c){
   var reasoning=(c.ai_reasoning||'').replace(/^\[Rated vs [^\]]+\]\s*/,'');
   var hasRating=score>0||reasoning;
   var scoreColor=score>=80?'#1D9E75':score>=60?'#BA7517':'#E24B4A';
-  var aiReason='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">AI Reasoning'+(score?' · '+score+'%':'')+'</div><button class="btn btn-g" id="rate-btn-'+c.id+'" style="font-size:10px;padding:4px 12px" onclick="rateCandidate('+c.id+')">'+(hasRating?'&#8635; Re-score':'&#10024; Score')+'</button></div>'
+  var aiReason='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0">AI Reasoning'+(score?' · '+score+'%':'')+'</div></div>'
     +'<div id="rating-box-'+c.id+'">'
     +(hasRating?('<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:'+(reasoning?'10px':'0')+'">'+scoreBar('AI Suitability',score,scoreColor)+scoreBar('Selection Probability',prob,'#BA7517')+'</div>'+(reasoning?'<div style="font-size:12px;color:#555;line-height:1.6">'+esc(reasoning)+'</div>':''))
-      :'<div style="font-size:13px;color:var(--muted);line-height:1.5">Not scored for this job yet. When scored, this shows AI Suitability %, Selection Probability % and the written reasoning.</div>')
+      :'')
     +'</div></div>';
+  if(!hasRating) aiReason='';   // Re-score removed (Oct 2026): show the card only when a score already exists
 
   // Key Skills — one chip list, saves on every change (Wave 1; was chips + a
   // second comma text box showing the same skills twice). #pf-skills stays
@@ -7228,13 +7229,11 @@ function renderProfileDetail(c){
     +(c.phone?'<button type="button" class="w1-ct" title="Push call to my phone" onclick="pushCall(\''+_q(c.phone)+'\',\''+_q(c.name)+'\')">'+_ic('M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z')+esc(c.phone)+'</button>':'<span class="w1-ct off">No phone</span>')
     +'<button type="button" class="w1-ct wa" title="WhatsApp — templates and thread" onclick="toggleWAPop('+c.id+')">WhatsApp &#9662;</button>'
     +'<button type="button" class="w1-ct" title="Compose / AI email" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">'+_ic('M3 5h18v14H3zM3 7l9 6 9-6')+'Email / AI compose</button>'
-    +(hasCv?'<button type="button" class="w1-ct" onclick="cpTab(\'resume\')">View CV</button>':'<button type="button" class="w1-ct" onclick="cpTab(\'resume\')" title="Upload a CV">No CV &middot; upload</button>')
+    +(hasCv?'<button type="button" class="w1-ct" id="cp-tab-resume" onclick="cpTab(\'resume\')">View CV</button>':'<button type="button" class="w1-ct" id="cp-tab-resume" onclick="cpTab(\'resume\')" title="Upload a CV">No CV &middot; upload</button>')
     +(c.linkedin_url?'<a class="w1-ct" href="'+esc(c.linkedin_url)+'" target="_blank" rel="noopener">LinkedIn</a>':'')
     +'<div class="w1-cp-acts">'
-      +'<button type="button" class="w1-btn w1-vio" onclick="rateCandidate('+c.id+')">Re-score</button>'
       +'<button type="button" class="w1-btn" onclick="cpTab(&#39;overview&#39;);toggleEdit(&#39;pd&#39;)">Edit</button>'
       +'<button type="button" class="w1-btn" onclick="cpAddToJob('+c.id+')" title="Put this person on another job as well. They stay on this one.">+ Another job</button>'
-      +'<button type="button" class="w1-btn" onclick="openMoveCandidate('+c.id+')" title="Take them off this job and put them on another">Move</button>'
       +'<button type="button" class="w1-btn" onclick="requestUpdate('+c.id+')">Request update</button>'
       +'<button type="button" class="w1-btn ic" title="Save all" aria-label="Save all" onclick="saveProfile('+c.id+')">'+_ic('M5 3h11l3 3v15H5zM8 3v6h8V3M8 21v-7h8v7')+'</button>'
       +'<button type="button" class="w1-btn ic dang" title="Delete candidate" aria-label="Delete candidate" onclick="deleteCandidateFromProfile('+c.id+',\''+_q(c.name)+'\')">'+_ic('M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3')+'</button>'
@@ -7243,7 +7242,8 @@ function renderProfileDetail(c){
   html+='</div>';
 
   // Tab bar (all 8 kept)
-  var tabs=[['overview','Overview'],['jobs','Job Matching'],['pitch','Pitch'],['ai','AI Analysis'],['billing','Placement &amp; Billing'],['resume','Resume'],['comms','Communications'],['call','Call Analysis']];
+  // AI Analysis tab removed and Resume tab folded into the "View CV" button (Oct 2026).
+  var tabs=[['overview','Overview'],['jobs','Job Matching'],['pitch','Pitch'],['billing','Placement &amp; Billing'],['comms','Communications'],['call','Call Analysis']];
   html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
@@ -7254,12 +7254,10 @@ function renderProfileDetail(c){
   html+='<div class="cp-pane" id="cp-pane-jobs" style="display:none"><div id="cp-jobs-'+c.id+'"></div></div>';
   // Pitch (candidate + position specific call script)
   html+='<div class="cp-pane" id="cp-pane-pitch" style="display:none"><div id="cp-pitch-'+c.id+'"></div></div>';
-  // AI Analysis (capability-first hiring-manager evaluation)
-  html+='<div class="cp-pane" id="cp-pane-ai" style="display:none"><div id="cp-ai-'+c.id+'"></div></div>';
   // Placement & Billing (closes the lifecycle: Joined -> Invoiced -> Paid)
   html+='<div class="cp-pane" id="cp-pane-billing" style="display:none"><div id="cp-billing-'+c.id+'"><div class="loading" style="padding:12px"><div class="spinner"></div>Loading…</div></div></div>';
-  // Resume
-  html+='<div class="cp-pane" id="cp-pane-resume" style="display:none">'+cvCard+'</div>';
+  // CV — no tab of its own; opened by the "View CV" button in the header
+  html+='<div class="cp-pane" id="cp-pane-resume" style="display:none"><div style="margin-bottom:10px"><button type="button" class="w1-btn" onclick="cpTab(\'overview\')">&#8592; Back to Overview</button></div>'+cvCard+'</div>';
   // Communications
   html+='<div class="cp-pane" id="cp-pane-comms" style="display:none">'+waCard+emailCard+'</div>';
   // Call Analysis (its own tab, next to Communications)
@@ -7401,7 +7399,7 @@ function w1NextStepFill(cid, rems){
 }
 
 function cpTab(name){
-  ['overview','jobs','pitch','ai','billing','resume','comms','call'].forEach(function(t){
+  ['overview','jobs','pitch','billing','resume','comms','call'].forEach(function(t){
     var p=document.getElementById('cp-pane-'+t); if(p) p.style.display=(t===name)?'block':'none';
     var b=document.getElementById('cp-tab-'+t); if(b) b.classList.toggle('active', t===name);
   });
@@ -7410,7 +7408,6 @@ function cpTab(name){
   if(name==='comms'){ try{ cpLoadEmailThread(cid); }catch(e){} try{ cpLoadWaThread(cid); }catch(e){} startWaPoll(cid); }
   else { stopWaPoll(); }
   if(name==='overview'){ try{ cpLoadHistory(cid); }catch(e){} }
-  if(name==='ai'){ cpLoadDeepAnalysis(cid); }
   if(name==='pitch'){ cpLoadPitch(cid); }
   if(name==='jobs'){ cpLoadJobMatching(cid); }
   if(name==='call'){ loadCallAnalysis(cid); }
@@ -7592,146 +7589,6 @@ function _renderPitch(cid){
   }
   h+='<div style="font-size:11px;color:#98A2B3;text-align:right">'+(lang==='hinglish'?'Hinglish':'English')+' &middot; generated by '+esc(d.by||'')+' &middot; '+esc((d.at||'').replace('T',' ').slice(0,16))+'</div>';
   box.innerHTML=h;
-}
-
-// ── AI Analysis tab: deep capability-first hiring evaluation ────────────────
-function _mdEsc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function _mdInline(s){
-  s=_mdEsc(s);
-  s=s.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
-  s=s.replace(/\*([^*]+)\*/g,'<em>$1</em>');
-  s=s.replace(/`([^`]+)`/g,'<code style="background:#f1f0f7;padding:1px 5px;border-radius:4px;font-size:12px">$1</code>');
-  return s;
-}
-// Minimal, self-contained markdown -> HTML for the predictable report structure.
-function _mdToHtml(md){
-  var lines=String(md||'').replace(/\r/g,'').split('\n');
-  var out=[], i=0, ulOpen=false;
-  function closeUl(){ if(ulOpen){ out.push('</ul>'); ulOpen=false; } }
-  while(i<lines.length){
-    var ln=lines[i];
-    // Table block
-    if(/^\s*\|.*\|\s*$/.test(ln) && i+1<lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i+1])){
-      closeUl();
-      var head=ln.trim().replace(/^\||\|$/g,'').split('|').map(function(x){return x.trim();});
-      i+=2; var rows=[];
-      while(i<lines.length && /^\s*\|.*\|\s*$/.test(lines[i])){
-        rows.push(lines[i].trim().replace(/^\||\|$/g,'').split('|').map(function(x){return x.trim();}));
-        i++;
-      }
-      var t='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;margin:8px 0">';
-      t+='<thead><tr>'+head.map(function(h){return '<th style="text-align:left;padding:8px 10px;background:#F4F3FB;border-bottom:2px solid #E3E0F3;font-weight:600;color:var(--navy)">'+_mdInline(h)+'</th>';}).join('')+'</tr></thead><tbody>';
-      rows.forEach(function(r){
-        t+='<tr>'+head.map(function(_,idx){
-          var cell=r[idx]||'';
-          var ml=cell.toLowerCase(), badge=cell;
-          if(/strong/.test(ml)) badge='<span style="color:#0F7A52;font-weight:600">'+_mdInline(cell)+'</span>';
-          else if(/moderate/.test(ml)) badge='<span style="color:#B4690E;font-weight:600">'+_mdInline(cell)+'</span>';
-          else if(/weak/.test(ml)) badge='<span style="color:#C4711A;font-weight:600">'+_mdInline(cell)+'</span>';
-          else if(/no evidence|missing|none/.test(ml)) badge='<span style="color:#C0392B;font-weight:600">'+_mdInline(cell)+'</span>';
-          else badge=_mdInline(cell);
-          return '<td style="padding:8px 10px;border-bottom:1px solid #EDEBF6;vertical-align:top">'+badge+'</td>';
-        }).join('')+'</tr>';
-      });
-      t+='</tbody></table></div>';
-      out.push(t); continue;
-    }
-    // Headings
-    var h=/^(#{1,6})\s+(.*)$/.exec(ln);
-    if(h){ closeUl();
-      var lvl=h[1].length, txt=_mdInline(h[2].trim());
-      if(lvl<=2) out.push('<div style="font-size:14px;font-weight:700;color:var(--navy);margin:16px 0 6px;padding-bottom:5px;border-bottom:1px solid var(--line)">'+txt+'</div>');
-      else out.push('<div style="font-size:13px;font-weight:600;color:#534AB7;margin:12px 0 4px">'+txt+'</div>');
-      i++; continue;
-    }
-    // Horizontal rule
-    if(/^\s*([-*_])\1{2,}\s*$/.test(ln)){ closeUl(); out.push('<hr style="border:none;border-top:1px solid var(--line);margin:12px 0">'); i++; continue; }
-    // Bullets
-    var b=/^\s*[-*•]\s+(.*)$/.exec(ln);
-    if(b){ if(!ulOpen){ out.push('<ul style="margin:4px 0 8px;padding-left:20px">'); ulOpen=true; } out.push('<li style="margin:3px 0;font-size:12.8px;line-height:1.55">'+_mdInline(b[1])+'</li>'); i++; continue; }
-    // Blank
-    if(!ln.trim()){ closeUl(); i++; continue; }
-    // Paragraph
-    closeUl();
-    out.push('<p style="margin:5px 0;font-size:12.8px;line-height:1.6;color:#333">'+_mdInline(ln.trim())+'</p>');
-    i++;
-  }
-  closeUl();
-  return out.join('');
-}
-function _deepScoreHeader(md){
-  var score=null, rec='';
-  var ms=/Overall\s*Match[:\s]*([0-9]{1,3})\s*\/\s*100/i.exec(md);
-  if(ms) score=Math.max(0,Math.min(100,parseInt(ms[1],10)));
-  var rm=/Recommendation[:\s]*\**\s*(Strong\s*Hire|Hire|Borderline|Reject)/i.exec(md);
-  if(rm) rec=rm[1].replace(/\s+/g,' ').trim();
-  if(score===null && !rec) return '';
-  var col=score>=75?'#0F7A52':score>=55?'#B4690E':score>=35?'#C4711A':'#C0392B';
-  var recCol={'strong hire':'#0F7A52','hire':'#1D9E75','borderline':'#B4690E','reject':'#C0392B'}[rec.toLowerCase()]||'#534AB7';
-  var h='<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;background:linear-gradient(135deg,#2b2560 0%,#534AB7 100%);border-radius:12px;padding:16px 20px;margin-bottom:14px">';
-  if(score!==null){
-    h+='<div style="width:78px;height:78px;border-radius:50%;background:rgba(255,255,255,.12);border:3px solid '+col+';display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0">'
-      +'<div style="font-size:24px;font-weight:800;color:#fff;line-height:1">'+score+'</div><div style="font-size:9px;color:rgba(255,255,255,.7);letter-spacing:.5px">/ 100</div></div>';
-  }
-  h+='<div style="flex:1;min-width:120px"><div style="font-size:10.5px;color:rgba(255,255,255,.6);letter-spacing:.6px;text-transform:uppercase;margin-bottom:3px">Capability Match</div>';
-  if(rec) h+='<div style="display:inline-block;background:'+recCol+';color:#fff;font-size:13px;font-weight:700;padding:5px 14px;border-radius:20px">'+_mdEsc(rec)+'</div>';
-  h+='<div style="font-size:10.5px;color:rgba(255,255,255,.55);margin-top:7px">Evidence-based &middot; ignores CTC, tenure, brand &amp; location</div></div></div>';
-  return h;
-}
-function _deepPane(cid, md, at, running){
-  var when=at?('<span style="font-size:10.5px;color:var(--muted)">Last run: '+esc(fmtDateTime?fmtDateTime(at):at)+'</span>'):'';
-  var btn='<button class="btn btn-g" id="deep-run-'+cid+'" style="font-size:11px;padding:6px 14px;background:#534AB7;color:#fff;border:none" onclick="runDeepAnalysis('+cid+')"'+(running?' disabled':'')+'>'+(running?'&#8987; Analysing…':(md?'&#8635; Re-run':'&#10024; Run Analysis'))+'</button>';
-  var head='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px">'
-    +'<div><div class="cp-lbl2" style="margin:0">AI Hiring Analysis</div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">Deep capability-first evaluation of this candidate vs the role JD.</div></div>'
-    +'<div style="display:flex;align-items:center;gap:10px">'+when+btn+'</div></div>';
-  var body='';
-  if(running){
-    body='<div class="loading" style="padding:26px"><div class="spinner"></div>DeepSeek is reading the resume against the JD… (takes ~20-40s)</div>';
-  } else if(md){
-    body=_deepScoreHeader(md)+'<div>'+_mdToHtml(md)+'</div>';
-  } else {
-    body='<div style="text-align:center;padding:30px 16px;color:var(--muted)">'
-      +'<div style="font-size:30px;margin-bottom:8px">&#10024;</div>'
-      +'<div style="font-size:13px;color:var(--ink);font-weight:600;margin-bottom:4px">No analysis yet</div>'
-      +'<div style="font-size:12px;max-width:340px;margin:0 auto 14px">Run a deep, evidence-based hiring evaluation — match score, skill table, gaps, transferable skills, interview questions &amp; a final verdict.</div>'
-      +'<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12.5px" onclick="runDeepAnalysis('+cid+')">&#10024; Run Analysis</button></div>';
-  }
-  return head+'</div>'+(md||running?'<div class="cp-card2" style="margin-top:0">'+body+'</div>':body);
-}
-function _deepErrBox(cid, msg){
-  return '<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px">'
-    +'<div><div class="cp-lbl2" style="margin:0">AI Hiring Analysis</div><div style="font-size:10.5px;color:var(--muted);margin-top:2px">Deep capability-first evaluation of this candidate vs the role JD.</div></div>'
-    +'<button class="btn btn-g" style="font-size:11px;padding:6px 14px;background:#534AB7;color:#fff;border:none" onclick="runDeepAnalysis('+cid+')">&#8635; Try again</button></div>'
-    +'<div style="margin-top:10px;background:#FDECEA;border:1px solid #F5C2C0;border-radius:10px;padding:12px 14px">'
-    +'<div style="font-size:12.5px;font-weight:700;color:#B42318;margin-bottom:4px">&#9888; Analysis failed</div>'
-    +'<div style="font-size:12px;color:#7A271A;line-height:1.5;word-break:break-word">'+esc(String(msg||'Unknown error'))+'</div>'
-    +'<div style="font-size:10.5px;color:#98564F;margin-top:8px">Yeh exact message mujhe bhej do — main fix kar doonga.</div>'
-    +'</div></div>';
-}
-async function cpLoadDeepAnalysis(cid){
-  var box=document.getElementById('cp-ai-'+cid); if(!box) return;
-  if(box.getAttribute('data-loaded')==='1' && !box.getAttribute('data-running')) return; // already have it
-  box.innerHTML='<div class="loading" style="padding:20px"><div class="spinner"></div>Loading…</div>';
-  var r;
-  try{ r=await req('GET','/candidates/'+cid+'/deep-analysis'); }
-  catch(e){ box.innerHTML=_deepPane(cid,'','',false); return; }
-  box.setAttribute('data-loaded','1');
-  if(r && r.cached && r.md){ box.innerHTML=_deepPane(cid, r.md, r.at, false); }
-  else { box.innerHTML=_deepPane(cid, '', '', false); }
-}
-async function runDeepAnalysis(cid){
-  var box=document.getElementById('cp-ai-'+cid); if(!box) return;
-  box.setAttribute('data-running','1');
-  box.innerHTML=_deepPane(cid, '', '', true);
-  var r;
-  try{ r=await req('POST','/candidates/'+cid+'/deep-analysis',{}); }
-  catch(e){ box.removeAttribute('data-running'); box.innerHTML=_deepErrBox(cid, e && e.message ? e.message : e); toast('Error','Analysis failed'); return; }
-  box.removeAttribute('data-running');
-  if(r && r.error){ box.innerHTML=_deepErrBox(cid, r.error); toast('Error','Analysis failed'); return; }
-  if(!r || !r.md){ box.innerHTML=_deepErrBox(cid, 'Server returned an empty response.'); return; }
-  box.setAttribute('data-loaded','1');
-  box.innerHTML=_deepPane(cid, r.md, r.at||'', false);
-  toast('OK','Analysis ready');
 }
 
 function _billStatusStyle(s){
@@ -13428,7 +13285,7 @@ async function cpLoadWaThread(cid, silent){
   var msgs=(r&&r.messages)||[];
   if(silent && el.dataset.msgcount===String(msgs.length)) return;   // nothing new -> no flicker
   el.dataset.msgcount=String(msgs.length);
-  if(!msgs.length){ el.innerHTML='<div style="color:#667085;font-size:12px;padding:14px;text-align:center;background:#fff;border-radius:6px">No WhatsApp messages yet.<br><span style="font-size:11px">Sent &amp; received messages will appear here once your listener is connected.</span></div>'; return; }
+  if(!msgs.length){ el.innerHTML='<div style="color:#667085;font-size:12px;padding:14px;text-align:center;background:#fff;border-radius:6px">No WhatsApp messages yet.<br><span style="font-size:11px">Messages you send from HireLab (WhatsApp button or the box below) are listed here.</span></div>'; return; }
   el.innerHTML=msgs.map(function(m){
     var inb=(m.direction==='inbound');
     var when=m.created_at?(_journeyDateLabel(m.created_at)+' '+_journeyTime(m.created_at)):'';
@@ -13518,6 +13375,29 @@ async function waDraftReply(cid){
   if(btn){ btn.disabled=false; btn.innerHTML='&#10024; Draft in my style'; }
 }
 
+// One place that turns a stored phone into a wa.me number (India default).
+// Before: "starts with 91" was treated as already having the country code, so a
+// 10-digit mobile like 91xxxxxxxx opened the wrong chat.
+function waNumber(phone){
+  var d=String(phone||'').replace(/\D/g,'');
+  if(!d) return '';
+  if(d.length===10) return '91'+d;
+  if(d.length===11 && d.charAt(0)==='0') return '91'+d.slice(1);
+  if(d.length===13 && d.slice(0,3)==='091') return d.slice(1);
+  return d;
+}
+function waOpen(phone, msg){
+  var n=waNumber(phone); if(!n) return false;
+  var w=window.open('https://wa.me/'+n+(msg?('?text='+encodeURIComponent(msg)):''),'_blank');
+  if(!w){ toast('WA','Pop-up blocked — allow pop-ups for HireLab, then click Send again'); return false; }
+  return true;
+}
+async function waLogSent(cid, msg){
+  try{ if(msg){ await req('POST','/candidates/'+cid+'/wa-send-log',{text:msg}); cpLoadWaThread(cid); } }catch(e){}
+  try{ await req('POST','/candidates/'+cid+'/stage',{stage:null,note:msg?'WhatsApp message sent':'WhatsApp chat opened',keep_stage:true});
+       var fresh=await req('GET','/candidates/'+cid); if(fresh&&fresh.history) refreshHistory(fresh.history); }catch(e){}
+}
+
 var _waTemplatesCache=null;
 async function waLoadTemplates(force){
   if(_waTemplatesCache && !force) return _waTemplatesCache;
@@ -13576,18 +13456,22 @@ async function openWhatsAppPanel(cid){
       +'</div>';
   }).join('');
 
-  var footer = composeEl
-    ? '<div style="border-top:0.5px solid var(--line);padding:10px 14px;background:#fafafa;font-size:11px;color:var(--muted)">Template pe click karo &rarr; message chat box me aa jayega, wahan edit karke bhejo.</div>'
-    : '<div style="border-top:0.5px solid var(--line);padding:12px 14px;background:#fafafa">'
-        +(phoneClean?'':'<div style="color:#E65100;font-size:11px;margin-bottom:6px">&#9888;&#65039; Phone number nahi hai.</div>')
-        +'<textarea id="wa-preview" class="inp" rows="5" placeholder="Template pe click karo..." style="font-size:12.5px;width:100%;box-sizing:border-box;resize:vertical"></textarea>'
-        +'<div style="display:flex;gap:8px;margin-top:8px">'
+  // The panel is self-contained: pick a template (or type), edit, Send. Before
+  // this, a template click was written into the Communications tab's compose
+  // box — hidden on every other tab — and the panel closed, so nothing seemed
+  // to happen and WhatsApp never opened.
+  var footer = '<div style="border-top:0.5px solid var(--line);padding:12px 14px;background:#fafafa">'
+        +(phoneClean?'<div style="font-size:11px;color:var(--muted);margin-bottom:6px">To <b>+'+esc(waNumber(cand.phone))+'</b> &middot; template chuno ya khud likho</div>'
+                    :'<div style="color:#B42318;font-size:11.5px;margin-bottom:6px">&#9888;&#65039; Phone number nahi hai — Overview &rarr; Edit mein number daalo.</div>')
+        +'<textarea id="wa-preview" class="inp" rows="6" placeholder="Message likho, ya upar se template chuno…" style="font-size:12.5px;width:100%;box-sizing:border-box;resize:vertical">'+esc(composeEl?composeEl.value:'')+'</textarea>'
+        +'<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">'
         +'<button class="btn" onclick="waCopyPreview()" style="font-size:12px">&#128203; Copy</button>'
-        +'<button class="btn" style="flex:1;background:#25D366;color:#fff;border:none;font-size:13px;justify-content:center" onclick="waSendPreview()">&#128172; Send on WhatsApp</button>'
+        +'<button class="btn" onclick="waOpenChatOnly()" style="font-size:12px" title="Open the chat without a message">Open chat</button>'
+        +'<button class="btn" '+(phoneClean?'':'disabled ')+'style="flex:1;background:#25D366;color:#fff;border:none;font-size:13px;justify-content:center" onclick="waSendPreview()">&#128172; Send on WhatsApp</button>'
         +'</div></div>';
 
   drawer.innerHTML='<div style="padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#075E54">'
-    +'<div style="font-size:14px;font-weight:600;color:#fff;display:flex;align-items:center;gap:7px">&#128172; Templates &middot; '+esc((cand.name||'').split(' ')[0]||'')+'</div>'
+    +'<div style="font-size:14px;font-weight:600;color:#fff;display:flex;align-items:center;gap:7px">&#128172; WhatsApp &middot; '+esc((cand.name||'').split(' ')[0]||'')+'</div>'
     +'<button onclick="closeWhatsAppPanel()" style="background:none;border:none;font-size:22px;color:rgba(255,255,255,.85);cursor:pointer;line-height:1">&times;</button></div>'
     +'<div style="flex:1;overflow-y:auto;padding:14px">'+listHtml+'</div>'
     +footer;
@@ -13603,9 +13487,10 @@ async function openWhatsAppPanel(cid){
         var jd=''; try{ var jr=await req('GET','/candidates/'+cid+'/jd-text'); jd=(jr&&jr.jd)||''; }catch(e){}
         filled=filled.replace(/\{\{JD\}\}/g, jd || '[JD not available — add it to the mandate]');
       }
-      var ce=document.getElementById('wa-compose-'+cid);
-      if(ce){ ce.value=filled; ce.style.height='auto'; ce.style.height=Math.min(ce.scrollHeight,180)+'px'; closeWhatsAppPanel(); setTimeout(function(){ ce.focus(); },210); }
-      else { var pv=document.getElementById('wa-preview'); if(pv) pv.value=filled; }
+      btn.textContent=tpl.title;
+      drawer.querySelectorAll('.wa-tpl-item').forEach(function(b){ b.style.borderColor=''; b.style.background='#F6F8F7'; });
+      btn.style.borderColor='#25D366'; btn.style.background='#E8F8EE';
+      var pv=document.getElementById('wa-preview'); if(pv){ pv.value=filled; pv.focus(); }
     });
   });
 }
@@ -13613,15 +13498,12 @@ async function waComposeSend(cid){
   var ta=document.getElementById('wa-compose-'+cid); if(!ta) return;
   var msg=(ta.value||'').trim(); if(!msg) return;
   var cand=(S._waCand&&S._waCand.id==cid)?S._waCand:((S._cand&&S._cand.id==cid)?S._cand:{});
-  var phone=(ta.dataset.phone||cand.phone||'').replace(/\D/g,'');
-  if(!phone){ toast('WA','Add phone number first'); return; }
-  var waNum=phone.startsWith('91')?phone:'91'+phone;
-  window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg),'_blank');
+  var phone=ta.dataset.phone||cand.phone||'';
+  if(!waNumber(phone)){ toast('WA','Add phone number first'); return; }
+  if(!waOpen(phone, msg)) return;
   ta.value=''; ta.style.height='auto';
   toast('OK','WhatsApp opened');
-  try{ await req('POST','/candidates/'+cid+'/wa-send-log',{text:msg}); cpLoadWaThread(cid); }catch(e){}
-  try{ await req('POST','/candidates/'+cid+'/stage',{stage:null,note:'WhatsApp message sent',keep_stage:true});
-       var fresh=await req('GET','/candidates/'+cid); if(fresh&&fresh.history) refreshHistory(fresh.history); }catch(e){}
+  await waLogSent(cid, msg);
 }
 function closeWhatsAppPanel(){
   var d=document.getElementById('wa-drawer');
@@ -13636,14 +13518,17 @@ async function waSendPreview(){
   var cand=S._waCand; if(!cand){ return; }
   var msg=(document.getElementById('wa-preview').value||'').trim();
   if(!msg){ toast('ERR','Type a message'); return; }
-  var phone=(cand.phone||'').replace(/\D/g,'');
-  if(!phone){ toast('WA','Add phone number first'); return; }
-  var waNum=phone.startsWith('91')?phone:'91'+phone;
-  window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg),'_blank');
+  if(!waNumber(cand.phone)){ toast('WA','Add phone number first'); return; }
+  if(!waOpen(cand.phone, msg)) return;
   toast('OK','WhatsApp opened'); closeWhatsAppPanel();
-  try{ await req('POST','/candidates/'+cand.id+'/wa-send-log',{text:msg}); cpLoadWaThread(cand.id); }catch(e){}
-  try{ await req('POST','/candidates/'+cand.id+'/stage',{stage:null,note:'WhatsApp message sent',keep_stage:true});
-       var fresh=await req('GET','/candidates/'+cand.id); if(fresh&&fresh.history) refreshHistory(fresh.history); }catch(e){}
+  await waLogSent(cand.id, msg);
+}
+async function waOpenChatOnly(){
+  var cand=S._waCand; if(!cand) return;
+  if(!waNumber(cand.phone)){ toast('WA','Add phone number first'); return; }
+  if(!waOpen(cand.phone, '')) return;
+  toast('OK','WhatsApp opened'); closeWhatsAppPanel();
+  await waLogSent(cand.id, '');
 }
 
 function attachWAHandlers(cand) {
@@ -13663,7 +13548,7 @@ function attachWAHandlers(cand) {
         return;
       }
 
-      var waNum = phone.startsWith('91') ? phone : '91'+phone;
+      var waNum = waNumber(phone);
       // Close the WA dropdown
       var pop = document.getElementById('wa-pop-' + cid); if (pop) pop.style.display = 'none';
       if (type === 'normal') {
@@ -15369,7 +15254,7 @@ async function agentApprove(cid) {
   var ta = document.getElementById('ag-ta-'+cid); var st = _agState[cid]||{};
   var msg = ta ? ta.value.trim() : '';
   var phone = (st.phone||'').replace(/\D/g,'');
-  if (phone) { var waNum = phone.startsWith('91')?phone:'91'+phone; window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg),'_blank'); }
+  if (phone) { var waNum = waNumber(phone); window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg),'_blank'); }
   else { toast('WA','No phone on this candidate'); }
   var lg = await req('POST','/outreach/log',{candidate_id:cid,mandate_id:st.mid,message:msg,status:'sent'});
   if (lg&&lg.id) st.logId=lg.id;
@@ -15455,7 +15340,7 @@ async function outreachSend(cid) {
   var msg = ta ? ta.value.trim() : '';
   var phone = (st.phone||'').replace(/\D/g,'');
   if (!phone) { toast('WA','No phone number on this candidate'); }
-  else { var waNum = phone.startsWith('91') ? phone : '91'+phone; window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg),'_blank'); }
+  else { var waNum = waNumber(phone); window.open('https://wa.me/'+waNum+'?text='+encodeURIComponent(msg),'_blank'); }
   var lg = await req('POST', '/outreach/log', {candidate_id: cid, mandate_id: st.mid, message: msg, status: 'sent'});
   if (lg && lg.id) st.logId = lg.id;
   var d = document.getElementById('or-done-'+cid); if (d) d.textContent = 'Logged as sent. Mark the reply when you hear back.';
@@ -24381,6 +24266,7 @@ input:focus,textarea:focus,select:focus{border-color:#0f766e !important}
 .w1-cp-stage label{font-size:12px;color:var(--muted)}
 .w1-cp-stage select{height:36px;font-size:13px;font-weight:600;border:1px solid var(--w1-border,#d0d5dd);border-radius:9px;padding:0 10px;background:#fff;cursor:pointer;max-width:220px}
 .w1-cp-contact{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid #f1f2f4}
+.w1-ct.active{border-color:#0F6E56;color:#0F6E56;background:#E1F5EE}
 .w1-ct{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border:1px solid var(--w1-border,#d0d5dd);border-radius:8px;background:#fff;color:var(--ink);font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap}
 .w1-ct:hover{background:#f8fafc}
 .w1-ct.wa{border-color:#86efac;background:#f0fdf4;color:#166534;font-weight:600}

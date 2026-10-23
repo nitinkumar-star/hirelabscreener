@@ -5988,6 +5988,7 @@ def extension_push():
         _save_naukri_ref(conn, existing['id'], d.get('naukri_ref'))
         conn.commit(); conn.close()
         return jsonify({'ok': True, 'action': 'updated', 'candidate_id': existing['id'],
+                        'mandate_id': mid, 'central': _to_central,
                         'name': name, 'preserved': True,
                         'message': 'CV & details updated. Stage, journey and comments preserved.'})
 
@@ -6030,7 +6031,8 @@ def extension_push():
             notify_freelancer_upload(cid)
         except Exception as _ne:
             print(f'[notifications] upload hook: {_ne}')
-    resp = {'ok': True, 'action': 'added', 'candidate_id': cid, 'name': name}
+    resp = {'ok': True, 'action': 'added', 'candidate_id': cid, 'name': name,
+            'mandate_id': mid, 'central': _to_central}
     if other_mandates:
         resp['also_in'] = other_mandates
         resp['message'] = 'Added here. This person also exists in: ' + ', '.join(other_mandates)
