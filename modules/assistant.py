@@ -11,6 +11,8 @@ Routes (JSON unless noted, all under /api/assistant, logged-in session)
   POST /parse   multipart: page_text?, cv?  ->  fields, resume_text, candidate_text
   POST /dupes   {mandate_id, name, phone, email, company, text}  ->  who is already in HireLab
   POST /split   {text}  ->  profiles [{key, name, text}] read from a pasted search-results page
+  POST /jobs    {text?}  ->  open jobs the recruiter can work on (for the Jobs search tab);
+                with text, each job also gets an AI match % (embeddings, same space as Job Matching)
 
 Scoring, the AI review, the review chat, the search screener and the push all
 reuse the existing /api/extension/* routes, so the Assistant gives the same
@@ -192,7 +194,13 @@ def assistant_dupes():
     d = request.get_json(silent=True) or {}
     conn = get_db()
     try:
-        m, err = ns._load_mandate(conn, d.get('mandate_id'))
+        mid_raw = d.get('mandate_id')
+        if str(mid_raw or '').strip().lower() == 'central':
+            # Central Database = the tenant's pool mandate. Resolve it so the
+            # same duplicate check runs ("already in Central DB" = this_job).
+            from modules.shared import central_mandate_id
+            mid_raw = central_mandate_id()
+        m, err = ns._load_mandate(conn, mid_raw)
         if err:
             return err
         co = effective_company_id()
@@ -311,3 +319,132 @@ def assistant_split():
     if not profiles:
         return ns._err('No candidate profiles were found in the pasted text. Copy the whole results page and try again.', 422)
     return jsonify({'ok': True, 'profiles': profiles, 'count': len(profiles)})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Jobs search — "which of my open jobs fits this person?"
+# ══════════════════════════════════════════════════════════════════════════
+MAX_JOB_TEXT = 20000
+
+
+def _job_vec(blob):
+    core = _core()
+    if not blob:
+        return None
+    try:
+        if getattr(core, '_HAS_NUMPY', False):
+            return [float(x) for x in core._np.frombuffer(blob, dtype=core._np.float32)]
+        import array
+        a = array.array('f')
+        a.frombytes(blob)
+        return [float(x) for x in a]
+    except Exception:
+        return None
+
+
+def _skills(core, m, col):
+    try:
+        return list(core.mandate_skills(m, col))[:15]
+    except Exception:
+        return []
+
+
+def _num_or0(v):
+    try:
+        return float(v or 0)
+    except Exception:
+        return 0.0
+
+
+@bp.route('/jobs', methods=['POST', 'OPTIONS'])
+@ns._ext_route
+def assistant_jobs():
+    """Open jobs for the extension's Jobs tab.
+
+    Without text: every active job the caller may work on, with the facts a
+    recruiter scans (client, city, experience, CTC, must-have skills, pipeline
+    size) so the side panel can filter them as you type.
+    With text (pasted profile and/or CV text): the same list, each job carrying
+    an AI match % — the candidate text embedded once and compared with each
+    job's stored JD vector (the vectors the ATS "Job Matching" tab uses).
+    Read-only; nothing is stored.
+    """
+    core = _core()
+    d = request.get_json(silent=True) or {}
+    text = ns.redact(str(d.get('text') or ''))[:MAX_JOB_TEXT].strip()
+    co = effective_company_id()
+    cu = core.current_user() or {}
+    conn = get_db()
+    try:
+        if cu.get('role') == 'freelancer_sourcer':
+            rows = conn.execute(
+                "SELECT m.* FROM mandate_freelancers mf JOIN mandates m ON m.id=mf.mandate_id "
+                "WHERE mf.freelancer_user_id=? AND mf.company_id=? AND mf.is_active=1 AND m.status='active' "
+                "ORDER BY m.created_at DESC", (ns.real_user_id(), co)).fetchall()
+        else:
+            from modules.access import mandate_scope_sql
+            ms, mp = mandate_scope_sql('id')
+            rows = conn.execute("SELECT * FROM mandates WHERE owner_id=? AND status='active'" + ms +
+                                " ORDER BY created_at DESC", [co] + mp).fetchall()
+        ids = [int(r['id']) for r in rows]
+        counts, vecs = {}, {}
+        if ids:
+            qs = ','.join('?' * len(ids))
+            for r in conn.execute('SELECT mandate_id, COUNT(*) AS n FROM candidates WHERE owner_id=? AND mandate_id IN (%s) '
+                                  'GROUP BY mandate_id' % qs, [co] + ids):
+                counts[int(r['mandate_id'])] = int(r['n'])
+            if text:
+                for r in conn.execute("SELECT mandate_id, embedding_vec FROM mandate_vectors WHERE status='completed' "
+                                      'AND mandate_id IN (%s)' % qs, ids):
+                    v = _job_vec(r['embedding_vec'])
+                    if v:
+                        vecs[int(r['mandate_id'])] = v
+        recent = {}
+        try:
+            for r in conn.execute('SELECT mandate_id, used_at FROM mandate_usage WHERE user_id=? ORDER BY used_at DESC LIMIT 5',
+                                  (ns.real_user_id(),)):
+                recent[int(r['mandate_id'])] = r['used_at']
+        except Exception:
+            pass
+
+        cvec, ai_note = None, ''
+        if text:
+            if not vecs:
+                ai_note = 'No job has an AI (JD) vector yet — add the JD in Mandate Setup.'
+            elif not core.get_setting('embedding_api_key', ''):
+                ai_note = 'Embedding API key is not set in HireLab Settings.'
+            elif not ns._rate_ok('assistant-jobs', ns.real_user_id(), 60):
+                return ns._err('Too many requests — wait a minute and try again.', 429)
+            else:
+                try:
+                    v = core.embed_long(text)
+                    cvec = v if isinstance(v, list) and v else None
+                except Exception as exc:
+                    print('[assistant/jobs] embed failed: %s' % exc)
+                if cvec is None:
+                    ai_note = 'Could not read this candidate with AI right now. Try again in a minute.'
+
+        keys = rows[0].keys() if rows else []
+        out = []
+        for m in rows:
+            mid = int(m['id'])
+            jd = str(m['jd'] or '') if 'jd' in keys else ''
+            j = {'id': mid, 'role': m['role'] or '', 'client': m['client'] or '', 'location': m['location'] or '',
+                 'exp_min': _num_or0(m['exp_min']) if 'exp_min' in keys else 0,
+                 'exp_max': _num_or0(m['exp_max']) if 'exp_max' in keys else 0,
+                 'ctc_min': _num_or0(m['ctc_min']), 'ctc_max': _num_or0(m['ctc_max']),
+                 'must': _skills(core, m, 'must_have_skills'), 'good': _skills(core, m, 'good_to_have_skills'),
+                 'jd': re.sub(r'\s+', ' ', jd)[:1500], 'pipeline': counts.get(mid, 0),
+                 'created_at': m['created_at'] or '', 'is_recent': mid in recent, 'score': None}
+            if cvec is not None and mid in vecs and len(vecs[mid]) == len(cvec):
+                j['score'] = round(max(0.0, float(core.cosine(cvec, vecs[mid]))) * 100, 1)
+            out.append(j)
+        if cvec is not None:
+            out.sort(key=lambda x: -(x['score'] if x['score'] is not None else -1))
+        else:
+            rrank = {k: i for i, k in enumerate(recent)}   # recent dict is in most-recent-first order
+            out.sort(key=lambda x: rrank.get(x['id'], len(rrank)))   # stable: rest keep newest-job-first
+        return jsonify({'ok': True, 'jobs': out, 'ai': cvec is not None, 'ai_note': ai_note,
+                        'no_vector': sum(1 for x in out if x['id'] not in vecs) if text else 0})
+    finally:
+        conn.close()
