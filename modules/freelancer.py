@@ -117,6 +117,7 @@ _FL_ALLOW = [
     (('POST',),         r'^/api/extension/explain(/chat)?/?$'),         # AI review + its chat; same assignment check
     (('POST',),         r'^/api/candidates/\d+/cv/?$'),                   # + own-candidate check below
     (('GET', 'POST'),   r'^/api/hotlist/mine(/outcome)?/?$'),           # Hot List calls assigned to this caller (checked in modules/hotlist.py)
+    (('POST',),         r'^/api/presence/ping/?$'),                     # Team Activity heartbeat (writes only their own presence)
 ]
 _FL_ALLOW = [(m, _re.compile(p)) for m, p in _FL_ALLOW]
 _CV_PATH = _re.compile(r'^/api/candidates/(\d+)/cv/?$')
