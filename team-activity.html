@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Team Activity · HireLab</title>
+<style>
+:root{
+  --page:#F7F6F2;--surface:#fcfcfb;--card:#fff;--line:#E6E4DD;--grid:#ECEAE4;--axis:#c3c2b7;
+  --ink:#16191d;--ink2:#52514e;--muted:#898781;--navy:#0E2A47;--brand:#0F6E56;--brand-soft:#E6F4EE;
+  --good:#0ca30c;--good-ink:#006300;--warn:#fab219;--warn-ink:#8a5a00;--bad:#d03b3b;--bad-ink:#b3261e;--info:#2a78d6;
+  /* sequential blue (magnitude) */
+  --s100:#cde2fb;--s150:#b7d3f6;--s200:#9ec5f4;--s250:#86b6ef;--s300:#6da7ec;--s350:#5598e7;--s400:#3987e5;--s450:#2a78d6;--s500:#256abf;--s550:#1c5cab;--s600:#184f95;--s650:#104281;--s700:#0d366b;
+  --r:14px;--shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);
+}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--page)}
+button,input,select{font:inherit;color:inherit}
+a{color:var(--info)}
+.num{font-variant-numeric:tabular-nums}
+/* top bar */
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.top a.back{text-decoration:none;color:var(--muted);font-size:13px}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--brand);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.top h1{font-size:17px;margin:0;letter-spacing:-.01em}
+.top .sp{flex:1}
+.live{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--ink2);background:#F2F0EA;border-radius:20px;padding:5px 11px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--axis);display:inline-block;flex-shrink:0}
+.dot.on{background:var(--good);box-shadow:0 0 0 3px rgba(12,163,12,.18);animation:pulse 2s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 6px rgba(12,163,12,.05)}}
+.upd{font-size:12px;color:var(--muted)}
+.wrap{max-width:1320px;margin:0 auto;padding:18px 20px 80px}
+/* filters */
+.filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.seg{display:inline-flex;background:#fff;border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px;flex-wrap:wrap}
+.seg button{border:none;background:none;border-radius:7px;padding:6px 11px;font-weight:600;font-size:13px;color:var(--ink2);cursor:pointer}
+.seg button:hover{background:#F4F2EC}
+.seg button.on{background:var(--navy);color:#fff}
+.custom{display:none;gap:6px;align-items:center}
+.custom.on{display:inline-flex}
+.custom input,.filters select{border:1px solid var(--line);border-radius:9px;padding:6px 9px;background:#fff}
+.rule{font-size:12px;color:var(--muted);margin-left:auto}
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;margin-bottom:16px;box-shadow:var(--shadow);min-width:0}
+.card h2{font-size:15px;margin:0;color:var(--navy);letter-spacing:-.01em}
+.card .sub{font-size:12.5px;color:var(--muted);margin-top:2px}
+.ch{display:flex;align-items:flex-start;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.ch .sp{flex:1}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.grid2>.card{margin-bottom:0}
+.mb16{margin-bottom:16px}
+/* KPI tiles */
+.kpis{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;box-shadow:var(--shadow);min-width:0}
+.kpi .k{font-size:12px;color:var(--ink2);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .v{font-size:24px;font-weight:700;color:var(--ink);margin-top:2px;letter-spacing:-.02em;white-space:nowrap}
+.kpi .h{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* insights */
+.ins{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.in{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fff;display:flex;gap:10px;align-items:flex-start}
+.in .ic{width:26px;height:26px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px}
+.in.good .ic{background:#E5F5E5;color:var(--good-ink)}
+.in.warn .ic{background:#FFF4DA;color:var(--warn-ink)}
+.in.bad .ic{background:#FBE8E7;color:var(--bad-ink)}
+.in.info .ic{background:#E8F1FC;color:#1c5cab}
+.in b{display:block;font-size:13.5px}
+.in p{margin:2px 0 0;font-size:13px;color:var(--ink2)}
+.in a{font-size:12px;font-weight:600;cursor:pointer;text-decoration:none}
+/* timeline */
+.tl{position:relative}
+.tl-axis{display:grid;grid-template-columns:180px 1fr 110px;font-size:11px;color:var(--muted)}
+.tl-axis .ticks{position:relative;height:18px}
+.tl-axis .ticks span{position:absolute;transform:translateX(-50%);top:0}
+.tl-row{display:grid;grid-template-columns:180px 1fr 110px;align-items:center;min-height:38px;border-top:1px solid var(--grid)}
+.tl-row:first-of-type{border-top:none}
+.tl-name{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;cursor:pointer;min-width:0;padding-right:8px}
+.tl-name span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-track{position:relative;height:22px;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(100%/var(--hrs) - 1px),var(--grid) calc(100%/var(--hrs) - 1px),var(--grid) calc(100%/var(--hrs)))}
+.tl-seg{position:absolute;top:3px;height:16px;background:var(--s450);border-radius:4px;min-width:3px;cursor:default}
+.tl-seg:hover{background:var(--s600)}
+.tl-now{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--bad);opacity:.6}
+.tl-tot{text-align:right;font-size:12.5px;color:var(--ink2);padding-left:10px;white-space:nowrap}
+.tl-tot b{color:var(--ink)}
+.tl-empty{font-size:12px;color:var(--muted);padding-left:6px}
+/* matrix (multi-day) */
+.mx{overflow-x:auto}
+.mx table{border-collapse:separate;border-spacing:3px;min-width:100%}
+.mx th{font-size:11px;color:var(--muted);font-weight:600;text-align:center;white-space:nowrap;padding:0 2px}
+.mx th.n{text-align:left;min-width:150px}
+.mx td.n{font-weight:600;font-size:13px;white-space:nowrap;cursor:pointer;padding-right:8px}
+.mx td.c{height:34px;min-width:44px;border-radius:6px;text-align:center;font-size:11px;font-weight:600;cursor:default}
+.mx td.c.z{background:#F4F2EC;color:var(--muted);font-weight:400}
+/* table */
+.tbl{overflow-x:auto}
+table.lb{width:100%;border-collapse:collapse;font-size:13px}
+.lb th{font-size:11.5px;color:var(--ink2);font-weight:600;text-align:right;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;cursor:pointer;user-select:none;position:sticky;top:0;background:#fff}
+.lb th:first-child,.lb td:first-child{text-align:left}
+.lb th.s::after{content:' ▾';color:var(--navy)}
+.lb th.s.asc::after{content:' ▴'}
+.lb td{padding:9px 10px;border-bottom:1px solid var(--grid);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.lb tr:hover td{background:#FAF9F5;cursor:pointer}
+.lb tr.mute td{color:var(--muted)}
+.lb .nm{display:flex;align-items:center;gap:8px;font-weight:600}
+.lb .z{color:#c9c7c0}
+.pill{display:inline-block;font-size:11px;font-weight:700;border-radius:10px;padding:1px 8px}
+.pill.bad{background:#FBE8E7;color:var(--bad-ink)}
+.pill.warn{background:#FFF4DA;color:var(--warn-ink)}
+.pill.good{background:#E5F5E5;color:var(--good-ink)}
+.mini{display:inline-block;width:56px;height:6px;border-radius:3px;background:#EEECE6;vertical-align:middle;margin-left:6px;overflow:hidden}
+.mini i{display:block;height:100%;background:var(--s450);border-radius:3px}
+/* stacked bars */
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin-bottom:10px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.sb-row{display:grid;grid-template-columns:150px 1fr 44px;gap:10px;align-items:center;margin:7px 0}
+.sb-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-bar{display:flex;height:18px;gap:2px}
+.sb-bar i{display:block;height:100%;min-width:2px}
+.sb-bar i:first-child{border-radius:4px 0 0 4px}.sb-bar i:last-child{border-radius:0 4px 4px 0}.sb-bar i:only-child{border-radius:4px}
+.sb-tot{font-size:12.5px;text-align:right;color:var(--ink2)}
+/* heatmap */
+.hm{display:grid;grid-template-columns:34px repeat(24,minmax(0,1fr));gap:2px;font-size:10.5px;color:var(--muted)}
+.hm .c{aspect-ratio:1.5;border-radius:3px;min-height:14px}
+.hm .l{display:flex;align-items:center}
+.hm .t{text-align:center}
+.scale{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);margin-top:8px}
+.scale i{width:18px;height:10px;border-radius:2px;display:inline-block}
+.hb{display:flex;align-items:flex-end;gap:3px;height:120px;border-bottom:1px solid var(--axis);padding-top:6px}
+.hb i{flex:1;background:var(--s450);border-radius:4px 4px 0 0;min-height:0}
+.hb i:hover{background:var(--s600)}
+.hbx{display:flex;gap:3px;font-size:10.5px;color:var(--muted)}
+.hbx span{flex:1;text-align:center}
+/* lists */
+.list{max-height:360px;overflow:auto}
+.li{display:flex;gap:10px;align-items:center;padding:9px 2px;border-bottom:1px solid var(--grid);font-size:13px}
+.li:last-child{border-bottom:none}
+.li .m{flex:1;min-width:0}
+.li .m b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li .m span{font-size:12px;color:var(--muted)}
+.li .d{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.empty{color:var(--muted);text-align:center;padding:22px 10px;font-size:13px}
+/* digest */
+pre.dg{white-space:pre-wrap;background:#FAF9F5;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font:13px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;margin:0}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:6px 12px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap;text-decoration:none;color:var(--ink);display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:#F7F6F2}
+.btn.wa{background:#25D366;border-color:#25D366;color:#fff}
+/* tooltip */
+#tip{position:fixed;z-index:100;pointer-events:none;background:#16191d;color:#fff;font-size:12px;line-height:1.45;border-radius:8px;padding:7px 10px;box-shadow:0 6px 20px rgba(0,0,0,.18);opacity:0;transition:opacity .08s;max-width:260px}
+#tip b{font-weight:700}
+#tip .r{color:#c3c2b7}
+/* drawer */
+#ov{position:fixed;inset:0;background:rgba(14,42,71,.28);z-index:40;display:none}
+#dr{position:fixed;top:0;right:0;bottom:0;width:560px;max-width:96vw;background:var(--page);z-index:41;transform:translateX(102%);transition:transform .2s ease;display:flex;flex-direction:column;box-shadow:-10px 0 30px rgba(0,0,0,.14)}
+#dr.on{transform:none}#ov.on{display:block}
+#dr .dh{display:flex;align-items:center;gap:10px;padding:14px 18px;background:#fff;border-bottom:1px solid var(--line)}
+#dr .dh h3{margin:0;font-size:16px}
+#dr .dh .x{margin-left:auto;border:none;background:none;font-size:24px;line-height:1;color:var(--muted);cursor:pointer}
+#dr .db{overflow:auto;padding:16px 18px;flex:1}
+.dk{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:14px}
+.dk div{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.dk span{font-size:11px;color:var(--ink2);font-weight:600}
+.dk b{display:block;font-size:18px}
+table.dd{width:100%;border-collapse:collapse;font-size:12.5px}
+.dd th{text-align:left;font-size:11px;color:var(--ink2);padding:6px 8px;border-bottom:1px solid var(--line)}
+.dd td{padding:7px 8px;border-bottom:1px solid var(--grid);font-variant-numeric:tabular-nums}
+.ev{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--grid);font-size:12.5px}
+.ev time{color:var(--muted);white-space:nowrap;width:92px;flex-shrink:0;font-variant-numeric:tabular-nums}
+.ev .k{font-weight:600;white-space:nowrap}
+.ev a{text-decoration:none}
+.note{background:#EEF4FB;color:#185FA5;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:14px}
+.err{background:#FBE9E7;color:var(--bad-ink);border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:12px}
+.skel{background:linear-gradient(90deg,#EFEDE7,#F7F6F2,#EFEDE7);background-size:200% 100%;animation:sk 1.2s infinite;border-radius:10px;height:90px;margin-bottom:16px}
+@keyframes sk{to{background-position:-200% 0}}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+@media(max-width:1180px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:860px){.grid2{grid-template-columns:1fr}.tl-axis,.tl-row{grid-template-columns:110px 1fr 76px}.rule{margin-left:0}.sb-row{grid-template-columns:100px 1fr 36px}}
+@media(max-width:560px){.upd,.top a.back,.top .logo{display:none}.top{gap:8px}.top h1{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}.live{padding:4px 9px;font-size:12px;white-space:nowrap}.wrap{padding:14px 12px 60px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.top{padding:10px 12px}.dk{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media print{.top,.filters,#tip{display:none}.card,.kpi{box-shadow:none}}
+</style>
+</head>
+<body>
+<div class="top">
+  <a class="back" href="/">&#8592; App</a><div class="logo">H</div><h1>Team Activity</h1>
+  <span class="sp"></span>
+  <span class="live" id="live" title="Active in HireLab in the last 5 minutes"><i class="dot"></i><span>—</span></span>
+  <span class="upd" id="upd"></span>
+  <button class="btn" id="refresh" title="Refresh">&#8635;</button>
+</div>
+
+<div class="wrap">
+  <div class="filters">
+    <div class="seg" id="presets" role="group" aria-label="Date range">
+      <button data-p="today" class="on">Today</button><button data-p="yesterday">Yesterday</button>
+      <button data-p="7">Last 7 days</button><button data-p="week">This week</button>
+      <button data-p="month">This month</button><button data-p="30">Last 30 days</button><button data-p="custom">Custom</button>
+    </div>
+    <span class="custom" id="custom"><input type="date" id="d1" aria-label="From"><span>→</span><input type="date" id="d2" aria-label="To"></span>
+    <select id="who" aria-label="Recruiter"><option value="">Whole team</option></select>
+    <span class="rule" id="rule"></span>
+  </div>
+
+  <div id="err"></div>
+  <div id="body"><div class="skel"></div><div class="skel" style="height:240px"></div><div class="skel" style="height:300px"></div></div>
+</div>
+
+<div id="tip" role="tooltip"></div>
+<div id="ov"></div>
+<aside id="dr" aria-label="Recruiter details"><div class="dh"><h3 id="drh"></h3><button class="x" aria-label="Close">&times;</button></div><div class="db" id="drb"></div></aside>
+
+<script>
+(function(){
+'use strict';
+var $ = function(id){ return document.getElementById(id); };
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function hm(mins){ mins = Math.round(mins || 0); var h = Math.floor(mins / 60), m = mins % 60; return h ? h + 'h ' + (m < 10 ? '0' : '') + m + 'm' : m + 'm'; }
+function clock(m){ m = Math.round(m); var h = Math.floor(m / 60) % 24, mm = m % 60; var ap = h < 12 ? 'am' : 'pm', h12 = h % 12 || 12; return h12 + (mm ? ':' + (mm < 10 ? '0' : '') + mm : '') + ap; }
+function hhmmToMin(s){ if (!s) return null; var p = s.split(':'); return (+p[0]) * 60 + (+p[1]); }
+function fmtClock(s){ var m = hhmmToMin(s); return m == null ? '—' : clock(m); }
+function ymd(d){ return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function istNow(){ var n = new Date(); return new Date(n.getTime() + n.getTimezoneOffset() * 60000 + 330 * 60000); }
+function dlabel(s, long){ var d = new Date(s + 'T00:00:00'); return d.toLocaleDateString('en-IN', long ? {weekday:'short', day:'numeric', month:'short'} : {day:'numeric', month:'short'}); }
+var WD = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+var SEQ = ['#cde2fb','#b7d3f6','#9ec5f4','#86b6ef','#6da7ec','#5598e7','#3987e5','#2a78d6','#256abf','#1c5cab','#184f95','#104281','#0d366b'];
+function seq(v, max){ if (!v) return null; var i = Math.min(SEQ.length - 1, Math.floor(Math.sqrt(v / max) * (SEQ.length - 1))); return SEQ[i]; }
+function inkOn(hex){ var i = SEQ.indexOf(hex); return i >= 6 ? '#fff' : '#0d366b'; }
+// Stage buckets: an ordinal ramp (later stage = darker), dropped = neutral gray
+var STAGES = [['sourced','Sourced','#cde2fb'],['engaged','Engaged','#86b6ef'],['client','Submitted','#3987e5'],
+              ['interview','Interview','#256abf'],['offer','Offer','#184f95'],['placed','Placed / joined','#0d366b'],['dropped','Dropped','#b9b7b0']];
+var ACT = {whatsapp:'WhatsApp', email:'E-mail', call:'Call', cv:'CV uploaded', note:'Note', interview:'Interview scheduled',
+           offer:'Offer created', update_request:'Update requested', add_to_job:'Added to another job', cv_push:'CV pushed (extension)',
+           added:'Added candidate', move:'Moved'};
+
+// ── state ───────────────────────────────────────────────────────────
+var st = {preset:'today', from:'', to:'', user:'', data:null, sort:'active_min', asc:false, timer:null};
+try { var sv = JSON.parse(localStorage.getItem('hl_team_f') || '{}'); if (sv.preset) st.preset = sv.preset; if (sv.from) { st.from = sv.from; st.to = sv.to; } } catch (e) {}
+function save(){ try { localStorage.setItem('hl_team_f', JSON.stringify({preset: st.preset, from: st.from, to: st.to})); } catch (e) {} }
+
+function rangeFor(p){
+  var t = istNow(), d = function(n){ var x = new Date(t); x.setDate(x.getDate() - n); return ymd(x); };
+  if (p === 'today') return [ymd(t), ymd(t)];
+  if (p === 'yesterday') return [d(1), d(1)];
+  if (p === '7') return [d(6), ymd(t)];
+  if (p === '30') return [d(29), ymd(t)];
+  if (p === 'week') { var wd = (t.getDay() + 6) % 7; return [d(wd), ymd(t)]; }
+  if (p === 'month') { return [ymd(new Date(t.getFullYear(), t.getMonth(), 1)), ymd(t)]; }
+  return [st.from || ymd(t), st.to || ymd(t)];
+}
+
+// ── tooltip ─────────────────────────────────────────────────────────
+var tip = $('tip');
+document.addEventListener('mousemove', function(e){
+  var el = e.target.closest && e.target.closest('[data-tip]');
+  if (!el) { tip.style.opacity = 0; return; }
+  tip.innerHTML = el.getAttribute('data-tip');
+  var x = e.clientX + 14, y = e.clientY + 14, w = tip.offsetWidth, h = tip.offsetHeight;
+  if (x + w > innerWidth - 8) x = e.clientX - w - 14;
+  if (y + h > innerHeight - 8) y = e.clientY - h - 14;
+  tip.style.left = x + 'px'; tip.style.top = y + 'px'; tip.style.opacity = 1;
+});
+
+// ── load ────────────────────────────────────────────────────────────
+async function load(quiet){
+  var r = rangeFor(st.preset); st.from = r[0]; st.to = r[1]; save();
+  $('d1').value = st.from; $('d2').value = st.to;
+  if (!quiet) $('body').innerHTML = '<div class="skel"></div><div class="skel" style="height:240px"></div><div class="skel" style="height:300px"></div>';
+  var q = '/api/team/overview?from=' + st.from + '&to=' + st.to;
+  var res, d;
+  try { res = await fetch(q, {credentials: 'same-origin'}); d = await res.json(); }
+  catch (e) { $('err').innerHTML = '<div class="err">Could not load team activity. Check your connection and press ↻.</div>'; return; }
+  if (!res.ok || !d.ok) { $('err').innerHTML = '<div class="err">' + esc(d && d.error || ('HTTP ' + res.status)) + '</div>'; return; }
+  $('err').innerHTML = '';
+  st.data = d;
+  render();
+  $('upd').textContent = 'Updated ' + clock(istNow().getHours() * 60 + istNow().getMinutes());
+  clearTimeout(st.timer);
+  if (d.to >= d.today) st.timer = setTimeout(function(){ load(true); }, 60000);
+}
+
+function users(){
+  var d = st.data, u = d.users.slice();
+  if (st.user) u = u.filter(function(x){ return String(x.id) === st.user; });
+  return u;
+}
+
+// ── render ──────────────────────────────────────────────────────────
+function render(){
+  var d = st.data;
+  var sel = $('who'), cur = st.user;
+  sel.innerHTML = '<option value="">Whole team (' + d.users.length + ')</option>' + d.users.map(function(u){ return '<option value="' + u.id + '">' + esc(u.name) + '</option>'; }).join('');
+  sel.value = cur;
+  var live = d.users.filter(function(u){ return u.live; });
+  $('live').innerHTML = '<i class="dot' + (live.length ? ' on' : '') + '"></i><span>' + (live.length ? live.length + ' online now' : 'Nobody online') + '</span>';
+  $('live').setAttribute('data-tip', live.length ? '<b>Active in the last ' + d.rules.idle_min + ' min</b><br>' + live.map(function(u){ return esc(u.name); }).join('<br>') : 'Nobody has used HireLab in the last ' + d.rules.idle_min + ' minutes');
+  $('rule').textContent = 'Idle after ' + d.rules.idle_min + ' min without mouse or keyboard · breaks ≥ ' + d.rules.break_min + ' min';
+
+  var U = users(), single = d.from === d.to;
+  var T = sumUp(U, d);
+  var h = '';
+  if (d.totals.untracked_moves && !U.some(function(u){ return u.moves; }))
+    h += '<div class="note">Recruiter-wise stage moves are counted from the day this update went live. ' + d.totals.untracked_moves + ' older moves in this period have no recruiter attached.</div>';
+  h += kpis(T, d, single);
+  h += '<div class="card"><div class="ch"><div><h2>What the numbers say</h2><div class="sub">Generated from this period&rsquo;s data — only what the data supports</div></div></div><div class="ins">' + insightsHtml(d) + '</div></div>';
+  h += '<div class="card"><div class="ch"><div><h2>' + (single ? 'Who worked when · ' + esc(dlabel(d.from, true)) : 'Time on HireLab per day') + '</h2><div class="sub">' +
+       (single ? 'Blue = active in HireLab. Gaps = idle or away. Hover a block for times.' : 'Active time per recruiter per day. Darker = more hours. Hover for first and last activity.') +
+       '</div></div></div>' + (single ? timeline(U, d) : matrix(U, d)) + '</div>';
+  h += '<div class="card"><div class="ch"><div><h2>Recruiter scorecard</h2><div class="sub">Click a column to sort · click a row for the full day-by-day view</div></div><span class="sp"></span>' +
+       '<button class="btn" id="csv">&#8595; CSV</button></div><div class="tbl">' + table(U, d) + '</div></div>';
+  h += '<div class="grid2 mb16"><div class="card"><div class="ch"><div><h2>Stage moves by recruiter</h2><div class="sub">Where each recruiter moved candidates to</div></div></div>' + stacked(U) + '</div>' +
+       '<div class="card"><div class="ch"><div><h2>Effort vs outcome</h2><div class="sub">Active hours against results (submitted + 2×interview + 3×offer + 4×placed)</div></div></div>' + effort(U) + '</div></div>';
+  h += '<div class="grid2 mb16"><div class="card"><div class="ch"><div><h2>When the team is active</h2><div class="sub">Active minutes by weekday and hour' + (st.user ? '' : ' (whole team)') + '</div></div></div>' + heat(d, U) + '</div>' +
+       '<div class="card"><div class="ch"><div><h2>When results happen</h2><div class="sub">Moves to Submitted, Interview, Offer or Placed, by hour of day</div></div></div>' + hourBars(U) + '</div></div>';
+  h += '<div class="grid2 mb16"><div class="card"><div class="ch"><div><h2>Jobs nobody worked on</h2><div class="sub">Active jobs with no stage move or note for ' + d.rules.untouched_days + '+ days · right now</div></div></div>' + untouched(d) + '</div>' +
+       '<div class="card"><div class="ch"><div><h2>Candidates going cold</h2><div class="sub">In a working stage with no movement for ' + d.rules.stuck_days + '+ days · right now</div></div></div>' + stuck(d) + '</div></div>';
+  h += '<div class="card"><div class="ch"><div><h2>Daily summary</h2><div class="sub">Ready to paste in your team WhatsApp group</div></div><span class="sp"></span>' +
+       '<button class="btn" id="copy">&#128203; Copy</button><a class="btn wa" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(d.digest) + '">Share on WhatsApp</a></div><pre class="dg">' + esc(d.digest) + '</pre></div>';
+  $('body').innerHTML = h;
+  wire();
+}
+
+function sumUp(U, d){
+  var t = {active:0, moves:0, added:0, sub:0, int:0, off:0, plc:0, contacts:0, firsts:[], people:0, stuck:0, untouched:0};
+  U.forEach(function(u){
+    t.active += u.active_min; t.moves += u.moves; t.added += u.added; t.sub += u.submissions; t.int += u.interviews;
+    t.off += u.offers; t.plc += u.placed; t.contacts += u.contacts; if (u.active_min) t.people++;
+    Object.keys(u.days).forEach(function(k){ t.firsts.push(u.days[k].first_min); });
+  });
+  t.avgFirst = t.firsts.length ? t.firsts.reduce(function(a, b){ return a + b; }, 0) / t.firsts.length : null;
+  t.stuck = st.user ? (U[0] ? U[0].stuck : 0) : d.totals.stuck;
+  t.untouched = st.user ? (U[0] ? U[0].untouched_jobs : 0) : d.totals.untouched;
+  return t;
+}
+function kpi(k, v, hint, tipTxt){ return '<div class="kpi"' + (tipTxt ? ' data-tip="' + esc(tipTxt) + '"' : '') + '><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="h">' + (hint || '&nbsp;') + '</div></div>'; }
+function kpis(T, d, single){
+  var nd = d.days.length;
+  return '<div class="kpis">' +
+    kpi('Active time', hm(T.active), T.people + ' ' + (T.people === 1 ? 'person' : 'people') + (nd > 1 ? ' · ' + nd + ' days' : ''), 'Minutes with mouse or keyboard activity in HireLab') +
+    kpi('Usual start', T.avgFirst == null ? '—' : clock(T.avgFirst), single ? 'first activity' : 'average first activity') +
+    kpi('Stage moves', T.moves, T.added + ' candidates added') +
+    kpi('Contacts', T.contacts, 'calls · WhatsApp · e-mails') +
+    kpi('Submitted', T.sub, 'moved to client') +
+    kpi('Interviews', T.int, T.sub ? Math.round(100 * T.int / T.sub) + '% of submitted' : '&nbsp;') +
+    kpi('Offers · placed', T.off + ' · ' + T.plc, '&nbsp;') +
+    kpi('Needs attention', '<span style="color:' + (T.untouched + T.stuck ? 'var(--bad-ink)' : 'var(--ink)') + '">' + (T.untouched + T.stuck) + '</span>', T.untouched + ' jobs idle · ' + T.stuck + ' cold candidates') +
+    '</div>';
+}
+function insightsHtml(d){
+  var icon = {good:'↑', warn:'!', bad:'!', info:'i'};
+  var list = d.insights.filter(function(x){ return !st.user || !x.user || String(x.user) === st.user; });
+  if (!list.length) return '<div class="empty">Nothing stands out for this selection.</div>';
+  return list.map(function(x){
+    return '<div class="in ' + x.tone + '"><div class="ic">' + icon[x.tone] + '</div><div><b>' + esc(x.title) + '</b><p>' + esc(x.text) + '</p>' +
+      (x.user ? '<a data-open="' + x.user + '">Open ' + esc((d.users.find(function(u){ return u.id === x.user; }) || {}).name || '') + ' →</a>' : '') + '</div></div>';
+  }).join('');
+}
+
+// single-day gantt
+function timeline(U, d){
+  var lo = 9 * 60, hi = 19 * 60, any = false;
+  U.forEach(function(u){ var x = u.days[d.from]; if (x) { any = true; lo = Math.min(lo, Math.floor(x.first_min / 60) * 60); hi = Math.max(hi, Math.ceil(x.last_min / 60) * 60); } });
+  var span = hi - lo, hrs = span / 60;
+  var ticks = ''; for (var t = lo; t <= hi; t += 60) if ((t - lo) % (hrs > 12 ? 120 : 60) === 0) ticks += '<span style="left:' + (100 * (t - lo) / span) + '%">' + clock(t) + '</span>';
+  var nowM = null; if (d.from === d.today) { var n = istNow(); nowM = n.getHours() * 60 + n.getMinutes(); if (nowM < lo || nowM > hi) nowM = null; }
+  var rows = U.map(function(u){
+    var x = u.days[d.from];
+    var track = '';
+    if (x) x.segments.forEach(function(s){
+      track += '<i class="tl-seg" style="left:' + (100 * (s[0] - lo) / span) + '%;width:' + (100 * (s[1] - s[0]) / span) + '%" data-tip="<b>' + esc(u.name) + '</b><br>' + clock(s[0]) + ' – ' + clock(s[1]) + ' <span class=r>(' + hm(s[1] - s[0]) + ')</span>"></i>';
+    });
+    if (nowM != null) track += '<i class="tl-now" style="left:' + (100 * (nowM - lo) / span) + '%" data-tip="Now"></i>';
+    return '<div class="tl-row"><div class="tl-name" data-open="' + u.id + '"><i class="dot' + (u.live ? ' on' : '') + '"></i><span>' + esc(u.name) + '</span></div>' +
+      '<div class="tl-track" style="--hrs:' + hrs + '">' + track + (x ? '' : '<span class="tl-empty">Did not use HireLab</span>') + '</div>' +
+      '<div class="tl-tot">' + (x ? '<b>' + hm(x.active_min) + '</b><br><span style="font-size:11px;color:var(--muted)">' + fmtClock(x.first) + '–' + fmtClock(x.last) + '</span>' : '<span class="z">—</span>') + '</div></div>';
+  }).join('');
+  if (!U.length) return '<div class="empty">No team members.</div>';
+  return '<div class="tl"><div class="tl-axis"><div></div><div class="ticks">' + ticks + '</div><div></div></div>' + rows + '</div>' +
+    (any ? '' : '<div class="empty">Nobody has used HireLab on this day yet.</div>');
+}
+// multi-day matrix
+function matrix(U, d){
+  var max = 1; U.forEach(function(u){ Object.keys(u.days).forEach(function(k){ max = Math.max(max, u.days[k].active_min); }); });
+  var compact = d.days.length > 16;
+  var head = '<tr><th class="n"></th>' + d.days.map(function(k){ var dt = new Date(k + 'T00:00:00'); return '<th>' + (compact ? dt.getDate() : esc(dlabel(k))) + '<br><span style="font-weight:400">' + WD[(dt.getDay() + 6) % 7].slice(0, compact ? 1 : 3) + '</span></th>'; }).join('') + '<th>Total</th></tr>';
+  var rows = U.map(function(u){
+    return '<tr><td class="n" data-open="' + u.id + '"><i class="dot' + (u.live ? ' on' : '') + '"></i> ' + esc(u.name) + '</td>' + d.days.map(function(k){
+      var x = u.days[k];
+      if (!x) return '<td class="c z" data-tip="<b>' + esc(u.name) + '</b> · ' + esc(dlabel(k, true)) + '<br>No activity">' + (compact ? '' : '—') + '</td>';
+      var bg = seq(x.active_min, max);
+      return '<td class="c" style="background:' + bg + ';color:' + inkOn(bg) + '" data-tip="<b>' + esc(u.name) + '</b> · ' + esc(dlabel(k, true)) + '<br>' + hm(x.active_min) + ' active<br><span class=r>' + fmtClock(x.first) + ' – ' + fmtClock(x.last) + (x.breaks.length ? ' · ' + x.breaks.length + ' break' + (x.breaks.length > 1 ? 's' : '') : '') + '</span>">' + (compact ? '' : (x.active_min >= 60 ? Math.round(x.active_min / 6) / 10 + 'h' : x.active_min + 'm')) + '</td>';
+    }).join('') + '<td style="font-weight:700;font-size:12.5px;padding-left:8px;white-space:nowrap">' + hm(u.active_min) + '</td></tr>';
+  }).join('');
+  return '<div class="mx"><table>' + head + rows + '</table></div><div class="scale">Less<i style="background:' + SEQ[0] + '"></i><i style="background:' + SEQ[4] + '"></i><i style="background:' + SEQ[8] + '"></i><i style="background:' + SEQ[12] + '"></i>More · max ' + hm(max) + ' in a day</div>';
+}
+
+// scorecard table
+var COLS = [
+  ['name','Recruiter'],['span','Start → end'],['active_min','Active'],['moves','Moves'],['added','Added'],['call','Calls'],['whatsapp','WhatsApp'],['email','E-mails'],
+  ['submissions','Submitted'],['interviews','Interviews'],['offers','Offers'],['per_hour','Results / h'],['first_contact_h','1st contact'],['stuck','Cold'],['untouched_jobs','Idle jobs']
+];
+function val(u, k){
+  if (k === 'call' || k === 'whatsapp' || k === 'email') return u.actions[k] || 0;
+  if (k === 'span') return u.avg_first ? hhmmToMin(u.avg_first) : 9999;
+  if (k === 'name') return u.name.toLowerCase();
+  var v = u[k]; return v == null ? (k === 'first_contact_h' ? 9999 : -1) : v;
+}
+function table(U, d){
+  var rows = U.slice().sort(function(a, b){ var x = val(a, st.sort), y = val(b, st.sort); var r = x < y ? -1 : x > y ? 1 : 0; return st.asc ? r : -r; });
+  var maxA = Math.max.apply(null, [1].concat(U.map(function(u){ return u.active_min; })));
+  var z = function(v){ return v ? v : '<span class="z">0</span>'; };
+  var head = '<tr>' + COLS.map(function(c){ return '<th data-sort="' + c[0] + '"' + (st.sort === c[0] ? ' class="s' + (st.asc ? ' asc' : '') + '"' : '') + '>' + c[1] + '</th>'; }).join('') + '</tr>';
+  var body = rows.map(function(u){
+    var span = u.avg_first ? fmtClock(u.avg_first) + ' → ' + fmtClock(u.avg_last) : '<span class="z">—</span>';
+    return '<tr data-open="' + u.id + '"' + (u.empty ? ' class="mute"' : '') + '><td><div class="nm"><i class="dot' + (u.live ? ' on' : '') + '"></i>' + esc(u.name) + '</div></td>' +
+      '<td>' + span + (d.days.length > 1 && u.days_active ? '<div style="font-size:11px;color:var(--muted)">avg · ' + u.days_active + '/' + d.days.length + ' days</div>' : '') + '</td>' +
+      '<td><b>' + (u.active_min ? hm(u.active_min) : '<span class="z">—</span>') + '</b><span class="mini"><i style="width:' + (100 * u.active_min / maxA) + '%"></i></span></td>' +
+      '<td>' + z(u.moves) + '</td><td>' + z(u.added) + '</td><td>' + z(u.actions.call) + '</td><td>' + z(u.actions.whatsapp) + '</td><td>' + z(u.actions.email) + '</td>' +
+      '<td>' + z(u.submissions) + '</td><td>' + z(u.interviews) + '</td><td>' + z(u.offers + (u.placed ? ' +' + u.placed + ' placed' : '')) + '</td>' +
+      '<td>' + (u.per_hour == null ? '<span class="z">—</span>' : u.per_hour) + '</td>' +
+      '<td>' + (u.first_contact_h == null ? '<span class="z">—</span>' : '<span class="pill ' + (u.first_contact_h <= 4 ? 'good' : u.first_contact_h <= 24 ? 'warn' : 'bad') + '">' + (u.first_contact_h < 1 ? Math.round(u.first_contact_h * 60) + ' min' : u.first_contact_h + ' h') + '</span>') + '</td>' +
+      '<td>' + (u.stuck ? '<span class="pill ' + (u.stuck >= 5 ? 'bad' : 'warn') + '">' + u.stuck + '</span>' : '<span class="z">0</span>') + '</td>' +
+      '<td>' + (u.untouched_jobs ? '<span class="pill bad">' + u.untouched_jobs + ' / ' + u.jobs + '</span>' : (u.jobs ? '<span class="z">0 / ' + u.jobs + '</span>' : '<span class="z">—</span>')) + '</td></tr>';
+  }).join('');
+  return '<table class="lb">' + head + body + '</table>';
+}
+
+function stacked(U){
+  var rows = U.filter(function(u){ return u.moves; });
+  if (!rows.length) return '<div class="empty">No stage moves in this period.</div>';
+  var max = Math.max.apply(null, rows.map(function(u){ return u.moves; }));
+  var leg = '<div class="legend">' + STAGES.filter(function(s){ return s[0] !== 'sourced'; }).map(function(s){ return '<span><i style="background:' + s[2] + '"></i>' + s[1] + '</span>'; }).join('') + '</div>';
+  return leg + rows.sort(function(a, b){ return b.moves - a.moves; }).map(function(u){
+    var segs = STAGES.map(function(s){ var n = u.stages[s[0]] || 0; if (!n) return ''; return '<i style="width:' + (100 * n / max) + '%;background:' + s[2] + '" data-tip="<b>' + esc(u.name) + '</b><br>' + s[1] + ': ' + n + ' <span class=r>(' + Math.round(100 * n / u.moves) + '%)</span>"></i>'; }).join('');
+    return '<div class="sb-row"><div class="sb-name" data-open="' + u.id + '" style="cursor:pointer">' + esc(u.name) + '</div><div class="sb-bar">' + segs + '</div><div class="sb-tot num">' + u.moves + '</div></div>';
+  }).join('');
+}
+function effort(U){
+  var rows = U.filter(function(u){ return u.active_min || u.outcome_points; });
+  if (!rows.length) return '<div class="empty">No activity in this period.</div>';
+  var maxH = Math.max.apply(null, rows.map(function(u){ return u.active_min; }).concat([1]));
+  var maxO = Math.max.apply(null, rows.map(function(u){ return u.outcome_points; }).concat([1]));
+  return '<div class="legend"><span><i style="background:var(--s250)"></i>Active time</span><span><i style="background:var(--s600)"></i>Results</span></div>' +
+    rows.sort(function(a, b){ return b.outcome_points - a.outcome_points || b.active_min - a.active_min; }).map(function(u){
+      return '<div class="sb-row" style="grid-template-columns:150px 1fr 80px"><div class="sb-name" data-open="' + u.id + '" style="cursor:pointer">' + esc(u.name) + '</div><div>' +
+        '<div class="sb-bar" style="height:9px;margin-bottom:3px"><i style="width:' + (100 * u.active_min / maxH) + '%;background:var(--s250);border-radius:4px" data-tip="<b>' + esc(u.name) + '</b><br>Active ' + hm(u.active_min) + '"></i></div>' +
+        '<div class="sb-bar" style="height:9px"><i style="width:' + (100 * u.outcome_points / maxO) + '%;background:var(--s600);border-radius:4px" data-tip="<b>' + esc(u.name) + '</b><br>' + u.submissions + ' submitted · ' + u.interviews + ' interviews · ' + u.offers + ' offers · ' + u.placed + ' placed"></i></div></div>' +
+        '<div class="sb-tot num">' + hm(u.active_min) + '<br><b style="color:var(--ink)">' + u.outcome_points + ' pts</b></div></div>';
+    }).join('');
+}
+function heat(d, U){
+  var grid = d.heat;
+  if (st.user) {   // rebuild for one person from their hours only (weekday split is team-level)
+    grid = null;
+  }
+  var h = '<div class="hm"><span></span>';
+  for (var i = 0; i < 24; i++) h += '<span class="t">' + (i % 3 === 0 ? (i % 12 || 12) + (i < 12 ? 'a' : 'p') : '') + '</span>';
+  if (!grid) {
+    var u = U[0] || {hours: []}, max = Math.max.apply(null, [1].concat(u.hours));
+    h += '<span class="l">All</span>' + u.hours.map(function(v, hr){ var c = seq(v, max); return '<i class="c" style="background:' + (c || '#F1EFE9') + '" data-tip="<b>' + clock(hr * 60) + '–' + clock(hr * 60 + 60) + '</b><br>' + hm(v) + ' active"></i>'; }).join('');
+    return h + '</div><div class="scale">Less<i style="background:' + SEQ[0] + '"></i><i style="background:' + SEQ[6] + '"></i><i style="background:' + SEQ[12] + '"></i>More</div>';
+  }
+  var max = 1; grid.forEach(function(r){ r.forEach(function(v){ max = Math.max(max, v); }); });
+  grid.forEach(function(r, wd){
+    h += '<span class="l">' + WD[wd] + '</span>' + r.map(function(v, hr){ var c = seq(v, max); return '<i class="c" style="background:' + (c || '#F1EFE9') + '" data-tip="<b>' + WD[wd] + ' ' + clock(hr * 60) + '–' + clock(hr * 60 + 60) + '</b><br>' + hm(v) + ' active (team total)"></i>'; }).join('');
+  });
+  return h + '</div><div class="scale">Less<i style="background:' + SEQ[0] + '"></i><i style="background:' + SEQ[6] + '"></i><i style="background:' + SEQ[12] + '"></i>More · max ' + hm(max) + ' in an hour slot</div>';
+}
+function hourBars(U){
+  var hrs = []; for (var i = 0; i < 24; i++) hrs.push(U.reduce(function(a, u){ return a + (u.out_hours[i] || 0); }, 0));
+  var tot = hrs.reduce(function(a, b){ return a + b; }, 0);
+  if (!tot) return '<div class="empty">No submissions, interviews or offers moved in this period.</div>';
+  var lo = 7, hi = 22; hrs.forEach(function(v, i){ if (v) { lo = Math.min(lo, i); hi = Math.max(hi, i); } });
+  var max = Math.max.apply(null, hrs);
+  var bars = '', lab = '';
+  for (var h = lo; h <= hi; h++) {
+    bars += '<i style="height:' + (100 * hrs[h] / max) + '%" data-tip="<b>' + clock(h * 60) + '–' + clock(h * 60 + 60) + '</b><br>' + hrs[h] + ' result move' + (hrs[h] === 1 ? '' : 's') + '"></i>';
+    lab += '<span>' + ((h - lo) % 2 === 0 ? (h % 12 || 12) + (h < 12 ? 'a' : 'p') : '') + '</span>';
+  }
+  var best = hrs.indexOf(max);
+  return '<div style="font-size:13px;margin-bottom:8px">Peak: <b>' + clock(best * 60) + '–' + clock(best * 60 + 60) + '</b> · ' + max + ' of ' + tot + ' result moves</div><div class="hb">' + bars + '</div><div class="hbx">' + lab + '</div>';
+}
+function untouched(d){
+  var L = d.untouched.filter(function(x){ return !st.user || x.owners.indexOf(+st.user) >= 0; });
+  if (!L.length) return '<div class="empty">Every active job had activity in the last ' + d.rules.untouched_days + ' days. 👍</div>';
+  return '<div class="list">' + L.map(function(x){
+    return '<div class="li"><div class="m"><b><a href="/#mandate/' + x.mandate_id + '/pipeline" target="_blank" rel="noopener">' + esc(x.job) + '</a></b><span>' + esc(x.client) + (x.owner_names.length ? ' · ' + esc(x.owner_names.join(', ')) : ' · <i>nobody assigned</i>') + '</span></div>' +
+      '<span class="pill ' + (x.days >= 7 ? 'bad' : 'warn') + '">' + (x.never ? 'never worked · ' : '') + x.days + ' days</span></div>';
+  }).join('') + '</div>';
+}
+function stuck(d){
+  var L = d.stuck.filter(function(x){ return !st.user || x.owners.indexOf(+st.user) >= 0; });
+  if (!L.length) return '<div class="empty">No candidate is stuck. 👍</div>';
+  return '<div class="list">' + L.map(function(x){
+    return '<div class="li"><div class="m"><b><a href="/#mandate/' + x.mandate_id + '/profiles/' + x.candidate_id + '" target="_blank" rel="noopener">' + esc(x.name) + '</a></b><span>' + esc(x.stage) + ' · ' + esc(x.job) + (x.owner_names.length ? ' · ' + esc(x.owner_names.join(', ')) : '') + '</span></div>' +
+      '<span class="d" style="color:' + (x.days >= 10 ? 'var(--bad-ink)' : 'var(--warn-ink)') + '">' + x.days + 'd</span></div>';
+  }).join('') + '</div>';
+}
+
+// ── drawer: one recruiter ───────────────────────────────────────────
+async function openUser(id){
+  var d = st.data, u = d.users.find(function(x){ return String(x.id) === String(id); });
+  if (!u) return;
+  $('drh').innerHTML = '<i class="dot' + (u.live ? ' on' : '') + '"></i> ' + esc(u.name);
+  var days = Object.keys(u.days).sort().reverse();
+  var h = '<div class="dk">' +
+    '<div><span>Active</span><b>' + hm(u.active_min) + '</b></div><div><span>Usual hours</span><b style="font-size:14px">' + (u.avg_first ? fmtClock(u.avg_first) + '–' + fmtClock(u.avg_last) : '—') + '</b></div>' +
+    '<div><span>Stage moves</span><b>' + u.moves + '</b></div><div><span>Added</span><b>' + u.added + '</b></div>' +
+    '<div><span>Calls</span><b>' + (u.actions.call || 0) + '</b></div><div><span>WhatsApp</span><b>' + (u.actions.whatsapp || 0) + '</b></div>' +
+    '<div><span>E-mails</span><b>' + (u.actions.email || 0) + '</b></div><div><span>Submitted → interview</span><b>' + u.submissions + ' → ' + u.interviews + '</b></div></div>';
+  if (u.last_seen && !u.live) h += '<div class="note" style="background:#F2F0EA;color:var(--ink2)">Last seen in HireLab: ' + esc(dlabel(u.last_seen.slice(0, 10), true)) + ', ' + fmtClock(u.last_seen.slice(11)) + '</div>';
+  h += '<div class="card"><h2 style="margin-bottom:8px">Day by day</h2>' + (days.length ? '<table class="dd"><tr><th>Day</th><th>First</th><th>Last</th><th>Active</th><th>Breaks · total</th></tr>' + days.map(function(k){
+    var x = u.days[k];
+    return '<tr><td>' + esc(dlabel(k, true)) + '</td><td>' + fmtClock(x.first) + '</td><td>' + fmtClock(x.last) + '</td><td><b>' + hm(x.active_min) + '</b></td><td>' +
+      (x.breaks.length ? '<span data-tip="' + x.breaks.map(function(b){ return clock(b[0]) + ' – ' + clock(b[1]) + ' <span class=r>(' + hm(b[1] - b[0]) + ')</span>'; }).join('<br>') + '" style="border-bottom:1px dotted var(--muted);cursor:help">' + x.breaks.length + ' · ' + hm(x.breaks.reduce(function(a, b){ return a + b[1] - b[0]; }, 0)) + '</span>' : '—') + '</td></tr>';
+  }).join('') + '</table>' : '<div class="empty">No time on HireLab in this period.</div>') + '</div>';
+  h += '<div class="card"><h2 style="margin-bottom:8px">Stage moves</h2>' + (u.moves ? STAGES.map(function(s){
+    var n = u.stages[s[0]] || 0; if (!n) return '';
+    return '<div class="sb-row" style="grid-template-columns:110px 1fr 34px"><div class="sb-name" style="font-weight:500">' + s[1] + '</div><div class="sb-bar"><i style="width:' + (100 * n / u.moves) + '%;background:' + s[2] + ';border-radius:4px"></i></div><div class="sb-tot num">' + n + '</div></div>';
+  }).join('') : '<div class="empty">No stage moves.</div>') + '</div>';
+  h += '<div class="card"><h2 style="margin-bottom:4px">Activity log</h2><div id="dlog"><div class="skel" style="height:120px"></div></div></div>';
+  $('drb').innerHTML = h;
+  $('dr').classList.add('on'); $('ov').classList.add('on');
+  try {
+    var r = await (await fetch('/api/team/user/' + u.id + '/log?from=' + d.from + '&to=' + d.to, {credentials: 'same-origin'})).json();
+    var items = (r && r.items) || [];
+    $('dlog').innerHTML = items.length ? items.map(function(x){
+      var what = x.kind === 'move' ? 'Moved to <b>' + esc(x.to) + '</b> <span style="color:var(--muted)">from ' + esc(x.from) + '</span>' : esc(ACT[x.kind] || x.kind);
+      var who = x.name ? ' · <a href="/#mandate/' + x.mandate_id + '/profiles/' + x.candidate_id + '" target="_blank" rel="noopener">' + esc(x.name) + '</a>' : '';
+      var t = String(x.at || '');
+      return '<div class="ev"><time>' + esc(dlabel(t.slice(0, 10))) + ' ' + fmtClock(t.slice(11, 16)) + '</time><div><span class="k">' + what + '</span>' + who + '</div></div>';
+    }).join('') : '<div class="empty">Nothing recorded in this period.</div>';
+  } catch (e) { $('dlog').innerHTML = '<div class="err">Could not load the log.</div>'; }
+}
+function closeDr(){ $('dr').classList.remove('on'); $('ov').classList.remove('on'); }
+$('ov').onclick = closeDr; document.querySelector('#dr .x').onclick = closeDr;
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeDr(); });
+
+function wire(){
+  document.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(e){ if (e.target.closest('a[href]')) return; openUser(el.getAttribute('data-open')); }); });
+  document.querySelectorAll('[data-sort]').forEach(function(th){ th.addEventListener('click', function(){ var k = th.getAttribute('data-sort'); if (st.sort === k) st.asc = !st.asc; else { st.sort = k; st.asc = (k === 'name' || k === 'span' || k === 'first_contact_h'); } render(); }); });
+  var cp = $('copy'); if (cp) cp.onclick = function(){ navigator.clipboard.writeText(st.data.digest).then(function(){ cp.textContent = '✓ Copied'; setTimeout(function(){ cp.innerHTML = '&#128203; Copy'; }, 1500); }); };
+  var cs = $('csv'); if (cs) cs.onclick = csv;
+}
+function csv(){
+  var d = st.data, rows = [['Recruiter','Days active','Avg start','Avg end','Active minutes','Stage moves','Added','Calls','WhatsApp','E-mails','Submitted','Interviews','Offers','Placed','First contact (h)','Cold candidates','Idle jobs']];
+  users().forEach(function(u){ rows.push([u.name, u.days_active, u.avg_first, u.avg_last, u.active_min, u.moves, u.added, u.actions.call || 0, u.actions.whatsapp || 0, u.actions.email || 0, u.submissions, u.interviews, u.offers, u.placed, u.first_contact_h == null ? '' : u.first_contact_h, u.stuck, u.untouched_jobs]); });
+  var s = rows.map(function(r){ return r.map(function(c){ c = String(c == null ? '' : c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(','); }).join('\n');
+  var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([s], {type: 'text/csv'})); a.download = 'team-activity_' + d.from + '_' + d.to + '.csv'; a.click();
+}
+
+// ── filters ─────────────────────────────────────────────────────────
+function setPreset(p){
+  st.preset = p;
+  document.querySelectorAll('#presets button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-p') === p); });
+  $('custom').classList.toggle('on', p === 'custom');
+}
+document.querySelectorAll('#presets button').forEach(function(b){ b.addEventListener('click', function(){ setPreset(b.getAttribute('data-p')); load(); }); });
+['d1','d2'].forEach(function(id){ $(id).addEventListener('change', function(){ st.from = $('d1').value; st.to = $('d2').value; if (st.from && st.to) load(); }); });
+$('who').addEventListener('change', function(e){ st.user = e.target.value; if (st.data) render(); });
+$('refresh').addEventListener('click', function(){ load(); });
+setPreset(st.preset);
+load();
+})();
+</script>
+</body>
+</html>

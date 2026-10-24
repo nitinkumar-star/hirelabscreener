@@ -2010,6 +2010,12 @@ def get_db():
     conn.execute('PRAGMA journal_mode=DELETE')
     conn.execute('PRAGMA busy_timeout=60000')
     conn.execute('PRAGMA synchronous=FULL')
+    # Team Activity: stamp the logged-in user on new stage_history rows
+    # (per-connection TEMP trigger — see modules/team_activity.py).
+    import sys as _sys
+    _ta = _sys.modules.get('modules.team_activity')
+    if _ta is not None:
+        _ta.attach_actor(conn)
     return conn
 
 def esc_html(s):
