@@ -6781,7 +6781,77 @@ TENANT_SETTINGS = {
     'wa_style_profile',    # DeepSeek-learned summary of how this recruiter writes (for AI drafts)
     'wa_followup_hours',   # hours to wait before AI suggests a follow-up (default 24)
     'wa_auto_categories',  # JSON list of situation categories the agent may auto-send (future)
+    # Isolation fix (Oct 2026): these were GLOBAL rows, so every agency read —
+    # and could overwrite — one shared Email-Agent knowledge base, and
+    # sig_website was missing from the signature keys above.
+    'email_agent_kb', 'email_agent_gaps', 'email_agent_max_fu', 'email_agent_signature',
+    'email_agent_skip_stages', 'sig_website',
 }
+
+# ── Settings isolation (Oct 2026) ──────────────────────────────────────────
+# ROOT CAUSE: a per-tenant key with no row for the company fell back to the
+# GLOBAL settings row. Those global rows are the platform owner's own old
+# values (Gmail + app password, signature, GSTIN, knowledge base …), so a new
+# agency silently used them — its Email Box could even sync the owner's Gmail.
+# And set_setting() wrote any key it did not know to the GLOBAL table, so any
+# agency admin could change platform-wide values for everyone.
+# NOW: only the platform owner's company (and code running without a request)
+# falls back to the global row; other agencies fall back only for the
+# harmless platform defaults below. Global keys are written by the owner only.
+_SHARED_DEFAULT_KEYS = frozenset((
+    'embedding_api_key', 'embedding_base_url', 'embedding_model', 'rag_enabled',   # platform-provided AI search
+    'stale_days', 'promise_hours', 'analytics_stale_days', 'bd_stale_days',
+    'fu1_hours', 'fu2_hours', 'wa_followup_hours', 'campaign_daily_cap',
+    'imap_host', 'ses_region', 'workflow_mode',
+))
+
+
+def _owner_company_ids():
+    """Companies of the platform owner (role 'admin'), cached per request."""
+    try:
+        from flask import g as _g, has_request_context as _hrc
+        if _hrc() and _g.get('_hl_owner_cos') is not None:
+            return _g._hl_owner_cos
+    except Exception:
+        _hrc = None
+    conn = get_db()
+    try:
+        ids = {int(r['company_id']) for r in conn.execute(
+            "SELECT DISTINCT company_id FROM users WHERE role='admin' AND company_id IS NOT NULL")}
+        for r in conn.execute("SELECT id FROM companies WHERE plan='owner'"):
+            ids.add(int(r['id']))
+    except Exception:
+        ids = set()
+    finally:
+        conn.close()
+    try:
+        if _hrc and _hrc():
+            _g._hl_owner_cos = ids
+    except Exception:
+        pass
+    return ids
+
+
+def _global_fallback_ok(key, cid):
+    """May company `cid` see the GLOBAL row of tenant key `key`?"""
+    if not cid or key in _SHARED_DEFAULT_KEYS:
+        return True
+    return int(cid) in _owner_company_ids()
+
+
+def _request_user_is_owner():
+    """True when the current request is the platform owner (super-admin).
+    None when there is no request or nobody is logged in."""
+    try:
+        from flask import has_request_context as _hrc
+        if not _hrc():
+            return None
+        if not session.get('user_id'):
+            return None
+        u = current_user()
+        return bool(u) and u.get('role') == 'admin'
+    except Exception:
+        return None
 
 def _safe_company_id():
     try:
@@ -7177,23 +7247,46 @@ def get_setting(key, default=''):
             if tr is not None:
                 conn.close()
                 return (tr['value'] or '') or default
+            if not _global_fallback_ok(key, cid):
+                conn.close()            # another agency: never the owner's global value
+                return default
     row = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
     conn.close()
     return (row['value'] if row else '') or default
 
 def set_setting(key, value):
     """Write a setting. Per-tenant keys go to this company's own row; global
-    keys go to the shared settings table."""
-    conn = get_db()
+    keys go to the shared settings table.
+
+    Isolation (Oct 2026): inside a web request, only the platform owner may
+    write a GLOBAL key — an agency admin's write of one is refused (returns
+    False) instead of changing the value for every agency. A tenant key in a
+    request that has no company (not logged in) is refused too. Code running
+    without a request (workers, boot) keeps the old behaviour."""
+    owner = _request_user_is_owner()
+    try:
+        from flask import has_request_context as _hrc
+        in_request = _hrc()
+    except Exception:
+        in_request = False
     if key in TENANT_SETTINGS:
         cid = _safe_company_id()
         if cid:
+            conn = get_db()
             conn.execute('INSERT OR REPLACE INTO tenant_settings (company_id,key,value) VALUES (?,?,?)',
                          (cid, key, str(value)))
             conn.commit(); conn.close()
-            return
+            return True
+        if in_request and not owner:
+            print(f'[settings] refused tenant key {key!r} without a company')
+            return False
+    elif in_request and not owner:
+        print(f'[settings] refused global key {key!r}: only the platform owner may change it')
+        return False
+    conn = get_db()
     conn.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (key, str(value)))
     conn.commit(); conn.close()
+    return True
 
 def gemini_embed(text, api_key):
     """Return a list[float] embedding for the given text via Gemini, or None."""
@@ -12196,10 +12289,20 @@ def ai_stats():
         return jsonify({'error': 'DeepSeek API key not set. Add it in Settings.'}), 400
 
     conn = get_db()
-    mandates = conn.execute('SELECT id, role, client, location, status, ctc_min, ctc_max FROM mandates').fetchall()
+    # Isolation fix (Oct 2026): this read EVERY agency's jobs and candidates
+    # and handed them to the AI, so any agency could ask about another's data.
+    _oid = effective_company_id()
+    try:
+        from modules.access import mandate_scope_sql as _msq, candidate_scope_sql as _csq
+        _mf, _mp = _msq('id')
+        _cf, _cp = _csq('mandate_id')
+    except Exception:
+        _mf, _mp, _cf, _cp = '', [], '', []
+    mandates = conn.execute('SELECT id, role, client, location, status, ctc_min, ctc_max FROM mandates '
+                            "WHERE owner_id=? AND COALESCE(status,'')!='central'" + _mf, [_oid] + _mp).fetchall()
     cands = conn.execute('SELECT name, company, designation, experience, ctc_current, '
                          'ctc_expected, notice_period, location, key_skills, stage, mandate_id '
-                         'FROM candidates').fetchall()
+                         'FROM candidates WHERE owner_id=?' + _cf, [_oid] + _cp).fetchall()
     conn.close()
 
     m_lines = []
@@ -12321,12 +12424,18 @@ def health():
 
 # Settings
 @app.route('/api/settings', methods=['GET'])
+@login_required          # was open to anyone on the internet (isolation fix, Oct 2026)
 def get_settings():
     conn = get_db()
     rows = conn.execute('SELECT key,value FROM settings').fetchall()
+    cid = _safe_company_id()
+    if cid and not _global_fallback_ok('', cid):
+        # Another agency: the global rows are the platform owner's own values.
+        # Keep only platform defaults and the (masked below) "is a key set"
+        # flags the UI uses; everything else comes from the agency's own rows.
+        rows = [r for r in rows if r['key'] in _SHARED_DEFAULT_KEYS or _settings_key_is_secret(r['key'])]
     out = {r['key']: r['value'] for r in rows}
     # Overlay this company's own per-tenant settings on top of the global defaults.
-    cid = _safe_company_id()
     if cid:
         trows = conn.execute('SELECT key,value FROM tenant_settings WHERE company_id=?', (cid,)).fetchall()
         for r in trows:
@@ -12340,17 +12449,8 @@ def get_settings():
             pass
     conn.close()
     # SECURITY: never expose platform secrets (AI keys, passwords, tokens) to any tenant UI.
-    def _is_secret(k):
-        kl = (k or '').lower()
-        if kl.endswith('_api_key') or kl.endswith('_apikey') or kl.endswith('api_key'):
-            return True
-        if 'secret' in kl or 'password' in kl or kl.endswith('_pass') or kl.endswith('_token'):
-            return True
-        return kl in ('claude_api_key','deepseek_api_key','groq_api_key','openai_api_key',
-                      'anthropic_api_key','smtp_pass','smtp_password','wa_token',
-                      'wa_access_token','verify_token','flask_secret_key','secret_key')
     for k in list(out.keys()):
-        if _is_secret(k):
+        if _settings_key_is_secret(k):
             # Tell the UI whether a key is configured, without leaking its value.
             out[k] = '__set__' if (out.get(k) or '').strip() else ''
     # A recruiter sees the identity THEIR emails go out with (own Gmail /
@@ -12378,17 +12478,34 @@ def get_settings():
         out['workflow_mode'] = 'agency'
     return jsonify(out)
 
+def _settings_key_is_secret(k):
+    kl = (k or '').lower()
+    if kl.endswith('_api_key') or kl.endswith('_apikey') or kl.endswith('api_key'):
+        return True
+    if 'secret' in kl or 'password' in kl or kl.endswith('_pass') or kl.endswith('_token'):
+        return True
+    return kl in ('claude_api_key', 'deepseek_api_key', 'groq_api_key', 'openai_api_key',
+                  'anthropic_api_key', 'smtp_pass', 'smtp_password', 'wa_token',
+                  'wa_access_token', 'verify_token', 'flask_secret_key', 'secret_key')
+
+
 @app.route('/api/settings', methods=['POST'])
 @login_required
 def save_settings():
     admin = is_admin()
+    skipped = []
     for k, v in (request.json or {}).items():
         # Global billing config can only be changed by the platform owner,
         # so an agency cannot set its own price/GST.
         if k.startswith('billing_') and not admin:
+            skipped.append(k)
             continue
-        set_setting(k, v)   # routes per-tenant keys automatically
-    return jsonify({'ok': True})
+        if set_setting(k, v) is False:   # global key from an agency: refused
+            skipped.append(k)
+    out = {'ok': True}
+    if skipped:
+        out['skipped'] = skipped
+    return jsonify(out)
 
 # Mandates
 @app.route('/api/mandates', methods=['GET'])
@@ -13899,8 +14016,12 @@ def ai_compose_email(cid):
 
     # Get candidate info for context
     conn = get_db()
-    c = conn.execute('SELECT name,company,designation,email,ctc_current,experience,location,mandate_id FROM candidates WHERE id=?', (cid,)).fetchone()
-    cand_info = dict(c) if c else {}
+    c = conn.execute('SELECT name,company,designation,email,ctc_current,experience,location,mandate_id FROM candidates '
+                     'WHERE id=? AND owner_id=?', (cid, effective_company_id())).fetchone()
+    if not c:
+        conn.close()
+        return jsonify({'error': 'Candidate not found'}), 404
+    cand_info = dict(c)
 
     # Get mandate JD for context
     jd_text = ''
@@ -17841,7 +17962,8 @@ def generate_jd():
 @login_required
 def get_mandate_templates(mid):
     conn = get_db()
-    m = conn.execute('SELECT email_templates FROM mandates WHERE id=?', (mid,)).fetchone()
+    m = conn.execute('SELECT email_templates FROM mandates WHERE id=? AND owner_id=?',
+                     (mid, effective_company_id())).fetchone()
     conn.close()
     if not m:
         return jsonify({'error': 'Mandate not found'}), 404
@@ -17858,8 +17980,11 @@ def save_mandate_templates(mid):
     d = request.json or {}
     templates = d.get('templates', [])
     conn = get_db()
-    conn.execute('UPDATE mandates SET email_templates=? WHERE id=?', (json.dumps(templates), mid))
+    n = conn.execute('UPDATE mandates SET email_templates=? WHERE id=? AND owner_id=?',
+                     (json.dumps(templates), mid, effective_company_id())).rowcount
     conn.commit(); conn.close()
+    if not n:
+        return jsonify({'error': 'Mandate not found'}), 404
     return jsonify({'ok': True})
 
 
@@ -17868,6 +17993,9 @@ def save_mandate_templates(mid):
 def candidate_email_history(cid):
     """Return sent email events for a candidate."""
     conn = get_db()
+    if not _tenant_owns_candidate(conn, cid):
+        conn.close()
+        return jsonify({'error': 'Candidate not found'}), 404
     rows = conn.execute(
         "SELECT detail, created_at FROM candidate_events WHERE candidate_id=? AND event_type='email' ORDER BY created_at DESC",
         (cid,)
@@ -20656,7 +20784,8 @@ def interview_message(cid):
     """Build the ready-to-send interview message from the template + details."""
     d = request.json or {}
     conn = get_db()
-    c = conn.execute('SELECT name, mandate_id FROM candidates WHERE id=?', (cid,)).fetchone()
+    c = conn.execute('SELECT name, mandate_id FROM candidates WHERE id=? AND owner_id=?',
+                     (cid, effective_company_id())).fetchone()
     if not c:
         conn.close(); return jsonify({'error': 'Candidate not found'}), 404
     mandate = conn.execute('SELECT role, client FROM mandates WHERE id=?', (c['mandate_id'],)).fetchone()

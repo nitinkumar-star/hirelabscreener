@@ -294,7 +294,8 @@ def test_recruiter_and_other_company_cannot_edit(env):
     s = env
     assert cl(s, RAJ).put(f'/api/team/{RIYA}', json={'display_name': 'hacked'}).status_code == 403
     assert cl(s, RAJ).get(f'/api/team/{RIYA}').status_code == 403
-    assert cl(s, OTHER_ADMIN).put(f'/api/team/{RIYA}', json={'display_name': 'hacked'}).status_code == 403
+    # another company: refused by the company guard as "not found" (Oct 2026), before the 403 check
+    assert cl(s, OTHER_ADMIN).put(f'/api/team/{RIYA}', json={'display_name': 'hacked'}).status_code in (403, 404)
     assert cl(s, RIYA).put(f'/api/team/{RIYA}', json={'username': 'x'}).status_code == 403
     conn = s.get_db()
     assert conn.execute('SELECT display_name FROM users WHERE id=?', (RIYA,)).fetchone()[0] == 'Riya Sharma'

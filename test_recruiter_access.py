@@ -307,7 +307,9 @@ def test_recruiter_daily_work(env):
     assert cl.post('/api/reminders', json={'candidate_id': OWN, 'note': 'call back',
                                            'due_at': server.ts()}).status_code == 200
     # admin modules are closed
-    for path in ('/api/invoices', '/api/emailbox/list', '/api/crm/clients', '/api/bd/home',
+    # (Email Box is not in this list since Oct 2026: a recruiter reads their OWN
+    #  mailbox there — see modules/access.py _ADMIN_ONLY and server._box_where.)
+    for path in ('/api/invoices', '/api/crm/clients', '/api/bd/home',
                  '/api/analytics', '/api/command/tasks', '/api/campaigns', '/api/expenses'):
         assert cl.get(path).status_code == 403, path
     assert cl.post('/api/settings', json={'x': '1'}).status_code == 403
