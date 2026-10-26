@@ -5052,9 +5052,41 @@ def dashboard_tasks_alias():
 
 PROMISE_TAGS = ['Will Callback', 'Call Later', 'Asked to Send JD', 'Interested']
 
+# Speed (Oct 2026): Home asks for the same dashboard numbers every time it is
+# opened. Each answer is kept for 60 seconds per company + user + filters
+# (never shared across tenants or people), so returning to Home is instant;
+# the numbers are at most a minute old.
+_ANALYTICS_CACHE = {}
+_ANALYTICS_TTL = 60
+import threading as _an_threading
+_ANALYTICS_LOCK = _an_threading.Lock()
+
+
 @app.route('/api/analytics')
 @login_required
 def analytics():
+    key = (effective_company_id(), real_user_id(), bool(session.get('view_as_company')),
+           is_company_admin(), request.query_string.decode('utf-8', 'replace'))
+    now_t = time.time()
+    with _ANALYTICS_LOCK:
+        hit = _ANALYTICS_CACHE.get(key)
+    if hit and now_t - hit[0] < _ANALYTICS_TTL:
+        return jsonify(hit[1])
+    resp = _analytics_uncached()
+    try:
+        if getattr(resp, 'status_code', 200) == 200:
+            body = resp.get_json()
+            with _ANALYTICS_LOCK:
+                if len(_ANALYTICS_CACHE) > 300:      # keep memory small
+                    for k in sorted(_ANALYTICS_CACHE, key=lambda k: _ANALYTICS_CACHE[k][0])[:150]:
+                        _ANALYTICS_CACHE.pop(k, None)
+                _ANALYTICS_CACHE[key] = (now_t, body)
+    except Exception:
+        pass
+    return resp
+
+
+def _analytics_uncached():
     """Dashboard analytics. Admin sees the whole company; a recruiter sees only
     their own assigned mandates + candidates. Pass ?scope=me to force self-view."""
     conn = get_db()
@@ -5820,7 +5852,27 @@ def get_tasks():
     for t in tasks:
         counts[t['section']] = counts.get(t['section'], 0) + 1
     counts['total'] = len(tasks)
-    return jsonify({'ok': True, 'tasks': tasks, 'counts': counts})
+    # Speed (Oct 2026): ?stale_limit=N returns only the N most-stale "no activity"
+    # candidates (the list is already oldest-first), while counts stay those of
+    # the FULL list. On a 30k-candidate desk this was 12,000+ stale rows / 4 MB.
+    # Without the parameter nothing changes (mobile app, MCP connector, My Day).
+    stale_total = sum(1 for t in tasks if t['type'] == 'stale')
+    out = {'ok': True, 'counts': counts, 'stale_total': stale_total}
+    _sl = (request.args.get('stale_limit') or '').strip()
+    if _sl.isdigit():
+        _cap, _kept, _trim = int(_sl), 0, []
+        for t in tasks:
+            if t['type'] == 'stale':
+                if _kept >= _cap:
+                    continue
+                _kept += 1
+            _trim.append(t)
+        tasks = _trim
+        out['stale_shown'] = _kept
+    else:
+        out['stale_shown'] = stale_total
+    out['tasks'] = tasks
+    return jsonify(out)
 
 
 @app.route('/api/tasks/snooze', methods=['POST'])
