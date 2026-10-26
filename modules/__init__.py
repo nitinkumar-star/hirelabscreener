@@ -58,6 +58,7 @@ _MODULE_NAMES = [
     'job_pulse',       # Jobs page: status line, whose move, next event, ₹ value, focus, SPOC view, chase, digest
     'finance',         # Invoicing → Profit & Cash: real P&L, GST/TDS, cash forecast, collections, freelancer commission (/finance)
     'team_activity',   # Team Activity: time on app, stage moves by recruiter, actions, insights (/team-activity, admin)
+    'perf',            # Speed: indexes on the core tables (candidates, stage_history, events …)
 ]
 
 _MIGRATIONS = []

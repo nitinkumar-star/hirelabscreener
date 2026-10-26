@@ -161,6 +161,10 @@ def _save_profile(conn, uid, d):
             if f == 'profile_email' and v and not _EMAIL_RX.match(v):
                 return 'Profile email does not look right.'
             conn.execute(f'UPDATE users SET {f}=? WHERE id=?', (v, uid))
+    try:
+        _core().forget_current_user()      # the per-request user cache must not go stale
+    except Exception:
+        pass
     return None
 
 
@@ -320,6 +324,10 @@ def team_member_put(uid):
         if clash:
             conn.close(); return jsonify({'error': 'That login id is already taken'}), 400
         conn.execute('UPDATE users SET username=? WHERE id=?', (un, uid))
+        try:
+            _core().forget_current_user()
+        except Exception:
+            pass
     e2 = _save_profile(conn, uid, d)
     if not e2 and any(k in d for k in ('smtp_email', 'smtp_app_password', 'smtp_display_name')):
         e2 = _save_identity(conn, uid, u.get('company_id'), d, session.get('user_id'))

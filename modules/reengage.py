@@ -178,9 +178,14 @@ def parse_track(tok):
 
 
 # ── who gets mailed ────────────────────────────────────────────────────────
-def build_people(conn, oid, settings=None, now=None):
+def build_people(conn, oid, settings=None, now=None, only_email=None):
     """One entry per e-mail address with its state:
-       due | upcoming | excluded (with reason). Latest job first."""
+       due | upcoming | excluded (with reason). Latest job first.
+
+    only_email (Speed, Oct 2026): build just that one person. The candidate
+    profile asked for one person's status but built the whole database
+    (~1.5 s on 30k candidates). The SQL below only narrows what is read; the
+    grouping and every rule stay exactly the same, so the entry is identical."""
     settings = settings or get_settings(conn, oid)
     now = now or now_ist()
     interval = datetime.timedelta(days=int(settings.get('interval_days') or 180))
@@ -189,17 +194,20 @@ def build_people(conn, oid, settings=None, now=None):
     except Exception:
         pool = 0
     mandates = {m['id']: m for m in _rows(conn, 'SELECT id, role, client, status FROM mandates WHERE owner_id=?', (oid,))}
+    one = (only_email or '').strip().lower()
     cands = _rows(conn, "SELECT id, name, email, mandate_id, stage, created_at, update_submitted_at, "
                         "COALESCE(do_not_email,0) AS dne, COALESCE(reengage_off,0) AS off "
-                        "FROM candidates WHERE owner_id=? AND TRIM(COALESCE(email,''))<>''", (oid,))
+                        "FROM candidates WHERE owner_id=? AND TRIM(COALESCE(email,''))<>''"
+                        + (" AND instr(LOWER(email), ?) > 0" if one else ""), (oid, one) if one else (oid,))
     sent = {}
     for r in _rows(conn, "SELECT email, MAX(sent_at) AS last FROM reengage_log WHERE company_id=? AND status='sent' "
-                         "GROUP BY email", (oid,)):
+                         + ("AND email=? " if one else "") + "GROUP BY email", (oid, one) if one else (oid,)):
         sent[r['email']] = r['last']
     upd_log = {}      # Wave 2: durable update-profile log (update_submitted_at is cleared when its task is dismissed)
     try:
         for r in _rows(conn, "SELECT LOWER(TRIM(email)) AS em, MAX(created_at) AS last FROM talent_updates "
-                             "WHERE company_id=? AND email<>'' GROUP BY em", (oid,)):
+                             "WHERE company_id=? AND email<>'' " + ("AND LOWER(TRIM(email))=? " if one else "")
+                             + "GROUP BY em", (oid, one) if one else (oid,)):
             upd_log[r['em']] = r['last']
     except Exception:
         pass
@@ -208,6 +216,8 @@ def build_people(conn, oid, settings=None, now=None):
         em = c['email'].strip().lower()
         if '@' not in em or '.' not in em.split('@')[-1]:
             continue
+        if one and em != one:
+            continue        # the SQL narrowing above is a superset; keep exact matches only
         groups.setdefault(em, []).append(c)
     out = []
     for em, rows in groups.items():
@@ -746,7 +756,7 @@ def _person_for(conn, oid, cid):
     if not r or not (r['email'] or '').strip():
         return None
     em = r['email'].strip().lower()
-    for p in build_people(conn, oid):
+    for p in build_people(conn, oid, only_email=em):
         if p['email'] == em:
             return p
     return None
