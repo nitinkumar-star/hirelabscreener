@@ -2667,6 +2667,7 @@ async function ntfEnableDesktop(){
 function _ntfMeta(n){
   if (n.kind === 'fl_upload') return { icon:'\uD83D\uDCE5', label:'New CV from freelancer', color:'#0F6E56', bg:'#ECFDF3' };
   if (n.kind === 'mandate_assigned') return { icon:'\uD83D\uDCBC', label:'New position assigned to you', color:'#3538CD', bg:'#EEF0FF' };
+  if (n.kind === 'cand_update') return { icon:'\uD83D\uDCDD', label:'Candidate updated their profile', color:'#B54708', bg:'#FFF6E5' };
   return { icon:'\uD83D\uDCCB', label:'Update on your candidate', color:'#2D6FB3', bg:'#EEF4FF' };
 }
 function _ntfBodyHtml(body, max){
