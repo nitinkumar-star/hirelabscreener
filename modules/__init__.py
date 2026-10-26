@@ -24,6 +24,7 @@ from importlib import import_module
 # Modules to mount, in load order. Add new module filenames here (without .py).
 _MODULE_NAMES = [
     'access',          # recruiter access guard + multi-recruiter assignment (load first)
+    'tenant_guard',    # company guard: an id in the URL must belong to the caller's company (+ suspended agencies)
     'mail_identity',   # per-recruiter Gmail + signature
     'user_templates',  # per-recruiter email / WhatsApp templates
     'call_intel',      # saved call analyses (report + recording)

@@ -1306,8 +1306,21 @@ def wa_webhook_verify():
 
 @bp.route('/webhook', methods=['POST'])
 def wa_webhook_receive():
-    """Receive incoming WhatsApp messages from Meta's webhook."""
-    data = request.json or {}
+    """Receive incoming WhatsApp messages from Meta's webhook.
+
+    Isolation fix (Oct 2026): the POST was accepted from anyone, so a forged
+    "candidate reply" could be injected into any agency's conversation. When
+    the Meta App Secret is configured (env META_APP_SECRET), the
+    X-Hub-Signature-256 header must match, else the call is refused."""
+    import hmac as _hmac, hashlib as _hashlib, os as _os
+    secret = (_os.environ.get('META_APP_SECRET', '') or '').strip()
+    if secret:
+        sig = request.headers.get('X-Hub-Signature-256', '') or ''
+        want = 'sha256=' + _hmac.new(secret.encode(), request.get_data() or b'', _hashlib.sha256).hexdigest()
+        if not _hmac.compare_digest(sig, want):
+            print('[wa_agent] webhook refused: bad or missing X-Hub-Signature-256')
+            return 'Forbidden', 403
+    data = request.get_json(silent=True) or {}
     try:
         for entry in data.get('entry', []):
             for change in entry.get('changes', []):
@@ -1567,6 +1580,11 @@ def add_learned():
 @login_required
 def delete_learned(lid):
     conn = get_db()
-    conn.execute('UPDATE wa_learned_responses SET is_active=0, updated_at=? WHERE id=?', (ts(), lid))
+    # Only this company's own learned replies (company 0 = platform defaults,
+    # shared by every agency, are not switched off from one agency).
+    n = conn.execute('UPDATE wa_learned_responses SET is_active=0, updated_at=? WHERE id=? AND company_id=?',
+                     (ts(), lid, effective_company_id())).rowcount
     conn.commit(); conn.close()
+    if not n:
+        return jsonify({'error': 'Not found'}), 404
     return jsonify({'ok': True})
