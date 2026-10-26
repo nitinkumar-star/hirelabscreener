@@ -201,6 +201,123 @@ def notify_freelancer_upload(candidate_id):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+#  STREAM 3 — a candidate updated their profile through the self-update link
+#  (the direct "request update" link and the re-engagement e-mail both land on
+#  POST /api/public/candidate-update/<token>)  → company admins + the
+#  recruiters of every live job this person is on.     (Oct 2026)
+# ══════════════════════════════════════════════════════════════════════════
+_SELF_UPDATE_PATH = re.compile(r'^/api/public/candidate-update/([^/]+)/?$')
+
+
+def _self_update_recipients(conn, company_id, person_ids):
+    """Admins of the company + recruiters assigned to any active/on-hold job
+    of this person (all their copies). Freelancers are not included."""
+    out = set()
+    for r in conn.execute(
+            "SELECT id FROM users WHERE company_id=? AND (role='admin' OR is_company_admin=1) "
+            "AND COALESCE(status,'approved')='approved'", (company_id,)).fetchall():
+        out.add(int(r['id']))
+    if person_ids:
+        qs = ','.join('?' * len(person_ids))
+        mids = [int(r['mandate_id']) for r in conn.execute(
+            "SELECT DISTINCT c.mandate_id FROM candidates c JOIN mandates m ON m.id=c.mandate_id "
+            "WHERE c.id IN (%s) AND m.owner_id=? AND COALESCE(m.status,'') IN ('active','hold')" % qs,
+            list(person_ids) + [company_id]).fetchall() if r['mandate_id']]
+        if mids:
+            mq = ','.join('?' * len(mids))
+            for r in conn.execute('SELECT assigned_user_id AS u FROM mandates WHERE id IN (%s)' % mq, mids).fetchall():
+                if r['u']:
+                    out.add(int(r['u']))
+            try:
+                for r in conn.execute('SELECT user_id AS u FROM mandate_assignees WHERE mandate_id IN (%s) '
+                                      'AND company_id=? AND is_active=1' % mq, mids + [company_id]).fetchall():
+                    out.add(int(r['u']))
+            except Exception:
+                pass
+    if out:     # only real, approved, non-freelancer users of this company
+        qs = ','.join('?' * len(out))
+        out = {int(r['id']) for r in conn.execute(
+            "SELECT id FROM users WHERE id IN (%s) AND company_id=? AND COALESCE(status,'approved')='approved' "
+            "AND COALESCE(role,'') != ?" % qs, list(out) + [company_id, FREELANCER_ROLE]).fetchall()}
+    return out
+
+
+def notify_candidate_self_update(token):
+    """Called after a successful self-update. Never raises."""
+    try:
+        conn = get_db()
+        try:
+            c = conn.execute(
+                'SELECT c.*, m.role AS m_role, m.client AS m_client, m.status AS m_status '
+                'FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id WHERE c.update_token=?',
+                (token,)).fetchone()
+            if not c:
+                return
+            company_id = int(c['owner_id'] or 0)
+            root = int(c['copied_from'] or 0) or int(c['id'])
+            person_ids = [int(r['id']) for r in conn.execute(
+                'SELECT id FROM candidates WHERE owner_id=? AND (id=? OR copied_from=?)',
+                (company_id, root, root)).fetchall()] or [int(c['id'])]
+            recipients = _self_update_recipients(conn, company_id, person_ids)
+            if not recipients:
+                return
+            # "What changed" — written a moment ago by the Talent Pool module, if present
+            summary, with_cv = '', False
+            try:
+                cutoff = (_now_dt() - datetime.timedelta(minutes=5)).isoformat(timespec='seconds')
+                tu = conn.execute('SELECT summary, with_cv FROM talent_updates WHERE candidate_id=? '
+                                  'AND created_at>=? ORDER BY id DESC LIMIT 1', (c['id'], cutoff)).fetchone()
+                if tu:
+                    summary, with_cv = (tu['summary'] or ''), bool(tu['with_cv'])
+            except Exception:
+                pass
+            if not with_cv:
+                ev = conn.execute("SELECT detail FROM candidate_events WHERE candidate_id=? AND event_type='update' "
+                                  "ORDER BY id DESC LIMIT 1", (c['id'],)).fetchone()
+                with_cv = bool(ev and 'with new resume' in (ev['detail'] or ''))
+            central = (c['m_status'] or '') == 'central' or not c['m_role']
+            position = 'Central Database' if central else (c['m_role'] or '') + (' @ ' + c['m_client'] if c['m_client'] else '')
+            name = c['name'] or 'A candidate'
+            title = name + ' updated their profile' + (' with a new CV' if with_cv else '')
+            now_line = ' · '.join(x for x in [
+                c['designation'] or '', c['company'] or '',
+                (_fmt_num(c['experience']) + ' yrs') if _fmt_num(c['experience']) else '',
+                ('CTC ' + _fmt_num(c['ctc_current']) + ' L') if _fmt_num(c['ctc_current']) else '',
+                ('Exp ' + _fmt_num(c['ctc_expected']) + ' L') if _fmt_num(c['ctc_expected']) else '',
+                ('NP ' + _fmt_num(c['notice_period']) + ' d') if _fmt_num(c['notice_period']) else '',
+            ] if x)
+            lines = [
+                'Candidate: ' + name,
+                'Position: ' + position,
+                ('What changed: ' + _short(summary, 220)) if summary else '',
+                'New CV attached' if with_cv else '',
+                ('Now: ' + now_line) if now_line else '',
+                'Via: profile update link',
+            ]
+            for uid in recipients:
+                _create(conn, company_id, uid, 'cand_update', title, lines,
+                        candidate_id=c['id'], mandate_id=0 if central else c['mandate_id'],
+                        actor_id=0, actor_name=name, merge=True)
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f'[notifications] self-update notify failed: {e}')
+
+
+@bp.after_app_request
+def _ntf_self_update(response):
+    try:
+        if request.method == 'POST' and 200 <= response.status_code < 300:
+            m = _SELF_UPDATE_PATH.match(request.path or '')
+            if m:
+                notify_candidate_self_update(m.group(1))
+    except Exception as e:
+        print(f'[notifications] self-update hook: {e}')
+    return response
+
+
+# ══════════════════════════════════════════════════════════════════════════
 #  STREAM 2 — recruiter action on a freelancer's candidate → freelancer
 # ══════════════════════════════════════════════════════════════════════════
 _CAND_PATH = re.compile(r'^/api/candidates/(\d+)(?:/([a-z0-9-]+))?/?$')
