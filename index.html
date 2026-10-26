@@ -1763,19 +1763,36 @@ let S = {
   ws:{mode:'agency',vocab:{},hidden_modules:[]}
 };
 
-async function req(method,path,body){
+// Speed (Oct 2026): identical GETs that are already on their way share ONE
+// network request (Home used to fetch /api/tasks three times at once). Nothing
+// is cached after the reply arrives, and every caller parses its own copy of
+// the JSON, so no screen can change another screen's data.
+var _reqInflight = {};
+function _reqFetch(method,path,body){
   const opts={method,headers:{'Content-Type':'application/json'},credentials:'include'};
   if(body)opts.body=JSON.stringify(body);
-  try{
-    const r=await fetch(API+path,opts);
-    if(!r.ok && r.status!==200){
-      const txt=await r.text();
-      try{return JSON.parse(txt);}catch(e){return{error:'Server error '+r.status+': '+txt.slice(0,100)};}
-    }
-    return r.json();
-  }catch(e){
-    return{error:'Server not reachable. Check your internet connection and try again. ('+e.message+')'};
+  return fetch(API+path,opts).then(function(r){
+    return r.text().then(function(txt){ return {ok:r.ok, status:r.status, txt:txt}; });
+  }, function(e){ return {neterr:e}; });
+}
+function _reqParse(res){
+  if(res.neterr) return {error:'Server not reachable. Check your internet connection and try again. ('+res.neterr.message+')'};
+  if(!res.ok && res.status!==200){
+    try{return JSON.parse(res.txt);}catch(e){return{error:'Server error '+res.status+': '+res.txt.slice(0,100)};}
   }
+  try{ return JSON.parse(res.txt); }
+  catch(e){ return{error:'Server not reachable. Check your internet connection and try again. ('+e.message+')'}; }
+}
+async function req(method,path,body){
+  if(method==='GET' && !body){
+    var p=_reqInflight[path];
+    if(!p){
+      p=_reqInflight[path]=_reqFetch(method,path,body);
+      p.then(function(){ delete _reqInflight[path]; });
+    }
+    return _reqParse(await p);
+  }
+  return _reqParse(await _reqFetch(method,path,body));
 }
 async function reqFile(path,fd){
   let r;

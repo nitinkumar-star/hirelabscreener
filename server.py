@@ -226,14 +226,42 @@ def any_users_exist():
 
 def current_user():
     """The logged-in user. If admin is 'viewing as' another tenant, the
-    EFFECTIVE workspace is that tenant, but real identity stays admin."""
+    EFFECTIVE workspace is that tenant, but real identity stays admin.
+
+    Speed (Oct 2026): read from the database ONCE per request and kept on
+    flask.g. Before, every effective_company_id() call opened a new DB
+    connection to re-read the same row — 3,338 times in one Analytics request.
+    A copy is returned, so a caller changing the dict cannot alter the cache.
+    Code that changes the logged-in user's own row calls forget_current_user()."""
     uid = session.get('user_id')
     if not uid:
         return None
+    try:
+        from flask import g as _g, has_request_context as _hrc
+        cache = _g if _hrc() else None
+    except Exception:
+        cache = None
+    if cache is not None:
+        hit = cache.get('_hl_cu')
+        if hit is not None and hit[0] == uid:
+            return dict(hit[1]) if hit[1] is not None else None
     conn = get_db()
     u = conn.execute('SELECT * FROM users WHERE id=?', (uid,)).fetchone()
     conn.close()
-    return dict(u) if u else None
+    row = dict(u) if u else None
+    if cache is not None:
+        cache._hl_cu = (uid, row)
+    return dict(row) if row is not None else None
+
+
+def forget_current_user():
+    """Drop the per-request cache after changing the logged-in user's row."""
+    try:
+        from flask import g as _g, has_request_context as _hrc
+        if _hrc():
+            _g.pop('_hl_cu', None)
+    except Exception:
+        pass
 
 def current_company_id():
     """The company (tenant) of the logged-in user, ignoring any view-as."""
@@ -2010,6 +2038,12 @@ def get_db():
     conn.execute('PRAGMA journal_mode=DELETE')
     conn.execute('PRAGMA busy_timeout=60000')
     conn.execute('PRAGMA synchronous=FULL')
+    # Speed (Oct 2026): keep temporary sort/group tables in memory and give each
+    # connection a 4 MB page cache. Durability is unchanged. (Memory-mapped I/O
+    # was tried and left out: every connection maps the file again, and peak
+    # memory with 8 busy users rose past Render Starter's 512 MB.)
+    conn.execute('PRAGMA temp_store=MEMORY')
+    conn.execute('PRAGMA cache_size=-4000')
     # Team Activity: stamp the logged-in user on new stage_history rows
     # (per-connection TEMP trigger — see modules/team_activity.py).
     import sys as _sys
@@ -5094,6 +5128,28 @@ def analytics():
     cands = [dict(c) for c in cand_rows]
     total_pipeline = len([c for c in cands if c['stage'] not in ('Placed', 'Not Interested', 'Not Suitable', 'Client Rejected on Paper', 'Client Rejected After Interview')])
 
+    # ── Speed (Oct 2026): stage-history lookups done ONCE for every candidate
+    # in scope, instead of one query per candidate per metric (that was ~90,000
+    # queries and minutes of waiting on a 30k-candidate database). Each map
+    # reproduces exactly what the old per-candidate query returned:
+    #   _last_placed[cid]  = latest 'Placed' entry  (ORDER BY created_at DESC LIMIT 1)
+    #   _first_at[stage][cid] = first entry, NULL first like ORDER BY ... ASC LIMIT 1
+    # A key is present only when the candidate has such a row at all.
+    _last_placed, _first_at = {}, {'Placed': {}, 'Joined': {}}
+    if mandate_ids:
+        _scope_ids = f'SELECT id FROM candidates WHERE mandate_id IN {_in(mandate_ids)}'
+        for _r in conn.execute(
+                "SELECT candidate_id, MAX(created_at) AS last_at, MIN(created_at) AS first_at, "
+                "SUM(CASE WHEN created_at IS NULL THEN 1 ELSE 0 END) AS nulls, to_stage "
+                "FROM stage_history WHERE to_stage IN ('Placed','Joined') AND candidate_id IN (" + _scope_ids + ") "
+                "GROUP BY candidate_id, to_stage", mandate_ids).fetchall():
+            _first_at[_r['to_stage']][_r['candidate_id']] = None if _r['nulls'] else _r['first_at']
+            if _r['to_stage'] == 'Placed':
+                _last_placed[_r['candidate_id']] = {'created_at': _r['last_at']}
+    _cands_by_mandate = {}
+    for _c in cands:
+        _cands_by_mandate.setdefault(_c['mandate_id'], []).append(_c)
+
     # Total successful placements = Placed + Joined, ALL-TIME (deliberately NOT
     # date-filtered) so the headline matches the actual Placed list and the
     # Command Center. Admin view counts every candidate for the company (even
@@ -5114,7 +5170,7 @@ def analytics():
     fill_days = []
     for c in cands:
         if (c['stage'] or '').strip().lower() in ('placed', 'joined'):
-            sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
+            sh = _last_placed.get(c['id'])
             if sh and c['created_at']:
                 try:
                     d0 = datetime.datetime.fromisoformat(c['created_at'])
@@ -5174,7 +5230,7 @@ def analytics():
     src_counts = {}
     for c in cands:
         if (c['stage'] or '').strip().lower() in ('placed', 'joined'):
-            sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (c['id'],)).fetchone()
+            sh = _last_placed.get(c['id'])
             when = sh['created_at'] if sh else c['updated_at']
             if not _in_range(when):
                 continue
@@ -5199,7 +5255,7 @@ def analytics():
                     if _in_range(uc['created_at']):
                         added += 1
                     if (uc['stage'] or '').strip().lower() in ('placed', 'joined'):
-                        sh = conn.execute("SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage='Placed' ORDER BY created_at DESC LIMIT 1", (uc['id'],)).fetchone()
+                        sh = _last_placed.get(uc['id'])
                         if _in_range(sh['created_at'] if sh else uc['updated_at']):
                             placed += 1
                 iv_rows = conn.execute(f'SELECT created_at FROM interviews WHERE mandate_id IN {_in(u_mids)}', u_mids).fetchall()
@@ -5213,7 +5269,7 @@ def analytics():
     for m in mandates:
         if (m.get('status') or 'active') != 'active':
             continue
-        m_cands = [c for c in cands if c['mandate_id'] == m['id']]
+        m_cands = _cands_by_mandate.get(m['id'], [])
         if not m_cands:
             continue
         latest = None
@@ -5250,11 +5306,9 @@ def analytics():
     #  `cands` and `mandates`, already loaded above.
     # ══════════════════════════════════════════════════════════════════════
     def _first_entry(cand_id, stage):
-        """When this candidate FIRST reached a stage (not the latest re-entry)."""
-        row = conn.execute(
-            'SELECT created_at FROM stage_history WHERE candidate_id=? AND to_stage=? '
-            'ORDER BY created_at ASC LIMIT 1', (cand_id, stage)).fetchone()
-        return row['created_at'] if row else None
+        """When this candidate FIRST reached a stage (not the latest re-entry).
+        Read from the map built once above (was one query per call)."""
+        return _first_at[stage].get(cand_id)
 
     def _parse(x):
         try:
@@ -5268,6 +5322,11 @@ def analytics():
 
     for c in cands:
         stage = (c['stage'] or '').strip().lower()
+        # Nothing below can count a candidate who never reached Placed/Joined
+        # (no history row and not at that stage now) — skip them cheaply.
+        if stage not in ('placed', 'joined') and c['id'] not in _first_at['Placed'] \
+                and c['id'] not in _first_at['Joined']:
+            continue
         placed_at = _first_entry(c['id'], 'Placed')
         joined_at = _first_entry(c['id'], 'Joined')
 
@@ -5311,8 +5370,8 @@ def analytics():
         if (m['status'] or '').lower() != 'active':
             continue
         want = int((m['headcount'] if 'headcount' in mk else 1) or 1)
-        got = len([c for c in cands if c['mandate_id'] == m['id']
-                   and (c['stage'] or '').strip().lower() == 'joined'])
+        got = len([c for c in _cands_by_mandate.get(m['id'], [])
+                   if (c['stage'] or '').strip().lower() == 'joined'])
         seats_total += want
         seats_open += max(0, want - got)
         opened = _parse(m['created_at'])
@@ -5330,6 +5389,18 @@ def analytics():
     # envelope, and until now nothing recorded the offer at all.
     within = over = unknown = 0
     offer_vals, over_by = [], []
+    # Latest released/accepted offer per candidate, read once (was one query
+    # per placed candidate). Same rule as before: highest offer id wins.
+    _offer_by = {}
+    try:
+        for _r in conn.execute(
+                "SELECT o.candidate_id, o.offered_ctc FROM offers o JOIN ("
+                "SELECT candidate_id, MAX(id) AS mid FROM offers WHERE company_id=? "
+                "AND status IN ('released','accepted') GROUP BY candidate_id) x ON o.id = x.mid",
+                (cid,)).fetchall():
+            _offer_by[_r['candidate_id']] = _r['offered_ctc']
+    except sqlite3.OperationalError:
+        _offer_by = {}
     for c in cands:
         if (c['stage'] or '').strip().lower() not in ('placed', 'joined'):
             continue
@@ -5337,15 +5408,9 @@ def analytics():
         # candidates.ctc_offered is the deprecated Wave-7 column, kept as a
         # fallback so figures recorded before the offers table still count.
         offered = 0
-        try:
-            orow = conn.execute(
-                "SELECT offered_ctc FROM offers WHERE candidate_id=? AND company_id=? "
-                "AND status IN ('released','accepted') ORDER BY id DESC LIMIT 1",
-                (c['id'], effective_company_id())).fetchone()
-            if orow and orow['offered_ctc']:
-                offered = float(orow['offered_ctc'])
-        except sqlite3.OperationalError:
-            offered = 0
+        _oc = _offer_by.get(c['id'])
+        if _oc:
+            offered = float(_oc)
         if not offered:
             try:
                 offered = float(c['ctc_offered'] or 0)
@@ -5571,6 +5636,28 @@ def get_tasks():
         [uid, central_mid] + mandate_scope_sql('c.mandate_id')[1]
     ).fetchall()
 
+    # ── Speed (Oct 2026): the latest event and the latest stage-history time
+    # for EVERY candidate above, read in two queries instead of two queries
+    # per candidate (45,000 queries / ~2 minutes on a 30k-candidate DB).
+    # Same rows as before: the newest by created_at; for two events in the same
+    # second, the one written first (what the old full-table query returned).
+    _cscope = ("SELECT c.id FROM candidates c LEFT JOIN mandates m ON m.id=c.mandate_id "
+               "WHERE c.owner_id=? AND m.status='active' AND m.id != ?" + mandate_scope_sql('c.mandate_id')[0])
+    _cparams = [uid, central_mid] + mandate_scope_sql('c.mandate_id')[1]
+    _last_ev = {}
+    for _r in conn.execute(
+            "SELECT candidate_id, event_type, detail, created_at FROM ("
+            "SELECT e.candidate_id, e.event_type, e.detail, e.created_at, ROW_NUMBER() OVER ("
+            "PARTITION BY e.candidate_id ORDER BY e.created_at DESC, e.rowid ASC) AS rn "
+            "FROM candidate_events e WHERE e.candidate_id IN (" + _cscope + ")) WHERE rn = 1",
+            _cparams).fetchall():
+        _last_ev[_r['candidate_id']] = _r
+    _last_stg = {}
+    for _r in conn.execute(
+            "SELECT candidate_id, MAX(created_at) AS created_at FROM stage_history "
+            "WHERE candidate_id IN (" + _cscope + ") GROUP BY candidate_id", _cparams).fetchall():
+        _last_stg[_r['candidate_id']] = _r
+
     # Stale follow-up only applies to candidates still in an active, meaningful
     # stage — dead/terminal-negative stages are not worth chasing.
     STALE_FOLLOWUP_STAGES = {
@@ -5587,14 +5674,9 @@ def get_tasks():
             except Exception:
                 pass
 
-        # Most recent event (any kind) for this candidate
-        ev = conn.execute(
-            "SELECT event_type, detail, created_at FROM candidate_events "
-            "WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1", (c['id'],)
-        ).fetchone()
-        stg = conn.execute(
-            "SELECT created_at FROM stage_history WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1", (c['id'],)
-        ).fetchone()
+        # Most recent event (any kind) and stage change for this candidate
+        ev = _last_ev.get(c['id'])
+        stg = _last_stg.get(c['id'])
 
         candidates_ts = [c['updated_at'] or '']
         if ev: candidates_ts.append(ev['created_at'] or '')
@@ -12989,6 +13071,7 @@ def update_my_profile():
         if field in d:
             conn.execute(f'UPDATE users SET {field}=? WHERE id=?', (d[field], uid))
     conn.commit(); conn.close()
+    forget_current_user()
     return jsonify({'ok': True})
 
 
@@ -13736,7 +13819,7 @@ def list_candidates(mid):
     conn = get_db()
     if not _tenant_owns_mandate(conn, mid):
         conn.close(); return jsonify({'error': 'Not found'}), 404
-    rows = conn.execute('SELECT * FROM candidates WHERE mandate_id=? ORDER BY created_at DESC', (mid,)).fetchall()
+    rows = conn.execute('SELECT * FROM candidates WHERE mandate_id=? ORDER BY created_at DESC, id ASC', (mid,)).fetchall()   # id: same order for equal times as before the indexes
     conn.close()
     out = []
     for r in rows:
@@ -22546,11 +22629,23 @@ def central_search():
     conn = get_db()
     try:
         total = conn.execute('SELECT COUNT(DISTINCT ' + pkey + ') n ' + base, params).fetchone()['n']
-        rows = conn.execute('SELECT * FROM (SELECT c.*, m.role AS mandate_role, m.client AS mandate_client, '
-                            'm.status AS mandate_status, ' + pkey + ' AS person_key, '
-                            'ROW_NUMBER() OVER (PARTITION BY ' + pkey + ' ORDER BY c.updated_at DESC, c.id DESC) AS _rn '
-                            + base + ') t WHERE t._rn=1 ORDER BY ' + order + ' LIMIT ? OFFSET ?',
-                            params + [per_page, (page - 1) * per_page]).fetchall()
+        # Speed (Oct 2026): pick the page using only the light columns the sort
+        # needs, then read the full rows for just those ids. Before, every
+        # matching row was copied in full (CV text, AI vectors) into the sort —
+        # ~1.8 s on 30k candidates. Same rows, same order.
+        page_ids = [r['id'] for r in conn.execute(
+            'SELECT t.id FROM (SELECT c.id, c.name, c.location, c.experience, c.ctc_current, c.ctc_expected, '
+            'c.stage, c.created_at, c.notice_period, c.updated_at, c.company, m.role AS mandate_role, '
+            'ROW_NUMBER() OVER (PARTITION BY ' + pkey + ' ORDER BY c.updated_at DESC, c.id DESC) AS _rn '
+            + base + ') t WHERE t._rn=1 ORDER BY ' + order + ' LIMIT ? OFFSET ?',
+            params + [per_page, (page - 1) * per_page]).fetchall()]
+        rows = []
+        if page_ids:
+            _full = {r['id']: r for r in conn.execute(
+                'SELECT c.*, m.role AS mandate_role, m.client AS mandate_client, m.status AS mandate_status, '
+                + pkey + ' AS person_key FROM candidates c LEFT JOIN mandates m ON c.mandate_id = m.id '
+                'WHERE c.id IN (%s)' % ','.join('?' * len(page_ids)), page_ids).fetchall()}
+            rows = [_full[i] for i in page_ids if i in _full]
         others = _talent_other_jobs(conn, [r['person_key'] for r in rows])
     finally:
         conn.close()
