@@ -65,7 +65,13 @@ def pitch_evaluation(conn, cid, mid):
         return None
     try:
         ev = json.loads(r['evaluation'])
-        return ev if isinstance(ev, dict) else None
+        if not isinstance(ev, dict):
+            return None
+        try:                                   # only what a call needs (keeps the prompt short)
+            from modules.pitch import call_view
+            return call_view(ev)
+        except Exception:
+            return ev
     except Exception:
         return None
 

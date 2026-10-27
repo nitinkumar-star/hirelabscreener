@@ -88,6 +88,7 @@ def _ensure_schema(conn):
 @register_migration
 def migrate(conn):
     _ensure_schema(conn)
+    _ensure_override_schema(conn)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -216,7 +217,15 @@ Return ONLY a JSON object, no prose, in exactly this shape:
   "strengths": ["<specific evidence from the profile that matches a job need>", ...],
   "gaps": ["<a job requirement the profile does not show, or shows weakly>", ...],
   "to_verify": ["<a claim in the profile/resume that matters for this job and must be confirmed on the call>", ...],
-  "location_fit": "<one short line: candidate location vs job location, relocation needed or not, or unknown>"
+  "location_fit": "<one short line: candidate location vs job location, relocation needed or not, or unknown>",
+  "must_have_check": [
+    {"requirement": "<one must-have of the job>", "kind": "skill" | "experience" | "location" | "other",
+     "status": "MET" | "NOT_MET" | "UNCLEAR",
+     "evidence": "<the profile/resume fact behind the status, quoted or paraphrased; or what is missing>"}
+  ],
+  "shortlist_reasons": ["<why this profile CAN go to the client: a job need + the profile fact that meets it>", ...],
+  "reject_reasons": ["<why it should NOT go: a job need + what the profile lacks or contradicts>", ...],
+  "client_summary": "<3-4 sentences in professional English for the CLIENT: who the candidate is and why they fit THIS role, using only facts from the profile>"
 }
 
 RULES
@@ -224,7 +233,17 @@ RULES
 - Only use facts present in the inputs. If something is unknown, put it in gaps or to_verify, never assume.
 - Must-have skills weigh far more than good-to-have.
 - 3-6 items in strengths, 2-6 in gaps, 2-5 in to_verify.
-- Never mention salary, CTC or budget."""
+- must_have_check: ONE row for EVERY must-have skill listed in the job, plus one row for the required
+  experience range (if given) and one for the job location (if given). If the job lists no must-have
+  skills, use the 3-5 most essential requirements of the JD instead.
+  MET = the profile/resume clearly shows it. NOT_MET = the profile clearly lacks it or contradicts it
+  (e.g. 3 years when 6-10 are required, a different domain, a firm "not willing to relocate").
+  UNCLEAR = the inputs simply do not say — never guess MET or NOT_MET.
+- shortlist_reasons: 2-4 items when the profile meets the job's core needs, else []. reject_reasons:
+  one item per NOT_MET must-have (plus any other serious mismatch), else [].
+- client_summary: factual and neutral — no gaps, no weaknesses, no score, no flattery words
+  (impressive, perfect, great fit), no contact details.
+- Never mention salary, CTC or budget anywhere."""
 
 
 PAUSE = '(PAUSE)'   # marker the model puts wherever the caller must stop and listen
@@ -430,7 +449,98 @@ def _normalise_eval(e):
         e[k] = [str(x) for x in v if str(x).strip()][:8] if isinstance(v, list) else []
     e['summary'] = str(e.get('summary') or '')
     e['location_fit'] = str(e.get('location_fit') or '')
+    rows = []
+    for r in (e.get('must_have_check') if isinstance(e.get('must_have_check'), list) else [])[:14]:
+        if not isinstance(r, dict) or not str(r.get('requirement') or '').strip():
+            continue
+        st = str(r.get('status') or '').strip().upper().replace(' ', '_')
+        st = st if st in ('MET', 'NOT_MET', 'UNCLEAR') else 'UNCLEAR'
+        kind = str(r.get('kind') or 'other').strip().lower()
+        rows.append({'requirement': str(r['requirement']).strip()[:160],
+                     'kind': kind if kind in ('skill', 'experience', 'location', 'other') else 'other',
+                     'status': st, 'evidence': str(r.get('evidence') or '').strip()[:300]})
+    e['must_have_check'] = rows
+    for k in ('shortlist_reasons', 'reject_reasons'):
+        v = e.get(k)
+        e[k] = [str(x).strip() for x in v if str(x).strip()][:6] if isinstance(v, list) else []
+    cs = _clean_text(e.get('client_summary'))          # no money figure / flattery for the client
+    e['client_summary'] = cs[:1200]
+    e['decision'] = decide(e)
     return e
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  DECISION — "can this profile go to the client?"
+#  A fixed rule over the must-have check, not the model's mood, so two
+#  similar profiles always get the same answer and the reason is visible.
+# ══════════════════════════════════════════════════════════════════════════
+SHORTLIST_MIN_SCORE = 70      # all must-haves met AND at least this score -> shortlisted
+NO_CHECK_REJECT_BELOW = 45    # job without a usable must-have list: score decides
+
+
+def decide(e):
+    """{'status': shortlisted|rejected|hold, 'shareable': bool, 'rule': why, 'verify': [...]}"""
+    rows = e.get('must_have_check') or []
+    score = int(e.get('match_score') or 0)
+    missing = [r['requirement'] for r in rows if r['status'] == 'NOT_MET']
+    unclear = [r['requirement'] for r in rows if r['status'] == 'UNCLEAR']
+    if missing:
+        return {'status': 'rejected', 'shareable': False, 'verify': [],
+                'rule': 'Must-have not met: ' + '; '.join(missing[:4])}
+    if unclear:
+        return {'status': 'hold', 'shareable': False, 'verify': unclear,
+                'rule': 'Confirm on the call first: ' + '; '.join(unclear[:4])}
+    if rows:
+        if score >= SHORTLIST_MIN_SCORE:
+            return {'status': 'shortlisted', 'shareable': True, 'verify': [],
+                    'rule': f'All {len(rows)} must-haves met and match score {score}/100'}
+        return {'status': 'hold', 'shareable': False, 'verify': [],
+                'rule': f'All must-haves met, but the overall match is only {score}/100 '
+                        f'(needs {SHORTLIST_MIN_SCORE}) — review the gaps before sharing'}
+    # no must-have list could be built (empty job): fall back to the score
+    if score >= SHORTLIST_MIN_SCORE:
+        return {'status': 'shortlisted', 'shareable': True, 'verify': [],
+                'rule': f'Match score {score}/100 (the job has no must-have list to check)'}
+    if score < NO_CHECK_REJECT_BELOW:
+        return {'status': 'rejected', 'shareable': False, 'verify': [],
+                'rule': f'Match score {score}/100 (the job has no must-have list to check)'}
+    return {'status': 'hold', 'shareable': False, 'verify': [],
+            'rule': f'Match score {score}/100 — add must-have skills to the job for a clear decision'}
+
+
+def call_view(ev):
+    """The parts of an evaluation a call needs (script writer, call analysis):
+    no client summary / reasons, so the prompt stays short."""
+    keep = ('match_score', 'verdict', 'summary', 'strengths', 'gaps', 'to_verify', 'location_fit', 'must_have_check')
+    return {k: ev[k] for k in keep if k in ev}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  RECRUITER OVERRIDE of the decision (with a reason) — per candidate + job,
+#  kept across re-generations. Additive table; the latest active row wins.
+# ══════════════════════════════════════════════════════════════════════════
+OVERRIDE_TABLE = 'hl_pitch_decision_override'
+DECISIONS = ('shortlisted', 'rejected', 'hold')
+
+
+def _ensure_override_schema(conn):
+    conn.execute(f'''CREATE TABLE IF NOT EXISTS {OVERRIDE_TABLE} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER DEFAULT 0, candidate_id INTEGER DEFAULT 0, mandate_id INTEGER DEFAULT 0,
+        status TEXT DEFAULT '', reason TEXT DEFAULT '', ai_status TEXT DEFAULT '',
+        by_id INTEGER DEFAULT 0, by_name TEXT DEFAULT '', created_at TEXT DEFAULT '',
+        is_active INTEGER DEFAULT 1)''')
+    conn.execute(f'CREATE INDEX IF NOT EXISTS idx_pdo_cand ON {OVERRIDE_TABLE}(candidate_id, mandate_id, is_active)')
+
+
+def _override(conn, cid, mid):
+    try:
+        r = conn.execute(f'SELECT status, reason, ai_status, by_name, created_at FROM {OVERRIDE_TABLE} '
+                         'WHERE candidate_id=? AND mandate_id=? AND company_id=? AND is_active=1 '
+                         'ORDER BY id DESC LIMIT 1', (cid, mid or 0, effective_company_id())).fetchone()
+    except Exception:
+        return None
+    return dict(r) if r else None
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -474,8 +584,9 @@ def _row_out(r, fp_now):
     except Exception:
         return None
     stale = bool(r['fingerprint']) and r['fingerprint'] != fp_now
+    # 'decision' exists from Oct 2026 on; an older evaluation shows a re-generate nudge instead
     return {'evaluation': ev, 'pitch': pt, 'lang': r['lang'], 'at': r['created_at'],
-            'by': r['created_by_name'], 'stale': stale}
+            'by': r['created_by_name'], 'stale': stale, 'has_decision': bool(ev.get('decision'))}
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -510,6 +621,8 @@ def get_pitch(cid):
                                 (cid, c['mandate_id'], effective_company_id())).fetchall()
             step = 'fingerprint'
             fp_now = _fingerprint(conn, c, m) if rows else ''
+            step = 'override'
+            ovr = _override(conn, cid, c['mandate_id'])
             conn.commit()
         finally:
             conn.close()
@@ -518,7 +631,7 @@ def get_pitch(cid):
             if r['lang'] == lang:
                 out = _row_out(r, fp_now)
                 if out:
-                    return jsonify({'ok': True, 'cached': True, 'available': have, **out})
+                    return jsonify({'ok': True, 'cached': True, 'available': have, 'override': ovr, **out})
         return jsonify({'ok': True, 'cached': False, 'available': have,
                         'has_mandate': bool(m), 'has_jd': bool(m and (m['jd'] or '').strip())})
     except Exception as e:
@@ -564,13 +677,13 @@ def generate_pitch(cid):
             step = 'ai-evaluate'
             ev, _ = _ask_json(ds_key, EVAL_PROMPT,
                               'JOB\n' + role_txt + '\n\nCANDIDATE\n' + cand_txt,
-                              0.2, 1000, 'pitch-evaluate')
+                              0.2, 1800, 'pitch-evaluate')
             ev = _normalise_eval(ev)
 
             step = 'ai-write-pitch'
             pitch_user = (f"Recruiter name: {recruiter}\nAgency name: {agency}\n\n"
                           f"JOB\n{role_txt}\n\nCANDIDATE\n{cand_txt}\n\n"
-                          f"EVALUATION (for you only — never read it out)\n{json.dumps(ev, ensure_ascii=False)}")
+                          f"EVALUATION (for you only — never read it out)\n{json.dumps(call_view(ev), ensure_ascii=False)}")
             system = _pitch_prompt(lang)
             pt, raw = _ask_json(ds_key, system, pitch_user, 0.6, 2600, 'pitch-write')
             step = 'check-rules'
@@ -608,10 +721,70 @@ def generate_pitch(cid):
             conn.commit()
         finally:
             conn.close()
+        conn = get_db()
+        try:
+            ovr = _override(conn, cid, mandate_id)
+        finally:
+            conn.close()
         return jsonify({'ok': True, 'cached': True, 'evaluation': ev, 'pitch': pt, 'lang': lang,
-                        'at': at, 'by': recruiter, 'stale': False})
+                        'at': at, 'by': recruiter, 'stale': False, 'has_decision': True, 'override': ovr})
     except Exception as e:
         return _internal(step, e)
+
+
+@bp.route('/candidates/<int:cid>/pitch/decision', methods=['POST', 'DELETE'])
+@login_required
+def set_pitch_decision(cid):
+    """Recruiter overrides the AI decision (with a reason), or DELETE goes back to the AI's."""
+    conn = get_db()
+    try:
+        c, m = _load(conn, cid)
+        if not c:
+            return jsonify({'error': 'Candidate not found'}), 404
+        _ensure_override_schema(conn)
+        u = current_user() or {}
+        who = (u.get('display_name') or u.get('username') or '').strip()
+        now = ts()
+        mid = c['mandate_id'] or 0
+        conn.execute(f'UPDATE {OVERRIDE_TABLE} SET is_active=0 WHERE candidate_id=? AND mandate_id=? '
+                     'AND company_id=? AND is_active=1', (cid, mid, effective_company_id()))
+        if request.method == 'DELETE':
+            note = 'Pitch decision: back to the AI decision'
+            ovr = None
+        else:
+            d = request.get_json(silent=True) or {}
+            status = str(d.get('status') or '').strip().lower()
+            reason = str(d.get('reason') or '').strip()
+            if status not in DECISIONS:
+                return jsonify({'error': 'Choose Shortlisted, Rejected or Hold.'}), 400
+            if len(reason) < 5:
+                return jsonify({'error': 'Write a short reason for changing the decision.'}), 400
+            ai = ''
+            try:
+                r = conn.execute(f'SELECT evaluation FROM {PITCH_TABLE} WHERE candidate_id=? AND mandate_id=? '
+                                 'AND owner_id=? ORDER BY id DESC LIMIT 1', (cid, mid, effective_company_id())).fetchone()
+                ai = ((json.loads(r['evaluation']) or {}).get('decision') or {}).get('status', '') if r else ''
+            except Exception:
+                ai = ''
+            conn.execute(f'INSERT INTO {OVERRIDE_TABLE} (company_id, candidate_id, mandate_id, status, reason, ai_status, '
+                         'by_id, by_name, created_at, is_active) VALUES (?,?,?,?,?,?,?,?,?,1)',
+                         (effective_company_id(), cid, mid, status, reason[:500], ai, real_user_id() or 0, who, now))
+            note = f'Pitch decision set to {status.title()} by {who}: {reason[:300]}'
+            ovr = {'status': status, 'reason': reason[:500], 'ai_status': ai, 'by_name': who, 'created_at': now}
+        try:
+            conn.execute('INSERT INTO candidate_events (candidate_id, event_type, detail, created_at) VALUES (?,?,?,?)',
+                         (cid, 'note', note, now))
+        except Exception:
+            pass
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        _core().log_activity('pitch.decision', note, entity_type='candidate', entity_id=cid)
+    except Exception:
+        pass
+    return jsonify({'ok': True, 'override': ovr})
+
 
 
 @bp.route('/pitch/diagnose', methods=['GET'])
