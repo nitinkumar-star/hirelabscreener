@@ -12783,8 +12783,9 @@ def _crm_client_row(conn, company_id, crm_client_id):
     The one place that validates a client id supplied by the browser."""
     if not crm_client_id:
         return None
+    # Jobs and invoices belong to CLIENTS; a BD-workspace prospect is converted first (Oct 2026).
     return conn.execute('SELECT id, name FROM crm_clients WHERE id=? AND company_id=? AND is_active=1 '
-                        'AND COALESCE(is_internal,0)=0', (crm_client_id, company_id)).fetchone()
+                        "AND COALESCE(is_internal,0)=0 AND COALESCE(record_type,'client')='client'", (crm_client_id, company_id)).fetchone()
 
 
 def _match_crm_client_by_name(conn, company_id, client_name):
@@ -12793,8 +12794,8 @@ def _match_crm_client_by_name(conn, company_id, client_name):
     if not target:
         return 0
     rows = conn.execute(
-        'SELECT id, name FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0',
-        (company_id,)).fetchall()
+        "SELECT id, name FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0 "
+        "AND COALESCE(record_type,'client')='client'", (company_id,)).fetchall()
     for r in rows:
         if _norm_client_name(r['name']) == target:
             return r['id']
@@ -12813,10 +12814,10 @@ def link_mandate_client(mid):
         conn.close(); return jsonify({'error': 'Mandate not found'}), 404
     # Validate the client belongs to this tenant (if non-zero)
     if crm_client_id:
-        cl = conn.execute('SELECT id FROM crm_clients WHERE id=? AND company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0',
-                          (crm_client_id, effective_company_id())).fetchone()
+        cl = conn.execute("SELECT id FROM crm_clients WHERE id=? AND company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0 "
+                          "AND COALESCE(record_type,'client')='client'", (crm_client_id, effective_company_id())).fetchone()
         if not cl:
-            conn.close(); return jsonify({'error': 'CRM client not found'}), 404
+            conn.close(); return jsonify({'error': 'CRM client not found (a BD prospect must be converted to a client first)'}), 404
     conn.execute('UPDATE mandates SET crm_client_id=? WHERE id=?', (crm_client_id, mid))
     _name = ''
     if crm_client_id:
@@ -17095,7 +17096,7 @@ def _work_status_brief(conn, oid):
             per_month = gap / months_left if months_left else gap
             # active clients + open mandates for growth context
             try:
-                nclients = conn.execute("SELECT COUNT(*) n FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0", (oid,)).fetchone()['n']
+                nclients = conn.execute("SELECT COUNT(*) n FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0 AND COALESCE(record_type,'client')='client'", (oid,)).fetchone()['n']
             except Exception:
                 nclients = 0
             lines.append(f"TARGET & GAP (think strategically about this every day): this-year target {_r(yt)}, "
@@ -17839,7 +17840,7 @@ def crm_clients_billing():
             "  CASE WHEN COALESCE(bill_address,'')!='' THEN bill_address ELSE COALESCE(address,'') END AS bill_address, "
             "  CASE WHEN COALESCE(bill_state,'')!='' THEN bill_state ELSE COALESCE(state,'') END AS bill_state, "
             "  COALESCE(bill_state_code,'') AS bill_state_code "
-            "FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0 ORDER BY name",
+            "FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0 AND COALESCE(record_type,'client')='client' ORDER BY name",
             (effective_company_id(),)).fetchall()
     except Exception:
         conn.close()

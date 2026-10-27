@@ -201,7 +201,15 @@ def test_opportunity_lifecycle_and_won_activates_client(srv):
     assert q(cl, 'companies', q='insight')['records'][0]['status'] == 'prospect'
     o = patch(cl, f'/api/bd/records/opportunities/{o["id"]}', {'stage': 'won'}).get_json()['record']
     assert o['won_at'] and o['probability'] == 100
-    assert q(cl, 'companies', q='insight')['records'][0]['status'] == 'active'
+    # won = agreement signed: the company left the BD workspace for Client CRM (Oct 2026)
+    assert q(cl, 'companies', q='insight')['total'] == 0
+    crm = cl.get('/api/crm/clients?q=insight').get_json()['clients']
+    assert crm and crm[0]['status'] == 'active' and crm[0]['record_type'] == 'client'
+    # the won deal stays visible as BD history
+    assert q(cl, 'opportunities', q='insight')['records'][0]['stage'] == 'won'
+    # (put it back so the following tests keep their prospect)
+    assert cl.post(f'/api/crm/clients/{cid}/move-to-bd').status_code == 200
+    assert q(cl, 'companies', q='insight')['records'][0]['status'] == 'prospect'
 
     conn = server.get_db()
     acts = [r['action'] for r in conn.execute("SELECT action FROM activity_log WHERE action LIKE 'opportunity.%'")]
@@ -514,7 +522,9 @@ def test_home_dashboard(srv):
     o1 = post(adm, '/api/bd/records/opportunities', {'client_id': cid, 'name': 'HD lead', 'amount': 100000, 'close_date': d(-3)}).get_json()['record']
     o2 = post(adm, '/api/bd/records/opportunities', {'client_id': cid, 'name': 'HD proposal', 'stage': 'proposal_sent',
                                                       'amount': 300000, 'close_date': d(5), 'owner_user_id': ids['a_mgr']}).get_json()['record']
-    post(adm, '/api/bd/records/opportunities', {'client_id': cid, 'name': 'HD won', 'stage': 'won', 'amount': 250000})
+    # a won deal converts its company to a client (Oct 2026), so it gets its own company here
+    won_co = post(adm, '/api/bd/records/companies', {'name': 'Home Dash Won Co'}).get_json()['record']['id']
+    post(adm, '/api/bd/records/opportunities', {'client_id': won_co, 'name': 'HD won', 'stage': 'won', 'amount': 250000})
     post(adm, '/api/bd/records/opportunities', {'client_id': cid, 'name': 'HD lost', 'stage': 'lost', 'amount': 50000})
     # tasks: overdue (mine=admin), today (later today), meeting in 3 days
     post(adm, '/api/bd/records/tasks', {'client_id': cid, 'subject': 'HD overdue', 'due_at': d(-1) + 'T10:00:00'})
