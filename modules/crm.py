@@ -132,6 +132,44 @@ def migrate(conn):
         except Exception:
             pass
 
+    # ── BD workspace split (Oct 2026) ─────────────────────────────────────
+    # One table, two lists: record_type 'prospect' lives in the BD workspace,
+    # 'client' in Client CRM. "Convert to client" flips it; contacts, e-mails,
+    # notes and follow-ups stay attached because the row id never changes.
+    # Additive: a new column (default 'client', so every existing company stays
+    # in the CRM) + who/when converted.
+    added = False
+    try:
+        c.execute("ALTER TABLE crm_clients ADD COLUMN record_type TEXT DEFAULT 'client'")
+        added = True
+    except Exception:
+        pass
+    for col, defn in (('converted_at', "TEXT DEFAULT ''"), ('converted_by', 'INTEGER DEFAULT 0')):
+        try:
+            c.execute(f'ALTER TABLE crm_clients ADD COLUMN {col} {defn}')
+        except Exception:
+            pass
+    try:
+        c.execute('CREATE INDEX IF NOT EXISTS idx_crm_clients_type ON crm_clients(company_id, record_type, is_active)')
+    except Exception:
+        pass
+    if added:
+        # Runs once, on the boot that adds the column: companies already marked
+        # 'Prospect' move to the BD workspace — unless work already hangs off
+        # them (a job or an invoice), which makes them clients in practice.
+        try:
+            c.execute("""UPDATE crm_clients SET record_type='prospect'
+                         WHERE LOWER(COALESCE(status,''))='prospect' AND COALESCE(is_internal,0)=0
+                           AND id NOT IN (SELECT crm_client_id FROM mandates WHERE COALESCE(crm_client_id,0)>0)
+                           AND id NOT IN (SELECT client_id FROM invoices WHERE COALESCE(client_id,0)>0)""")
+        except Exception:
+            try:     # an install without the invoices table
+                c.execute("""UPDATE crm_clients SET record_type='prospect'
+                             WHERE LOWER(COALESCE(status,''))='prospect' AND COALESCE(is_internal,0)=0
+                               AND id NOT IN (SELECT crm_client_id FROM mandates WHERE COALESCE(crm_client_id,0)>0)""")
+            except Exception as e:
+                print('[crm] prospect move skipped:', e)
+
 
 # ══════════════════════════════════════════════════════════════════════════
 #  HELPERS
@@ -155,6 +193,20 @@ def _norm_email(s):
 
 
 VALID_CLIENT_STATUS = {'active', 'prospect', 'inactive', 'lost'}
+
+RECORD_TYPES = ('prospect', 'client')
+
+
+def client_type_sql(alias=''):
+    """SQL: the row is a CLIENT (Client CRM). Rows from before the split count as clients."""
+    a = (alias + '.') if alias else ''
+    return f"COALESCE({a}record_type,'client')='client'"
+
+
+def prospect_type_sql(alias=''):
+    """SQL: the row is a PROSPECT (BD workspace)."""
+    a = (alias + '.') if alias else ''
+    return f"COALESCE({a}record_type,'client')='prospect'"
 
 # Contact role tags for multi-level BD mapping (recruitment-specific)
 VALID_ROLE_TAGS = {'decision_maker', 'spoc', 'hiring_manager',
@@ -259,6 +311,11 @@ class ClientRepo:
         # it exists only so Corporate hiring managers can be crm_contacts.
         where = ['company_id=?', 'is_active=?', 'COALESCE(is_internal,0)=0']
         params = [company_id, 0 if filters.get('deleted') else 1]
+        rtype = filters.get('record_type') or 'client'      # Client CRM shows clients only
+        if rtype == 'client':
+            where.append(client_type_sql())
+        elif rtype == 'prospect':
+            where.append(prospect_type_sql())
         if filters.get('q'):
             where.append('(name LIKE ? OR city LIKE ? OR industry LIKE ? OR gstin LIKE ?)')
             like = f'%{filters["q"]}%'; params += [like, like, like, like]
@@ -406,14 +463,19 @@ class ClientService:
         name = (payload.get('name') or '').strip()
         if not name:
             raise ValidationError(f'{_CL()} name is required.')
-        status = (payload.get('status') or 'active').strip().lower()
+        rtype = (payload.get('record_type') or 'client').strip().lower()
+        if rtype not in RECORD_TYPES:
+            raise ValidationError('Invalid record type.')
+        status = (payload.get('status') or ('prospect' if rtype == 'prospect' else 'active')).strip().lower()
         if status not in VALID_CLIENT_STATUS:
             raise ValidationError('Invalid status.')
 
         name_key = _norm_name(name)
         dup = ClientRepo.find_by_namekey(conn, company_id, name_key)
         if dup:
-            raise DuplicateError(f'A client named "{dup["name"]}" already exists.', dup['id'])
+            where = ('in the BD workspace as a prospect'
+                     if (dict(dup).get('record_type') or 'client') == 'prospect' else 'in Clients')
+            raise DuplicateError(f'"{dup["name"]}" already exists {where}.', dup['id'])
 
         data = {
             'company_id': company_id, 'name': name,
@@ -430,6 +492,8 @@ class ClientService:
             'name_key': name_key, 'actor': actor, 'now': now,
         }
         cid = ClientRepo.insert(conn, data)
+        if rtype != 'client':
+            conn.execute('UPDATE crm_clients SET record_type=? WHERE id=?', (rtype, cid))
         if isinstance(payload.get('gstins'), list):
             save_gstins(conn, data['company_id'], cid, payload['gstins'])
         # Billing fields live in columns added after the original INSERT shape.
@@ -462,7 +526,9 @@ class ClientService:
             name_key = _norm_name(name)
             dup = ClientRepo.find_by_namekey(conn, company_id, name_key, exclude_id=cid)
             if dup:
-                raise DuplicateError(f'Another client named "{dup["name"]}" already exists.', dup['id'])
+                where = ('in the BD workspace as a prospect'
+                         if (dict(dup).get('record_type') or 'client') == 'prospect' else 'in Clients')
+                raise DuplicateError(f'Another company named "{dup["name"]}" already exists {where}.', dup['id'])
             fields['name'] = name
             fields['name_key'] = name_key
         # bill_* were sent by the CRM form but never saved before (silently dropped).
@@ -517,6 +583,78 @@ class ClientService:
         ClientRepo.restore(conn, cid, real_user_id(), ts())
         conn.commit()
         log_activity('client.restored', f'Restored client "{existing["name"]}"',
+                     entity_type='client', entity_id=cid)
+
+
+class ConversionService:
+    """Prospect (BD workspace) <-> client (Client CRM). The row id stays the
+    same, so contacts, e-mails, notes, follow-ups, files and deals move with it."""
+
+    @staticmethod
+    def _timeline(conn, company_id, cid, subject, body, actor, now):
+        try:
+            conn.execute('INSERT INTO crm_activities (company_id, client_id, activity_type, subject, body, status, '
+                         'completed_at, owner_user_id, is_active, created_by, updated_by, created_at, updated_at) '
+                         "VALUES (?,?,'note',?,?,'done',?,?,1,?,?,?,?)",
+                         (company_id, cid, subject, body, now, actor, actor, actor, now, now))
+        except Exception as e:                  # BD module not migrated yet: the move still happens
+            print('[crm] timeline note skipped:', e)
+
+    @staticmethod
+    def to_client(conn, cid, reason='manual'):
+        company_id = effective_company_id()
+        actor = real_user_id()
+        now = ts()
+        row = ClientRepo.get(conn, company_id, cid)
+        if not row or int(dict(row).get('is_internal') or 0):
+            raise ValidationError('Company not found.', 404)
+        if (dict(row).get('record_type') or 'client') != 'prospect':
+            raise ValidationError(f'"{row["name"]}" is already in Clients.')
+        conn.execute("UPDATE crm_clients SET record_type='client', status='active', converted_at=?, converted_by=?, "
+                     'updated_by=?, updated_at=? WHERE id=?', (now, actor, actor, now, cid))
+        # Deals belong to prospects: the open ones end as won with the conversion.
+        won = 0
+        try:
+            won = conn.execute("UPDATE bd_opportunities SET stage='won', won_at=?, lost_at='', stage_changed_at=?, "
+                               'probability=100, updated_by=?, updated_at=? '
+                               "WHERE client_id=? AND company_id=? AND is_active=1 AND stage NOT IN ('won','lost')",
+                               (now, now, actor, now, cid, company_id)).rowcount
+        except Exception:
+            pass
+        ConversionService._timeline(conn, company_id, cid, 'Converted to client',
+                                    'Moved from the BD workspace to Clients'
+                                    + (f'; {won} open deal(s) marked won' if won else '') + '.', actor, now)
+        conn.commit()
+        log_activity('client.converted', f'"{row["name"]}" converted from prospect to client',
+                     entity_type='client', entity_id=cid, meta={'deals_won': won, 'reason': reason})
+        return {'deals_won': won}
+
+    @staticmethod
+    def to_prospect(conn, cid):
+        company_id = effective_company_id()
+        actor = real_user_id()
+        now = ts()
+        row = ClientRepo.get(conn, company_id, cid)
+        if not row or int(dict(row).get('is_internal') or 0):
+            raise ValidationError('Company not found.', 404)
+        if (dict(row).get('record_type') or 'client') == 'prospect':
+            raise ValidationError(f'"{row["name"]}" is already in the BD workspace.')
+        jobs = conn.execute('SELECT COUNT(*) n FROM mandates WHERE owner_id=? AND crm_client_id=?',
+                            (company_id, cid)).fetchone()['n']
+        try:
+            inv = conn.execute('SELECT COUNT(*) n FROM invoices WHERE owner_id=? AND client_id=?',
+                               (company_id, cid)).fetchone()['n']
+        except Exception:
+            inv = 0
+        if jobs or inv:
+            what = ' and '.join(x for x in (f'{jobs} job(s)' if jobs else '', f'{inv} invoice(s)' if inv else '') if x)
+            raise ValidationError(f'"{row["name"]}" has {what}, so it stays in Clients.')
+        conn.execute("UPDATE crm_clients SET record_type='prospect', status='prospect', updated_by=?, updated_at=? "
+                     'WHERE id=?', (actor, now, cid))
+        ConversionService._timeline(conn, company_id, cid, 'Moved back to BD workspace',
+                                    'Moved from Clients back to the BD workspace as a prospect.', actor, now)
+        conn.commit()
+        log_activity('client.to_prospect', f'"{row["name"]}" moved back to the BD workspace',
                      entity_type='client', entity_id=cid)
 
 
@@ -764,6 +902,8 @@ def list_clients():
         'page': request.args.get('page', 1, type=int),
         'per_page': request.args.get('per_page', 25, type=int),
         'deleted': request.args.get('deleted') == '1',
+        # client (default) | prospect | all
+        'record_type': (request.args.get('type', '') or 'client').strip().lower(),
     }
     conn = get_db()
     rows, total, page, per = ClientRepo.search(conn, company_id, filters)
@@ -866,6 +1006,38 @@ def restore_client(cid):
         conn.close(); return _err(e)
 
 
+@bp.route('/clients/<int:cid>/convert', methods=['POST'])
+@login_required
+def convert_client(cid):
+    """BD workspace -> Client CRM."""
+    if not is_company_admin():
+        return jsonify({'error': 'Only an admin can convert a prospect.'}), 403
+    conn = get_db()
+    try:
+        res = ConversionService.to_client(conn, cid)
+        return jsonify({'ok': True, **res})
+    except ValidationError as e:
+        return _err(e)
+    finally:
+        conn.close()
+
+
+@bp.route('/clients/<int:cid>/move-to-bd', methods=['POST'])
+@login_required
+def move_client_to_bd(cid):
+    """Client CRM -> BD workspace (undo a conversion made by mistake)."""
+    if not is_company_admin():
+        return jsonify({'error': 'Only an admin can move a client back to BD.'}), 403
+    conn = get_db()
+    try:
+        ConversionService.to_prospect(conn, cid)
+        return jsonify({'ok': True})
+    except ValidationError as e:
+        return _err(e)
+    finally:
+        conn.close()
+
+
 @bp.route('/clients/<int:cid>/contacts', methods=['POST'])
 @login_required
 def add_contact(cid):
@@ -956,5 +1128,5 @@ def crm_meta():
         (company_id,)).fetchall()]
     conn.close()
     return jsonify({'ok': True, 'industries': industries, 'cities': cities,
-                    'statuses': sorted(VALID_CLIENT_STATUS),
+                    'statuses': sorted(VALID_CLIENT_STATUS - {'prospect'}),   # prospects live in the BD workspace
                     'role_tags': [{'value': k, 'label': v} for k, v in ROLE_TAG_LABELS.items()]})

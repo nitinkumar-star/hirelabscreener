@@ -255,7 +255,8 @@ OBJECTS = {
     'companies': {
         'label': 'Companies', 'singular': 'Company', 'title': 'name',
         'from': 'crm_clients c',
-        'where': 'c.company_id=? AND c.is_active=1 AND COALESCE(c.is_internal,0)=0',
+        # BD workspace = prospects only; converted companies live in Client CRM (Oct 2026)
+        'where': "c.company_id=? AND c.is_active=1 AND COALESCE(c.is_internal,0)=0 AND COALESCE(c.record_type,'client')='prospect'",
         'id_expr': 'c.id',
         'default_sort': [{'field': 'created_at', 'dir': 'desc'}],
         'fields': [
@@ -299,7 +300,7 @@ OBJECTS = {
     'people': {
         'label': 'People', 'singular': 'Person', 'title': 'name',
         'from': 'crm_contacts p JOIN crm_clients c ON c.id=p.client_id AND c.company_id=p.company_id',
-        'where': 'p.company_id=? AND p.is_active=1 AND c.is_active=1 AND COALESCE(c.is_internal,0)=0',
+        'where': "p.company_id=? AND p.is_active=1 AND c.is_active=1 AND COALESCE(c.is_internal,0)=0 AND COALESCE(c.record_type,'client')='prospect'",
         'id_expr': 'p.id',
         'default_sort': [{'field': 'created_at', 'dir': 'desc'}],
         'fields': [
@@ -335,7 +336,9 @@ OBJECTS = {
         'from': ('bd_opportunities o '
                  'JOIN crm_clients c ON c.id=o.client_id AND c.company_id=o.company_id '
                  'LEFT JOIN crm_contacts p ON p.id=o.contact_id AND p.company_id=o.company_id AND p.is_active=1'),
-        'where': 'o.company_id=? AND o.is_active=1 AND c.is_active=1 AND COALESCE(c.is_internal,0)=0',
+        # open deals: prospects only; won/lost deals stay as BD history after the company converts
+        'where': ("o.company_id=? AND o.is_active=1 AND c.is_active=1 AND COALESCE(c.is_internal,0)=0 "
+                  "AND (COALESCE(c.record_type,'client')='prospect' OR o.stage IN ('won','lost'))"),
         'id_expr': 'o.id',
         'default_sort': [{'field': 'created_at', 'dir': 'desc'}],
         'fields': [
@@ -380,7 +383,7 @@ OBJECTS = {
                  'LEFT JOIN crm_contacts p ON p.id=a.contact_id AND p.company_id=a.company_id AND p.is_active=1 '
                  'LEFT JOIN bd_opportunities o ON o.id=a.opportunity_id AND o.company_id=a.company_id AND o.is_active=1'),
         'where': ("a.company_id=? AND a.is_active=1 AND c.is_active=1 AND COALESCE(c.is_internal,0)=0 "
-                  "AND a.activity_type IN ('task','followup','call','meeting')"),
+                  "AND COALESCE(c.record_type,'client')='prospect' AND a.activity_type IN ('task','followup','call','meeting')"),
         'id_expr': 'a.id',
         'default_sort': [{'field': 'due_at', 'dir': 'asc'}],
         'fields': [
@@ -415,7 +418,7 @@ OBJECTS = {
                  'LEFT JOIN crm_contacts p ON p.id=a.contact_id AND p.company_id=a.company_id AND p.is_active=1 '
                  'LEFT JOIN bd_opportunities o ON o.id=a.opportunity_id AND o.company_id=a.company_id AND o.is_active=1'),
         'where': ("a.company_id=? AND a.is_active=1 AND c.is_active=1 AND COALESCE(c.is_internal,0)=0 "
-                  "AND a.activity_type='note'"),
+                  "AND COALESCE(c.record_type,'client')='prospect' AND a.activity_type='note'"),
         'id_expr': 'a.id',
         'default_sort': [{'field': 'created_at', 'dir': 'desc'}],
         'fields': [
@@ -977,8 +980,10 @@ def _opt_date(v, label):
 
 
 def _client_row(conn, company_id, cid):
+    """A BD-workspace company (a prospect) of this tenant, else None."""
     return conn.execute(
-        'SELECT * FROM crm_clients WHERE id=? AND company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0',
+        "SELECT * FROM crm_clients c WHERE c.id=? AND c.company_id=? AND c.is_active=1 "
+        "AND COALESCE(c.is_internal,0)=0 AND COALESCE(c.record_type,'client')='prospect'",
         (cid, company_id)).fetchone()
 
 
@@ -1053,6 +1058,7 @@ def company_create(conn, payload):
     core = {k: v for k, v in payload.items() if k not in _COMPANY_EXTRA}
     if 'status' not in core:
         core['status'] = 'prospect'   # a company added from BD starts as a prospect
+    core['record_type'] = 'prospect'  # ...and lives in the BD workspace until converted
     cid = ClientService.create(conn, core)
     if extra:
         conn.execute('UPDATE crm_clients SET ' + ', '.join(f'{k}=?' for k in extra) + ' WHERE id=?',
@@ -1246,12 +1252,12 @@ def _apply_stage_side_effects(vals, current, now, explicit_probability):
 
 
 def _on_won(conn, client_id):
-    """Agreement signed -> the company becomes an active client."""
-    from modules.crm import ClientService
+    """Agreement signed -> the prospect becomes a client: it moves from the
+    BD workspace to Client CRM (same as the "Convert to client" button)."""
+    from modules.crm import ConversionService
     company_id = effective_company_id()
-    cl = _client_row(conn, company_id, client_id)
-    if cl and (cl['status'] or '') != 'active':
-        ClientService.update(conn, client_id, {'status': 'active'})
+    if _client_row(conn, company_id, client_id):
+        ConversionService.to_client(conn, client_id, reason='deal_won')
 
 
 def opportunity_create(conn, payload):
@@ -2204,7 +2210,8 @@ def build_home(conn, company_id, me, scope_me=False):
 
     owner_sql, owner_p = ('AND o.owner_user_id=?', [me]) if scope_me else ('', [])
     base = ('FROM bd_opportunities o JOIN crm_clients c ON c.id=o.client_id AND c.company_id=o.company_id '
-            'WHERE o.company_id=? AND o.is_active=1 AND c.is_active=1 AND COALESCE(c.is_internal,0)=0 ' + owner_sql)
+            'WHERE o.company_id=? AND o.is_active=1 AND c.is_active=1 AND COALESCE(c.is_internal,0)=0 '
+            "AND (COALESCE(c.record_type,'client')='prospect' OR o.stage IN ('won','lost')) " + owner_sql)
     bp_ = [company_id] + owner_p
 
     # ── pipeline by open stage ────────────────────────────────────────────
@@ -2258,6 +2265,7 @@ def build_home(conn, company_id, me, scope_me=False):
                 f"SELECT m.id, m.purpose, m.guest_name, m.start_at, m.mode, m.crm_client_id, c.name AS client_name, "
                 f"{_user_label('m.host_user_id')} AS host FROM meetings m "
                 f"JOIN crm_clients c ON c.id=m.crm_client_id AND c.company_id=m.company_id AND c.is_active=1 "
+                f"AND COALESCE(c.record_type,'client')='prospect' "
                 f"WHERE m.company_id=? AND COALESCE(m.status,'confirmed')='confirmed' "
                 f"AND m.start_at>=? AND m.start_at<=? {host_sql}",
                 [company_id, now[:16], week] + host_p):
@@ -2290,7 +2298,7 @@ def build_home(conn, company_id, me, scope_me=False):
     attention.sort(key=lambda r: (order[r['reason_kind']], r.get('close_date') or '9999'))
 
     # ── companies gone quiet ──────────────────────────────────────────────
-    stale = Q('companies', [{'field': 'status', 'op': 'in', 'value': ['active', 'prospect']},
+    stale = Q('companies', [{'field': 'status', 'op': 'not_in', 'value': ['lost', 'inactive']},
                             {'field': 'last_activity', 'op': 'not_in_last_days', 'value': stale_days}],
               [{'field': 'last_activity', 'dir': 'asc'}], 10)
 
@@ -2302,6 +2310,7 @@ def build_home(conn, company_id, me, scope_me=False):
         f"SELECT m.id, m.role, m.location, m.created_at, m.crm_client_id, c.name AS client_name, "
         f"(SELECT COUNT(*) FROM candidates k WHERE k.mandate_id=m.id) AS candidates "
         f"FROM mandates m JOIN crm_clients c ON c.id=m.crm_client_id AND c.company_id=m.owner_id AND c.is_active=1 "
+        f"AND COALESCE(c.record_type,'client')='prospect' "
         f"WHERE m.owner_id=? AND (m.status IS NULL OR m.status='active') {asg_sql} "
         f"ORDER BY c.name COLLATE NOCASE, m.created_at DESC", [company_id] + asg_p).fetchall()
     reqs = {}

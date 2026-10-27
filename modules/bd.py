@@ -320,9 +320,10 @@ class ActivityService:
 #  COMMAND CENTER  (the aggregation logic)
 # ══════════════════════════════════════════════════════════════════════════
 def _client_name_map(conn, company_id):
+    # BD workspace = prospects only (Oct 2026); clients' follow-ups live on their client page
     rows = conn.execute(
-        'SELECT id, name, status FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0',
-        (company_id,)).fetchall()
+        "SELECT id, name, status FROM crm_clients WHERE company_id=? AND is_active=1 AND COALESCE(is_internal,0)=0 "
+        "AND COALESCE(record_type,'client')='prospect'", (company_id,)).fetchall()
     return {r['id']: {'name': r['name'], 'status': r['status']} for r in rows}
 
 
@@ -340,6 +341,8 @@ def build_command_center(conn, company_id, scope_me=False):
     def _decorate(rows):
         out = []
         for r in rows:
+            if r['client_id'] not in cmap:
+                continue                     # a client's activity, not BD's
             d = _activity_public(r)
             ci = cmap.get(r['client_id'], {})
             d['client_name'] = ci.get('name', 'Unknown')
@@ -362,7 +365,7 @@ def build_command_center(conn, company_id, scope_me=False):
     # New prospects (clients with status=prospect)
     prospect_rows = conn.execute(
         "SELECT id, name, industry, city, created_at FROM crm_clients "
-        "WHERE company_id=? AND is_active=1 AND status='prospect' "
+        "WHERE company_id=? AND is_active=1 AND COALESCE(record_type,'client')='prospect' "
         "ORDER BY created_at DESC LIMIT 20", (company_id,)).fetchall()
     prospects = [dict(r) for r in prospect_rows]
 
@@ -371,7 +374,8 @@ def build_command_center(conn, company_id, scope_me=False):
     cutoff = (now - datetime.timedelta(days=stale_days)).isoformat()
     active_clients = conn.execute(
         "SELECT id, name, industry, city FROM crm_clients "
-        "WHERE company_id=? AND is_active=1 AND status='active'", (company_id,)).fetchall()
+        "WHERE company_id=? AND is_active=1 AND COALESCE(record_type,'client')='prospect' AND COALESCE(status,'') NOT IN ('lost','inactive')",
+        (company_id,)).fetchall()
     for cl in active_clients:
         last = conn.execute(
             'SELECT MAX(COALESCE(NULLIF(created_at,\'\'), due_at)) AS last_at '
