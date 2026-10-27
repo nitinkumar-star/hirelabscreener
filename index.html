@@ -1202,7 +1202,7 @@ body{font-size:14px !important; line-height:1.5}
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px;min-width:0">
         <div id="bd-head-ic" style="width:28px;height:28px;border-radius:6px;background:#EAE6FB;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">&#128188;</div>
-        <div style="min-width:0"><div id="bd-head-title" style="font-size:14px;font-weight:600">BD workspace</div><div id="bd-head-sub" style="font-size:11px;color:#888;margin-top:1px">Prospects: follow-ups, meetings, deals &amp; emails</div></div>
+        <div style="min-width:0"><div id="bd-head-title" style="font-size:14px;font-weight:600">BD workspace</div><div id="bd-head-sub" style="font-size:11px;color:#888;margin-top:1px">Today's follow-ups, meetings, stale clients &amp; requirements</div></div>
       </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <div id="bd-home-ctl" style="display:flex;gap:8px;align-items:center">
@@ -7228,7 +7228,7 @@ function renderProfileDetail(c){
     +'</div>'
     +'</div>';
   var emailCard='<div class="cp-card2"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="cp-lbl2" style="margin:0">&#9993; Email thread</div><div style="display:flex;gap:7px"><button class="cp-hbtn" onclick="cpLoadEmailThread('+c.id+')">&#8635; Refresh</button><button class="cp-hbtn" style="background:#185FA5;color:#fff;border-color:transparent" onclick="openEmailPanel('+c.id+',\''+esc(c.email||'').replace(/'/g,"\\'")+'\','+(c.mandate_id||'null')+')">&#9998; Compose / AI</button></div></div><div id="cp-email-'+c.id+'" style="max-height:460px;overflow-y:auto"><div class="loading" style="padding:16px"><div class="spinner"></div>Loading emails…</div></div></div>';
-  var callCard='<div class="cp-card2" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload the call recording — DeepSeek reads the CV, the Pitch evaluation and the call together and compares them with the JD. On your phone: open the recording &rarr; Share &rarr; HireLab.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
+  var callCard='<div class="cp-card2 ca-dark" style="background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%)"><div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div style="font-size:13px;font-weight:600;color:#fff">&#128222; Call Recording Analysis</div><div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Upload the call recording — DeepSeek reads the CV, the Pitch evaluation and the call together and compares them with the JD. On your phone: open the recording &rarr; Share &rarr; HireLab.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">'+(c.phone?('<a class="btn" href="tel:'+esc(c.phone)+'" style="background:#13A37E;color:#fff;border:none;font-size:11px;text-decoration:none">&#128222; Call</a>'):'')+'<label class="btn" style="background:rgba(255,255,255,.12);color:#fff;border:0.5px solid rgba(255,255,255,.2);font-size:11px;cursor:pointer">&#127911; Upload<input type="file" id="call-file-input-'+c.id+'" accept="audio/*,.mp3,.m4a,.mp4,.wav,.ogg,.webm,.flac" style="display:none" onchange="handleCallUpload('+c.id+',this)"></label></div></div><div id="call-status-'+c.id+'" style="display:none;padding:10px 14px;border-radius:8px;font-size:12px;color:#fff;margin-bottom:10px"></div><div id="call-analysis-'+c.id+'"></div></div>';
 
   // ── Compose page (Wave 1 decision header) ─────────────────────────────
   var _m = S.activeMandate || {};
@@ -7501,6 +7501,88 @@ function cpCopyPitch(cid){
 }
 function _fallbackCopy(t){ var ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(e){} ta.remove(); }
 
+// ── Pitch decision (Oct 2026): Shortlisted / Rejected / Hold + must-have check ──
+var _PD = {
+  shortlisted:{ic:'&#9989;', t:'SHORTLISTED', s:'Shareable with the client', bg:'#ECFDF3', bd:'#ABEFC6', fg:'#067647'},
+  rejected:{ic:'&#10060;', t:'REJECTED', s:'Do not share with the client', bg:'#FEF3F2', bd:'#FECDCA', fg:'#B42318'},
+  hold:{ic:'&#9208;&#65039;', t:'HOLD', s:'Share only after the call confirms the points below', bg:'#FFFAEB', bd:'#FEDF89', fg:'#B54708'}
+};
+var _PD_ST = {MET:['&#10003; Met','#067647','#ECFDF3'], NOT_MET:['&#10007; Not met','#B42318','#FEF3F2'], UNCLEAR:['? Unclear','#B54708','#FFFAEB']};
+function _pitchDecisionHtml(cid, ev, ov, st){
+  var dec=ev.decision;
+  if(!dec){
+    return '<div style="background:#EEF4FF;border:1px solid #C7D7FE;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#2D4A8A;margin-bottom:12px;display:flex;align-items:center;gap:10px">'
+      +'This pitch was made before the client-share decision existed. Re-generate to see <b>Shortlisted / Rejected / Hold</b> with the must-have check.'
+      +'<button class="btn" style="margin-left:auto;background:#534AB7;color:#fff;border:none;font-size:11.5px;padding:5px 12px" onclick="cpGenPitch('+cid+')">Re-generate</button></div>';
+  }
+  var eff=(ov&&ov.status)||dec.status, c=_PD[eff]||_PD.hold;
+  var h='<div class="cp-card2" style="margin-bottom:12px;background:'+c.bg+' !important;border:1px solid '+c.bd+' !important">'
+    +'<div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">'
+    +'<div style="font-size:26px;line-height:1">'+c.ic+'</div>'
+    +'<div style="flex:1;min-width:220px"><div style="font-size:17px;font-weight:800;color:'+c.fg+';letter-spacing:.3px">'+c.t+' &middot; <span style="font-weight:700">'+c.s+'</span></div>'
+    +'<div style="font-size:12.5px;color:#344054;margin-top:4px;line-height:1.5">'+(ov?'<b>AI rule:</b> ':'')+esc(dec.rule||'')+'</div>'
+    +(ov?'<div style="font-size:12.5px;color:#101828;margin-top:6px;background:#fff;border:1px solid '+c.bd+';border-radius:8px;padding:7px 10px">&#9998; Changed to <b>'+esc(eff)+'</b> by '+esc(ov.by_name||'a recruiter')
+        +(ov.created_at?' &middot; '+esc(String(ov.created_at).replace('T',' ').slice(0,16)):'')+(ov.ai_status?' (AI said '+esc(ov.ai_status)+')':'')+'<br><span style="color:#475467">Reason: '+esc(ov.reason||'')+'</span></div>':'')
+    +'</div>'
+    +'<div style="display:flex;gap:6px">'
+    +(ov?'<button class="btn btn-o" style="font-size:11.5px;padding:5px 10px" onclick="cpPitchClearDecision('+cid+')">Use AI decision</button>':'')
+    +'<button class="btn btn-o" style="font-size:11.5px;padding:5px 10px" onclick="cpPitchDecisionForm('+cid+')">Change decision</button></div></div>'
+    +'<div id="pd-form-'+cid+'"></div>';
+  if(eff==='hold' && (dec.verify||[]).length>4){     // the rule line names the first 4
+    h+='<div style="margin-top:10px;font-size:12.5px;color:#93370D"><b>Also confirm:</b> '+dec.verify.slice(4).map(esc).join(' &middot; ')+'</div>';
+  }
+  var rows=ev.must_have_check||[];
+  if(rows.length){
+    h+='<div style="margin-top:12px;background:#fff;border:1px solid #EAECF0;border-radius:10px;overflow:hidden"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
+      +'<tr style="background:#F9FAFB;color:#667085;font-size:11px;text-transform:uppercase;letter-spacing:.4px;text-align:left"><th style="padding:8px 10px">Must-have</th><th style="padding:8px 10px">Status</th><th style="padding:8px 10px">From the profile</th></tr>'
+      +rows.map(function(r){ var x=_PD_ST[r.status]||_PD_ST.UNCLEAR;
+        return '<tr style="border-top:1px solid #F2F4F7;vertical-align:top"><td style="padding:8px 10px;font-weight:600;color:#101828;min-width:150px">'+esc(r.requirement)+'</td>'
+          +'<td style="padding:8px 10px;white-space:nowrap"><span style="font-size:11px;font-weight:700;color:'+x[1]+';background:'+x[2]+';border-radius:6px;padding:2px 8px">'+x[0]+'</span></td>'
+          +'<td style="padding:8px 10px;color:#475467;min-width:200px">'+esc(r.evidence||'')+'</td></tr>'; }).join('')
+      +'</table></div></div>';
+  }
+  var why=function(title,color,items){ return (items&&items.length)?'<div style="flex:1;min-width:220px"><div style="font-size:11px;font-weight:700;color:'+color+';text-transform:uppercase;letter-spacing:.4px;margin:12px 0 6px">'+title+'</div>'
+      +items.map(function(x){ return '<div style="font-size:12.5px;color:#344054;line-height:1.45;margin-bottom:5px;padding-left:10px;border-left:2px solid '+color+'55">'+esc(x)+'</div>'; }).join('')+'</div>':''; };
+  h+='<div style="display:flex;gap:16px;flex-wrap:wrap">'+why('Why it can go to the client','#067647',ev.shortlist_reasons)+why('Why not','#B42318',ev.reject_reasons)+'</div>';
+  if(eff==='shortlisted' && ev.client_summary){
+    h+='<div style="margin-top:12px;background:#fff;border:1px solid #ABEFC6;border-radius:10px;padding:10px 12px">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="font-size:12px;font-weight:700;color:#067647">&#128233; Client-ready summary</div>'
+      +'<div style="font-size:11px;color:#667085">No CTC, no gaps &mdash; paste it in the submission mail</div>'
+      +'<button class="btn btn-o" style="margin-left:auto;font-size:11.5px;padding:4px 10px" onclick="cpCopyClientSummary('+cid+')">&#128203; Copy</button></div>'
+      +'<div style="font-size:13.5px;color:#101828;line-height:1.65">'+esc(ev.client_summary)+'</div></div>';
+  }
+  return h+'</div>';
+}
+function cpPitchDecisionForm(cid){
+  var box=document.getElementById('pd-form-'+cid); if(!box) return;
+  if(box.innerHTML){ box.innerHTML=''; return; }
+  box.innerHTML='<div style="margin-top:10px;background:#fff;border:1px solid #EAECF0;border-radius:10px;padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    +'<select id="pd-st-'+cid+'" style="font-size:12.5px;padding:6px 8px;border:1px solid #D0D5DD;border-radius:8px"><option value="shortlisted">Shortlisted &mdash; share with client</option><option value="hold">Hold &mdash; verify first</option><option value="rejected">Rejected &mdash; do not share</option></select>'
+    +'<input id="pd-rs-'+cid+'" placeholder="Reason (required) e.g. confirmed SCADA on call" style="flex:1;min-width:220px;font-size:12.5px;padding:7px 10px;border:1px solid #D0D5DD;border-radius:8px">'
+    +'<button class="btn" style="background:#0F6E56;color:#fff;border:none;font-size:12px;padding:7px 14px" onclick="cpPitchSaveDecision('+cid+')">Save</button></div>';
+  try{ document.getElementById('pd-rs-'+cid).focus(); }catch(e){}
+}
+async function cpPitchSaveDecision(cid){
+  var stv=(document.getElementById('pd-st-'+cid)||{}).value, rs=((document.getElementById('pd-rs-'+cid)||{}).value||'').trim();
+  if(rs.length<5){ toast('ERR','Write a short reason first'); return; }
+  var r=await req('POST','/candidates/'+cid+'/pitch/decision',{status:stv, reason:rs});
+  if(!r||!r.ok){ toast('ERR', esc((r&&r.error)||'Could not save')); return; }
+  var st=window._pitchState[cid]; if(st&&st.data) st.data.override=r.override;
+  _renderPitch(cid); toast('OK','Decision updated');
+}
+async function cpPitchClearDecision(cid){
+  var r=await req('DELETE','/candidates/'+cid+'/pitch/decision');
+  if(!r||!r.ok){ toast('ERR', esc((r&&r.error)||'Could not reset')); return; }
+  var st=window._pitchState[cid]; if(st&&st.data) st.data.override=null;
+  _renderPitch(cid); toast('OK','Back to the AI decision');
+}
+function cpCopyClientSummary(cid){
+  var st=window._pitchState[cid]; var t=st&&st.data&&st.data.evaluation&&st.data.evaluation.client_summary; if(!t) return;
+  var done=function(){ toast('OK','Client summary copied'); };
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done,function(){ _fallbackCopy(t); done(); }); }
+  else { _fallbackCopy(t); done(); }
+}
+
 function _renderPitch(cid){
   var box=document.getElementById('cp-pitch-'+cid); if(!box) return;
   var st=window._pitchState[cid]||{}; var lang=st.lang||'en'; var d=st.data; var meta=st.meta||{};
@@ -7548,6 +7630,8 @@ function _renderPitch(cid){
     h+='<div style="background:#FFFAEB;border:1px solid #FEDF89;border-radius:10px;padding:9px 14px;font-size:12px;color:#93370D;margin-bottom:12px;display:flex;align-items:center;gap:10px">'
       +'&#9888; The profile, CV or JD changed after this pitch was made.<button class="btn" style="margin-left:auto;background:#B54708;color:#fff;border:none;font-size:11.5px;padding:5px 12px" onclick="cpGenPitch('+cid+')">Re-generate</button></div>';
   }
+  // Decision: can this profile go to the client? (rule over the must-have check; recruiter may override)
+  h+=_pitchDecisionHtml(cid, ev, d.override||null, st);
   // Evaluation card
   var sc=ev.match_score||0, col=sc>=75?'#0F6E56':(sc>=50?'#B54708':'#B42318'), bg=sc>=75?'#ECFDF3':(sc>=50?'#FFFAEB':'#FEF3F2');
   var list=function(title,icon,color,items){
@@ -12415,8 +12499,8 @@ function renderCallReport(cid, call){
     + renderCallList('Red Flags', a.red_flags, '#f09595', '&#9888;')
     + '</div>';
   // 10. quotes
-  if(a.key_quotes && a.key_quotes.length){
-    html += _caSec('Key quotes from the candidate', a.key_quotes.map(function(q){
+  if(_caArr(a.key_quotes).length){
+    html += _caSec('Key quotes from the candidate', _caArr(a.key_quotes).map(function(q){
       return '<div style="border-left:2px solid rgba(255,255,255,.2);padding:4px 10px;margin-bottom:5px;font-size:11px;color:rgba(255,255,255,.75);font-style:italic">&ldquo;'+esc(q)+'&rdquo;</div>';
     }).join(''));
   }
@@ -12435,7 +12519,9 @@ function renderCallReport(cid, call){
   el.innerHTML = html;
 }
 
+function _caArr(v){ return Array.isArray(v) ? v : (v ? [v] : []); }   // AI sometimes sends one string
 function renderCallList(title, items, color, icon) {
+  items = _caArr(items);
   if (!items || !items.length) return '<div style="background:rgba(255,255,255,.05);border-radius:6px;padding:8px;"><div style="font-size:10px;color:'+color+';font-weight:500;margin-bottom:4px">'+title+'</div><div style="font-size:10px;color:rgba(255,255,255,.3)">None noted</div></div>';
   return '<div style="background:rgba(255,255,255,.05);border-radius:6px;padding:8px;">'
     +'<div style="font-size:10px;color:'+color+';font-weight:500;margin-bottom:6px">'+icon+' '+title+'</div>'
@@ -17537,7 +17623,7 @@ async function renderCrm(){
   html+='<div class="w3-tb">'
     +'<label class="w3-q"><span aria-hidden="true">&#9906;</span><input id="crm-search" aria-label="Search clients" placeholder="Search company, city or GSTIN" value="'+esc(_crmState.q)+'" oninput="_crmDebounceSearch(this.value)"></label>'
     +'<div class="w3-chips" role="group" aria-label="Status">';
-  var sts=[''].concat(_crmMeta.statuses.length?_crmMeta.statuses:['active','inactive','lost']);   // prospects: BD workspace
+  var sts=[''].concat(_crmMeta.statuses.length?_crmMeta.statuses:['active','prospect','inactive','lost']);
   sts.forEach(function(s){
     var on=(_crmState.status||'')===s;
     html+='<button class="w1-chip'+(on?' on':'')+'" aria-pressed="'+on+'" onclick="_crmSetFilter(\'status\',\''+s+'\')">'+(s?s.charAt(0).toUpperCase()+s.slice(1):'All')+'</button>';
@@ -17551,7 +17637,7 @@ async function renderCrm(){
   html+='</div>';
   // ── Bulk bar (shown when rows are ticked) ──
   html+='<div id="crm-bulk" class="w3-bulk" role="region" aria-label="Bulk actions" style="display:none"><b id="crm-bulk-n">0 selected</b>'
-    +'<select aria-label="Set status" onchange="_crmBulkStatus(this.value);this.value=\'\'"><option value="">Set status…</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="lost">Lost</option></select>'
+    +'<select aria-label="Set status" onchange="_crmBulkStatus(this.value);this.value=\'\'"><option value="">Set status…</option><option value="active">Active</option><option value="prospect">Prospect</option><option value="inactive">Inactive</option><option value="lost">Lost</option></select>'
     +'<button onclick="_crmExportCsv()">Export CSV</button><button class="x" onclick="_crmClearSel()">Clear</button></div>';
 
   if(!clients.length){
@@ -17804,30 +17890,6 @@ function backToCrmList(){
   openCrm();
 }
 
-// ── BD workspace <-> Client CRM (Oct 2026) ────────────────────────────────
-function _crmNameFor(cid){
-  try{ if(BDW && BDW.pnl && BDW.pnl.obj==='companies' && BDW.pnl.id===cid && BDW.pnl.rec) return BDW.pnl.rec.name||''; }catch(e){}
-  try{ if(_cdCurrentClient && _cdCurrentClient.client && _cdCurrentClient.client.id===cid) return _cdCurrentClient.client.name||''; }catch(e){}
-  return 'this company';
-}
-async function crmConvertToClient(cid){
-  var name=_crmNameFor(cid);
-  if(!confirm('Convert "'+name+'" to a client?\n\nIt moves from the BD workspace to Clients with all its contacts, emails, notes and follow-ups. Open deals are marked won.')) return;
-  var r=await req('POST','/crm/clients/'+cid+'/convert',{});
-  if(!r.ok){ toast('ERR', esc(r.error||'Could not convert')); return; }
-  toast('OK', esc(name)+' is now a client'+(r.deals_won?' &middot; '+r.deals_won+' deal'+(r.deals_won>1?'s':'')+' marked won':''));
-  try{ if(BDW && BDW.pnl) bdwPanelClose(true); }catch(e){}
-  openClientDetail(cid);
-}
-async function crmMoveToBd(cid){
-  var name=_crmNameFor(cid);
-  if(!confirm('Move "'+name+'" back to the BD workspace as a prospect?')) return;
-  var r=await req('POST','/crm/clients/'+cid+'/move-to-bd',{});
-  if(!r.ok){ toast('ERR', esc(r.error||'Could not move')); return; }
-  toast('OK', esc(name)+' moved back to the BD workspace');
-  openBd('companies');
-}
-
 async function _renderClientDetail(clientId){
   var r=await req('GET','/crm/clients/'+clientId);
   if(!r.ok){ toast('ERR','Client not found'); backToCrmList(); return; }
@@ -17835,18 +17897,9 @@ async function _renderClientDetail(clientId){
   var contacts=r.contacts||[];
   _cdCurrentClient={client:c, contacts:contacts};
   var sc=_crmStatusColor(c.status);
-  // BD split (Oct 2026): a prospect opens on the same page, but belongs to the BD workspace
-  var isProspect=(c.record_type==='prospect');
-  var isAdm=!!(S.currentUser && (S.currentUser.role==='admin'||S.currentUser.is_company_admin));
-  var crumb=isProspect
-    ? '<a href="#bd/companies" onclick="event.preventDefault();openBd(\'companies\')">BD workspace</a>'
-    : '<a href="#crm" onclick="event.preventDefault();backToCrmList()">Clients</a>';
-  var moveBtn=isProspect
-    ? (isAdm?'<button class="w1-btn pri" style="background:#0F6E56;border-color:#0F6E56" onclick="crmConvertToClient('+clientId+')" title="Move to Clients with all contacts, emails, notes and follow-ups">&#10003; Convert to client</button>':'')
-    : (isAdm?'<button class="w1-btn" onclick="crmMoveToBd('+clientId+')" title="Undo a conversion: move back to the BD workspace">&#8617; Move to BD</button>':'');
   // ═══ HEADER: breadcrumb, identity, actions, activity tabs ═══
   var hdr='<div class="w3-cdh">'
-    +'<nav class="w3-crumb" aria-label="Breadcrumb">'+crumb+'<span>/</span><b>'+esc(c.name)+'</b></nav>'
+    +'<nav class="w3-crumb" aria-label="Breadcrumb"><a href="#crm" onclick="event.preventDefault();backToCrmList()">Clients</a><span>/</span><b>'+esc(c.name)+'</b></nav>'
     +'<div class="w3-cdh-row">'
     +'<span class="w3-cdav" style="background:'+sc.bg+';color:'+sc.fg+'">'+esc((c.name||'?').charAt(0).toUpperCase())+'</span>'
     +'<div class="w3-cdh-t"><h1>'+esc(c.name)+'</h1>'
@@ -17854,8 +17907,7 @@ async function _renderClientDetail(clientId){
     +(c.industry?esc(c.industry):'No industry')+(c.city?' &middot; '+esc(c.city):'')
     +(c.website?' &middot; <a href="'+esc(/^https?:\/\//i.test(c.website)?c.website:'https://'+c.website)+'" target="_blank" rel="noopener">'+esc(String(c.website).replace(/^https?:\/\/(www\.)?/i,'').replace(/\/$/,''))+' &#8599;</a>':'')
     +'</p></div>'
-    +'<div class="w3-cdh-a"><span class="w3-pill" style="background:'+sc.bg+';color:'+sc.fg+'">'+esc(isProspect?'BD prospect':c.status)+'</span>'
-    +moveBtn
+    +'<div class="w3-cdh-a"><span class="w3-pill" style="background:'+sc.bg+';color:'+sc.fg+'">'+esc(c.status)+'</span>'
     +'<button class="w1-btn" onclick="openClientForm('+clientId+')">&#9998; Edit</button>'
     +'<button class="w1-btn pri" onclick="openLogActivity('+clientId+')">&#43; Log activity</button></div></div>'
     +'<nav class="w3-tabs" id="cd-tabs" aria-label="Activity filter">'+_cdTabsHtml(clientId)+'</nav></div>';
@@ -19852,9 +19904,9 @@ var _BDW_IC = {
   notes:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h7M9 7h3"/></svg>'
 };
 var _BDW_PAGES = [
-  {k:'home', label:'Home', sub:"Today's prospect follow-ups, meetings & deals", bg:'#EAE6FB'},
-  {k:'companies', label:'Companies', sub:'Prospects you are selling to \u2014 convert them to clients when they sign', bg:'#E3EEFB'},
-  {k:'people', label:'People', sub:'Contacts at your prospects', bg:'#E7F3EE'},
+  {k:'home', label:'Home', sub:"Today's follow-ups, meetings, stale clients & requirements", bg:'#EAE6FB'},
+  {k:'companies', label:'Companies', sub:'Every company you sell to \u2014 prospects and clients', bg:'#E3EEFB'},
+  {k:'people', label:'People', sub:'Contacts across all companies', bg:'#E7F3EE'},
   {k:'opportunities', label:'Opportunities', sub:'BD deals and pipeline value', bg:'#FDF6E9'},
   {k:'tasks', label:'Tasks', sub:'Follow-ups, calls, meetings and to-dos', bg:'#E6F0FF'},
   {k:'notes', label:'Notes', sub:'Notes logged against companies and deals', bg:'#F4F3FF'}
@@ -20996,7 +21048,6 @@ function _bdwPnlRender(){
     +'<div class="ic" style="background:'+_BDW_BG[P.obj]+'">'+_BDW_IC[P.obj]+'</div>'
     +'<div style="flex:1;min-width:0"><span class="bdw-ttl" data-pa="title" title="Click to rename">'+esc(title)+'</span>'
     +'<div class="bdw-stl">'+esc(o.singular)+(rec.created_at?' \u00B7 created '+esc(_bdwAgo(rec.created_at)):'')+(rec.created_by_label?' by '+esc(rec.created_by_label):'')+'</div></div>'
-    +(P.obj==='companies'?'<button class="bdw-pbtn" data-pa="convert" title="Move to Clients with all contacts, emails, notes and follow-ups" style="white-space:nowrap">&#10003; Convert to client</button>':'')
     +((P.obj==='companies'||P.obj==='people')?'<button class="bdw-ico" data-pa="full" title="Open full page" style="font-size:14px">&#10530;</button>':'')
     +'<button class="bdw-ico" data-pa="del" title="Delete">&#128465;</button>'
     +'<button class="bdw-ico" data-pa="close" title="Close (Esc)" style="font-size:17px">&times;</button></div>';
@@ -21409,7 +21460,6 @@ function _bdwPnlAct(act, a, e){
       return openClientDetail(cid);
     }
     case 'del': return _bdwPnlDelete();
-    case 'convert': return crmConvertToClient(P.id);
     case 'ltsave': { var ta=a.closest('.bdw-fv').querySelector('textarea'); var k=P.ltKey; P.ltKey=null; return _bdwPnlCommit(k, ta.value); }
     case 'ltcancel': P.ltKey=null; return _bdwPnlTab();
     case 'addtask': return _bdwAddTask();
@@ -21709,9 +21759,8 @@ function _bdhHtml(r){
       +'<div class="t2">'+esc([d.client_id_label, _bdwPlain(_bdwF('stage','opportunities'), d), d.owner_user_id_label].filter(Boolean).join(' · '))+'</div></div>'
       +'<span class="bdh-tag '+d.reason_kind+'">'+esc(d.reason)+'</span><span class="r">'+esc(d.amount!=null?_bdwCompact(d.amount):'')+'</span></div>';
   }).join('') : '<div class="bdh-empty">Every open deal is on track.</div>';
-  h+='</div><div class="bdh-card"><div class="bdh-ch"><span class="t">Prospects with an open job</span><span class="n">'+r.requirements_total+' active job'+(r.requirements_total===1?'':'s')+'</span></div>';
-  if(r.requirements.length) h+='<div class="bdh-sub">They already gave you work &mdash; convert them to clients.</div>';
-  if(!r.requirements.length) h+='<div class="bdh-empty">None. Jobs live with your clients in Clients (CRM).</div>';
+  h+='</div><div class="bdh-card"><div class="bdh-ch"><span class="t">Open requirements</span><span class="n">'+r.requirements_total+' active job'+(r.requirements_total===1?'':'s')+'</span></div>';
+  if(!r.requirements.length) h+='<div class="bdh-empty">No active jobs'+(r.scope==='me'?' assigned to you':'')+'.</div>';
   r.requirements.forEach(function(g){
     h+='<div class="bdh-sec" style="text-transform:none;letter-spacing:0;font-size:12.5px;color:#344054;cursor:pointer" data-h="open" data-o="companies" data-id="'+g.client_id+'">'+esc(g.client_name)+' <span class="bdw-mute" style="font-weight:500">· '+g.jobs.length+'</span></div>';
     g.jobs.forEach(function(j){
@@ -21725,7 +21774,7 @@ function _bdhHtml(r){
   // ── gone quiet + recent wins
   h+='<div class="bdh-grid"><div class="bdh-card"><div class="bdh-ch"><span class="t">Gone quiet</span><span class="n">'+r.stale_total+'</span>'
     +(r.stale_total>r.stale.length?'<span class="a"><button class="bdw-lnk" data-h="go-stale">View all</button></span>':'')+'</div>'
-    +'<div class="bdh-sub">Prospects with no activity in '+r.stale_days+' days</div>';
+    +'<div class="bdh-sub">Active clients &amp; prospects with no activity in '+r.stale_days+' days</div>';
   h+= r.stale.length ? r.stale.map(function(c){
     return '<div class="bdh-row" data-h="open" data-o="companies" data-id="'+c.id+'">'+_bdwAv(c.name,true)+'<div class="m"><div class="t1">'+esc(c.name)+'</div>'
       +'<div class="t2">'+esc([_bdwPlain(_bdwF('status','companies'), c), c.city, c.owner_user_id_label].filter(Boolean).join(' · '))+'</div></div>'
@@ -24384,6 +24433,9 @@ input:focus,textarea:focus,select:focus{border-color:#0f766e !important}
 .cp-tab.active{color:var(--ink) !important;font-weight:600 !important;border-bottom-color:#0f766e !important}
 .cp-pane{padding:16px 22px 30px}
 .cp-card2{background:#fff !important;border:1px solid var(--line) !important;border-radius:14px !important;box-shadow:none !important}
+/* Call Analysis is a dark card (white text). The rule above forced every card white, so the
+   report's white text vanished on a white background — "the tab doesn't render fully". */
+.cp-card2.ca-dark{background:linear-gradient(135deg,#0a2540 0%,#1a3a5c 100%) !important;border-color:#1a3a5c !important}
 .cp-lbl2{font-size:14px !important;font-weight:700 !important;color:var(--ink) !important;text-transform:none !important;letter-spacing:0 !important}
 .w1-next{display:flex;justify-content:space-between;align-items:center;gap:12px;background:#f5f3ff !important;border-color:#ddd6fe !important}
 .w1-next .k{font-size:11.5px;font-weight:700;color:#5b21b6;text-transform:uppercase;letter-spacing:.05em}
