@@ -52,6 +52,7 @@ _MODULE_NAMES = [
     'assistant',       # HireLab Assistant side panel (paste / CV, never reads Naukri)
     'linkedin_capture',# HireLab Assistant: 1-click LinkedIn profile -> Central DB or BD workspace
     'meeting_tasks',   # scheduler meetings -> Tasks, and 10-minute task alerts
+    'cand_agent',      # AI Agent tab on the candidate profile: instruction -> approved e-mail / WhatsApp draft / reminder
     'reengage',        # 6-monthly candidate re-engagement e-mails + dashboard (/reengage)
     'jobmail',         # Job-Match Mail: vector match + AI check + approve + send (/jobmail)
     'segments',        # Talent Pool: segmentation + CV freshness + update log (/talent-pool)
