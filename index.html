@@ -503,6 +503,32 @@ button,input,textarea,select{font-family:inherit}
 .cp-two{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;align-items:start}
 @media(max-width:980px){.cp-two{grid-template-columns:1fr}}
 .cp-card2{background:#fff;border:0.5px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm);margin-bottom:16px}
+/* AI Agent tab (Oct 2026) */
+.cpa-quick{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 14px !important}
+.cpa-quick input{flex:1;min-width:0;border:none;outline:none;font:inherit;font-size:13.5px;background:transparent;color:var(--ink)}
+.cpa-spark{font-size:15px}
+.cpa-h{font-size:14.5px;font-weight:600;color:var(--ink)}
+.cpa-sub{font-size:12.5px;color:#667085;margin:3px 0 10px}
+.cpa-ask textarea,.cpa-task textarea,.cpa-task input{width:100%;box-sizing:border-box;font:inherit;font-size:13px;padding:8px 10px;border:1px solid #D0D5DD;border-radius:8px;outline:none;background:#fff;color:var(--ink)}
+.cpa-ask textarea:focus,.cpa-task textarea:focus,.cpa-task input:focus{border-color:#0f766e}
+.cpa-row{display:flex;gap:10px;align-items:flex-start;margin-top:8px}
+.cpa-ex{flex:1;display:flex;flex-wrap:wrap;gap:6px}
+.cpa-chip{border:1px solid #E4E7EC;background:#F9FAFB;color:#475467;border-radius:999px;padding:4px 10px;font:inherit;font-size:11.5px;cursor:pointer}
+.cpa-chip:hover{border-color:#0f766e;color:#0f766e}
+.cpa-warn{color:#B54708;font-size:12.5px;margin-top:8px}
+.cpa-note{font-size:13px;background:#F8FAFC !important}
+.cpa-empty{color:#98A2B3;font-size:13px;padding:8px 2px}
+.cpa-th{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cpa-k{font-weight:600;font-size:13.5px}
+.cpa-pill{font-size:11.5px;font-weight:600;border-radius:6px;padding:2px 8px}
+.cpa-when{margin-left:auto;font-size:12.5px;color:#475467}
+.cpa-mute{color:#98A2B3;font-size:12px}
+.cpa-instr{font-size:12.5px;color:#667085;font-style:italic;margin:6px 0 8px}
+.cpa-err{color:#B42318;font-size:12.5px;margin:4px 0 8px}
+.cpa-l{display:block;font-size:11.5px;color:#667085;font-weight:600;margin:8px 0 3px}
+.cpa-meta{font-size:12.5px;color:#475467;margin-bottom:4px}
+.cpa-body{font-size:13px;color:var(--ink);line-height:1.5;white-space:normal;background:#F9FAFB;border-radius:8px;padding:10px 12px}
+.cpa-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .cp-lbl2{font-size:11px;letter-spacing:.05em;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:10px}
 .cp-hbtn{border:0.5px solid var(--line);background:#fff;border-radius:9px;padding:7px 13px;font-size:12.5px;color:var(--ink);cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px;font-weight:500}
 .cp-hbtn:hover{background:#F7F6F2}
@@ -2674,6 +2700,9 @@ function _ntfMeta(n){
   if (n.kind === 'fl_upload') return { icon:'\uD83D\uDCE5', label:'New CV from freelancer', color:'#0F6E56', bg:'#ECFDF3' };
   if (n.kind === 'mandate_assigned') return { icon:'\uD83D\uDCBC', label:'New position assigned to you', color:'#3538CD', bg:'#EEF0FF' };
   if (n.kind === 'cand_update') return { icon:'\uD83D\uDCDD', label:'Candidate updated their profile', color:'#B54708', bg:'#FFF6E5' };
+  if (n.kind === 'agent_wa') return { icon:'\uD83D\uDCAC', label:'AI Agent \u00B7 WhatsApp draft ready', color:'#027A48', bg:'#ECFDF3' };
+  if (n.kind === 'agent_sent') return { icon:'\u2709\uFE0F', label:'AI Agent \u00B7 e-mail sent', color:'#3538CD', bg:'#EEF4FF' };
+  if (n.kind === 'agent_held' || n.kind === 'agent_failed') return { icon:'\u26A0\uFE0F', label:'AI Agent \u00B7 needs you', color:'#B42318', bg:'#FEF3F2' };
   return { icon:'\uD83D\uDCCB', label:'Update on your candidate', color:'#2D6FB3', bg:'#EEF4FF' };
 }
 function _ntfBodyHtml(body, max){
@@ -2775,7 +2804,10 @@ async function ntfOpen(id){
     return;
   }
   if (typeof openProfileById === 'function') {
-    try { await openProfileById(n.candidate_id, n.mandate_id || null); }
+    try {
+      await openProfileById(n.candidate_id, n.mandate_id || null);
+      if (String(n.kind||'').indexOf('agent_') === 0 && typeof cpTab === 'function') cpTab('agent');
+    }
     catch(e){ toast('ERR','Could not open candidate'); }
   }
 }
@@ -7302,13 +7334,16 @@ function renderProfileDetail(c){
 
   // Tab bar (all 8 kept)
   // AI Analysis tab removed and Resume tab folded into the "View CV" button (Oct 2026).
-  var tabs=[['overview','Overview'],['jobs','Job Matching'],['pitch','Pitch'],['billing','Placement &amp; Billing'],['comms','Communications'],['call','Call Analysis']];
+  var tabs=[['overview','Overview'],['jobs','Job Matching'],['pitch','Pitch'],['billing','Placement &amp; Billing'],['comms','Communications'],['call','Call Analysis'],['agent','&#10024; AI Agent']];
   html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
   var nextCard='<div class="cp-card2 w1-next" id="cp-next-'+c.id+'"><div style="min-width:0"><div class="k">Next step</div><div class="v" id="cp-next-v-'+c.id+'">Loading…</div><div class="s" id="cp-next-s-'+c.id+'"></div></div>'
     +'<a href="#" onclick="event.preventDefault();var r=document.getElementById(\'cp-rem-card-'+c.id+'\');if(r){r.scrollIntoView({behavior:\'smooth\',block:\'center\'});var n=document.getElementById(\'rem-note-'+c.id+'\');if(n)n.focus();}">Add reminder &darr;</a></div>';
-  html+='<div class="cp-pane" id="cp-pane-overview"><div class="cp-two"><div>'+nextCard+summary+aiReason+skillsCard+notesCard+historyCard+'</div><div>'+keyFacts+reminders+workCard+_cpOrgShell(c.id)+_cpInterviewShell(c.id)+'</div></div></div>';
+  var agentQuick='<div class="cp-card2 cpa-quick"><span class="cpa-spark">&#10024;</span>'
+    +'<input id="cpa-q-'+c.id+'" maxlength="1000" placeholder="Tell the AI agent\u2026 e.g. drop a follow-up e-mail for the JD at 11 AM tomorrow" onkeydown="if(event.key===\'Enter\'){event.preventDefault();cpAgentQuick('+c.id+');}">'
+    +'<button type="button" class="w1-btn pri" onclick="cpAgentQuick('+c.id+')">Run</button></div>';
+  html+='<div class="cp-pane" id="cp-pane-overview">'+agentQuick+'<div class="cp-two"><div>'+nextCard+summary+aiReason+skillsCard+notesCard+historyCard+'</div><div>'+keyFacts+reminders+workCard+_cpOrgShell(c.id)+_cpInterviewShell(c.id)+'</div></div></div>';
   // Job Matching (vector: this candidate's profile + resume vs every active JD)
   html+='<div class="cp-pane" id="cp-pane-jobs" style="display:none"><div id="cp-jobs-'+c.id+'"></div></div>';
   // Pitch (candidate + position specific call script)
@@ -7321,6 +7356,8 @@ function renderProfileDetail(c){
   html+='<div class="cp-pane" id="cp-pane-comms" style="display:none">'+waCard+emailCard+'</div>';
   // Call Analysis (its own tab, next to Communications)
   html+='<div class="cp-pane" id="cp-pane-call" style="display:none">'+callCard+'</div>';
+  // AI Agent (instruction -> approved e-mail / WhatsApp draft / reminder)
+  html+='<div class="cp-pane" id="cp-pane-agent" style="display:none"><div id="cp-agent-'+c.id+'"></div></div>';
   // History pane removed — Candidate Journey now renders inline under Notes in Overview.
 
   el.innerHTML=html;
@@ -7458,7 +7495,7 @@ function w1NextStepFill(cid, rems){
 }
 
 function cpTab(name){
-  ['overview','jobs','pitch','billing','resume','comms','call'].forEach(function(t){
+  ['overview','jobs','pitch','billing','resume','comms','call','agent'].forEach(function(t){
     var p=document.getElementById('cp-pane-'+t); if(p) p.style.display=(t===name)?'block':'none';
     var b=document.getElementById('cp-tab-'+t); if(b) b.classList.toggle('active', t===name);
   });
@@ -7471,6 +7508,171 @@ function cpTab(name){
   if(name==='jobs'){ cpLoadJobMatching(cid); }
   if(name==='call'){ loadCallAnalysis(cid); }
   if(name==='billing'){ try{ cpLoadBilling(cid); }catch(e){} }
+  if(name==='agent'){ cpLoadAgent(cid); }
+}
+
+
+// ── AI Agent tab (Oct 2026) ──────────────────────────────────────────────────
+// Server: modules/cand_agent.py. The recruiter writes the work in plain words;
+// the agent reads the candidate (CV, stage, job + JD, e-mails, WhatsApp) and
+// proposes e-mails, WhatsApp drafts, reminders or an answer. Nothing goes to the
+// candidate before the recruiter approves; WhatsApp is always sent by them.
+window._cpAgent = window._cpAgent || {};   // cid -> {data, busy, text, understood, question, err}
+var _CPA_EX = ['Drop a follow-up e-mail for the JD at 11 AM tomorrow',
+  'WhatsApp him at 6 PM to check if he is still interested',
+  'Remind me to call her on Friday 4 PM about the offer',
+  "What is the notice period and expected CTC?"];
+var _CPA_KIND = {email:['&#9993;&#65039;','E-mail'], whatsapp:['&#128172;','WhatsApp'], reminder:['&#9200;','Reminder for you'], answer:['&#128161;','Answer']};
+var _CPA_ST = {draft:['Needs your approval','#B54708','#FFFAEB'], scheduled:['Scheduled','#3538CD','#EEF4FF'],
+  held:['On hold','#B42318','#FEF3F2'], ready:['Ready to send','#027A48','#ECFDF3'], sent:['Sent','#027A48','#ECFDF3'],
+  done:['Done','#027A48','#ECFDF3'], failed:['Failed','#B42318','#FEF3F2'], cancelled:['Cancelled','#667085','#F2F4F7']};
+function _cpaWhen(s){
+  var m=String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/); if(!m) return '';
+  var d=new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5]), h=d.getHours(), ap=h>=12?'PM':'AM'; h=h%12||12;
+  return d.toLocaleDateString('en-IN',{weekday:'short', day:'numeric', month:'short'})+', '+h+':'+m[5]+' '+ap;
+}
+async function cpLoadAgent(cid){
+  var st=window._cpAgent[cid]=window._cpAgent[cid]||{};
+  if(!st.data) _cpAgentRender(cid);
+  var r=await req('GET','/candidates/'+cid+'/agent');
+  if(r && r.ok){ st.data=r; st.err=''; } else st.err=(r&&r.error)||'Could not load the AI Agent';
+  _cpAgentRender(cid);
+}
+function _cpaKeepText(cid){
+  var st=window._cpAgent[cid]||{}, ta=document.getElementById('cpa-in-'+cid);
+  if(ta) st.text=ta.value;
+}
+function _cpAgentRender(cid){
+  var box=document.getElementById('cp-agent-'+cid); if(!box) return;
+  var st=window._cpAgent[cid]||{}, d=st.data||{tasks:[]};
+  var h='<div class="cp-card2 cpa-ask"><div class="cpa-h">&#10024; Tell the AI agent what to do</div>'
+    +'<div class="cpa-sub">It reads the CV, stage, job &amp; JD, e-mails and WhatsApp history first. Nothing reaches the candidate until you approve, and WhatsApp is always sent by you.</div>'
+    +'<textarea id="cpa-in-'+cid+'" rows="3" maxlength="1000" placeholder="e.g. Please drop a follow-up e-mail for the JD at 11 AM tomorrow" '
+    +'onkeydown="if(event.key===\'Enter\'&&(event.ctrlKey||event.metaKey)){event.preventDefault();cpAgentRun('+cid+');}"></textarea>'
+    +'<div class="cpa-row"><div class="cpa-ex">'+_CPA_EX.map(function(x,i){ return '<button type="button" class="cpa-chip" onclick="cpAgentExample('+cid+','+i+')">'+esc(x)+'</button>'; }).join('')+'</div>'
+    +'<button type="button" class="w1-btn pri" onclick="cpAgentRun('+cid+')"'+(st.busy?' disabled':'')+'>'+(st.busy?'Working\u2026':'Run')+'</button></div>'
+    +(d.ai_ready===false?'<div class="cpa-warn">AI is not set up for your company yet (Settings &rarr; AI keys &rarr; DeepSeek).</div>':'')
+    +'</div>';
+  if(st.err) h+='<div class="cp-card2 cpa-warn">'+esc(st.err)+'</div>';
+  if(st.busy) h+='<div class="cp-card2"><div class="loading" style="padding:14px"><div class="spinner"></div>Reading the candidate and preparing the work\u2026</div></div>';
+  if(st.understood || st.question){
+    h+='<div class="cp-card2 cpa-note">'+(st.understood?'<div><b>Understood:</b> '+esc(st.understood)+'</div>':'')
+      +(st.question?'<div style="margin-top:6px;color:#B54708"><b>The agent asks:</b> '+esc(st.question)+'</div>':'')+'</div>';
+  }
+  var tasks=(d.tasks||[]).filter(function(t){ return !(t.action==='answer' && t.status==='cancelled'); });
+  if(!tasks.length && !st.busy) h+='<div class="cpa-empty">No agent actions for this candidate yet.</div>';
+  tasks.forEach(function(t){ h+=_cpaCard(cid, t, d); });
+  box.innerHTML=h;
+  var ta=document.getElementById('cpa-in-'+cid); if(ta) ta.value=st.text||'';
+}
+function _cpaCard(cid, t, d){
+  var k=_CPA_KIND[t.action]||['',t.action], s=_CPA_ST[t.status]||[t.status,'#475467','#F2F4F7'];
+  var editable=(t.status==='draft'||t.status==='held'||(t.status==='ready'&&t.action==='whatsapp'));
+  var id='cpa-'+t.id;
+  var h='<div class="cp-card2 cpa-task" id="'+id+'"><div class="cpa-th"><span class="cpa-k">'+k[0]+' '+k[1]+'</span>'
+    +'<span class="cpa-pill" style="color:'+s[1]+';background:'+s[2]+'">'+s[0]+'</span>'
+    +(t.run_at && t.action!=='answer'?'<span class="cpa-when">'+(t.status==='sent'||t.status==='done'?'':'&#128339; ')+esc(_cpaWhen(t.status==='sent'?t.done_at:t.run_at))+(t.action!=='answer'&&!t.time_stated&&t.status==='draft'?' <span class="cpa-mute">(no time in your instruction)</span>':'')+'</span>':'')
+    +'</div>';
+  h+='<div class="cpa-instr">&ldquo;'+esc(t.instruction)+'&rdquo;</div>';
+  if(t.error) h+='<div class="cpa-err">'+esc(t.error)+'</div>';
+  if(t.status==='held' && t.reason) h+='<div class="cpa-err">'+esc(t.reason)+'</div>';
+  if(t.action==='answer'){
+    h+='<div class="cpa-body">'+esc(t.body).replace(/\n/g,'<br>')+'</div>'
+      +'<div class="cpa-btns"><button type="button" class="w1-btn" onclick="cpAgentCancel('+cid+','+t.id+')">Dismiss</button></div></div>';
+    return h;
+  }
+  if(editable){
+    if(t.action==='email') h+='<label class="cpa-l">To</label><input id="'+id+'-to" value="'+esc(t.to_addr)+'">'
+      +'<label class="cpa-l">Subject</label><input id="'+id+'-sub" value="'+esc(t.subject)+'">';
+    if(t.action==='whatsapp') h+='<label class="cpa-l">WhatsApp number</label><input id="'+id+'-to" value="'+esc(t.to_addr)+'">';
+    h+='<label class="cpa-l">'+(t.action==='reminder'?'Task':'Message')+'</label><textarea id="'+id+'-body" rows="'+(t.action==='email'?9:4)+'">'+esc(t.body)+'</textarea>';
+    if(t.status==='draft') h+='<label class="cpa-l">'+(t.action==='email'?'Send at':(t.action==='whatsapp'?'Remind me to send at':'Due'))+' (IST)</label>'
+      +'<input type="datetime-local" id="'+id+'-at" value="'+esc((t.run_at||'').slice(0,16))+'">';
+  } else {
+    if(t.action==='email') h+='<div class="cpa-meta">To '+esc(t.to_addr)+' &middot; <b>'+esc(t.subject)+'</b></div>';
+    h+='<div class="cpa-body">'+esc(t.body).replace(/\n/g,'<br>')+'</div>';
+  }
+  if(t.reason && t.status==='draft') h+='<div class="cpa-mute" style="margin-top:6px">Based on: '+esc(t.reason)+'</div>';
+  var b='';
+  if(t.status==='draft'){
+    var lbl = t.action==='email'?'Approve & schedule':(t.action==='whatsapp'?'Approve draft':'Create task');
+    b+='<button type="button" class="w1-btn pri" onclick="cpAgentApprove('+cid+','+t.id+',false)">'+lbl+'</button>';
+    if(t.action!=='reminder') b+='<button type="button" class="w1-btn" onclick="cpAgentApprove('+cid+','+t.id+',true)">'+(t.action==='email'?'Send now':'Get it now')+'</button>';
+  }
+  if(t.status==='held') b+='<button type="button" class="w1-btn pri" onclick="cpAgentApprove('+cid+','+t.id+',true)">Send anyway</button>';
+  if(t.action==='whatsapp' && (t.status==='ready')){
+    if(d.wa_api) b+='<button type="button" class="w1-btn pri" onclick="cpAgentWaApi('+cid+','+t.id+')">Send via WhatsApp Business</button>';
+    b+='<button type="button" class="w1-btn'+(d.wa_api?'':' pri')+'" onclick="cpAgentWaOpen('+cid+','+t.id+')">Open WhatsApp</button>'
+      +'<button type="button" class="w1-btn" onclick="cpAgentWaDone('+cid+','+t.id+')">Mark as sent</button>';
+  }
+  if(['draft','scheduled','held','ready'].indexOf(t.status)>=0) b+='<button type="button" class="w1-btn" onclick="cpAgentCancel('+cid+','+t.id+')">Cancel</button>';
+  if(b) h+='<div class="cpa-btns">'+b+'</div>';
+  return h+'</div>';
+}
+function cpAgentExample(cid, i){ var ta=document.getElementById('cpa-in-'+cid); if(ta){ ta.value=_CPA_EX[i]; ta.focus(); } }
+function cpAgentQuick(cid){
+  var inp=document.getElementById('cpa-q-'+cid), v=inp?inp.value.trim():'';
+  if(!v){ if(inp) inp.focus(); return; }
+  inp.value='';
+  cpTab('agent');
+  cpAgentRun(cid, v);
+}
+async function cpAgentRun(cid, text){
+  var st=window._cpAgent[cid]=window._cpAgent[cid]||{};
+  if(st.busy) return;
+  if(text==null){ _cpaKeepText(cid); text=(st.text||'').trim(); }
+  if(!text){ var ta=document.getElementById('cpa-in-'+cid); if(ta) ta.focus(); return; }
+  st.busy=true; st.err=''; st.understood=''; st.question=''; st.text=text; _cpAgentRender(cid);
+  var r=await req('POST','/candidates/'+cid+'/agent/plan',{instruction:text});
+  st.busy=false;
+  if(!r || r.error){ st.err=(r&&r.error)||'The agent could not answer. Please try again.'; _cpAgentRender(cid); return; }
+  st.text=''; st.understood=r.understood||''; st.question=r.question||'';
+  st.data=st.data||{}; st.data.tasks=r.tasks||[];
+  _cpAgentRender(cid);
+  if(!st.data.hasOwnProperty('wa_api')) cpLoadAgent(cid);
+}
+async function cpAgentApprove(cid, tid, now){
+  _cpaKeepText(cid);
+  var id='cpa-'+tid, v=function(s){ var e=document.getElementById(id+'-'+s); return e?e.value:undefined; };
+  var body={};
+  ['to','body'].forEach(function(k){ if(v(k)!==undefined) body[k]=v(k); });
+  if(v('sub')!==undefined) body.subject=v('sub');
+  if(now) body.now=true; else if(v('at')!==undefined){
+    if(!v('at')){ toast('&#9888;&#65039;','Pick a date and time'); return; }
+    body.run_at=v('at');
+  }
+  var r=await req('POST','/candidates/'+cid+'/agent/tasks/'+tid+'/approve', body);
+  if(!r || r.error){ toast('&#9888;&#65039;', esc((r&&r.error)||'Could not approve')); if(r&&r.task) cpLoadAgent(cid); return; }
+  var t=r.task, msg = t.status==='sent' ? 'E-mail sent' : t.status==='scheduled' ? 'Scheduled for '+_cpaWhen(t.run_at)
+    : t.status==='ready' ? 'WhatsApp draft ready' : t.status==='done' ? 'Task created' : 'Saved';
+  toast('&#10003;', esc(msg));
+  cpLoadAgent(cid);
+  if(t.status==='sent'){ try{ cpLoadEmailThread(cid); }catch(e){} }
+}
+async function cpAgentCancel(cid, tid){
+  _cpaKeepText(cid);
+  var r=await req('POST','/candidates/'+cid+'/agent/tasks/'+tid+'/cancel',{});
+  if(!r || r.error){ toast('&#9888;&#65039;', esc((r&&r.error)||'Could not cancel')); }
+  cpLoadAgent(cid);
+}
+function _cpaWaBody(tid){ var e=document.getElementById('cpa-'+tid+'-body'); return e?e.value:''; }
+function cpAgentWaOpen(cid, tid){
+  var t=((window._cpAgent[cid]||{}).data||{tasks:[]}).tasks.filter(function(x){ return x.id===tid; })[0]; if(!t) return;
+  var numEl=document.getElementById('cpa-'+tid+'-to'), num=waNumber(numEl?numEl.value:t.to_addr);
+  window.open('https://wa.me/'+num+'?text='+encodeURIComponent(_cpaWaBody(tid)||t.body),'_blank');
+  toast('&#128172;','Sent it? Press \u201CMark as sent\u201D so it is logged.');
+}
+async function cpAgentWaDone(cid, tid){
+  _cpaKeepText(cid);
+  var r=await req('POST','/candidates/'+cid+'/agent/tasks/'+tid+'/wa-done',{body:_cpaWaBody(tid)});
+  if(!r || r.error){ toast('&#9888;&#65039;', esc((r&&r.error)||'Could not save')); return; }
+  toast('&#10003;','WhatsApp logged'); cpLoadAgent(cid);
+}
+async function cpAgentWaApi(cid, tid){
+  _cpaKeepText(cid);
+  var r=await req('POST','/candidates/'+cid+'/agent/tasks/'+tid+'/wa-send',{body:_cpaWaBody(tid)});
+  if(!r || r.error){ toast('&#9888;&#65039;', esc((r&&r.error)||'Could not send')); return; }
+  toast('&#10003;','WhatsApp sent'); cpLoadAgent(cid);
 }
 
 
