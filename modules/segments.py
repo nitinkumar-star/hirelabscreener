@@ -70,17 +70,20 @@ INDUSTRIES = [
         ('switchgear', 3), ('substation', 3), ('transformer', 2), (r'\behv\b', 3), ('transmission line', 3),
         ('power distribution', 3), (r'\b(lt|ht|lv|mv|hv)\b ?panel', 2), (r'\b(gis|ais)\b', 2), ('protection relay', 2),
         ('busbar|bus duct|busway', 2), (r'\b\d{2,3} ?kv\b', 2), ('power system', 2), (r'\b(mcc|pcc)\b', 2), ('cable laying', 1),
-        ('electrical', 1), ('genset|dg set', 1), ('earthing|lightning protection', 1), ('energy meter|metering', 1)]),
+        ('electrical', 1), ('genset|dg set', 1), ('earthing|lightning protection', 1), ('energy meter|metering', 1),
+        ('electrical (engineer|design|maintenance|execution|project|site|lead|manager|head|supervisor|in.?charge)', 2),
+        (r'\blt\b|\bht\b|low voltage|medium voltage|high voltage', 1), ('relay|protection system', 1)]),
     ('automation', 'Industrial Automation', [
         (r'\bplc\b', 3), (r'\bscada\b', 3), (r'\bdcs\b', 3), (r'\bhmi\b', 2), ('industrial automation', 3), ('automation', 2),
-        ('instrumentation', 2), (r'\bvfd\b|variable frequency drive', 2), ('drives', 1), ('robotic', 2), ('process control', 2),
+        ('instrumentation', 2), (r'\bvfd\b|variable frequency drive', 2), ('(ac|dc|servo|low voltage|lv|mv) drives', 2), ('industrial robot', 2), ('process control', 2),
         ('control system', 2), ('allen.?bradley|rockwell|siemens s7|tia portal|wincc', 3), (r'\bbms\b|building management', 2),
         (r'\biiot\b', 2), ('motion control', 2)]),
     ('tic', 'Testing, Inspection & Certification', [
-        ('certification', 2), ('inspection', 2), ('third party inspection', 3), (r'\btpi\b', 3), ('testing laborator', 3),
-        (r'\bnabl\b', 3), ('calibration', 2), (r't(u|ü)v', 3), ('bureau veritas', 3), (r'\bsgs\b', 3), ('intertek', 3),
-        (r'\bdekra\b', 3), ('lloyd', 2), (r'\bul solutions\b|underwriters laborator', 3), ('conformity assessment', 3),
-        ('type testing', 2), ('audit', 1)]),
+        ('certification (body|services|engineer|auditor|manager)', 2), ('inspection (services|agency|body)', 3),
+        ('third party inspection', 3), (r'\btpi\b', 3), ('testing laborator', 3), (r'\bnabl\b', 3), ('calibration', 2),
+        (r't(u|ü)v', 3), ('bureau veritas', 3), (r'\bsgs\b', 3), ('intertek', 3), (r'\bdekra\b', 3), ("lloyd'?s register", 3),
+        (r'\bul solutions\b|underwriters laborator', 3), ('conformity assessment', 3), ('type testing', 2),
+        ('lead auditor', 2), (r'\bdnv\b', 3), ('applus', 3), ('element materials', 3), (r'\bcpri\b|\berda\b', 3)]),
 ]
 FUNCTIONS = [
     ('projects', 'Projects & Execution', [
@@ -260,6 +263,54 @@ def _pat(p):
     return c
 
 
+# Bump when the rules change: the version is part of every person's text_hash,
+# so the next background scan re-classifies everyone (manual edits are kept).
+# Before Oct 2026 the hash had no version, so changed rules were never applied
+# to people already scanned.
+RULES_VERSION = '2026-10-28'
+
+# Phrases that LOOK like our domains but are software / office work. They are
+# removed before scoring ("test automation" is not Industrial Automation,
+# "robotic process automation" is not robotics, "data center migration" is IT).
+_NEUTRAL = re.compile(
+    r'(test(ing)? automation|automation test(ing|er)?|qa automation|automation (framework|anywhere)|'
+    r'selenium|robotic process automation|\brpa\b|marketing automation|sales ?force automation|'
+    r'power automate|automation scripts?|ui ?path|blue ?prism|'
+    r'data cent(er|re) (migration|virtuali[sz]ation|network)|cloud data cent(er|re)|'
+    r'software design|ui/?ux design|graphic design|web design|instructional design|design patterns?|'
+    r'sales ?force|inside sales|tele ?sales|software sales)')
+# Clear software / IT-services signals. A profile with several of these and no
+# strong domain word in its title or job is not placed in any industry.
+_IT_SIGNAL = re.compile(
+    r'(\bjava\b|python|\.net\b|c#|javascript|typescript|\breact(js)?\b|angular|node\.?js|spring boot|'
+    r'full ?stack|front ?end|back ?end developer|software (engineer|developer|tester|testing)|'
+    r'manual testing|test cases?|\bsdlc\b|\bstlc\b|\bjira\b|devops|kubernetes|docker|\baws\b|microservices|'
+    r'\bsql\b|power ?bi|tableau|data (analyst|scientist)|machine learning|'
+    r'android developer|ios developer|mainframe|\bsap (abap|fico|basis|hana)|servicenow|'
+    r'accenture|infosys|wipro|tata consultancy|\btcs\b|cognizant|capgemini|hcl ?tech|tech mahindra|\bepam\b|'
+    r'ltimindtree|mphasis|hexaware|persistent systems|coforge|virtusa|\bibm\b)')
+# Known employers by industry: a strong signal on the COMPANY field only.
+_COMPANY_HINTS = {
+    'data_center': r'equinix|\bntt\b|stt ?gdc|ctrls|nxtra|yotta|\bsify\b|web ?werks|adani ?conne?x|princeton digital|'
+                   r'colt dcs|digital realty|iron mountain|st telemedia|capitaland data',
+    'solar_re': r'adani green|\brenew( power)?\b|tata power (solar|renewable)|waaree|vikram solar|sterling (and|&) wilson|'
+                r'azure power|avaada|greenko|juniper green|mahindra susten|fourth partner|amp energy|ayana|\bseci\b|'
+                r'premier energies|hero future|sembcorp|acme solar|suzlon|inox wind|gensol|emmvee|goldi solar|'
+                r'rays power|solar ?edge|sungrow|enfinity|cleanmax|o2 power|serentica|torrent green',
+    'electrical': r'hitachi energy|lauritz|\bl ?& ?k\b|havells|legrand|\beaton\b|polycab|\bkei\b|kalpataru|\bkec\b|'
+                  r'sterlite power|power ?grid|\bntpc\b|cg power|crompton greaves|\bge (grid|vernova)|'
+                  r'schneider electric|siemens (energy|smart infrastructure)|\babb\b|l ?& ?t (electrical|power|construction)',
+    'automation': r'rockwell|honeywell|emerson|yokogawa|mitsubishi electric|omron|endress|\bb ?& ?r\b|beckhoff|'
+                  r'phoenix contact|siemens (digital industries|automation)|schneider electric',
+    'tic': r't(u|ü)v|bureau veritas|\bsgs\b|intertek|dekra|\bul\b|lloyd|\bdnv\b|applus|element materials|'
+           r'\bcpri\b|\berda\b|\bkiwa\b|eurofins',
+}
+
+
+def _neutral(t):
+    return _NEUTRAL.sub(' ', t) if t else t
+
+
 def _score(table, weighted_texts):
     """{key: score} for a taxonomy table over [(text, field_weight)]."""
     out = {}
@@ -303,13 +354,44 @@ def region_of(location, preferred=''):
     return 'unknown'
 
 
+def _strong_domain(texts):
+    """True if a weight-3 industry word appears in one of these texts (title / job the person came from)."""
+    for txt in texts:
+        if not txt:
+            continue
+        for _k, _l, pats in INDUSTRIES:
+            for p, w in pats:
+                if w >= 3 and _pat(p).search(txt):
+                    return True
+    return False
+
+
+def _strong_tic(texts):
+    pats = [p for k, _l, ps in INDUSTRIES if k == 'tic' for p, w in ps if w >= 3]
+    return any(txt and _pat(p).search(txt) for txt in texts for p in pats)
+
+
 def classify(person):
     """Rules: (industries, functions, scores) for one person dict of texts."""
-    title = person.get('title', '')
-    texts = [(title, 3), (person.get('job', ''), 2), (person.get('skills', ''), 2), (person.get('tags', ''), 2),
-             (person.get('company', ''), 1), (person.get('summary', ''), 1)]
+    raw_all = ' '.join(str(person.get(k, '') or '') for k in ('title', 'job', 'skills', 'tags', 'company', 'summary'))
+    title, job = _neutral(person.get('title', '')), _neutral(person.get('job', ''))
+    skills, tags = _neutral(person.get('skills', '')), _neutral(person.get('tags', ''))
+    company, summary = _neutral(person.get('company', '')), _neutral(person.get('summary', ''))
+    # A software / IT-services profile with no real domain word in its title or job gets no segment:
+    # it is not part of the Data Center / Solar / Electrical / Automation / TIC talent pool.
+    it_hits = len(set(m.group(0) for m in _IT_SIGNAL.finditer(raw_all)))
+    if it_hits >= 2 and not _strong_domain([title, job]):
+        return [], [], {'industries': {}, 'functions': {}, 'it_profile': it_hits}
+    texts = [(title, 3), (job, 2), (skills, 2), (tags, 2), (company, 1), (summary, 1)]
     ind = _score(INDUSTRIES, texts)
-    fun = _score(FUNCTIONS, [(title, 3), (person.get('tags', ''), 1), (person.get('skills', ''), 1), (person.get('summary', ''), 1)])
+    for key, pat in _COMPANY_HINTS.items():          # a known employer is a strong signal on its own
+        if company and _pat(pat).search(company):
+            ind[key] = ind.get(key, 0) + 5
+    # TIC needs a TIC-specific word or employer: generic "inspection / audit" is in every QA/QC CV
+    if 'tic' in ind and not (_pat(_COMPANY_HINTS['tic']).search(company or '')
+                             or _strong_tic([title, job, skills, tags, summary])):
+        ind.pop('tic')
+    fun = _score(FUNCTIONS, [(title, 3), (tags, 1), (skills, 1), (summary, 1)])
     industries = _pick(ind, 4)
     functions = [f for f in _pick(fun, 3) if f != 'leadership']
     if 'leadership' in fun and fun['leadership'] >= 9:
@@ -336,8 +418,10 @@ def scan_company(conn, oid):
             'key_skills', 'key_skill_tags', 'domain_tags', 'function_tags', 'industry_background', 'career_summary',
             'cv_path', 'created_at', 'stage', 'do_not_email', 'reengage_off', 'mandate_id']
     cols = ', '.join('c.' + c for c in want if c in have)
-    rows = _rows(conn, 'SELECT %s, m.role AS m_role, m.status AS m_status FROM candidates c '
-                       'LEFT JOIN mandates m ON m.id=c.mandate_id WHERE c.owner_id=?' % cols, (oid,))
+    mcols = {r[1] for r in conn.execute('PRAGMA table_info(mandates)')}
+    moff = ', COALESCE(m.auto_mail_off,0) AS m_mail_off' if 'auto_mail_off' in mcols else ', 0 AS m_mail_off'
+    rows = _rows(conn, 'SELECT %s, m.role AS m_role, m.status AS m_status%s FROM candidates c '
+                       'LEFT JOIN mandates m ON m.id=c.mandate_id WHERE c.owner_id=?' % (cols, moff), (oid,))
     upd = {}
     for r in conn.execute('SELECT LOWER(TRIM(email)) AS em, candidate_id, MAX(created_at) AS last FROM talent_updates '
                           'WHERE company_id=? GROUP BY em, candidate_id', (oid,)):
@@ -365,13 +449,14 @@ def scan_company(conn, oid):
             'company': ' '.join(str(r.get('company') or '') + ' ' + str(r.get('industry_background') or '') for r in recs[:3]).lower(),
             'summary': str(lt.get('career_summary') or '')[:800].lower(),
         }
-        h = hashlib.sha1(json.dumps([person, lt.get('experience'), lt.get('location'), lt.get('preferred_location')],
+        h = hashlib.sha1(json.dumps([RULES_VERSION, person, lt.get('experience'), lt.get('location'), lt.get('preferred_location')],
                                     sort_keys=True).encode()).hexdigest()[:16]
         em = _valid_email(lt.get('email'))
         cv_dates = [str(r.get('created_at') or '') for r in recs if r.get('cv_path')]
         lu = max([upd.get(em, '')] + [upd.get('cid:%d' % r['id'], '') for r in recs])
         cv_date = max(cv_dates + [lu]) if (cv_dates or lu) else ''
-        emailable = 1 if (em and not any(r.get('do_not_email') for r in recs) and not any(r.get('reengage_off') for r in recs)) else 0
+        emailable = 1 if (em and not any(r.get('do_not_email') for r in recs) and not any(r.get('reengage_off') for r in recs)
+                          and not any(r.get('m_mail_off') for r in recs)) else 0
         live = 1 if any(str(r.get('stage') or '').strip().lower() in LIVE_STAGES for r in recs) else 0
         base = {'email': em, 'candidate_id': lt['id'], 'record_ids': json.dumps([r['id'] for r in recs][:50]),
                 'name': lt.get('name') or '', 'designation': lt.get('designation') or '', 'company': lt.get('company') or '',

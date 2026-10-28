@@ -211,6 +211,12 @@ def build_people(conn, oid, settings=None, now=None, only_email=None):
             upd_log[r['em']] = r['last']
     except Exception:
         pass
+    mg_ids, mg_ems, mg_lab = set(), set(), {}       # per-job "automated e-mails OFF" (modules/mail_guard.py)
+    try:
+        from modules import mail_guard as _mg
+        mg_ids, mg_ems, mg_lab = _mg.blocked(conn, oid)
+    except Exception:
+        pass
     groups = {}
     for c in cands:
         em = c['email'].strip().lower()
@@ -239,6 +245,8 @@ def build_people(conn, oid, settings=None, now=None, only_email=None):
             p['state'], p['reason'] = 'excluded', 'Unsubscribed'
         elif p['off']:
             p['state'], p['reason'] = 'excluded', 'Switched off by you'
+        elif em in mg_ems or any(c['id'] in mg_ids for c in rows):
+            p['state'], p['reason'] = 'excluded', 'Job e-mails off (%s)' % mg_lab.get(em, 'job')
         elif any((c['stage'] or '').strip().lower() in ACTIVE_STAGES for c in rows):
             live = [c['stage'] for c in rows if (c['stage'] or '').strip().lower() in ACTIVE_STAGES][0]
             p['state'], p['reason'] = 'excluded', 'Live in a pipeline (%s)' % live

@@ -237,7 +237,16 @@ def audience_people(conn, oid, aud):
     """Talent Pool people for this audience — e-mailable only."""
     from modules import segments as sg
     f = sg._clean_filter(dict(aud, emailable_only=True))
-    return sg.segment_people(conn, oid, f)
+    people = sg.segment_people(conn, oid, f)
+    try:                    # per-job "automated e-mails OFF" (modules/mail_guard.py) — live, not only at the last scan
+        from modules import mail_guard as _mg
+        _ids, _ems, _ = _mg.blocked(conn, oid)
+        if _ids or _ems:
+            people = [p for p in people if (p.get('email') or '').lower() not in _ems
+                      and int(p.get('candidate_id') or 0) not in _ids]
+    except Exception:
+        pass
+    return people
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -370,6 +379,14 @@ def _fresh_days(conn, oid):
         return 180
 
 
+def _mail_off(conn, oid, rec):
+    try:
+        from modules import mail_guard as _mg
+        return _mg.is_blocked(conn, oid, rec['candidate_id'], rec['email'])
+    except Exception:
+        return False
+
+
 def send_one(conn, oid, rec, issue, fresh_days, gap):
     core = _core()
     cur = conn.execute("UPDATE newsletter_recipients SET status='sending' WHERE id=? AND status='queued'", (rec['id'],))
@@ -381,6 +398,8 @@ def send_one(conn, oid, rec, issue, fresh_days, gap):
                        "WHERE owner_id=? AND LOWER(TRIM(email))=?", (oid, rec['email'])).fetchone()
     if dne and (dne[0] or dne[1]):
         skip = 'Unsubscribed / switched off before sending'
+    elif _mail_off(conn, oid, rec):
+        skip = 'Automated e-mails switched off for their job'
     elif rec['email'] in recent_mail_emails(conn, oid, gap, exclude_issue=issue['id']):
         skip = 'Got another HireLab e-mail in the last %d days' % gap
     if skip:

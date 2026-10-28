@@ -368,6 +368,12 @@ def build_campaign(conn, oid, camp):
                                                "AND mandate_id=? AND campaign_id<>? AND status IN ('queued','sending','sent')",
                                                (oid, mid, camp['id']))}
     recent = recent_mail_map(conn, oid, s['gap_days'], exclude_campaign=camp['id'])
+    mg_ids, mg_ems = set(), set()          # per-job "automated e-mails OFF" switch (modules/mail_guard.py)
+    try:
+        from modules import mail_guard as _mg
+        mg_ids, mg_ems, _ = _mg.blocked(conn, oid)
+    except Exception:
+        pass
 
     exp_min, exp_max = _num(_mval(m, 'exp_min')), _num(_mval(m, 'exp_max'))
     ctc_max = _num(_mval(m, 'ctc_max'))
@@ -402,6 +408,8 @@ def build_campaign(conn, oid, camp):
             reason = 'Unsubscribed'
         elif fl and fl['off']:
             reason = 'E-mails switched off by you'
+        elif em in mg_ems or cid in mg_ids:
+            reason = 'Automated e-mails switched off for their job'
         elif _person_key(r) in in_keys or cid in in_keys or em in in_emails or (_digits(r['phone']) and _digits(r['phone']) in in_phones):
             reason = 'Already in this job'
         elif stages & LIVE_STAGES:
@@ -682,6 +690,14 @@ def _links(rid, oid, cid):
 # ══════════════════════════════════════════════════════════════════════════
 #  4. SEND — background thread
 # ══════════════════════════════════════════════════════════════════════════
+def _mail_off(conn, oid, rec):
+    try:
+        from modules import mail_guard as _mg
+        return _mg.is_blocked(conn, oid, rec['candidate_id'], rec['email'])
+    except Exception:
+        return False
+
+
 def send_one(conn, oid, rec, m, camp):
     """Claim + send one queued recipient. Returns (sent, err)."""
     core = _core()
@@ -698,6 +714,8 @@ def send_one(conn, oid, rec, m, camp):
         skip = 'Job closed before sending'
     elif dne:
         skip = 'Unsubscribed before sending'
+    elif _mail_off(conn, oid, rec):
+        skip = 'Automated e-mails switched off for their job'
     else:
         recent = recent_mail_map(conn, oid, s['gap_days'], exclude_campaign=camp['id'])
         if rec['email'] in recent and recent[rec['email']] != 'queued':

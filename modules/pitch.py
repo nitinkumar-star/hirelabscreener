@@ -321,6 +321,47 @@ Return ONLY a JSON object, no prose:
 }}"""
 
 
+# Oct 2026: the paragraph call script is switched off — the Pitch tab keeps the
+# evaluation + the ANSWER CHECKLIST only (faster, fewer tokens). Set to True to
+# bring the full script back (the old prompt above is untouched).
+SCRIPT_IN_PITCH = False
+
+
+def _checklist_prompt(lang):
+    if lang == 'hinglish':
+        lang_rule = ("LANGUAGE: Hinglish — natural Hindi-English mix in ROMAN script only (no Devanagari). "
+                     "Keep skill, product and tool names in English.")
+    else:
+        lang_rule = "LANGUAGE: Simple, natural spoken Indian English — short, polite sentences."
+    return f"""You prepare the ANSWER CHECKLIST a junior Indian recruiter uses on a phone call with a
+candidate about one job. The caller has no technical knowledge and cannot judge skill level, so each
+question only finds out WHETHER the candidate has exposure to an important skill, and roughly how much.
+
+{lang_rule}
+
+You receive the job details, the candidate's profile and a screening EVALUATION (strengths, gaps,
+claims to verify, must-have check).
+
+EXPOSURE QUESTIONS (5 to 7):
+- Form: "Have you worked on / handled <skill or area>? If yes, for about how many years, and in which
+  company?" (or the natural Hinglish equivalent).
+- Cover every must-have that is NOT_MET or UNCLEAR, every important GAP and every claim TO VERIFY from
+  the evaluation first; then the remaining must-haves. One skill per question.
+- NEVER ask "how would you…", "explain…", "what is the difference…", scenario, technical or test-style
+  questions. Keep each question to one simple sentence.
+
+Also write "ctc_response": the diplomatic line the caller uses IF the candidate asks about budget (the
+client decides based on current package, experience and interviews; first understand current and
+expected). It must contain NO number. No flattery anywhere.
+
+Return ONLY a JSON object:
+{{
+  "exposure_questions": [{{"skill": "<short skill name>", "q": "<the exact question>",
+                          "note": "<what the caller writes down, e.g. Yes/No + years + company>"}}],
+  "ctc_response": "..."
+}}"""
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  DEEPSEEK CALL
 # ══════════════════════════════════════════════════════════════════════════
@@ -394,7 +435,7 @@ def _violations(p):
             bad.append(f'"{k}" contains flattery ("{_FLATTERY.search(t).group(0)}")')
     script = str(p.get('script') or '')
     paras = [x for x in re.split(r'\n\s*\n', script) if x.strip()]
-    if len(paras) < 5:
+    if SCRIPT_IN_PITCH and len(paras) < 5:
         bad.append(f'"script" must be 6 paragraphs separated by blank lines (got {len(paras)})')
     for i, q in enumerate(p.get('exposure_questions') or []):
         if isinstance(q, dict) and _TEST_Q.search(str(q.get('q') or '')):
@@ -684,8 +725,9 @@ def generate_pitch(cid):
             pitch_user = (f"Recruiter name: {recruiter}\nAgency name: {agency}\n\n"
                           f"JOB\n{role_txt}\n\nCANDIDATE\n{cand_txt}\n\n"
                           f"EVALUATION (for you only — never read it out)\n{json.dumps(call_view(ev), ensure_ascii=False)}")
-            system = _pitch_prompt(lang)
-            pt, raw = _ask_json(ds_key, system, pitch_user, 0.6, 2600, 'pitch-write')
+            system = _pitch_prompt(lang) if SCRIPT_IN_PITCH else _checklist_prompt(lang)
+            pt, raw = _ask_json(ds_key, system, pitch_user, 0.6 if SCRIPT_IN_PITCH else 0.4,
+                                2600 if SCRIPT_IN_PITCH else 1400, 'pitch-write')
             step = 'check-rules'
             bad = _violations(pt)
             if bad:
@@ -694,11 +736,14 @@ def generate_pitch(cid):
                     {'role': 'assistant', 'content': raw},
                     {'role': 'user', 'content': 'Rewrite it. These rules were broken: ' + '; '.join(bad)
                      + '. Fix all of them. Same JSON shape.'}])
-                if isinstance(pt2, dict) and pt2.get('script'):
+                if isinstance(pt2, dict) and (pt2.get('script') or (not SCRIPT_IN_PITCH and pt2.get('exposure_questions'))):
                     pt = pt2
             step = 'scrub'
+            if not SCRIPT_IN_PITCH:
+                pt['script'] = ''
             pt = _scrub(pt)
-            if len(pt.get('script') or '') < 300 or not pt.get('exposure_questions'):
+            pt['checklist_only'] = not SCRIPT_IN_PITCH
+            if (SCRIPT_IN_PITCH and len(pt.get('script') or '') < 300) or not pt.get('exposure_questions'):
                 raise PitchError('AI returned an incomplete pitch. Please try again.')
         except PitchError as e:
             print(f'[pitch] step={step}: {e}')

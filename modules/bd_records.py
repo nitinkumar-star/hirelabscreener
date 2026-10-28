@@ -1518,6 +1518,53 @@ def _run_write(fn):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+#  QUICK COMPANY (Oct 2026) — type a company name while adding a person /
+#  deal and it is created on the spot as a BD prospect (details later).
+# ══════════════════════════════════════════════════════════════════════════
+def quick_company(conn, name, extra=None):
+    """Return (id, name, created) for a BD prospect company with this name.
+    Re-uses an existing prospect (same normalised name). A company that already
+    became a client lives in Client CRM and cannot take new BD people."""
+    from modules.crm import ClientRepo, ClientService, _norm_name, DuplicateError
+    name = re.sub(r'\s+', ' ', str(name or '')).strip()[:160]
+    if len(name) < 2:
+        raise RecordError('Type the company name.')
+    company_id = effective_company_id()
+    dup = ClientRepo.find_by_namekey(conn, company_id, _norm_name(name))
+    if dup:
+        if (dict(dup).get('record_type') or 'client') == 'prospect':
+            return dup['id'], dup['name'], False
+        raise RecordError(f'"{dup["name"]}" is already a client in Client CRM — add this person there.', 409)
+    payload = {'name': name, 'status': 'prospect', 'record_type': 'prospect'}
+    for k in ('city', 'industry', 'website'):
+        if extra and str(extra.get(k) or '').strip():
+            payload[k] = str(extra[k]).strip()[:200]
+    try:
+        cid = ClientService.create(conn, payload)
+    except DuplicateError as e:          # created by someone else a moment ago
+        return e.existing_id, name, False
+    if extra and str(extra.get('linkedin') or '').strip():
+        conn.execute('UPDATE crm_clients SET linkedin=? WHERE id=?', (str(extra['linkedin']).strip()[:300], cid))
+        conn.commit()
+    return cid, name, True
+
+
+@bp.route('/companies/quick', methods=['POST'])
+@login_required
+def quick_company_api():
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        res, err = _run_write(lambda: quick_company(conn, d.get('name')))
+        if err:
+            return err
+        cid, nm, created = res
+        return jsonify({'ok': True, 'id': cid, 'name': nm, 'created': created})
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
 #  VIEWS  (saved table / kanban configurations)
 # ══════════════════════════════════════════════════════════════════════════
 def _clean_view_config(o, cfg):

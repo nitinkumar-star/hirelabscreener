@@ -26,6 +26,7 @@ _MODULE_NAMES = [
     'access',          # recruiter access guard + multi-recruiter assignment (load first)
     'tenant_guard',    # company guard: an id in the URL must belong to the caller's company (+ suspended agencies)
     'mail_identity',   # per-recruiter Gmail + signature
+    'mail_guard',      # per-job switch: automated e-mails OFF for that job's candidates
     'user_templates',  # per-recruiter email / WhatsApp templates
     'call_intel',      # saved call analyses (report + recording)
     'call_report',     # downloadable call report (Word + print-to-PDF; internal / client)
@@ -39,6 +40,7 @@ _MODULE_NAMES = [
     'orgmap',
     'notifications',
     'pitch',
+    'final_result',    # Pitch tab: resume evidence + call evidence -> one final decision
     'storage_health',
     'todo',            # Tasks v2 — Any.do-style to-do engine on the reminders table
     'todo_ai',         # Tasks v2 Wave 5 — smart quick-add, daily plan, morning summary
@@ -48,6 +50,7 @@ _MODULE_NAMES = [
     'job_profile',     # Job Breakdown (core/important/nice) + extension profile explanation
     'google_meet',     # Google Calendar + Meet invites for Video bookings
     'assistant',       # HireLab Assistant side panel (paste / CV, never reads Naukri)
+    'linkedin_capture',# HireLab Assistant: 1-click LinkedIn profile -> Central DB or BD workspace
     'meeting_tasks',   # scheduler meetings -> Tasks, and 10-minute task alerts
     'reengage',        # 6-monthly candidate re-engagement e-mails + dashboard (/reengage)
     'jobmail',         # Job-Match Mail: vector match + AI check + approve + send (/jobmail)
