@@ -1787,7 +1787,13 @@ function _reqParse(res){
   try{ return JSON.parse(res.txt); }
   catch(e){ return{error:'Server not reachable. Check your internet connection and try again. ('+e.message+')'}; }
 }
+// BD workspace (Oct 2026): every /bd/ call carries the open BD workspace (?ws=)
+function _bdWsPath(path){
+  try{ if(typeof BDW!=='undefined' && BDW.ws && String(path).indexOf('/bd/')===0) return path+(path.indexOf('?')<0?'?':'&')+'ws='+BDW.ws; }catch(e){}
+  return path;
+}
 async function req(method,path,body){
+  path=_bdWsPath(path);
   if(method==='GET' && !body){
     var p=_reqInflight[path];
     if(!p){
@@ -19769,6 +19775,11 @@ body.rs-scoped #ai-tab-stats, body.rs-scoped #ai-tab-companies, body.rs-scoped #
 .bdw-nav-i{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:7px;font-size:13px;color:#344054;cursor:pointer;border:none;background:transparent;width:100%;text-align:left;font-family:inherit}
 .bdw-nav-i svg{width:16px;height:16px;flex-shrink:0}
 .bdw-nav-i:hover{background:#F2F4F7}
+.bdw-ws{display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;margin:0 0 8px;border:0.5px solid #D0D5DD;border-radius:8px;background:#fff;font:inherit;font-size:13px;font-weight:600;color:#101828;cursor:pointer;text-align:left}
+.bdw-ws:hover{background:#F9FAFB;border-color:#A4B0FF}
+.bdw-ws .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bdw-ws .cv{color:#98A2B3;font-size:11px}
+.bdw-ws .dot,.bdw-wsdot{width:9px;height:9px;border-radius:3px;flex-shrink:0;display:inline-block}
 .bdw-nav-i.on{background:#EEF0FF;color:#3538CD;font-weight:600}
 #bdw-grid{flex:1;flex-direction:column;overflow:hidden;background:#fff;min-width:0}
 .bdw-top{display:flex;align-items:center;gap:6px;padding:8px 14px;border-bottom:0.5px solid #EAECF0;flex-wrap:wrap;flex-shrink:0}
@@ -20042,7 +20053,8 @@ table.bdw-t{border-collapse:separate;border-spacing:0;table-layout:fixed;font-si
 //  Backend: modules/bd_records.py  (/api/bd/objects, /records, /views)
 //  Pages: home (existing dashboard) | companies | people | opportunities | tasks | notes
 // ═══════════════════════════════════════════════════════════════════════
-var BDW = { meta:null, page:'home', obj:null, st:{}, seq:0, pop:null, popCtx:null, modal:null, wired:false };
+var BDW = { meta:null, page:'home', obj:null, st:{}, seq:0, pop:null, popCtx:null, modal:null, wired:false,
+  ws:(function(){ try{ return +localStorage.getItem('bdw_ws')||0; }catch(e){ return 0; } })() };
 
 var _BDW_IC = {
   home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>',
@@ -20187,6 +20199,7 @@ function _bdwWire(){
     }
   });
   document.getElementById('bdw-nav').addEventListener('click', function(e){
+    var w=e.target.closest('[data-ws]'); if(w) return _bdwWsMenu(w);
     var b=e.target.closest('[data-page]'); if(b) bdwShow(b.getAttribute('data-page'));
   });
   var p=document.createElement('div'); p.id='bdw-pop'; document.body.appendChild(p); BDW.pop=p;
@@ -20285,12 +20298,78 @@ function _bdwHnavDown(e){
   }
 }
 
+function _bdwCurWs(){
+  var l=(BDW.meta && BDW.meta.workspaces)||[];
+  return l.filter(function(w){ return w.id===BDW.ws; })[0] || {id:BDW.ws, name:BDW.ws?'Workspace':'Main', color:''};
+}
 function _bdwRenderNav(){
-  var h='<div class="bdw-nav-h">Workspace</div>';
+  var nav=document.getElementById('bdw-nav'); if(!nav) return;
+  var cw=_bdwCurWs();
+  var h='<div class="bdw-nav-h">Workspace</div>'
+    +'<button class="bdw-ws" data-ws="menu" title="Switch BD workspace"><span class="dot" style="background:'+esc(cw.color||'#98A2B3')+'"></span>'
+    +'<span class="nm">'+esc(cw.name)+'</span><span class="cv">&#9662;</span></button>';
   _BDW_PAGES.forEach(function(pg){
     h+='<button class="bdw-nav-i'+(BDW.page===pg.k?' on':'')+'" data-page="'+pg.k+'">'+_BDW_IC[pg.k]+'<span>'+pg.label+'</span></button>';
   });
-  document.getElementById('bdw-nav').innerHTML=h;
+  nav.innerHTML=h;
+}
+
+// ── multiple BD workspaces (Oct 2026) ─────────────────────────────────────
+function _bdwSetWs(id, silent){
+  BDW.ws=+id||0;
+  try{ localStorage.setItem('bdw_ws', String(BDW.ws)); }catch(e){}
+  bdwPopClose(); bdwPanelClose(true);
+  BDW.meta=null; BDW.st={}; BDW.obj=null;
+  if(!silent) bdwShow(BDW.page||'home');
+}
+function _bdwWsMenu(anchor){
+  bdwPopOpen(anchor, '<div id="bdw-wsm" style="width:250px"></div>', {type:'ws'});
+  _bdwWsMenuRender();
+}
+function _bdwWsMenuRender(){
+  var el=document.getElementById('bdw-wsm'); if(!el) return;
+  var l=(BDW.meta && BDW.meta.workspaces)||[{id:0, name:'Main', companies:0}], admin=BDW.meta && BDW.meta.is_admin;
+  var h='<div class="bdw-ph">BD workspaces</div>';
+  l.forEach(function(w,i){
+    h+='<button class="bdw-pi'+(w.id===BDW.ws?' on':'')+'" data-p="wssel" data-i="'+i+'"><span class="bdw-wsdot" style="background:'+esc(w.color||'#98A2B3')+'"></span>'
+      +'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(w.name)+'</span><span class="sub">'+(w.companies||0)+'</span></button>';
+  });
+  if(admin){
+    h+='<div class="bdw-psep"></div><button class="bdw-pi" data-p="wsnew">+ New workspace</button>';
+    if(BDW.ws) h+='<button class="bdw-pi" data-p="wsren">Rename “'+esc(_bdwCurWs().name)+'”</button>'
+      +'<button class="bdw-pi" data-p="wsdel" style="color:#D92D20">Delete “'+esc(_bdwCurWs().name)+'”</button>';
+  }
+  el.innerHTML=h;
+}
+var _BDW_WS_COLORS=['#3E63DD','#12B76A','#F79009','#F04438','#7A5AF8','#0BA5EC','#EE46BC','#667085'];
+async function _bdwWsAct(p, i){
+  var l=(BDW.meta && BDW.meta.workspaces)||[];
+  if(p==='wssel'){ var w=l[i]; if(!w) return; bdwPopClose(); if(w.id!==BDW.ws) _bdwSetWs(w.id); return; }
+  if(p==='wsnew'){
+    bdwPopClose();
+    var nm=prompt('Name of the new BD workspace (e.g. IT Staffing, Leadership Hiring):', ''); if(nm==null || !nm.trim()) return;
+    var r=await req('POST','/bd/workspaces',{name:nm.trim(), color:_BDW_WS_COLORS[l.length%_BDW_WS_COLORS.length]});
+    if(!r || r.error){ _bdwToast((r&&r.error)||'Could not create the workspace'); return; }
+    toast('&#10003;', 'Workspace “'+esc(r.workspace.name)+'” created');
+    return _bdwSetWs(r.workspace.id);
+  }
+  if(p==='wsren'){
+    bdwPopClose();
+    var cur=_bdwCurWs(), nn=prompt('Rename this BD workspace:', cur.name); if(nn==null || !nn.trim() || nn.trim()===cur.name) return;
+    var r2=await req('PUT','/bd/workspaces/'+cur.id,{name:nn.trim()});
+    if(!r2 || r2.error){ _bdwToast((r2&&r2.error)||'Could not rename'); return; }
+    if(BDW.meta) BDW.meta.workspaces=l.map(function(w){ return w.id===cur.id ? r2.workspace : w; });
+    _bdwRenderNav(); return;
+  }
+  if(p==='wsdel'){
+    bdwPopClose();
+    var cw=_bdwCurWs();
+    if(!confirm('Delete the BD workspace “'+cw.name+'”? Its custom fields and views are removed. A workspace must be empty (no companies) to delete.')) return;
+    var r3=await req('DELETE','/bd/workspaces/'+cw.id);
+    if(!r3 || r3.error){ _bdwToast((r3&&r3.error)||'Could not delete'); return; }
+    toast('&#10003;', 'Workspace deleted');
+    return _bdwSetWs(0);
+  }
 }
 
 async function bdwShow(page, rid){
@@ -20316,12 +20395,14 @@ async function bdwShow(page, rid){
 async function _bdwEnsureMeta(){
   if(BDW.meta) return true;
   var r=await req('GET','/bd/objects');
+  if((!r || !r.ok) && BDW.ws){ _bdwSetWs(0, true); r=await req('GET','/bd/objects'); }   // workspace deleted / not ours
   if(!r || !r.ok){ return false; }
   Object.keys(r.objects).forEach(function(k){
     var o=r.objects[k]; o._by={}; o.fields.forEach(function(f){ o._by[f.key]=f; });
   });
-  BDW.meta=r; return true;
+  BDW.meta=r; _bdwRenderNav(); return true;
 }
+async function _bdwReloadMeta(){ BDW.meta=null; return _bdwEnsureMeta(); }
 
 async function bdwOpenObject(obj){
   var g=document.getElementById('bdw-grid');
@@ -20528,7 +20609,7 @@ function _bdwRenderTable(scrollTop){
     h+='<th class="'+(i===0?'s1':'')+'" data-a="colmenu" data-f="'+c.field+'" style="position:sticky">'
       +esc(f.label)+(s?(s.dir==='desc'?' &#8595;':' &#8593;'):'')+'<span class="rs" data-a="rs" data-f="'+c.field+'"></span></th>';
   });
-  h+='<th data-a="options" title="Show / hide fields" style="text-align:center;color:#98A2B3">+</th></tr></thead><tbody>';
+  h+='<th data-a="addcol" title="'+(BDW.meta.is_admin?'Add a field':'Show / hide fields')+'" style="text-align:center;color:#98A2B3">+</th></tr></thead><tbody>';
   if(!st.records.length){
     var filtered=st.q || st.cfg.filter.conditions.length;
     h+='<tr><td colspan="'+(cols.length+2)+'" style="height:auto;border-right:none"><div class="bdw-state">'
@@ -20588,6 +20669,7 @@ function _bdwGridClick(e){
       case 'sdir': st.cfg.sort[i].dir = st.cfg.sort[i].dir==='desc'?'asc':'desc'; return _bdwFetch(true);
       case 'sx': st.cfg.sort.splice(i,1); return _bdwFetch(true);
       case 'options': return _bdwOptionsPop(a);
+      case 'addcol': return BDW.meta.is_admin ? _bdwFieldEditor(a, null) : _bdwOptionsPop(a);
       case 'new': return bdwNewModal();
       case 'vt': {
         var nv=a.getAttribute('data-v'); if(nv===st.cfg.view_type) return;
@@ -20804,6 +20886,7 @@ function _bdwPopChange(e){
   var ctx=BDW.popCtx; if(!ctx) return;
   if(e.target.id==='bdw-fop'){ ctx.op=e.target.value; _bdwFilterValueUI(); }
   if(e.target.getAttribute('data-p')==='colvis'){ _bdwToggleCol(+e.target.getAttribute('data-i')); }
+  if(e.target.id==='bdw-cf-type') _bdwFieldTypeUI();
   if(e.target.id==='bdw-kbf'){ _bdwSt().cfg.kanban_field=e.target.value; bdwPopClose(); _bdwRenderBar(); _bdwFetch(true); }
 }
 function _bdwPopKey(e){
@@ -20813,6 +20896,10 @@ function _bdwPopKey(e){
   }
   if(e.key==='Enter' && ctx.type==='filter' && ctx.field && e.target.tagName==='INPUT'){ e.preventDefault(); _bdwFilterApply(); }
   if(e.key==='Enter' && ctx.type==='views' && e.target.id==='bdw-vname'){ e.preventDefault(); _bdwSaveNewView(); }
+  if(e.key==='Enter' && ctx.type==='cfed' && e.target.tagName==='INPUT'){
+    e.preventDefault();
+    if(e.target.closest('.bdw-cf-o')) _bdwFieldOptRow('', '', true); else _bdwFieldSave();
+  }
 }
 function _bdwPopClick(e){
   var ctx=BDW.popCtx; if(!ctx) return;
@@ -20829,6 +20916,13 @@ function _bdwPopClick(e){
   }
   if(ctx.type==='options'){
     if(p==='colup'||p==='coldn') return _bdwMoveCol(i, p==='colup'?-1:1);
+    if(p==='addfield') return _bdwFieldEditor(ctx.anchor, null);
+  }
+  if(ctx.type==='ws') return _bdwWsAct(p, i);
+  if(ctx.type==='cfed'){
+    if(p==='cfsave') return _bdwFieldSave();
+    if(p==='cfaddopt') return _bdwFieldOptRow('', '', true);
+    if(p==='cfdelopt'){ var row=b.closest('.bdw-cf-o'); if(row) row.remove(); return; }
   }
   if(ctx.type==='views'){
     if(p==='vsel') return _bdwSelectView(i);
@@ -20947,7 +21041,13 @@ function _bdwColMenu(anchor, key){
              {label:'Sort descending', value:'desc', html:'&#8595;&nbsp; Sort descending'},
              {label:'Filter', value:'filter', html:'&#9881;&nbsp; Filter'}];
   if(key!==o.title_field) items.push({label:'Hide', value:'hide', html:'&#128065;&nbsp; Hide field'});
-  bdwPickList(anchor, {title:f.label, items:items, inGrid:true, onPick:function(it){
+  if(f.custom && BDW.meta.is_admin){
+    items.push({label:'Edit field', value:'cfedit', html:'&#9998;&nbsp; Edit field'});
+    items.push({label:'Delete field', value:'cfdel', html:'<span style="color:#D92D20">&#128465;&nbsp; Delete field</span>'});
+  }
+  bdwPickList(anchor, {title:f.label+(f.custom?' · custom':''), items:items, inGrid:true, onPick:function(it){
+    if(it.value==='cfedit') return setTimeout(function(){ _bdwFieldEditor(anchor, f); }, 0);
+    if(it.value==='cfdel') return _bdwFieldDelete(f);
     if(it.value==='asc'||it.value==='desc') return _bdwSetSort(key, it.value, true);
     if(it.value==='filter') return setTimeout(function(){ _bdwFilterPop(document.getElementById('bdw-tb-filter')||anchor, -1, key); }, 0);
     if(it.value==='hide'){ var st=_bdwSt(); st.cfg.columns.forEach(function(c){ if(c.field===key) c.visible=false; });
@@ -20979,7 +21079,81 @@ function _bdwOptionsRender(){
       +'<input type="checkbox" data-p="colvis" data-i="'+i+'"'+(c.visible?' checked':'')+(lock?' disabled':'')+'>'+esc(f.label)+'</label>'
       +(c.visible&&!lock?'<button class="bdw-ico" data-p="colup" data-i="'+i+'" title="Move left">&#8593;</button><button class="bdw-ico" data-p="coldn" data-i="'+i+'" title="Move right">&#8595;</button>':'')
       +'</div>';
-  }).join('');
+  }).join('')
+  +(BDW.meta.is_admin?'<div class="bdw-psep"></div><button class="bdw-pi" data-p="addfield" style="color:#3E63DD;font-weight:600">+ Add a custom field</button>':'');
+}
+
+// ── custom fields — Airtable-style columns (Oct 2026) ─────────────────────
+function _bdwFieldEditor(anchor, f){
+  var types=BDW.meta.custom_types||[], o=_bdwO();
+  var h='<div class="bdw-pbody" style="width:300px"><div style="font-size:12px;color:#667085;font-weight:600">'
+    +(f?'Edit field':'New field in '+esc(o.label)+(BDW.ws?' · '+esc(_bdwCurWs().name):''))+'</div>'
+    +'<input type="text" id="bdw-cf-label" maxlength="60" placeholder="Field name, e.g. Fee %, Hiring volume">'
+    +'<select id="bdw-cf-type"'+(f?' disabled title="The type cannot be changed"':'')+'>'
+    +types.map(function(t){ return '<option value="'+t.value+'"'+((f?f.type:'text')===t.value?' selected':'')+'>'+esc(t.label)+'</option>'; }).join('')
+    +'</select><div id="bdw-cf-optw" style="display:none"><div style="font-size:11.5px;color:#667085;margin-bottom:4px">Options</div>'
+    +'<div id="bdw-cf-opts" style="display:flex;flex-direction:column;gap:5px;max-height:220px;overflow:auto"></div>'
+    +'<button class="bdw-lnk" data-p="cfaddopt" style="padding-left:0;margin-top:4px">+ Add option</button></div>'
+    +'<div style="display:flex;gap:6px;justify-content:flex-end"><button class="bdw-pbtn o" data-p="close">Cancel</button>'
+    +'<button class="bdw-pbtn" data-p="cfsave">'+(f?'Save':'Create field')+'</button></div></div>';
+  bdwPopOpen(anchor, h, {type:'cfed', field:f});
+  var li=document.getElementById('bdw-cf-label'); li.value=f?f.label:'';
+  if(f && f.type==='select') (f.options||[]).forEach(function(x){ _bdwFieldOptRow(x.value, x.label); });
+  _bdwFieldTypeUI(); li.focus();
+}
+function _bdwFieldOptRow(value, label, focus){
+  var box=document.getElementById('bdw-cf-opts'); if(!box) return;
+  var d=document.createElement('div'); d.className='bdw-cf-o'; d.setAttribute('data-v', value||'');
+  d.style.cssText='display:flex;gap:4px;align-items:center';
+  d.innerHTML='<input type="text" maxlength="80" placeholder="Option" style="flex:1"><button class="bdw-ico" data-p="cfdelopt" title="Remove option">&times;</button>';
+  d.firstChild.value=label||''; box.appendChild(d);
+  if(focus) d.firstChild.focus();
+}
+function _bdwFieldTypeUI(){
+  var t=document.getElementById('bdw-cf-type'), w=document.getElementById('bdw-cf-optw'); if(!t||!w) return;
+  var sel=t.value==='select'; w.style.display=sel?'':'none';
+  if(sel && !document.querySelectorAll('#bdw-cf-opts .bdw-cf-o').length){ _bdwFieldOptRow('',''); _bdwFieldOptRow('',''); }
+}
+async function _bdwFieldSave(){
+  var ctx=BDW.popCtx, f=ctx.field, obj=BDW.obj;
+  var label=(document.getElementById('bdw-cf-label').value||'').trim();
+  if(!label){ _bdwToast('Give the field a name'); return; }
+  var type=f?f.type:document.getElementById('bdw-cf-type').value, body={label:label};
+  if(type==='select'){
+    var opts=[].slice.call(document.querySelectorAll('#bdw-cf-opts .bdw-cf-o')).map(function(r){
+      return {value:r.getAttribute('data-v')||'', label:(r.querySelector('input').value||'').trim()};
+    }).filter(function(x){ return x.label; });
+    if(!opts.length){ _bdwToast('Add at least one option'); return; }
+    if(f){
+      var keep={}; opts.forEach(function(x){ if(x.value) keep[x.value]=1; });
+      var gone=(f.options||[]).filter(function(x){ return !keep[x.value]; });
+      if(gone.length && !confirm('Remove '+gone.map(function(x){return '“'+x.label+'”';}).join(', ')+'? Records using '+(gone.length===1?'it':'them')+' become empty.')) return;
+    }
+    body.options=opts;
+  }
+  if(!f){ body.object=obj; body.type=type; }
+  var r=f ? await req('PUT','/bd/fields/'+f.field_id, body) : await req('POST','/bd/fields', body);
+  if(!r || r.error){ _bdwToast((r&&r.error)||'Could not save the field'); return; }
+  bdwPopClose();
+  if(!(await _bdwReloadMeta()) || BDW.obj!==obj) return;
+  var st=_bdwSt();
+  if(!f && st){   // show the new column at the end of the current layout
+    var clean=!_bdwDirty();
+    st.cfg.columns=st.cfg.columns.filter(function(c){ return c.field!==r.field.key; });
+    st.cfg.columns.push({field:r.field.key, width:r.field.width, visible:true});
+    if(clean && !st.view) st.base=_bdwCfgKey(st.cfg);
+  }
+  _bdwRenderFrame(); _bdwFetch(true);
+  toast('&#10003;', f?'Field updated':'Field “'+esc(r.field.label)+'” added');
+}
+async function _bdwFieldDelete(f){
+  if(!confirm('Delete the field “'+f.label+'”? It disappears from every record and view in this workspace.')) return;
+  var obj=BDW.obj, r=await req('DELETE','/bd/fields/'+f.field_id);
+  if(!r || r.error){ _bdwToast((r&&r.error)||'Could not delete the field'); return; }
+  delete BDW.st[obj];
+  await _bdwReloadMeta();
+  if(BDW.page===obj) bdwOpenObject(obj);
+  toast('&#10003;', 'Field deleted');
 }
 function _bdwToggleCol(i){
   var st=_bdwSt(), c=st.cfg.columns[i]; if(!c || c.field===_bdwO().title_field) return;
@@ -21320,7 +21494,10 @@ function _bdwTabHome(b, seq){
     h+='<div class="bdw-won"><span style="font-size:16px">&#127881;</span><div style="flex:1">Agreement signed. Open the job for <b>'+esc(rec.client_id_label||'this company')+'</b> so sourcing can start.</div>'
       +'<button class="bdw-pbtn" data-pa="mkjob">Create job</button></div>';
   }
-  _BDW_GROUPS[P.obj].forEach(function(g){
+  var groups=_BDW_GROUPS[P.obj].slice();
+  var cks=o.fields.filter(function(f){ return f.custom; }).map(function(f){ return f.key; });
+  if(cks.length) groups.splice(Math.max(0, groups.length-1), 0, ['Custom fields', cks]);
+  groups.forEach(function(g){
     h+='<div class="bdw-sec"><div class="bdw-sech">'+esc(g[0])+'</div>';
     g[1].forEach(function(k){
       var f=o._by[k]; if(!f) return;
@@ -21333,6 +21510,10 @@ function _bdwTabHome(b, seq){
     });
     h+='</div>';
   });
+  if(P.obj==='companies' && BDW.meta.is_admin && (BDW.meta.workspaces||[]).length>1){
+    h+='<div class="bdw-sec"><div class="bdw-sech">Workspace</div><div class="bdw-fr"><div class="bdw-fl">BD workspace</div>'
+      +'<div class="bdw-fv">'+esc(_bdwCurWs().name)+'<button class="bdw-go" data-pa="movews" title="Move this company (with its people and deals) to another workspace">Move&hellip;</button></div></div></div>';
+  }
   if(P.obj==='companies'){
     h+='<div id="bdw-rel-people"></div><div id="bdw-rel-opps"></div>';
   } else if(P.obj==='people'){
@@ -21708,6 +21889,17 @@ function _bdwPnlAct(act, a, e){
     case 'emtoggle': return a.classList.toggle('open');
     case 'job': { if(e) e.stopPropagation(); var mid=+a.getAttribute('data-id'); bdwPanelClose(true); return selectMandate(mid); }
     case 'mkjob': return bdwCreateJobFromDeal(P.rec);
+    case 'movews': {
+      var items=(BDW.meta.workspaces||[]).filter(function(w){ return w.id!==BDW.ws; })
+        .map(function(w){ return {label:w.name, value:w.id, html:'<span class="bdw-wsdot" style="background:'+esc(w.color||'#98A2B3')+'"></span>'+esc(w.name)}; });
+      return bdwPickList(a, {title:'Move to workspace', items:items, onPick:async function(it){
+        var id=P.id, r=await req('POST','/bd/records/companies/'+id+'/workspace',{workspace_id:it.value});
+        if(!r || r.error){ _bdwToast((r&&r.error)||'Could not move'); return; }
+        toast('&#10003;', esc(P.rec.name||'Company')+' moved to “'+esc(it.label)+'”');
+        (BDW.meta.workspaces||[]).forEach(function(w){ if(w.id===BDW.ws) w.companies=Math.max(0,(w.companies||0)-1); if(w.id===it.value) w.companies=(w.companies||0)+1; });
+        bdwPanelClose(); if(BDW.obj) _bdwFetch(true);
+      }});
+    }
     case 'addrel': {
       var tgt=a.getAttribute('data-o'), pre={};
       if(P.obj==='companies') pre.client_id=[P.id, P.rec.name];

@@ -31,7 +31,7 @@ concatenated into SQL. All values are bound parameters.
 import re
 import json
 import datetime
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, g, has_request_context
 
 from modules.shared import (
     get_db, ts, effective_company_id, real_user_id, is_company_admin,
@@ -155,6 +155,52 @@ def migrate(conn):
         PRIMARY KEY (company_id, object)
     )''')
 
+    # Multiple BD workspaces (Oct 2026). Workspace 0 = "Main" (implicit, every
+    # existing record). A company belongs to one workspace; its people, deals,
+    # tasks and notes follow it.
+    c.execute('''CREATE TABLE IF NOT EXISTS bd_workspaces (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        color TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        position INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_by INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT ''
+    )''')
+    # Airtable-style custom columns, per workspace and object (Oct 2026)
+    c.execute('''CREATE TABLE IF NOT EXISTS bd_custom_fields (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        workspace_id INTEGER DEFAULT 0,
+        object TEXT NOT NULL,                     -- companies|people|opportunities|tasks|notes
+        label TEXT NOT NULL DEFAULT '',
+        type TEXT NOT NULL DEFAULT 'text',        -- see CUSTOM_TYPES
+        options TEXT DEFAULT '[]',                -- JSON [{value,label}] for select
+        width INTEGER DEFAULT 160,
+        position INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_by INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT ''
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS bd_field_values (
+        field_id INTEGER NOT NULL,                -- FK -> bd_custom_fields.id
+        record_id INTEGER NOT NULL,               -- id in the object's table
+        value TEXT,
+        updated_by INTEGER DEFAULT 0,
+        updated_at TEXT DEFAULT '',
+        PRIMARY KEY (field_id, record_id)
+    )''')
+    for tbl in ('crm_clients', 'bd_views'):
+        col = 'bd_workspace_id' if tbl == 'crm_clients' else 'workspace_id'
+        try:
+            c.execute(f'ALTER TABLE {tbl} ADD COLUMN {col} INTEGER DEFAULT 0')
+        except Exception:
+            pass
+
     # Twenty-style company fields the CRM never had.
     for col, defn in [('domain', "TEXT DEFAULT ''"), ('linkedin', "TEXT DEFAULT ''"),
                       ('employees', 'INTEGER'), ('annual_revenue', 'REAL')]:
@@ -176,6 +222,10 @@ def migrate(conn):
         'CREATE INDEX IF NOT EXISTS idx_bdviews_obj ON bd_views(company_id, object, is_active)',
         'CREATE INDEX IF NOT EXISTS idx_bd_act_opp ON crm_activities(opportunity_id, is_active)',
         'CREATE INDEX IF NOT EXISTS idx_bd_act_contact ON crm_activities(contact_id, is_active)',
+        'CREATE INDEX IF NOT EXISTS idx_bdws_company ON bd_workspaces(company_id, is_active)',
+        'CREATE INDEX IF NOT EXISTS idx_bdcf_obj ON bd_custom_fields(company_id, workspace_id, object, is_active)',
+        'CREATE INDEX IF NOT EXISTS idx_bdfv_record ON bd_field_values(record_id, field_id)',
+        'CREATE INDEX IF NOT EXISTS idx_crm_clients_bdws ON crm_clients(company_id, bd_workspace_id)',
     ]:
         try:
             c.execute(sql)
@@ -442,10 +492,211 @@ for _o in OBJECTS.values():
 
 
 def _obj(name):
+    """The object definition for this request: built-in fields plus the custom
+    columns of the current tenant + BD workspace."""
     o = OBJECTS.get(name)
     if not o:
         raise RecordError('Unknown object.', 404)
-    return o
+    if not has_request_context() or not session.get('user_id'):
+        return o
+    cache = g.setdefault('_bd_objs', {})
+    key = (name, _ws())
+    if key not in cache:
+        extra = [_custom_field_def(o, r) for r in _custom_rows(name)]
+        if extra:
+            m = dict(o)
+            m['fields'] = o['fields'] + extra
+            m['by_key'] = {f['key']: f for f in m['fields']}
+            cache[key] = m
+        else:
+            cache[key] = o
+    return cache[key]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  WORKSPACES + CUSTOM FIELDS  (Oct 2026)
+# ══════════════════════════════════════════════════════════════════════════
+MAIN_WORKSPACE_NAME = 'Main'
+MAX_WORKSPACES = 30
+MAX_CUSTOM_FIELDS = 60          # per object per workspace
+MAX_SELECT_OPTIONS = 100
+
+# type -> label. Stored as TEXT in bd_field_values; the read expression casts.
+CUSTOM_TYPES = [
+    ('text', 'Text'), ('long_text', 'Long text'), ('number', 'Number'),
+    ('currency', 'Currency'), ('percent', 'Percent'), ('date', 'Date'),
+    ('select', 'Single select'), ('bool', 'Checkbox'), ('user', 'Team member'),
+    ('url', 'URL'), ('email', 'Email'), ('phone', 'Phone'),
+]
+CUSTOM_TYPE_KEYS = [k for k, _ in CUSTOM_TYPES]
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+
+def _ws():
+    """Current BD workspace id from ?ws= (0 = Main). Validated once per request."""
+    if not has_request_context():
+        return 0
+    if '_bd_ws' in g:
+        return g._bd_ws
+    raw = request.args.get('ws') or ''
+    try:
+        wid = max(0, int(raw)) if str(raw).strip() else 0
+    except Exception:
+        raise RecordError('Invalid workspace.')
+    if wid:
+        conn = get_db()
+        try:
+            ok = conn.execute('SELECT id FROM bd_workspaces WHERE id=? AND company_id=? AND is_active=1',
+                              (wid, effective_company_id())).fetchone()
+        finally:
+            conn.close()
+        if not ok:
+            raise RecordError('Workspace not found.', 404)
+    g._bd_ws = wid
+    return wid
+
+
+def _custom_rows(obj_name, ws=None):
+    """Active custom field rows for the tenant + workspace (cached per request)."""
+    ws = _ws() if ws is None else ws
+    cache = g.setdefault('_bd_cf', {})
+    if ws not in cache:
+        conn = get_db()
+        try:
+            rows = conn.execute(
+                'SELECT * FROM bd_custom_fields WHERE company_id=? AND COALESCE(workspace_id,0)=? '
+                'AND is_active=1 ORDER BY position, id', (effective_company_id(), ws)).fetchall()
+        finally:
+            conn.close()
+        cache[ws] = [dict(r) for r in rows]
+    return [r for r in cache[ws] if r['object'] == obj_name]
+
+
+def _cf_options(row):
+    try:
+        v = json.loads(row.get('options') or '[]')
+        return v if isinstance(v, list) else []
+    except Exception:
+        return []
+
+
+def _custom_field_def(o, row):
+    """Registry entry for one custom column. Only the integer id and the
+    registry's own id_expr reach the SQL text."""
+    fid = int(row['id'])
+    ftype = row['type'] if row['type'] in CUSTOM_TYPE_KEYS else 'text'
+    raw = f"(SELECT v.value FROM bd_field_values v WHERE v.field_id={fid} AND v.record_id={o['id_expr']})"
+    if ftype in NUM_TYPES:
+        expr = f'CAST({raw} AS REAL)'
+    elif ftype in ('bool', 'user'):
+        expr = f'CAST({raw} AS INTEGER)'
+    else:
+        expr = raw
+    f = F(f'cf_{fid}', row['label'], ftype, expr, editable=True,
+          searchable=ftype in TEXT_TYPES, options=_cf_options(row),
+          width=int(row.get('width') or 160), visible=True)
+    f['custom'] = True
+    f['field_id'] = fid
+    return f
+
+
+def _custom_value(f, v):
+    """Validate + normalise one custom value -> TEXT to store (None = clear)."""
+    t, label = f['type'], f['label']
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    if t == 'bool':
+        return '1' if (v is True or str(v).strip().lower() in ('1', 'true', 'yes')) else None
+    if t in NUM_TYPES:
+        try:
+            n = float(str(v).replace(',', '').replace('₹', '').strip())
+        except Exception:
+            raise RecordError(f'{label} must be a number.')
+        if n != n or n in (float('inf'), float('-inf')):
+            raise RecordError(f'{label} must be a number.')
+        return repr(int(n)) if n == int(n) and abs(n) < 1e15 else repr(round(n, 4))
+    if t == 'date':
+        return _opt_date(v, label) or None
+    if t == 'select':
+        s = str(v)
+        if s not in {o['value'] for o in f['options']}:
+            raise RecordError(f'"{s}" is not an option of {label}.')
+        return s
+    if t == 'user':
+        try:
+            uid = int(v)
+        except Exception:
+            raise RecordError(f'{label} must be a team member.')
+        if not uid:
+            return None
+        conn = get_db()
+        try:
+            ok = _valid_member(conn, effective_company_id(), uid)
+        finally:
+            conn.close()
+        if not ok:
+            raise RecordError(f'{label} must be a member of your team.')
+        return str(uid)
+    s = str(v).strip()
+    if t == 'email' and not _EMAIL_RE.match(s):
+        raise RecordError(f'{label} must be an e-mail address.')
+    return s[:20000 if t == 'long_text' else 2000]
+
+
+def _split_custom(o, payload):
+    """payload -> (built-in payload, {field: stored value}). Validates first."""
+    if not isinstance(payload, dict):
+        raise RecordError('JSON object expected.')
+    core, custom = {}, {}
+    for k, v in payload.items():
+        if isinstance(k, str) and k.startswith('cf_'):
+            f = o['by_key'].get(k)
+            if not f or not f.get('custom'):
+                raise RecordError(f'Unknown field "{k}".')
+            custom[f['field_id']] = _custom_value(f, v)
+        else:
+            core[k] = v
+    return core, custom
+
+
+def _save_custom(conn, rid, custom):
+    if not custom:
+        return
+    uid, now = real_user_id(), ts()
+    for fid, val in custom.items():
+        if val is None:
+            conn.execute('DELETE FROM bd_field_values WHERE field_id=? AND record_id=?', (fid, rid))
+        else:
+            conn.execute('INSERT INTO bd_field_values (field_id, record_id, value, updated_by, updated_at) '
+                         'VALUES (?,?,?,?,?) ON CONFLICT(field_id, record_id) DO UPDATE SET '
+                         'value=excluded.value, updated_by=excluded.updated_by, updated_at=excluded.updated_at',
+                         (fid, rid, val, uid, now))
+    conn.commit()
+
+
+def _workspaces(conn, company_id):
+    rows = conn.execute(
+        'SELECT w.*, (SELECT COUNT(*) FROM crm_clients c WHERE c.company_id=w.company_id AND c.is_active=1 '
+        "AND COALESCE(c.record_type,'client')='prospect' AND c.bd_workspace_id=w.id) AS companies "
+        'FROM bd_workspaces w WHERE w.company_id=? AND w.is_active=1 ORDER BY w.position, w.id',
+        (company_id,)).fetchall()
+    main_n = conn.execute(
+        "SELECT COUNT(*) n FROM crm_clients c WHERE c.company_id=? AND c.is_active=1 "
+        "AND COALESCE(c.is_internal,0)=0 AND COALESCE(c.record_type,'client')='prospect' "
+        "AND COALESCE(c.bd_workspace_id,0)=0", (company_id,)).fetchone()['n']
+    out = [{'id': 0, 'name': MAIN_WORKSPACE_NAME, 'color': '', 'description': '',
+            'is_main': True, 'companies': main_n}]
+    for r in rows:
+        out.append({'id': r['id'], 'name': r['name'], 'color': r['color'] or '',
+                    'description': r['description'] or '', 'is_main': False,
+                    'companies': r['companies'] or 0})
+    return out
+
+
+def _seed_key(obj, ws):
+    """bd_view_seeds / bd_view_defaults are keyed by object; other workspaces
+    use "<object>@<ws>" so Main keeps its existing rows untouched."""
+    return obj if not ws else f'{obj}@{ws}'
 
 
 def _field(o, key):
@@ -740,8 +991,8 @@ def _compile_sort(o, sort, ctx):
 
 
 def _where(o, company_id, spec, ctx):
-    params = [company_id]
-    clauses = [o['where']]
+    params = [company_id, ctx.get('ws', 0)]
+    clauses = [o['where'], 'COALESCE(c.bd_workspace_id,0)=?']
     fsql = _compile_filter(o, spec.get('filter'), params, ctx)
     if fsql:
         clauses.append('(' + fsql + ')')
@@ -827,10 +1078,11 @@ def _calc_exprs(pairs, ctx):
     return exprs
 
 
-def query_records(conn, obj_name, spec, company_id=None, me=None):
+def query_records(conn, obj_name, spec, company_id=None, me=None, ws=None):
     o = _obj(obj_name)
     company_id = company_id if company_id is not None else effective_company_id()
-    ctx = {'now': _now_iso(), 'me': me if me is not None else real_user_id()}
+    ctx = {'now': _now_iso(), 'me': me if me is not None else real_user_id(),
+           'ws': _ws() if ws is None else ws}
 
     try:
         page = max(1, int(spec.get('page') or 1))
@@ -881,7 +1133,7 @@ def group_records(conn, obj_name, spec, company_id=None):
     field — powers Kanban columns and pipeline summaries."""
     o = _obj(obj_name)
     company_id = company_id if company_id is not None else effective_company_id()
-    ctx = {'now': _now_iso(), 'me': real_user_id()}
+    ctx = {'now': _now_iso(), 'me': real_user_id(), 'ws': _ws()}
     gf = _field(o, spec.get('group_by'))
     if _family(gf['type']) not in ('select', 'user', 'relation', 'bool'):
         raise RecordError('Group by needs a select, user, relation or yes/no field.')
@@ -1060,6 +1312,7 @@ def company_create(conn, payload):
         core['status'] = 'prospect'   # a company added from BD starts as a prospect
     core['record_type'] = 'prospect'  # ...and lives in the BD workspace until converted
     cid = ClientService.create(conn, core)
+    extra['bd_workspace_id'] = _ws()
     if extra:
         conn.execute('UPDATE crm_clients SET ' + ', '.join(f'{k}=?' for k in extra) + ' WHERE id=?',
                      list(extra.values()) + [cid])
@@ -1473,7 +1726,44 @@ def activity_delete(conn, obj_name, aid):
 
 
 # ── dispatch tables ────────────────────────────────────────────────────────
+def _client_ws(conn, company_id, client_id):
+    r = conn.execute('SELECT COALESCE(bd_workspace_id,0) AS ws FROM crm_clients WHERE id=? AND company_id=?',
+                     (client_id, company_id)).fetchone()
+    return None if r is None else r['ws']
+
+
+def _check_parent_ws(conn, obj, payload):
+    """A new person / deal / task / note must hang off a company of the
+    workspace it is created in (it would vanish from view otherwise)."""
+    if obj == 'companies' or not payload.get('client_id'):
+        return
+    try:
+        cid = int(payload.get('client_id') or 0)
+    except Exception:
+        return  # the object's own validation reports it
+    ws = _client_ws(conn, effective_company_id(), cid)
+    if ws is not None and ws != _ws():
+        raise RecordError('That company is in another BD workspace. Switch to that workspace to add to it.')
+
+
 def _create(conn, obj, payload):
+    core, custom = _split_custom(_obj(obj), payload)
+    _check_parent_ws(conn, obj, core)
+    rid = _create_core(conn, obj, core)
+    _save_custom(conn, rid, custom)
+    return rid
+
+
+def _update(conn, obj, rid, payload):
+    core, custom = _split_custom(_obj(obj), payload)
+    if core:
+        _update_core(conn, obj, rid, core)
+    elif custom and not get_record(conn, obj, rid):
+        raise RecordError(f'{OBJECTS[obj]["singular"]} not found.', 404)
+    _save_custom(conn, rid, custom)
+
+
+def _create_core(conn, obj, payload):
     if obj == 'companies':
         return company_create(conn, payload)
     if obj == 'people':
@@ -1483,7 +1773,7 @@ def _create(conn, obj, payload):
     return activity_create(conn, obj, payload)
 
 
-def _update(conn, obj, rid, payload):
+def _update_core(conn, obj, rid, payload):
     if obj == 'companies':
         return company_update(conn, rid, payload)
     if obj == 'people':
@@ -1533,6 +1823,8 @@ def quick_company(conn, name, extra=None):
     dup = ClientRepo.find_by_namekey(conn, company_id, _norm_name(name))
     if dup:
         if (dict(dup).get('record_type') or 'client') == 'prospect':
+            if (dict(dup).get('bd_workspace_id') or 0) != _ws():
+                raise RecordError(f'"{dup["name"]}" is already in another BD workspace.', 409)
             return dup['id'], dup['name'], False
         raise RecordError(f'"{dup["name"]}" is already a client in Client CRM — add this person there.', 409)
     payload = {'name': name, 'status': 'prospect', 'record_type': 'prospect'}
@@ -1543,6 +1835,9 @@ def quick_company(conn, name, extra=None):
         cid = ClientService.create(conn, payload)
     except DuplicateError as e:          # created by someone else a moment ago
         return e.existing_id, name, False
+    if _ws():
+        conn.execute('UPDATE crm_clients SET bd_workspace_id=? WHERE id=?', (_ws(), cid))
+        conn.commit()
     if extra and str(extra.get('linkedin') or '').strip():
         conn.execute('UPDATE crm_clients SET linkedin=? WHERE id=?', (str(extra['linkedin']).strip()[:300], cid))
         conn.commit()
@@ -1647,10 +1942,18 @@ def default_view_config(obj_name):
 @login_required
 def objects_meta():
     conn = get_db()
-    members = _members(conn, effective_company_id())
-    conn.close()
+    try:
+        company_id = effective_company_id()
+        ws = _ws()
+        members = _members(conn, company_id)
+        workspaces = _workspaces(conn, company_id)
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
     objs = {}
-    for name, o in OBJECTS.items():
+    for name in OBJECTS:
+        o = _obj(name)
         objs[name] = {
             'name': name, 'label': o['label'], 'singular': o['singular'],
             'title_field': o['title'],
@@ -1661,13 +1964,396 @@ def objects_meta():
                 'computed': f['computed'], 'options': f['options'],
                 'target': f['target'], 'width': f['width'],
                 'default_visible': f['visible'],
+                'custom': bool(f.get('custom')), 'field_id': f.get('field_id'),
                 'filter_ops': OPS_BY_TYPE[_family(f['type'])],
                 'calc_fns': CALC_BY_TYPE[_family(f['type'])],
             } for f in o['fields']],
         }
     return jsonify({'ok': True, 'objects': objs, 'members': members,
                     'me': real_user_id(), 'is_admin': bool(is_company_admin()),
+                    'workspace_id': ws, 'workspaces': workspaces,
+                    'custom_types': [{'value': k, 'label': l} for k, l in CUSTOM_TYPES],
                     'stages': [{'value': k, 'label': l, 'probability': p} for k, l, p in OPP_STAGES]})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  API — workspaces  (Oct 2026)
+# ══════════════════════════════════════════════════════════════════════════
+_COLOR_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
+
+
+def _ws_row(conn, wid):
+    return conn.execute('SELECT * FROM bd_workspaces WHERE id=? AND company_id=? AND is_active=1',
+                        (wid, effective_company_id())).fetchone()
+
+
+def _ws_name(conn, name, skip_id=0):
+    nm = re.sub(r'\s+', ' ', str(name or '')).strip()[:60]
+    if not nm:
+        raise RecordError('Workspace name is required.')
+    if nm.lower() == MAIN_WORKSPACE_NAME.lower():
+        raise RecordError(f'"{MAIN_WORKSPACE_NAME}" is the built-in workspace. Pick another name.')
+    dup = conn.execute('SELECT id FROM bd_workspaces WHERE company_id=? AND is_active=1 AND LOWER(name)=? AND id!=?',
+                       (effective_company_id(), nm.lower(), skip_id)).fetchone()
+    if dup:
+        raise RecordError('A workspace with this name already exists.', 409)
+    return nm
+
+
+def _ws_color(v):
+    s = str(v or '').strip()
+    if s and not _COLOR_RE.match(s):
+        raise RecordError('Colour must look like #3E63DD.')
+    return s
+
+
+@bp.route('/workspaces', methods=['GET'])
+@login_required
+def list_workspaces():
+    conn = get_db()
+    try:
+        return jsonify({'ok': True, 'workspaces': _workspaces(conn, effective_company_id())})
+    finally:
+        conn.close()
+
+
+@bp.route('/workspaces', methods=['POST'])
+@login_required
+def create_workspace():
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        if not is_company_admin():
+            raise RecordError('Only an admin can create a workspace.', 403)
+        company_id, now = effective_company_id(), ts()
+        n = conn.execute('SELECT COUNT(*) n FROM bd_workspaces WHERE company_id=? AND is_active=1',
+                         (company_id,)).fetchone()['n']
+        if n >= MAX_WORKSPACES:
+            raise RecordError(f'You can have up to {MAX_WORKSPACES} workspaces.')
+        name = _ws_name(conn, d.get('name'))
+        color = _ws_color(d.get('color'))
+        desc = str(d.get('description') or '').strip()[:300]
+        pos = conn.execute('SELECT COALESCE(MAX(position),0)+1 p FROM bd_workspaces WHERE company_id=?',
+                           (company_id,)).fetchone()['p']
+        conn.execute('INSERT INTO bd_workspaces (company_id,name,color,description,position,is_active,'
+                     'created_by,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?)',
+                     (company_id, name, color, desc, pos, real_user_id(), now, now))
+        wid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
+        conn.commit()
+        log_activity('bd.workspace_created', f'BD workspace "{name}" created',
+                     entity_type='bd_workspace', entity_id=wid)
+        ws = [w for w in _workspaces(conn, company_id) if w['id'] == wid][0]
+        return jsonify({'ok': True, 'workspace': ws})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
+
+
+@bp.route('/workspaces/<int:wid>', methods=['PUT', 'PATCH'])
+@login_required
+def update_workspace(wid):
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        if not is_company_admin():
+            raise RecordError('Only an admin can change a workspace.', 403)
+        row = _ws_row(conn, wid)
+        if not row:
+            raise RecordError('Workspace not found.', 404)
+        vals = {}
+        if 'name' in d:
+            vals['name'] = _ws_name(conn, d.get('name'), wid)
+        if 'color' in d:
+            vals['color'] = _ws_color(d.get('color'))
+        if 'description' in d:
+            vals['description'] = str(d.get('description') or '').strip()[:300]
+        if 'position' in d:
+            try:
+                vals['position'] = int(d.get('position') or 0)
+            except Exception:
+                raise RecordError('Invalid position.')
+        if vals:
+            conn.execute('UPDATE bd_workspaces SET ' + ', '.join(f'{k}=?' for k in vals) + ', updated_at=? WHERE id=?',
+                         list(vals.values()) + [ts(), wid])
+            conn.commit()
+        ws = [w for w in _workspaces(conn, effective_company_id()) if w['id'] == wid][0]
+        return jsonify({'ok': True, 'workspace': ws})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
+
+
+@bp.route('/workspaces/<int:wid>', methods=['DELETE'])
+@login_required
+def delete_workspace(wid):
+    """Only an empty workspace can be deleted — move its companies first."""
+    conn = get_db()
+    try:
+        if not is_company_admin():
+            raise RecordError('Only an admin can delete a workspace.', 403)
+        row = _ws_row(conn, wid)
+        if not row:
+            raise RecordError('Workspace not found.', 404)
+        n = conn.execute("SELECT COUNT(*) n FROM crm_clients WHERE company_id=? AND is_active=1 "
+                         "AND COALESCE(record_type,'client')='prospect' AND bd_workspace_id=?",
+                         (effective_company_id(), wid)).fetchone()['n']
+        if n:
+            raise RecordError(f'This workspace still has {n} compan{"y" if n == 1 else "ies"}. '
+                              'Move or delete them first.', 409)
+        now = ts()
+        conn.execute('UPDATE bd_workspaces SET is_active=0, updated_at=? WHERE id=?', (now, wid))
+        conn.execute('UPDATE bd_custom_fields SET is_active=0, updated_at=? WHERE company_id=? AND workspace_id=?',
+                     (now, effective_company_id(), wid))
+        conn.execute('UPDATE bd_views SET is_active=0, updated_at=? WHERE company_id=? AND workspace_id=?',
+                     (now, effective_company_id(), wid))
+        conn.commit()
+        log_activity('bd.workspace_deleted', f'BD workspace "{row["name"]}" deleted',
+                     entity_type='bd_workspace', entity_id=wid)
+        return jsonify({'ok': True})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
+
+
+@bp.route('/records/companies/<int:cid>/workspace', methods=['POST'])
+@login_required
+def move_company_workspace(cid):
+    """Move a company (with its people, deals, tasks and notes) to another
+    workspace. Custom-column values belong to a workspace and stay behind."""
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        if not is_company_admin():
+            raise RecordError('Only an admin can move a company to another workspace.', 403)
+        company_id = effective_company_id()
+        row = _client_row(conn, company_id, cid)
+        if not row:
+            raise RecordError('Company not found.', 404)
+        try:
+            to = int(d.get('workspace_id') or 0)
+        except Exception:
+            raise RecordError('Invalid workspace.')
+        if to and not _ws_row(conn, to):
+            raise RecordError('Workspace not found.', 404)
+        frm = dict(row).get('bd_workspace_id') or 0
+        if to != frm:
+            conn.execute('UPDATE crm_clients SET bd_workspace_id=?, updated_by=?, updated_at=? WHERE id=?',
+                         (to, real_user_id(), ts(), cid))
+            conn.commit()
+            names = {w['id']: w['name'] for w in _workspaces(conn, company_id)}
+            log_activity('client.updated', f'Moved "{row["name"]}" to BD workspace "{names.get(to, to)}"',
+                         entity_type='client', entity_id=cid,
+                         meta={'changes': [{'field': 'bd_workspace_id', 'from': frm, 'to': to}]})
+        return jsonify({'ok': True, 'workspace_id': to})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  API — custom fields (Airtable-style columns)  (Oct 2026)
+# ══════════════════════════════════════════════════════════════════════════
+def _clean_options(raw, current=None):
+    """[{value?, label}] -> stored list. Existing values are kept so renaming
+    an option does not orphan the records that use it."""
+    if not isinstance(raw, list):
+        raise RecordError('options must be a list.')
+    known = {o['value'] for o in (current or [])}
+    out, seen, n = [], set(), len(current or [])
+    for o in raw[:MAX_SELECT_OPTIONS]:
+        if isinstance(o, str):
+            o = {'label': o}
+        if not isinstance(o, dict):
+            raise RecordError('Invalid option.')
+        label = re.sub(r'\s+', ' ', str(o.get('label') or '')).strip()[:80]
+        if not label or label.lower() in seen:
+            continue
+        seen.add(label.lower())
+        val = str(o.get('value') or '')
+        if val not in known:
+            n += 1
+            val = f'o{n}'
+            while val in known:
+                n += 1
+                val = f'o{n}'
+            known.add(val)
+        out.append({'value': val, 'label': label})
+    return out
+
+
+def _cf_row(conn, fid):
+    return conn.execute('SELECT * FROM bd_custom_fields WHERE id=? AND company_id=? AND is_active=1',
+                        (fid, effective_company_id())).fetchone()
+
+
+def _cf_label(conn, o, obj, ws, label, skip_id=0):
+    nm = re.sub(r'\s+', ' ', str(label or '')).strip()[:60]
+    if not nm:
+        raise RecordError('Field name is required.')
+    taken = {f['label'].lower() for f in OBJECTS[obj]['fields']}
+    taken |= {r['label'].lower() for r in conn.execute(
+        'SELECT id, label FROM bd_custom_fields WHERE company_id=? AND COALESCE(workspace_id,0)=? AND object=? '
+        'AND is_active=1 AND id!=?', (effective_company_id(), ws, obj, skip_id))}
+    if nm.lower() in taken:
+        raise RecordError(f'{o["label"]} already has a field called "{nm}".', 409)
+    return nm
+
+
+def _cf_public(o, row):
+    f = _custom_field_def(o, dict(row))
+    return {'key': f['key'], 'field_id': f['field_id'], 'label': f['label'], 'type': f['type'],
+            'options': f['options'], 'width': f['width'], 'custom': True}
+
+
+@bp.route('/fields', methods=['POST'])
+@login_required
+def create_field():
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        if not is_company_admin():
+            raise RecordError('Only an admin can add a custom field.', 403)
+        obj = d.get('object', '')
+        o = _obj(obj)
+        ws, company_id, now = _ws(), effective_company_id(), ts()
+        n = conn.execute('SELECT COUNT(*) n FROM bd_custom_fields WHERE company_id=? AND COALESCE(workspace_id,0)=? '
+                         'AND object=? AND is_active=1', (company_id, ws, obj)).fetchone()['n']
+        if n >= MAX_CUSTOM_FIELDS:
+            raise RecordError(f'{o["label"]} can have up to {MAX_CUSTOM_FIELDS} custom fields.')
+        label = _cf_label(conn, o, obj, ws, d.get('label'))
+        ftype = d.get('type') or 'text'
+        if ftype not in CUSTOM_TYPE_KEYS:
+            raise RecordError('Unknown field type.')
+        opts = _clean_options(d.get('options') or []) if ftype == 'select' else []
+        if ftype == 'select' and not opts:
+            raise RecordError('Add at least one option.')
+        try:
+            width = max(60, min(800, int(d.get('width') or (220 if ftype == 'long_text' else 160))))
+        except Exception:
+            width = 160
+        pos = conn.execute('SELECT COALESCE(MAX(position),0)+1 p FROM bd_custom_fields WHERE company_id=? AND object=?',
+                           (company_id, obj)).fetchone()['p']
+        conn.execute('INSERT INTO bd_custom_fields (company_id,workspace_id,object,label,type,options,width,position,'
+                     'is_active,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?,?)',
+                     (company_id, ws, obj, label, ftype, json.dumps(opts), width, pos, real_user_id(), now, now))
+        fid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
+        conn.commit()
+        log_activity('bd.field_created', f'Custom field "{label}" added to {o["label"]}',
+                     entity_type='bd_field', entity_id=fid, meta={'type': ftype, 'workspace_id': ws})
+        return jsonify({'ok': True, 'field': _cf_public(o, _cf_row(conn, fid))})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
+
+
+@bp.route('/fields/<int:fid>', methods=['PUT', 'PATCH'])
+@login_required
+def update_field(fid):
+    """Rename, change the options or default width. The type is fixed."""
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        if not is_company_admin():
+            raise RecordError('Only an admin can change a custom field.', 403)
+        row = _cf_row(conn, fid)
+        if not row:
+            raise RecordError('Field not found.', 404)
+        obj, ws = row['object'], row['workspace_id'] or 0
+        o = OBJECTS[obj]
+        vals = {}
+        if 'label' in d:
+            vals['label'] = _cf_label(conn, o, obj, ws, d.get('label'), fid)
+        if 'options' in d:
+            if row['type'] != 'select':
+                raise RecordError('Only a single-select field has options.')
+            opts = _clean_options(d.get('options') or [], _cf_options(dict(row)))
+            if not opts:
+                raise RecordError('Add at least one option.')
+            vals['options'] = json.dumps(opts)
+            gone = [x['value'] for x in _cf_options(dict(row)) if x['value'] not in {y['value'] for y in opts}]
+            if gone:   # records that used a removed option become empty
+                conn.execute(f'DELETE FROM bd_field_values WHERE field_id=? AND value IN ({",".join("?" * len(gone))})',
+                             [fid] + gone)
+        if 'width' in d:
+            try:
+                vals['width'] = max(60, min(800, int(d.get('width'))))
+            except Exception:
+                raise RecordError('Invalid width.')
+        if d.get('type') not in (None, row['type']):
+            raise RecordError('The type of a field cannot be changed. Add a new field instead.')
+        if vals:
+            conn.execute('UPDATE bd_custom_fields SET ' + ', '.join(f'{k}=?' for k in vals) + ', updated_at=? WHERE id=?',
+                         list(vals.values()) + [ts(), fid])
+        conn.commit()
+        return jsonify({'ok': True, 'field': _cf_public(o, _cf_row(conn, fid))})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
+
+
+def _strip_field(node, key):
+    """Remove every filter condition on `key` from a filter tree."""
+    if isinstance(node, list):
+        return [x for x in (_strip_field(c, key) for c in node) if x not in (None, {}, [])]
+    if not isinstance(node, dict):
+        return node
+    if 'field' in node:
+        return None if node.get('field') == key else node
+    out = dict(node)
+    out['conditions'] = _strip_field(node.get('conditions') or [], key)
+    return out if out['conditions'] else None
+
+
+@bp.route('/fields/<int:fid>', methods=['DELETE'])
+@login_required
+def delete_field(fid):
+    """Hide the field (values kept in the database) and drop it from every
+    saved view of its workspace so those views keep working."""
+    conn = get_db()
+    try:
+        if not is_company_admin():
+            raise RecordError('Only an admin can delete a custom field.', 403)
+        row = _cf_row(conn, fid)
+        if not row:
+            raise RecordError('Field not found.', 404)
+        key, now = f'cf_{fid}', ts()
+        conn.execute('UPDATE bd_custom_fields SET is_active=0, updated_at=? WHERE id=?', (now, fid))
+        for v in conn.execute('SELECT id, config FROM bd_views WHERE company_id=? AND object=? '
+                              'AND COALESCE(workspace_id,0)=? AND is_active=1',
+                              (row['company_id'], row['object'], row['workspace_id'] or 0)).fetchall():
+            try:
+                cfg = json.loads(v['config'] or '{}')
+            except Exception:
+                continue
+            if key not in (v['config'] or ''):
+                continue
+            cfg['columns'] = [c for c in (cfg.get('columns') or [])
+                              if (c if isinstance(c, str) else (c or {}).get('field')) != key]
+            cfg['filter'] = _strip_field(cfg.get('filter'), key)
+            cfg['sort'] = [s for s in (cfg.get('sort') or []) if (s or {}).get('field') != key]
+            calc = cfg.get('calc') or {}
+            if isinstance(calc, dict):
+                calc.pop(key, None)
+            else:
+                calc = [c for c in calc if (c or {}).get('field') != key]
+            cfg['calc'] = calc
+            if cfg.get('kanban_field') == key:
+                cfg['view_type'], cfg['kanban_field'] = 'table', None
+            conn.execute('UPDATE bd_views SET config=?, updated_at=? WHERE id=?', (json.dumps(cfg), now, v['id']))
+        conn.commit()
+        log_activity('bd.field_deleted', f'Custom field "{row["label"]}" deleted',
+                     entity_type='bd_field', entity_id=fid)
+        return jsonify({'ok': True})
+    except RecordError as e:
+        return _err(e)
+    finally:
+        conn.close()
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1806,12 +2492,12 @@ def list_views():
     conn = get_db()
     try:
         _obj(obj)
-        company_id, uid = effective_company_id(), real_user_id()
-        seed_builtin_views(conn, company_id, obj)
+        company_id, uid, ws = effective_company_id(), real_user_id(), _ws()
+        seed_builtin_views(conn, company_id, obj, ws)
         rows = conn.execute(
             "SELECT * FROM bd_views WHERE company_id=? AND object=? AND is_active=1 "
-            "AND (user_id=? OR visibility='team') ORDER BY position, id",
-            (company_id, obj, uid)).fetchall()
+            "AND COALESCE(workspace_id,0)=? AND (user_id=? OR visibility='team') ORDER BY position, id",
+            (company_id, obj, ws, uid)).fetchall()
         views = [_view_public(r) for r in rows]
         return jsonify({'ok': True, 'object': obj, 'default_config': default_view_config(obj),
                         'views': views,
@@ -1847,8 +2533,8 @@ def create_view():
             conn.execute('UPDATE bd_views SET is_default=0 WHERE company_id=? AND object=? AND user_id=?',
                          (company_id, obj, uid))
         conn.execute('INSERT INTO bd_views (company_id,user_id,object,name,config,visibility,is_default,'
-                     'position,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?)',
-                     (company_id, uid, obj, name, json.dumps(cfg), vis, is_def, pos, now, now))
+                     'position,is_active,created_at,updated_at,workspace_id) VALUES (?,?,?,?,?,?,?,?,1,?,?,?)',
+                     (company_id, uid, obj, name, json.dumps(cfg), vis, is_def, pos, now, now, _ws()))
         vid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
         conn.commit()
         return jsonify({'ok': True, 'view': _view_public(_view_row(conn, vid))})
@@ -1869,6 +2555,8 @@ def update_view(vid):
             raise RecordError('View not found.', 404)
         if not _can_edit_view(row):
             raise RecordError('Only the creator or an admin can change this view.', 403)
+        if (dict(row).get('workspace_id') or 0) != _ws():
+            raise RecordError('That view belongs to another BD workspace.', 409)
         o = _obj(row['object'])
         fields = {}
         if 'name' in d:
@@ -2110,31 +2798,32 @@ BUILTIN_VIEWS = {
 }
 
 
-def seed_builtin_views(conn, company_id, obj):
-    """Create the built-in team views for this tenant+object once. Owned by
-    user 0 ("system"), shared with the team, editable/deletable by admins."""
+def seed_builtin_views(conn, company_id, obj, ws=0):
+    """Create the built-in team views for this tenant+object(+workspace) once.
+    Owned by user 0 ("system"), shared with the team, editable/deletable by admins."""
     presets = BUILTIN_VIEWS.get(obj)
     if not presets or not company_id:
         return
+    skey = _seed_key(obj, ws)
     row = conn.execute('SELECT version FROM bd_view_seeds WHERE company_id=? AND object=?',
-                       (company_id, obj)).fetchone()
+                       (company_id, skey)).fetchone()
     if row and (row['version'] or 0) >= BUILTIN_VIEWS_VERSION:
         return
     o = _obj(obj)
     now = ts()
     try:
         conn.execute('INSERT OR IGNORE INTO bd_view_seeds (company_id, object, version, seeded_at) VALUES (?,?,?,?)',
-                     (company_id, obj, 0, now))
+                     (company_id, skey, 0, now))
         claimed = conn.execute('UPDATE bd_view_seeds SET version=?, seeded_at=? WHERE company_id=? AND object=? '
                                'AND COALESCE(version,0)<?',
-                               (BUILTIN_VIEWS_VERSION, now, company_id, obj, BUILTIN_VIEWS_VERSION)).rowcount
+                               (BUILTIN_VIEWS_VERSION, now, company_id, skey, BUILTIN_VIEWS_VERSION)).rowcount
         if not claimed:            # another request seeded it first
             conn.commit(); return
         for pos, (name, cfg) in enumerate(presets, start=1):
             clean = _clean_view_config(o, cfg)
             conn.execute('INSERT INTO bd_views (company_id,user_id,object,name,config,visibility,is_default,'
-                         'position,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?)',
-                         (company_id, 0, obj, name, json.dumps(clean), 'team', 0, -100 + pos, now, now))
+                         'position,is_active,created_at,updated_at,workspace_id) VALUES (?,?,?,?,?,?,?,?,1,?,?,?)',
+                         (company_id, 0, obj, name, json.dumps(clean), 'team', 0, -100 + pos, now, now, ws))
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -2146,7 +2835,7 @@ def _user_default_view(conn, company_id, uid, obj, visible_views):
     is still visible to them, else their legacy starred own view, else 0 (All)."""
     ids = {v['id'] for v in visible_views}
     r = conn.execute('SELECT view_id FROM bd_view_defaults WHERE company_id=? AND user_id=? AND object=?',
-                     (company_id, uid, obj)).fetchone()
+                     (company_id, uid, _seed_key(obj, _ws()))).fetchone()
     if r is not None:
         return r['view_id'] if r['view_id'] in ids else 0
     legacy = [v['id'] for v in visible_views if v.get('is_default') and v.get('is_mine')]
@@ -2168,11 +2857,12 @@ def set_default_view():
         company_id, uid = effective_company_id(), real_user_id()
         if vid:
             row = _view_row(conn, vid)
-            if not row or row['object'] != obj or (row['user_id'] != uid and row['visibility'] != 'team'):
+            if not row or row['object'] != obj or (row['user_id'] != uid and row['visibility'] != 'team') \
+                    or (dict(row).get('workspace_id') or 0) != _ws():
                 raise RecordError('View not found.', 404)
         conn.execute('INSERT INTO bd_view_defaults (company_id,user_id,object,view_id,updated_at) VALUES (?,?,?,?,?) '
                      'ON CONFLICT(company_id,user_id,object) DO UPDATE SET view_id=excluded.view_id, '
-                     'updated_at=excluded.updated_at', (company_id, uid, obj, vid, ts()))
+                     'updated_at=excluded.updated_at', (company_id, uid, _seed_key(obj, _ws()), vid, ts()))
         conn.commit()
         return jsonify({'ok': True, 'object': obj, 'default_view_id': vid})
     except RecordError as e:
@@ -2255,11 +2945,13 @@ def build_home(conn, company_id, me, scope_me=False):
                 'sort': sort, 'per_page': per, 'calc': calc}
         return query_records(conn, obj, spec, company_id, ctx_me)
 
+    ws = _ws()
     owner_sql, owner_p = ('AND o.owner_user_id=?', [me]) if scope_me else ('', [])
     base = ('FROM bd_opportunities o JOIN crm_clients c ON c.id=o.client_id AND c.company_id=o.company_id '
             'WHERE o.company_id=? AND o.is_active=1 AND c.is_active=1 AND COALESCE(c.is_internal,0)=0 '
-            "AND (COALESCE(c.record_type,'client')='prospect' OR o.stage IN ('won','lost')) " + owner_sql)
-    bp_ = [company_id] + owner_p
+            "AND (COALESCE(c.record_type,'client')='prospect' OR o.stage IN ('won','lost')) "
+            'AND COALESCE(c.bd_workspace_id,0)=? ' + owner_sql)
+    bp_ = [company_id, ws] + owner_p
 
     # ── pipeline by open stage ────────────────────────────────────────────
     rows = {r['stage']: r for r in conn.execute(
@@ -2312,10 +3004,10 @@ def build_home(conn, company_id, me, scope_me=False):
                 f"SELECT m.id, m.purpose, m.guest_name, m.start_at, m.mode, m.crm_client_id, c.name AS client_name, "
                 f"{_user_label('m.host_user_id')} AS host FROM meetings m "
                 f"JOIN crm_clients c ON c.id=m.crm_client_id AND c.company_id=m.company_id AND c.is_active=1 "
-                f"AND COALESCE(c.record_type,'client')='prospect' "
+                f"AND COALESCE(c.record_type,'client')='prospect' AND COALESCE(c.bd_workspace_id,0)=? "
                 f"WHERE m.company_id=? AND COALESCE(m.status,'confirmed')='confirmed' "
                 f"AND m.start_at>=? AND m.start_at<=? {host_sql}",
-                [company_id, now[:16], week] + host_p):
+                [ws, company_id, now[:16], week] + host_p):
             agenda.append({'source': 'scheduler', 'id': r['id'], 'kind': 'meeting',
                            'title': r['purpose'] or ('Meeting with ' + (r['guest_name'] or 'guest')),
                            'start_at': r['start_at'], 'client_id': r['crm_client_id'], 'client_name': r['client_name'],
@@ -2357,9 +3049,9 @@ def build_home(conn, company_id, me, scope_me=False):
         f"SELECT m.id, m.role, m.location, m.created_at, m.crm_client_id, c.name AS client_name, "
         f"(SELECT COUNT(*) FROM candidates k WHERE k.mandate_id=m.id) AS candidates "
         f"FROM mandates m JOIN crm_clients c ON c.id=m.crm_client_id AND c.company_id=m.owner_id AND c.is_active=1 "
-        f"AND COALESCE(c.record_type,'client')='prospect' "
+        f"AND COALESCE(c.record_type,'client')='prospect' AND COALESCE(c.bd_workspace_id,0)=? "
         f"WHERE m.owner_id=? AND (m.status IS NULL OR m.status='active') {asg_sql} "
-        f"ORDER BY c.name COLLATE NOCASE, m.created_at DESC", [company_id] + asg_p).fetchall()
+        f"ORDER BY c.name COLLATE NOCASE, m.created_at DESC", [ws, company_id] + asg_p).fetchall()
     reqs = {}
     for r in req_rows:
         g = reqs.setdefault(r['crm_client_id'], {'client_id': r['crm_client_id'], 'client_name': r['client_name'],
