@@ -10757,8 +10757,17 @@ def _email_agent_scan_impl(oid):
             "WHERE c.owner_id=? AND c.email_agent=1 AND TRIM(COALESCE(c.email,''))!=''", (oid,)).fetchall()
     except Exception:
         conn.close(); return 0
+    # Per-job switch (Mandate Setup): no automated mail to anyone in a switched-off job.
+    _mg_ids, _mg_ems = set(), set()
+    try:
+        from modules import mail_guard as _mg
+        _mg_ids, _mg_ems, _ = _mg.blocked(conn, oid)
+    except Exception:
+        pass
     now = time.time(); created = 0; _ai_work = 0
     for c in cands:
+        if c['id'] in _mg_ids or (c['email'] or '').strip().lower() in _mg_ems:
+            continue
         # Per-pass budget: never let one scan run forever. Anything skipped here
         # is picked up on the next cycle (or the next manual scan).
         if _ai_work >= _AGENT_MAX_ITEMS_PER_PASS or (time.time() - _scan_started) > _AGENT_MAX_SECONDS_PER_PASS:
@@ -18763,6 +18772,12 @@ def _camp_build_list(conn, oid, camp):
                           (oid, cutoff, camp['id'])).fetchall()):
         recent.add(r['candidate_id'])
     seen_emails = set()
+    _mg_ids, _mg_ems = set(), set()
+    try:
+        from modules import mail_guard as _mg
+        _mg_ids, _mg_ems, _ = _mg.blocked(conn, oid)
+    except Exception:
+        pass
     out = []
     for r in rows:
         email = (r['email'] or '').strip()
@@ -18771,6 +18786,8 @@ def _camp_build_list(conn, oid, camp):
             status, reason = 'skipped', 'No email address'
         elif r['dne']:
             status, reason = 'skipped', 'Unsubscribed / do-not-email'
+        elif r['id'] in _mg_ids or email.lower() in _mg_ems:
+            status, reason = 'skipped', 'Automated e-mails switched off for this job'
         elif email.lower() in seen_emails:
             status, reason = 'skipped', 'Duplicate email in this list'
         elif r['id'] in recent:
@@ -18850,6 +18867,18 @@ def _camp_send_one(cid, oid):
     if cand['do_not_email']:
         _finish('skipped', 'Unsubscribed / do-not-email')
         return False
+    try:
+        from modules import mail_guard as _mg
+        _c3 = get_db()
+        try:
+            _off = _mg.is_blocked(_c3, oid, cand['id'], cand['email'])
+        finally:
+            _c3.close()
+        if _off:
+            _finish('skipped', _mg.REASON)
+            return False
+    except Exception:
+        pass
     to = (cand['email'] or '').strip()
     if not to or '@' not in to:
         _finish('skipped', 'No email address')

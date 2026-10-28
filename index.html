@@ -4094,6 +4094,29 @@ async function openProfileById(cid, mandateId) {
 }
 
 // ── MANDATE SETUP ──────────────────────────────────────────────────────────
+// ── Per-job switch: automated e-mails OFF for this job's candidates (modules/mail_guard.py) ──
+async function loadAutoMail(mid, r){
+  var box=document.getElementById('ms-automail'); if(!box) return;
+  r = r || await req('GET','/mandates/'+mid+'/auto-mail');
+  if(!r || r.error){ box.innerHTML='<div style="font-size:12px;color:#B42318">'+esc((r&&r.error)||'Could not load')+'</div>'; return; }
+  var on=!r.off;
+  box.innerHTML='<label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer">'
+    +'<span class="am-sw'+(on?' on':'')+'" style="position:relative;width:40px;height:22px;border-radius:12px;flex-shrink:0;margin-top:1px;transition:background .15s;background:'+(on?'#0F6E56':'#D0D5DD')+'">'
+    +'<span style="position:absolute;top:2px;left:'+(on?'20':'2')+'px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .15s"></span></span>'
+    +'<input type="checkbox" '+(on?'checked':'')+' onchange="saveAutoMail('+mid+', !this.checked)" style="display:none">'
+    +'<span style="flex:1"><span style="display:block;font-size:13px;font-weight:600;color:'+(on?'#0F6E56':'#B42318')+'">'+(on?'ON &mdash; automated e-mails can go to this job&rsquo;s candidates':'OFF &mdash; no automated e-mail to anyone in this job')+'</span>'
+    +'<span style="display:block;font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.5">Covers Job Mail, Re-engage, mass Campaigns, Email Agent follow-ups and Market Pulse for all '+(r.candidates||0)+' candidates of this job '
+    +'(the same person in the Central Database is skipped too). Your own 1:1 e-mails are never blocked. Switching it back ON restores everything.</span>'
+    +(!on && r.pending_campaign_mails ? '<span style="display:block;font-size:11.5px;color:#B54708;margin-top:4px">'+r.pending_campaign_mails+' queued campaign e-mail(s) will be skipped.</span>' : '')
+    +'</span></label>';
+}
+async function saveAutoMail(mid, off){
+  if(off && !confirm('Switch OFF all automated e-mails for this job\'s candidates?\n\nJob Mail, Re-engage, Campaigns, Email Agent and Market Pulse will skip them until you switch it back ON.')){ loadAutoMail(mid); return; }
+  var r=await req('POST','/mandates/'+mid+'/auto-mail',{off:!!off});
+  if(!r || r.error){ toast('⚠️',(r&&r.error)||'Could not save'); loadAutoMail(mid); return; }
+  toast('✅', off?'Automated e-mails OFF for this job':'Automated e-mails ON for this job');
+  loadAutoMail(mid, r);
+}
 function renderMandateSetup(el){
   const m=S.activeMandate;
   el.style.padding='16px';
@@ -4209,9 +4232,13 @@ function renderMandateSetup(el){
     + '<button class="btn btn-g" onclick="addClientNote()">Add</button></div>'
     + '<div id="cn-list"><div style="font-size:12px;color:var(--muted)">Loading notes...</div></div>'
     + '</div></div>'
+    + '<div class="card setup-card" data-sc="manage" style="max-width:580px;margin-top:16px"><div class="card-head">'
+    + '<span style="font-weight:500">Automated e-mails <span style="font-size:10.5px;color:var(--muted);font-weight:400">(to the candidates of this job)</span></span></div>'
+    + '<div class="card-body" id="ms-automail"><div style="font-size:12px;color:var(--muted)">Loading…</div></div></div>'
     + adminCard;
   attachJDToolbar();
   loadClientNotes();
+  loadAutoMail(m.id);
   loadSpocOptions();
   loadCcOptions();
   if (wsMode()==='corporate') { loadOrgOptions(m); loadApprovalHistory(m); }
@@ -4248,7 +4275,7 @@ function wrapSetupAsRail(el){
     ['detail', mW+' detail', corp ? 'Role, CTC, organisation, planning, JD' : 'Client, role, CTC, JD'],
     ['kw', 'Keywords &amp; skills', 'Boolean, must-haves'],
     ['intent', 'Search intent', 'Plain-English rule'],
-    ['manage', 'Manage', corp ? 'CC, notes, team' : 'SPOC, CC, notes, team']
+    ['manage', 'Manage', corp ? 'CC, notes, e-mails, team' : 'SPOC, CC, notes, e-mails, team']
   ];
   var shell = document.createElement('div');
   shell.className = 'setup-fp w1-setup';
@@ -6893,10 +6920,9 @@ async function renderProfiles(el){
   PIPELINE_STAGES.forEach(function(stage){
     var cands = grouped[stage.id] || [];
     if(!cands.length) return;
-    listHtml += '<div class="prof-stage-head" style="color:'+stage.color+'">'
-      +'<span style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:50%;background:'+stage.color+';flex-shrink:0;display:inline-block"></span>'
-      +esc(stageLabel(stage.id))+'</span>'
-      +'<span style="background:'+stage.color+'22;color:'+stage.color+';border-radius:9px;padding:1px 8px;font-size:11px">'+cands.length+'</span>'
+    listHtml += '<div class="prof-stage-head pl1-sh" style="--sc:'+stage.color+'">'
+      +'<span class="pl1-sn"><i></i>'+esc(stageLabel(stage.id))+'</span>'
+      +'<span class="pl1-sc">'+cands.length+'</span>'
       +'</div>';
     cands.forEach(function(c){
       var isActive = c.id === selected.id;
@@ -6905,14 +6931,15 @@ async function renderProfiles(el){
         var col = _tagColor(t);
         return '<span style="font-size:8.5px;font-weight:600;color:'+col+';background:'+col+'18;padding:1px 5px;border-radius:7px;white-space:nowrap">'+esc(t)+'</span>';
       }).join(' ');
-      listHtml += '<div class="prof-list-item'+(isActive?' active':'')+'" data-pid="'+c.id+'" data-q="'+esc([c.name,c.company,c.designation].filter(Boolean).join(' ').toLowerCase())+'" style="display:flex;align-items:center;gap:10px">'
-        +avatarHtml(c.name, 34)
-        +'<div style="flex:1;min-width:0">'
-        +'<div style="font-size:13px;font-weight:600;color:#1B1B18;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.name||'')+'</div>'
-        +'<div style="font-size:11.5px;color:#A8A498;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.company||'')+(c.ctc_current?' \u00b7 '+c.ctc_current+'L':'')+'</div>'
-        +(tagChips?'<div style="margin-top:3px;display:flex;gap:3px;flex-wrap:wrap">'+tagChips+'</div>':'')
-        +'</div>'
-        +(c.cv_path?'<span style="font-size:9px;font-weight:600;background:#E8F4EE;color:#127A57;padding:2px 6px;border-radius:6px;flex-shrink:0">CV</span>':'')
+      // Oct 2026: one compact line per candidate — Name · Company · CTC (full text on hover)
+      var tip=[c.name, c.designation, c.company, c.ctc_current?c.ctc_current+' LPA':''].filter(Boolean).join(' \u00b7 ')+(_lst.length?' \u2014 '+_lst.join(', '):'');
+      listHtml += '<div class="prof-list-item pl1-row'+(isActive?' active':'')+'" data-pid="'+c.id+'" title="'+esc(tip)+'" data-q="'+esc([c.name,c.company,c.designation].filter(Boolean).join(' ').toLowerCase())+'">'
+        +avatarHtml(c.name, 24)
+        +'<span class="pl1-nm">'+esc(c.name||'')+'</span>'
+        +(c.company?'<span class="pl1-co">'+esc(c.company)+'</span>':'<span class="pl1-co"></span>')
+        +(_lst.length?'<span class="pl1-tg" style="background:'+_tagColor(_lst[0])+'"></span>':'')
+        +(c.ctc_current?'<span class="pl1-ctc">'+esc(c.ctc_current)+'L</span>':'')
+        +(c.cv_path?'<span class="pl1-cv" title="CV attached">CV</span>':'<span class="pl1-cv off" title="No CV"></span>')
         +'</div>';
     });
   });
@@ -7473,10 +7500,17 @@ async function cpGenPitch(cid){
   st.running = false;
   if(!r || r.error || !r.ok){ st.err=(r&&r.error)||'Pitch generation failed'; _renderPitch(cid); toast('ERR','Pitch failed'); return; }
   st.data = r; st.meta = st.meta||{};
+  window._finalState[cid] = {};          // new resume check → the final result rebuilds on its own
   st.meta.available = (st.meta.available||[]).concat([st.lang]);
   _renderPitch(cid); toast('OK','Pitch ready');
 }
 function _pitchPlain(p, ev){
+  var eqs=(p.exposure_questions&&p.exposure_questions.length)?p.exposure_questions:(p.questions||[]);
+  if(eqs.length){   // Oct 2026: checklist only (the call script is switched off)
+    var o=['ANSWER CHECKLIST\n'+eqs.map(function(q,i){ return (i+1)+'. '+(q.skill?q.skill+': ':'')+q.q+(q.note?'\n   Note down: '+q.note:''); }).join('\n')];
+    if(p.ctc_response) o.push('IF ASKED ABOUT CTC / BUDGET (never share a number)\n'+p.ctc_response);
+    return o.join('\n\n');
+  }
   if(p.script){
     var out=[String(p.script).replace(/\(PAUSE\)/g,'[wait for answer]')];
     var qs=p.exposure_questions||[];
@@ -7495,7 +7529,7 @@ function _pitchPlain(p, ev){
 function cpCopyPitch(cid){
   var st=window._pitchState[cid]; if(!st||!st.data) return;
   var t=_pitchPlain(st.data.pitch||{}, st.data.evaluation||{});
-  var done=function(){ toast('OK','Pitch copied'); };
+  var done=function(){ toast('OK','Checklist copied'); };
   if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done,function(){ _fallbackCopy(t); done(); }); }
   else { _fallbackCopy(t); done(); }
 }
@@ -7508,7 +7542,7 @@ var _PD = {
   hold:{ic:'&#9208;&#65039;', t:'HOLD', s:'Share only after the call confirms the points below', bg:'#FFFAEB', bd:'#FEDF89', fg:'#B54708'}
 };
 var _PD_ST = {MET:['&#10003; Met','#067647','#ECFDF3'], NOT_MET:['&#10007; Not met','#B42318','#FEF3F2'], UNCLEAR:['? Unclear','#B54708','#FFFAEB']};
-function _pitchDecisionHtml(cid, ev, ov, st){
+function _pitchDecisionHtml(cid, ev, ov, st, compact){
   var dec=ev.decision;
   if(!dec){
     return '<div style="background:#EEF4FF;border:1px solid #C7D7FE;border-radius:10px;padding:10px 14px;font-size:12.5px;color:#2D4A8A;margin-bottom:12px;display:flex;align-items:center;gap:10px">'
@@ -7524,10 +7558,10 @@ function _pitchDecisionHtml(cid, ev, ov, st){
     +(ov?'<div style="font-size:12.5px;color:#101828;margin-top:6px;background:#fff;border:1px solid '+c.bd+';border-radius:8px;padding:7px 10px">&#9998; Changed to <b>'+esc(eff)+'</b> by '+esc(ov.by_name||'a recruiter')
         +(ov.created_at?' &middot; '+esc(String(ov.created_at).replace('T',' ').slice(0,16)):'')+(ov.ai_status?' (AI said '+esc(ov.ai_status)+')':'')+'<br><span style="color:#475467">Reason: '+esc(ov.reason||'')+'</span></div>':'')
     +'</div>'
-    +'<div style="display:flex;gap:6px">'
+    +(compact?'</div>':'<div style="display:flex;gap:6px">'
     +(ov?'<button class="btn btn-o" style="font-size:11.5px;padding:5px 10px" onclick="cpPitchClearDecision('+cid+')">Use AI decision</button>':'')
     +'<button class="btn btn-o" style="font-size:11.5px;padding:5px 10px" onclick="cpPitchDecisionForm('+cid+')">Change decision</button></div></div>'
-    +'<div id="pd-form-'+cid+'"></div>';
+    +'<div id="pd-form-'+cid+'"></div>');
   if(eff==='hold' && (dec.verify||[]).length>4){     // the rule line names the first 4
     h+='<div style="margin-top:10px;font-size:12.5px;color:#93370D"><b>Also confirm:</b> '+dec.verify.slice(4).map(esc).join(' &middot; ')+'</div>';
   }
@@ -7544,7 +7578,7 @@ function _pitchDecisionHtml(cid, ev, ov, st){
   var why=function(title,color,items){ return (items&&items.length)?'<div style="flex:1;min-width:220px"><div style="font-size:11px;font-weight:700;color:'+color+';text-transform:uppercase;letter-spacing:.4px;margin:12px 0 6px">'+title+'</div>'
       +items.map(function(x){ return '<div style="font-size:12.5px;color:#344054;line-height:1.45;margin-bottom:5px;padding-left:10px;border-left:2px solid '+color+'55">'+esc(x)+'</div>'; }).join('')+'</div>':''; };
   h+='<div style="display:flex;gap:16px;flex-wrap:wrap">'+why('Why it can go to the client','#067647',ev.shortlist_reasons)+why('Why not','#B42318',ev.reject_reasons)+'</div>';
-  if(eff==='shortlisted' && ev.client_summary){
+  if(eff==='shortlisted' && ev.client_summary && !compact){
     h+='<div style="margin-top:12px;background:#fff;border:1px solid #ABEFC6;border-radius:10px;padding:10px 12px">'
       +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="font-size:12px;font-weight:700;color:#067647">&#128233; Client-ready summary</div>'
       +'<div style="font-size:11px;color:#667085">No CTC, no gaps &mdash; paste it in the submission mail</div>'
@@ -7583,6 +7617,113 @@ function cpCopyClientSummary(cid){
   else { _fallbackCopy(t); done(); }
 }
 
+// ── Final Result (Oct 2026): resume evidence + call evidence → one decision ──
+// Server: modules/final_result.py. Built automatically once both the Pitch
+// evaluation and an analysed call exist; rebuilt when either changes.
+window._finalState = window._finalState || {};
+var _FR_ST = {MET:['&#10003; Met','#067647','#ECFDF3'], NOT_MET:['&#10007; Not met','#B42318','#FEF3F2'], UNCLEAR:['? Unclear','#B54708','#FFFAEB']};
+async function cpLoadFinal(cid, force){
+  var box=document.getElementById('cp-final-'+cid); if(!box) return;
+  var fs=window._finalState[cid]=window._finalState[cid]||{};
+  if(fs.running){ _renderFinal(cid); return; }
+  var r=await req('GET','/candidates/'+cid+'/final-result');
+  if(!r || r.error){ box.innerHTML=''; return; }
+  fs.data=r;
+  // both inputs exist but no result yet (or an input changed) → build it now, once per page view
+  if(r.have && r.have.pitch && r.have.call && (!r.result || r.stale) && !fs.autoTried){ fs.autoTried=true; return cpGenFinal(cid); }
+  _renderFinal(cid);
+}
+async function cpGenFinal(cid){
+  var fs=window._finalState[cid]=window._finalState[cid]||{};
+  if(fs.running) return;
+  fs.running=true; fs.err=''; _renderFinal(cid);
+  var r=await req('POST','/candidates/'+cid+'/final-result',{});
+  fs.running=false;
+  if(!r || r.error || !r.ok){ fs.err=(r&&r.error)||'Could not build the final result'; _renderFinal(cid); return; }
+  fs.data=Object.assign({}, fs.data||{}, r, {have:{pitch:true, call:true}});
+  _renderFinal(cid); toast('OK','Final result ready');
+}
+function _renderFinal(cid){
+  var box=document.getElementById('cp-final-'+cid); if(!box) return;
+  var fs=window._finalState[cid]||{}, d=fs.data||{}, have=d.have||{};
+  var pst=window._pitchState[cid]||{}, pd=pst.data||{}, ev=pd.evaluation||{};
+  var rd=document.getElementById('cp-resdec-'+cid);
+  if(fs.running){
+    box.innerHTML='<div class="cp-card2" style="margin-bottom:12px;border:1px solid #C7D7FE;background:#F5F8FF"><div class="loading" style="padding:18px"><div class="spinner"></div>Clubbing the resume check with what the candidate said on the call&hellip; (~10&ndash;20s)</div></div>';
+    return;
+  }
+  if(fs.err){
+    box.innerHTML='<div class="cp-card2" style="margin-bottom:12px;border-left:4px solid #D92D20"><div style="font-size:12.5px;font-weight:700;color:#B42318">&#9888; Final result could not be built</div>'
+      +'<div style="font-size:12.5px;color:#475467;margin:4px 0 8px">'+esc(fs.err)+'</div><button class="btn btn-o" style="font-size:11.5px;padding:5px 12px" onclick="cpGenFinal('+cid+')">Try again</button></div>';
+    return;
+  }
+  var res=d.result;
+  if(!res){
+    // waiting for the call: a slim hint, the resume-only decision stays as the main card
+    box.innerHTML = have.call ? '' : '<div style="background:#F9FAFB;border:1px dashed #D0D5DD;border-radius:10px;padding:9px 14px;font-size:12px;color:#475467;margin-bottom:12px;display:flex;align-items:center;gap:8px">'
+      +'<span style="font-size:15px">&#127919;</span><span><b>Final Result</b> appears here after the call &mdash; upload the recording in <a href="#" onclick="cpTab(\'call\');return false" style="color:#534AB7;font-weight:600">Call Analysis</a>. It clubs the resume evidence below with what the candidate says.</span></div>';
+    return;
+  }
+  var dec=res.decision||{}, ov=pd.override||null, eff=(ov&&ov.status)||dec.status, c=_PD[eff]||_PD.hold;
+  var sc=res.final_score||0, scol=sc>=75?'#067647':(sc>=50?'#B54708':'#B42318');
+  var h='<div class="cp-card2" style="margin-bottom:12px;background:'+c.bg+' !important;border:1.5px solid '+c.bd+' !important">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:10.5px;font-weight:800;letter-spacing:.6px;color:#344054;background:#fff;border:1px solid '+c.bd+';border-radius:20px;padding:2px 10px">FINAL RESULT &middot; RESUME + CALL</span>'
+    +(d.stale?'<span style="font-size:11px;color:#B54708;font-weight:600">&#9888; resume check or call changed</span>':'')
+    +'<span style="flex:1"></span><button class="btn btn-o" style="font-size:11px;padding:4px 10px" onclick="cpGenFinal('+cid+')">&#8635; Rebuild</button></div>'
+    +'<div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">'
+    +'<div style="width:60px;height:60px;border-radius:50%;background:#fff;border:3px solid '+scol+';display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0"><span style="font-size:19px;font-weight:800;color:'+scol+';line-height:1">'+sc+'</span><span style="font-size:8.5px;color:#667085">/100</span></div>'
+    +'<div style="flex:1;min-width:220px"><div style="font-size:18px;font-weight:800;color:'+c.fg+';letter-spacing:.3px">'+c.ic+' '+c.t+' &middot; <span style="font-weight:700;font-size:15px">'+c.s+'</span></div>'
+    +'<div style="font-size:12.5px;color:#344054;margin-top:4px;line-height:1.5">'+(ov?'<b>AI rule:</b> ':'')+esc(dec.rule||'')+'</div>'
+    +(ov?'<div style="font-size:12.5px;color:#101828;margin-top:6px;background:#fff;border:1px solid '+c.bd+';border-radius:8px;padding:7px 10px">&#9998; Changed to <b>'+esc(eff)+'</b> by '+esc(ov.by_name||'a recruiter')+(ov.ai_status?'':'')+'<br><span style="color:#475467">Reason: '+esc(ov.reason||'')+'</span></div>':'')
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
+    +(res.interest_level?'<span style="font-size:11px;font-weight:700;background:#fff;border:1px solid #EAECF0;border-radius:6px;padding:2px 8px;color:'+(res.interest_level==='HIGH'?'#067647':res.interest_level==='LOW'?'#B42318':'#B54708')+'" title="'+esc(res.interest_reason||'')+'">Interest: '+esc(res.interest_level)+'</span>':'')
+    +(res.call_recommendation?'<span style="font-size:11px;font-weight:700;background:#fff;border:1px solid #EAECF0;border-radius:6px;padding:2px 8px;color:#344054">Call advice: '+esc(res.call_recommendation)+'</span>':'')
+    +'</div></div>'
+    +'<div style="display:flex;gap:6px">'
+    +(ov?'<button class="btn btn-o" style="font-size:11.5px;padding:5px 10px" onclick="cpPitchClearDecision('+cid+')">Use AI decision</button>':'')
+    +'<button class="btn btn-o" style="font-size:11.5px;padding:5px 10px" onclick="cpPitchDecisionForm('+cid+')">Change decision</button></div></div>'
+    +'<div id="pd-form-'+cid+'"></div>';
+  if(res.summary) h+='<div style="font-size:13px;color:#101828;line-height:1.6;margin-top:12px;background:#fff;border:1px solid #EAECF0;border-radius:10px;padding:10px 12px">'+esc(res.summary)+'</div>';
+  var rows=res.rows||[];
+  if(rows.length){
+    h+='<div style="margin-top:12px;background:#fff;border:1px solid #EAECF0;border-radius:10px;overflow:hidden"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
+      +'<tr style="background:#F9FAFB;color:#667085;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;text-align:left"><th style="padding:8px 10px">Must-have</th><th style="padding:8px 10px">&#128196; From resume</th><th style="padding:8px 10px">&#128222; From call</th><th style="padding:8px 10px">Final</th></tr>'
+      +rows.map(function(r){
+        var x=_FR_ST[r.status]||_FR_ST.UNCLEAR, rs=_FR_ST[r.resume_status]||_FR_ST.UNCLEAR, moved=r.resume_status!==r.status;
+        return '<tr style="border-top:1px solid #F2F4F7;vertical-align:top"><td style="padding:9px 10px;font-weight:600;color:#101828;min-width:140px">'+esc(r.requirement)+'</td>'
+          +'<td style="padding:9px 10px;color:#475467;min-width:170px"><span style="font-size:10px;font-weight:700;color:'+rs[1]+'">'+rs[0]+'</span><div style="margin-top:2px">'+esc(r.resume_evidence||'')+'</div></td>'
+          +'<td style="padding:9px 10px;color:#475467;min-width:170px">'+esc(r.call_evidence||'')+'</td>'
+          +'<td style="padding:9px 10px;min-width:120px"><span style="font-size:11px;font-weight:700;color:'+x[1]+';background:'+x[2]+';border-radius:6px;padding:2px 8px;white-space:nowrap">'+x[0]+'</span>'
+          +(moved?'<div style="font-size:10px;color:#534AB7;font-weight:700;margin-top:4px">changed by call</div>':'')
+          +(r.why?'<div style="font-size:11px;color:#667085;margin-top:4px;line-height:1.4">'+esc(r.why)+'</div>':'')+'</td></tr>';
+      }).join('')+'</table></div></div>';
+  }
+  var why=function(title,color,items){ return (items&&items.length)?'<div style="flex:1;min-width:200px"><div style="font-size:11px;font-weight:700;color:'+color+';text-transform:uppercase;letter-spacing:.4px;margin:12px 0 6px">'+title+'</div>'
+      +items.map(function(x){ return '<div style="font-size:12.5px;color:#344054;line-height:1.45;margin-bottom:5px;padding-left:10px;border-left:2px solid '+color+'55">'+esc(x)+'</div>'; }).join('')+'</div>':''; };
+  h+='<div style="display:flex;gap:16px;flex-wrap:wrap">'+why('Why it can go to the client','#067647',res.shortlist_reasons)+why('Why not','#B42318',res.reject_reasons)
+    +why('Still to confirm','#B54708',res.open_points)+why('Red flags from the call','#B42318',res.red_flags)+'</div>';
+  if(eff==='shortlisted' && res.client_summary){
+    h+='<div style="margin-top:12px;background:#fff;border:1px solid #ABEFC6;border-radius:10px;padding:10px 12px">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="font-size:12px;font-weight:700;color:#067647">&#128233; Client-ready summary</div>'
+      +'<div style="font-size:11px;color:#667085">Resume + call confirmed &mdash; no CTC, no gaps</div>'
+      +'<button class="btn btn-o" style="margin-left:auto;font-size:11.5px;padding:4px 10px" onclick="cpCopyFinalSummary('+cid+')">&#128203; Copy</button></div>'
+      +'<div style="font-size:13.5px;color:#101828;line-height:1.65">'+esc(res.client_summary)+'</div></div>';
+  }
+  h+='<div style="font-size:10.5px;color:#98A2B3;margin-top:8px;text-align:right">Built '+esc(String(d.at||'').replace('T',' ').slice(0,16))+(d.by?' by '+esc(d.by):'')+'</div></div>';
+  box.innerHTML=h;
+  // the resume-only decision becomes the "before the call" detail
+  if(rd && ev.decision){
+    rd.innerHTML='<details style="margin-bottom:12px"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:#475467;padding:4px 2px">Before the call &mdash; resume-only check ('+esc((ev.decision.status||'').toUpperCase())+')</summary>'
+      +'<div style="margin-top:8px">'+_pitchDecisionHtml(cid, ev, null, pst, true)+'</div></details>';
+  }
+}
+function cpCopyFinalSummary(cid){
+  var fs=window._finalState[cid]; var t=fs&&fs.data&&fs.data.result&&fs.data.result.client_summary; if(!t) return;
+  var done=function(){ toast('OK','Client summary copied'); };
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done,function(){ _fallbackCopy(t); done(); }); }
+  else { _fallbackCopy(t); done(); }
+}
+
 function _renderPitch(cid){
   var box=document.getElementById('cp-pitch-'+cid); if(!box) return;
   var st=window._pitchState[cid]||{}; var lang=st.lang||'en'; var d=st.data; var meta=st.meta||{};
@@ -7596,10 +7737,10 @@ function _renderPitch(cid){
   };
   var gen = '<button class="btn" style="background:#534AB7;color:#fff;border:none;font-size:12.5px;padding:7px 16px" onclick="cpGenPitch('+cid+')"'+(st.running?' disabled':'')+'>'
     +(st.running?'&#8987; Working…':(d?'&#8635; Re-generate':'&#10024; Generate Pitch'))+'</button>';
-  var copy = (d&&!st.running)?'<button class="btn btn-o" style="font-size:12.5px;padding:7px 14px" onclick="cpCopyPitch('+cid+')">&#128203; Copy script</button>':'';
+  var copy = (d&&!st.running)?'<button class="btn btn-o" style="font-size:12.5px;padding:7px 14px" onclick="cpCopyPitch('+cid+')">&#128203; Copy checklist</button>':'';
   var h='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
     +'<div style="flex:1;min-width:200px"><div style="font-size:15px;font-weight:700;color:var(--navy)">&#127919; Call Pitch</div>'
-    +'<div style="font-size:11.5px;color:var(--muted);margin-top:2px">Built for this candidate and this position — evaluated against the JD first.</div></div>'
+    +'<div style="font-size:11.5px;color:var(--muted);margin-top:2px">Resume check against the JD, answer checklist for the call &mdash; and after the call, one final result.</div></div>'
     +'<div style="display:flex;background:#F2F4F7;border-radius:9px;padding:3px">'+langBtn('en','English')+langBtn('hinglish','Hinglish')+'</div>'
     +copy+gen+'</div>';
 
@@ -7608,7 +7749,7 @@ function _renderPitch(cid){
       +'<div style="font-size:12.5px;color:#475467">'+esc(st.err)+'</div></div>';
   }
   if(st.running){
-    h+='<div class="cp-card2"><div class="loading" style="padding:28px"><div class="spinner"></div>Evaluating the profile against the JD, then writing the pitch… (~20–40s)</div></div>';
+    h+='<div class="cp-card2"><div class="loading" style="padding:28px"><div class="spinner"></div>Checking the resume against the JD, then preparing the answer checklist… (~15–30s)</div></div>';
     box.innerHTML=h; return;
   }
   if(!d){
@@ -7618,7 +7759,7 @@ function _renderPitch(cid){
       h+='<div class="cp-card2" style="text-align:center;padding:30px 20px">'
         +'<div style="font-size:30px;margin-bottom:6px">&#127919;</div>'
         +'<div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:4px">No '+(lang==='hinglish'?'Hinglish':'English')+' pitch for this candidate yet</div>'
-        +'<div style="font-size:12.5px;color:var(--muted);max-width:460px;margin:0 auto 14px">The AI first checks this profile against the JD (match score, gaps, claims to verify), then writes a natural call script with skill questions that test exactly those points.</div>'
+        +'<div style="font-size:12.5px;color:var(--muted);max-width:460px;margin:0 auto 14px">The AI first checks this resume against the JD (must-haves, gaps, claims to verify), then prepares an answer checklist for the call. After the call is analysed, the Final Result clubs both.</div>'
         +(noJd?'<div style="font-size:12px;color:#B54708;margin-bottom:12px">'+esc(noJd)+'</div>':'')
         +gen+'</div>';
     }
@@ -7630,8 +7771,10 @@ function _renderPitch(cid){
     h+='<div style="background:#FFFAEB;border:1px solid #FEDF89;border-radius:10px;padding:9px 14px;font-size:12px;color:#93370D;margin-bottom:12px;display:flex;align-items:center;gap:10px">'
       +'&#9888; The profile, CV or JD changed after this pitch was made.<button class="btn" style="margin-left:auto;background:#B54708;color:#fff;border:none;font-size:11.5px;padding:5px 12px" onclick="cpGenPitch('+cid+')">Re-generate</button></div>';
   }
+  // Final Result (resume + call) sits on top; the resume-only decision follows it.
+  h+='<div id="cp-final-'+cid+'"></div>';
   // Decision: can this profile go to the client? (rule over the must-have check; recruiter may override)
-  h+=_pitchDecisionHtml(cid, ev, d.override||null, st);
+  h+='<div id="cp-resdec-'+cid+'">'+_pitchDecisionHtml(cid, ev, d.override||null, st)+'</div>';
   // Evaluation card
   var sc=ev.match_score||0, col=sc>=75?'#0F6E56':(sc>=50?'#B54708':'#B42318'), bg=sc>=75?'#ECFDF3':(sc>=50?'#FFFAEB':'#FEF3F2');
   var list=function(title,icon,color,items){
@@ -7651,54 +7794,35 @@ function _renderPitch(cid){
     +list('Matches','&#10003;','#0F6E56',ev.strengths)+list('Gaps','&#9888;','#B54708',ev.gaps)+list('Verify on call','?','#2D6FB3',ev.to_verify)
     +'</div><div style="font-size:10.5px;color:#98A2B3;margin-top:8px">For the recruiter only — do not read this out.</div></div>';
 
-  if(p.script){
-    // Paragraph script for junior callers — read top to bottom.
-    var pauseChip='<span style="display:inline-block;margin:0 4px;padding:1px 9px;border-radius:10px;background:#FFF4E5;color:#B54708;font-size:11px;font-weight:700;font-style:normal;white-space:nowrap">&#9208; '+(lang==='hinglish'?'Jawab suniye':'Wait for answer')+'</span>';
-    var paras=String(p.script).split(/\n\s*\n/).filter(function(x){return x.trim();});
-    h+='<div class="cp-card2" style="margin-bottom:12px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'
-      +'<div style="font-size:13px;font-weight:700;color:var(--navy)">&#128222; Call script</div>'
-      +'<div style="font-size:11px;color:#667085">Read it as it is. Stop at every '+pauseChip+' and let the candidate speak.</div></div>'
-      +paras.map(function(para){
-        return '<p style="font-size:14.5px;line-height:1.75;color:#101828;margin:0 0 14px">'+esc(para).replace(/\(PAUSE\)/g,pauseChip)+'</p>';
+  // Oct 2026: the paragraph call script is no longer shown — only the answer checklist + the CTC rule.
+  var eq=(p.exposure_questions&&p.exposure_questions.length) ? p.exposure_questions
+        : (p.questions||[]).map(function(q){ return {skill:q.skill||'', q:q.q||'', note:q.note||''}; });
+  if(eq.length){
+    h+='<div class="cp-card2" style="margin-bottom:12px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:2px"><div style="font-size:13px;font-weight:700;color:var(--navy)">&#9989; Answer checklist</div>'
+      +'<span style="font-size:10.5px;font-weight:700;color:#2D6FB3;background:#EEF4FF;border-radius:10px;padding:1px 8px">'+eq.length+' questions</span></div>'
+      +'<div style="font-size:11.5px;color:#667085;margin-bottom:6px">Ask one by one. Only note whether the candidate has worked on it &mdash; Yes / No, years and company. No need to judge the skill.</div>'
+      +eq.map(function(q,i){
+        return '<label style="display:flex;gap:10px;padding:10px 0;border-top:1px solid #F2F4F7;cursor:pointer">'
+          +'<input type="checkbox" style="margin-top:3px;flex-shrink:0">'
+          +'<div style="flex:1">'+(q.skill?'<span style="display:inline-block;font-size:10.5px;font-weight:700;color:#2D6FB3;background:#EEF4FF;border-radius:6px;padding:1px 7px;margin-bottom:3px">'+esc(q.skill)+'</span>':'')
+          +'<div style="font-size:13.5px;color:#101828;line-height:1.5">'+(i+1)+'. '+esc(q.q||'')+'</div>'
+          +(q.note?'<div style="font-size:11.5px;color:#667085;margin-top:2px">Note down: '+esc(q.note)+'</div>':'')
+          +'</div></label>';
       }).join('')+'</div>';
-
-    // Budget rule card
+  } else {
+    h+='<div style="background:#EEF4FF;border:1px solid #C7D7FE;border-radius:10px;padding:9px 14px;font-size:12px;color:#2D4A8A;margin-bottom:12px;display:flex;align-items:center;gap:10px">'
+      +'No answer checklist on this pitch. Re-generate to get the exposure questions.'
+      +'<button class="btn" style="margin-left:auto;background:#534AB7;color:#fff;border:none;font-size:11.5px;padding:5px 12px" onclick="cpGenPitch('+cid+')">Re-generate</button></div>';
+  }
+  if(p.ctc_response){
     h+='<div class="cp-card2" style="margin-bottom:12px;background:#FEF3F2;border:1px solid #FECDCA">'
       +'<div style="font-size:12px;font-weight:800;color:#B42318;margin-bottom:4px">&#128683; Never disclose CTC or budget</div>'
       +'<div style="font-size:11.5px;color:#912018;margin-bottom:6px">If the candidate asks, say:</div>'
-      +'<div style="font-size:14px;color:#101828;line-height:1.65;font-style:italic">&ldquo;'+esc(p.ctc_response||'')+'&rdquo;</div></div>';
-
-    // Answer checklist (exposure only)
-    var eq=p.exposure_questions||[];
-    if(eq.length){
-      h+='<div class="cp-card2" style="margin-bottom:12px"><div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:2px">&#9989; Answer checklist</div>'
-        +'<div style="font-size:11.5px;color:#667085;margin-bottom:6px">Only note whether the candidate has worked on it — Yes / No, years and company. No need to judge the skill.</div>'
-        +eq.map(function(q,i){
-          return '<label style="display:flex;gap:10px;padding:10px 0;border-top:1px solid #F2F4F7;cursor:pointer">'
-            +'<input type="checkbox" style="margin-top:3px;flex-shrink:0">'
-            +'<div style="flex:1">'+(q.skill?'<span style="display:inline-block;font-size:10.5px;font-weight:700;color:#2D6FB3;background:#EEF4FF;border-radius:6px;padding:1px 7px;margin-bottom:3px">'+esc(q.skill)+'</span>':'')
-            +'<div style="font-size:13.5px;color:#101828;line-height:1.5">'+(i+1)+'. '+esc(q.q||'')+'</div>'
-            +(q.note?'<div style="font-size:11.5px;color:#667085;margin-top:2px">Note down: '+esc(q.note)+'</div>':'')
-            +'</div></label>';
-        }).join('')+'</div>';
-    }
-  } else {
-    // Pitch made before the paragraph format — still shown, with a nudge to refresh.
-    h+='<div style="background:#EEF4FF;border:1px solid #C7D7FE;border-radius:10px;padding:9px 14px;font-size:12px;color:#2D4A8A;margin-bottom:12px;display:flex;align-items:center;gap:10px">'
-      +'This pitch is in the old format. Re-generate to get the paragraph script with exposure questions.'
-      +'<button class="btn" style="margin-left:auto;background:#534AB7;color:#fff;border:none;font-size:11.5px;padding:5px 12px" onclick="cpGenPitch('+cid+')">Re-generate</button></div>';
-    var step=function(n,label,text){
-      if(!text) return '';
-      return '<div style="padding:9px 0;border-top:1px solid #F2F4F7"><div style="font-size:11px;font-weight:700;color:#667085;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">'+n+'. '+label+'</div>'
-        +'<div style="font-size:13.5px;color:#101828;line-height:1.6">'+esc(text)+'</div></div>';
-    };
-    h+='<div class="cp-card2" style="margin-bottom:12px">'+step(1,'Introduction',p.intro)+step(2,'Location',p.location)+step(3,'Client',p.client)
-      +step(4,'Position',p.title)+step(5,'Role',p.role)
-      +(p.questions||[]).map(function(q,i){ return step(6,'Question '+(i+1),q.q); }).join('')
-      +step(7,'If asked about CTC',p.ctc_response)+step(8,'Closing',p.closing)+'</div>';
+      +'<div style="font-size:14px;color:#101828;line-height:1.65;font-style:italic">&ldquo;'+esc(p.ctc_response)+'&rdquo;</div></div>';
   }
   h+='<div style="font-size:11px;color:#98A2B3;text-align:right">'+(lang==='hinglish'?'Hinglish':'English')+' &middot; generated by '+esc(d.by||'')+' &middot; '+esc((d.at||'').replace('T',' ').slice(0,16))+'</div>';
   box.innerHTML=h;
+  try{ cpLoadFinal(cid); }catch(e){}
 }
 
 function _billStatusStyle(s){
@@ -12010,6 +12134,7 @@ async function handleCallUpload(cid, input) {
 
     const a = r.analysis || {};
     statusEl.style.display = 'none';
+    try { window._finalState = window._finalState || {}; window._finalState[cid] = {}; } catch(e) {}
     renderCallReport(cid, {analysis: a, transcript: r.transcript, recording_file: r.recording_file,
       recording_name: r.recording_name, updated_fields: r.updated_fields,
       id: r.id, proposed_updates: r.proposed_updates || {}, applied_fields: r.applied_fields || [],
@@ -12230,6 +12355,7 @@ async function _scUpload(){
     return;
   }
   try { var cache = await caches.open('hl-share'); await cache.delete(f.key); } catch (e) {}
+  try { window._finalState = window._finalState || {}; window._finalState[c.id] = {}; } catch (e) {}
   var a = r.analysis || {};
   var next = _sc.idx + 1 < _sc.files.length;
   var callRec = {id: r.id, proposed_updates: r.proposed_updates || {}, applied_fields: r.applied_fields || []};
@@ -12442,6 +12568,10 @@ function renderCallReport(cid, call){
     + tile('Interest', a.interest_level, a.interest_reason, _caKind(a.interest_level))
     + tile('Recommendation', a.recommendation, a.recommendation_reason, _caKind(a.recommendation))
     + '</div>';
+  // 3b. pointer to the clubbed decision
+  html += '<div style="background:rgba(83,74,183,.22);border:0.5px solid rgba(175,169,236,.45);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:11.5px;color:#E4E2FB;display:flex;align-items:center;gap:8px">'
+    + '&#127919; <span style="flex:1"><b>Final Result</b> (resume evidence + this call, one decision) is on the Pitch tab.</span>'
+    + '<button onclick="cpTab(\'pitch\')" style="border:none;background:#fff;color:#3C3489;border-radius:7px;padding:5px 11px;font-size:11px;font-weight:700;cursor:pointer">Open</button></div>';
   // 4. combined summary
   if(a.overall_summary || a.call_summary){
     html += _caSec('Combined picture (CV + Pitch + call vs JD)',
@@ -19661,7 +19791,26 @@ body.rs-scoped #ai-tab-stats, body.rs-scoped #ai-tab-companies, body.rs-scoped #
 .bdw-lnk{border:none;background:transparent;color:#3E63DD;font-size:12px;cursor:pointer;padding:3px 6px;border-radius:5px;font-family:inherit}
 .bdw-lnk:hover{background:#EEF0FF}
 .bdw-bulk{display:flex;align-items:center;gap:10px;padding:7px 14px;background:#EEF0FF;color:#3538CD;font-size:12.5px;flex-shrink:0}
-.bdw-scroll{flex:1;overflow:auto;position:relative;min-height:0}
+.bdw-scroll{flex:1;overflow:auto;position:relative;min-height:0;scroll-behavior:auto;scrollbar-width:auto;scrollbar-color:#B9C0CC #F2F4F7}
+/* Oct 2026: easier scrolling on the BD sheet — thick bars, a column navigator, shadow on the frozen column */
+.bdw-scroll::-webkit-scrollbar{width:12px;height:12px}
+.bdw-scroll::-webkit-scrollbar-track{background:#F2F4F7}
+.bdw-scroll::-webkit-scrollbar-thumb{background:#B9C0CC;border-radius:8px;border:3px solid #F2F4F7}
+.bdw-scroll::-webkit-scrollbar-thumb:hover{background:#8C95A6}
+.bdw-scroll::-webkit-scrollbar-corner{background:#F2F4F7}
+.bdw-scroll.hx .bdw-t .s1{box-shadow:6px 0 8px -6px rgba(16,24,40,.28)}
+.bdw-hnav{display:none;align-items:center;gap:6px;padding:6px 12px;border-top:0.5px solid #EAECF0;background:#FCFCFD;flex-shrink:0;user-select:none}
+.bdw-hnav.on{display:flex}
+.bdw-hnav button{border:0.5px solid #D0D5DD;background:#fff;color:#344054;border-radius:7px;height:26px;min-width:30px;padding:0 8px;font-size:12px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;gap:4px}
+.bdw-hnav button:hover:not(:disabled){background:#EEF0FF;border-color:#A4B0FF;color:#3538CD}
+.bdw-hnav button:disabled{opacity:.4;cursor:default}
+.bdw-hnav .trk{flex:1;height:10px;background:#EEF0F3;border-radius:6px;position:relative;cursor:pointer;min-width:80px}
+.bdw-hnav .thm{position:absolute;top:0;bottom:0;background:#3E63DD;border-radius:6px;min-width:24px;cursor:grab;opacity:.85}
+.bdw-hnav .thm:hover,.bdw-hnav .thm.drag{opacity:1}
+.bdw-hnav .thm.drag{cursor:grabbing}
+.bdw-hnav .lbl{font-size:11.5px;color:#667085;white-space:nowrap;min-width:150px;text-align:right;font-variant-numeric:tabular-nums}
+.bdw-hnav .tip{font-size:10.5px;color:#98A2B3;white-space:nowrap}
+@media(max-width:700px){.bdw-hnav .tip,.bdw-hnav .lbl{display:none}}
 table.bdw-t{border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:13px;color:#101828}
 .bdw-t th,.bdw-t td{border-bottom:0.5px solid #EAECF0;border-right:0.5px solid #EAECF0;height:34px;padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;background:#fff}
 .bdw-t th{position:sticky;top:0;z-index:3;font-weight:500;color:#667085;font-size:12.5px;cursor:pointer;user-select:none}
@@ -20062,7 +20211,78 @@ function _bdwWire(){
       var st=_bdwSt(); if(st && st.cfg.view_type!=='kanban' && !st.loading && st.page<st.pages){ st.page++; _bdwFetch(false); }
     }
     if(p.style.display==='block' && BDW.popCtx && BDW.popCtx.inGrid) _bdwPopFollow(el);
+    _bdwHnavSync();
   }, true);
+  // mouse wheel over the column headers scrolls sideways (no Shift needed)
+  g.addEventListener('wheel', function(e){
+    if(!e.target.closest || !e.target.closest('.bdw-t thead')) return;
+    var sc2=document.getElementById('bdw-scroll'); if(!sc2 || sc2.scrollWidth<=sc2.clientWidth) return;
+    if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){ sc2.scrollLeft+=e.deltaY; e.preventDefault(); }
+  }, {passive:false});
+  g.addEventListener('mousedown', _bdwHnavDown);
+  window.addEventListener('resize', function(){ _bdwHnavSync(); });
+}
+
+// ── column navigator under the sheet (Oct 2026) ───────────────────────────
+function _bdwHnavSync(){
+  var sc=document.getElementById('bdw-scroll'), nav=document.getElementById('bdw-hnav'); if(!sc || !nav) return;
+  if(BDW._hnavFor!==sc && window.ResizeObserver){          // re-sync when the table / window changes size
+    BDW._hnavFor=sc;
+    try{ if(BDW._hnavRO) BDW._hnavRO.disconnect(); }catch(e){}
+    try{ var ro=new ResizeObserver(function(){ _bdwHnavSync(); }); ro.observe(sc); if(sc.firstElementChild) ro.observe(sc.firstElementChild); BDW._hnavRO=ro; }catch(e){}
+  }
+  var max=sc.scrollWidth-sc.clientWidth;
+  sc.classList.toggle('hx', sc.scrollLeft>2);
+  if(max<=4){ nav.classList.remove('on'); return; }
+  if(!nav.firstChild){
+    nav.innerHTML='<button data-hn="home" title="First column">&#8676;</button><button data-hn="left" title="Scroll left (hold)">&#9664;</button>'
+      +'<div class="trk" data-hn="trk"><div class="thm" data-hn="thm"></div></div>'
+      +'<button data-hn="right" title="Scroll right (hold)">&#9654;</button><button data-hn="end" title="Last column">&#8677;</button>'
+      +'<span class="lbl" id="bdw-hn-lbl"></span><span class="tip">Tip: scroll on the header row to move sideways</span>';
+  }
+  nav.classList.add('on');
+  var trk=nav.querySelector('.trk'), thm=nav.querySelector('.thm'), tw=trk.clientWidth;
+  var w=Math.max(24, tw*sc.clientWidth/sc.scrollWidth), left=(tw-w)*(sc.scrollLeft/max);
+  thm.style.width=w+'px'; thm.style.left=left+'px';
+  nav.querySelector('[data-hn="home"]').disabled=nav.querySelector('[data-hn="left"]').disabled=sc.scrollLeft<=2;
+  nav.querySelector('[data-hn="end"]').disabled=nav.querySelector('[data-hn="right"]').disabled=sc.scrollLeft>=max-2;
+  // "Columns 3–8 of 20" — which fields are on screen (the frozen first column is always visible)
+  var lbl=document.getElementById('bdw-hn-lbl'), ths=sc.querySelectorAll('.bdw-t thead th[data-f]');
+  if(lbl && ths.length){
+    var vl=sc.scrollLeft, vr=vl+sc.clientWidth, first=0, last=0;
+    for(var i=0;i<ths.length;i++){ var a=ths[i].offsetLeft, b=a+ths[i].offsetWidth;
+      if(i===0 || (b>vl+36+ths[0].offsetWidth && a<vr)){ if(!first) first=i+1; last=i+1; } }
+    lbl.textContent='Columns '+first+(last>first?'\u2013'+last:'')+' of '+ths.length;
+  } else if(lbl){ lbl.textContent=''; }
+}
+function _bdwHnavStep(dir, big){
+  var sc=document.getElementById('bdw-scroll'); if(!sc) return;
+  sc.scrollBy({left:dir*(big?sc.clientWidth*0.8:260), behavior:'smooth'});
+}
+function _bdwHnavDown(e){
+  var b=e.target.closest && e.target.closest('[data-hn]'); if(!b) return;
+  var a=b.getAttribute('data-hn'), sc=document.getElementById('bdw-scroll'); if(!sc) return;
+  e.preventDefault();
+  if(a==='home'){ sc.scrollTo({left:0, behavior:'smooth'}); return; }
+  if(a==='end'){ sc.scrollTo({left:sc.scrollWidth, behavior:'smooth'}); return; }
+  if(a==='left'||a==='right'){
+    var dir=a==='left'?-1:1; _bdwHnavStep(dir);
+    var t=setTimeout(function(){ BDW._hnRep=setInterval(function(){ sc.scrollLeft+=dir*40; }, 30); }, 350);
+    var stop=function(){ clearTimeout(t); clearInterval(BDW._hnRep); document.removeEventListener('mouseup', stop); };
+    document.addEventListener('mouseup', stop); return;
+  }
+  var trk=document.querySelector('#bdw-hnav .trk'), thm=document.querySelector('#bdw-hnav .thm'); if(!trk||!thm) return;
+  var max=sc.scrollWidth-sc.clientWidth, tw=trk.clientWidth, w=thm.offsetWidth;
+  if(a==='trk'){                       // click on the track: page towards that side
+    var r=trk.getBoundingClientRect(), x=e.clientX-r.left;
+    _bdwHnavStep(x < thm.offsetLeft ? -1 : 1, true); return;
+  }
+  if(a==='thm'){                       // drag the thumb
+    var sx=e.clientX, sl=sc.scrollLeft; thm.classList.add('drag');
+    var mv=function(ev){ sc.scrollLeft = sl + (ev.clientX-sx) * (max/Math.max(1,(tw-w))); };
+    var up=function(){ thm.classList.remove('drag'); document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+    document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+  }
 }
 
 function _bdwRenderNav(){
@@ -20222,8 +20442,9 @@ function _bdwRenderFrame(){
     +'<button class="bdw-tb" data-a="options">Options</button>'
     +(_bdwKanbanFields().length?'<span class="bdw-seg"><button class="'+(st.cfg.view_type!=='kanban'?'on':'')+'" data-a="vt" data-v="table" title="Table">&#9638; Table</button><button class="'+(st.cfg.view_type==='kanban'?'on':'')+'" data-a="vt" data-v="kanban" title="Kanban board">&#9636; Kanban</button></span>':'')
     +'<button class="bdw-new" data-a="new">+ New</button>'
-    +'</div><div id="bdw-bar"></div><div id="bdw-bulk"></div><div class="bdw-scroll" id="bdw-scroll"></div>';
+    +'</div><div id="bdw-bar"></div><div id="bdw-bulk"></div><div class="bdw-scroll" id="bdw-scroll"></div><div class="bdw-hnav" id="bdw-hnav"></div>';
   document.getElementById('bdw-grid').innerHTML=h;
+  BDW._hnavFor=null;
   _bdwRenderCount(); _bdwRenderBar(); _bdwRenderBulk();
   if(st.cfg.view_type==='kanban'){ if(st.kb) _bdwRenderKanban(); }
   else if(st.records.length) _bdwRenderTable(true);
@@ -20321,6 +20542,7 @@ function _bdwRenderTable(scrollTop){
   sc.innerHTML=h;
   if(scrollTop) sc.scrollTop=0;
   _bdwRenderFoot();
+  setTimeout(_bdwHnavSync, 0);
 }
 function _bdwCalcText(f, c){
   if(!c) return '';
@@ -20492,11 +20714,18 @@ function _bdwRelSearcher(f, ctxRec){
     }
     var r=await req('POST','/bd/records/'+target+'/query',{q:q, filter:filter, per_page:12, sort:[{field:to.title_field, dir:'asc'}]});
     if(!r || !r.ok) return [];
-    return r.records.map(function(x){
+    var items=r.records.map(function(x){
       var lbl=x[to.title_field]||('#'+x.id);
       var sub = target==='companies' ? (x.city||'') : (x.client_id_label||'');
       return {label:lbl, value:x.id, sub:sub, html:_bdwAv(lbl,true)+esc(lbl), on: ctxRec && ctxRec[f.key]===x.id};
     });
+    // Oct 2026: company not in the list yet → create it right here (fill its details later)
+    var qq=String(q||'').trim();
+    if(target==='companies' && qq.length>=2 && !items.some(function(it){ return String(it.label).trim().toLowerCase()===qq.toLowerCase(); })){
+      items.push({label:qq, value:'__new__', create:true, sub:'',
+        html:'<span style="display:inline-flex;width:22px;height:22px;border-radius:6px;background:#ECFDF3;color:#067647;align-items:center;justify-content:center;font-weight:800;margin-right:8px">+</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Create company &ldquo;<b>'+esc(qq)+'</b>&rdquo;</span>'});
+    }
+    return items;
   };
 }
 
@@ -20530,6 +20759,15 @@ function bdwPickList(anchor, opt){
   _bdwPickRender();
   var inp=BDW.pop.querySelector('.bdw-pin'); if(inp) inp.focus();
   if(opt.remote) _bdwPickRemote('');
+}
+// A "Create company" row: make the prospect first, then hand the real id to the picker's callback.
+async function _bdwPickDo(ctx, it){
+  if(!it || !it.create) return ctx.onPick(it);
+  var r=await req('POST','/bd/companies/quick',{name:it.label});
+  if(!r || r.error || !r.id){ _bdwToast((r&&r.error)||'Could not create the company'); return; }
+  toast('&#10003;', r.created ? 'Company &ldquo;'+esc(r.name)+'&rdquo; created &mdash; add its details any time' : 'Using existing company &ldquo;'+esc(r.name)+'&rdquo;');
+  ctx.onPick({label:r.name, value:r.id});
+  if(r.created && BDW.obj==='companies'){ try{ _bdwFetch(true); }catch(e){} }
 }
 function _bdwPickRender(){
   var ctx=BDW.popCtx; if(!ctx||ctx.type!=='pick') return;
@@ -20571,7 +20809,7 @@ function _bdwPopChange(e){
 function _bdwPopKey(e){
   var ctx=BDW.popCtx; if(!ctx) return;
   if(e.key==='Enter' && ctx.type==='pick' && e.target.getAttribute('data-p')==='q'){
-    e.preventDefault(); var it=(ctx.shown||[])[0]; if(it){ bdwPopClose(); ctx.onPick(it); }
+    e.preventDefault(); var it=(ctx.shown||[])[0]; if(it){ bdwPopClose(); _bdwPickDo(ctx, it); }
   }
   if(e.key==='Enter' && ctx.type==='filter' && ctx.field && e.target.tagName==='INPUT'){ e.preventDefault(); _bdwFilterApply(); }
   if(e.key==='Enter' && ctx.type==='views' && e.target.id==='bdw-vname'){ e.preventDefault(); _bdwSaveNewView(); }
@@ -20581,7 +20819,7 @@ function _bdwPopClick(e){
   var b=e.target.closest('[data-p]'); if(!b) return;
   var p=b.getAttribute('data-p'), i=+b.getAttribute('data-i');
   if(p==='close') return bdwPopClose();
-  if(p==='pick' && ctx.type==='pick'){ var it=(ctx.shown||[])[i]; bdwPopClose(); if(it) ctx.onPick(it); return; }
+  if(p==='pick' && ctx.type==='pick'){ var it=(ctx.shown||[])[i]; bdwPopClose(); if(it) _bdwPickDo(ctx, it); return; }
   if(p==='ltsave' && ctx.onSave) return ctx.onSave();
   if(ctx.type==='filter'){
     if(p==='ff') return _bdwFilterPickField(b.getAttribute('data-k'));
@@ -21548,6 +21786,7 @@ function _bdwKcHtml(rec){
   return h+'</div>';
 }
 function _bdwRenderKanban(){
+  setTimeout(_bdwHnavSync, 0);
   var sc=document.getElementById('bdw-scroll'), st=_bdwSt(); if(!sc || !st.kb) return;
   var f=_bdwO()._by[st.kb.field], sumF=st.kb.sumField && _bdwO()._by[st.kb.sumField];
   var h='<div class="bdw-kb">';
@@ -24392,6 +24631,26 @@ input:focus,textarea:focus,select:focus{border-color:#0f766e !important}
 /* ── Wave 1: Candidate profile ── */
 .w1-plh{display:flex !important;flex-direction:column;gap:8px;position:sticky;top:0;z-index:2;background:#fff}
 .w1-plf{height:32px;border:1px solid var(--w1-border,#d0d5dd);border-radius:8px;padding:0 10px;font-size:12.5px;width:100%;box-sizing:border-box}
+/* Oct 2026: pipeline list — one line per candidate, DM Sans */
+.prof-list{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+@media(min-width:901px){.prof-list{width:300px !important}}
+.prof-list .w1-plh{font-family:inherit}
+.prof-list .w1-plh>div>span{font-size:12px;font-weight:600;color:#475467;letter-spacing:.02em}
+.pl1-sh{display:flex !important;align-items:center;justify-content:space-between;padding:9px 14px 7px !important;background:#fafbfc !important;
+  font-size:10.5px !important;font-weight:700 !important;letter-spacing:.08em !important;text-transform:uppercase;color:var(--sc) !important}
+.pl1-sn{display:flex;align-items:center;gap:7px}
+.pl1-sn i{width:7px;height:7px;border-radius:50%;background:var(--sc);display:inline-block}
+.pl1-sc{font-size:10.5px;font-weight:700;color:var(--sc);background:color-mix(in srgb,var(--sc) 12%,#fff);border-radius:9px;padding:1px 7px;letter-spacing:0}
+.pl1-row{display:flex !important;align-items:center;gap:8px;padding:7px 12px 7px 11px !important;min-height:38px;box-sizing:border-box;font-size:12.5px;line-height:1.2}
+.pl1-row .pl1-nm{font-weight:600;color:#101828;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%;flex-shrink:0}
+.pl1-row .pl1-co{color:#667085;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;font-size:12px}
+.pl1-row .pl1-co:not(:empty)::before{content:'\00b7';margin:0 5px 0 0;color:#98A2B3}
+.pl1-row .pl1-tg{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.pl1-row .pl1-ctc{font-size:11px;font-weight:600;color:#344054;font-variant-numeric:tabular-nums;flex-shrink:0}
+.pl1-row .pl1-cv{font-size:9px;font-weight:700;color:#127A57;background:#E8F4EE;border-radius:5px;padding:2px 5px;flex-shrink:0;letter-spacing:.03em}
+.pl1-row .pl1-cv.off{width:6px;height:6px;padding:0;border-radius:50%;background:#EAECF0;margin:0 9px}
+.pl1-row:hover{background:#f8fafc !important}
+.pl1-row.active .pl1-nm{color:#0f766e}
 .prof-list{background:#fff !important;border-right:1px solid var(--line) !important}
 .prof-stage-head{background:#f8fafc !important;border-bottom:1px solid var(--line) !important;font-size:12px !important;text-transform:uppercase;letter-spacing:.04em}
 .prof-list-item{border-bottom:1px solid #f1f2f4 !important}
