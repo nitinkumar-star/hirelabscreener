@@ -161,7 +161,8 @@ var uploadedResume = null;
 // passed on to the form config and the submission so the application lands on the
 // right job, for the right company, with the right source (they were dropped before).
 var QP = new URLSearchParams(location.search);
-var CID = QP.get('c') || '', MID = QP.get('m') || '', SRC = QP.get('src') || '';
+var CID = QP.get('c') || '', MID = QP.get('m') || '', SRC = QP.get('src') || '', KEY = QP.get('k') || '';
+// k = the job link from the job's own page (signed): the job is shown even when the careers page is off
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];}); }
 
 // Load form config
@@ -205,6 +206,19 @@ loadConfig();
 // Which job is this? (only when opened from the careers page)
 (async function(){
   if (!MID) return;
+  if (KEY) {
+    try {
+      var jl = await (await fetch('/api/public/job-link?c=' + encodeURIComponent(CID) + '&m=' + encodeURIComponent(MID) + '&k=' + encodeURIComponent(KEY))).json();
+      if (jl && jl.ok) {
+        if (jl.company) { document.getElementById('brand').textContent = jl.company; document.getElementById('mark').textContent = String(jl.company).trim().charAt(0).toUpperCase() || 'H'; }
+        document.getElementById('job-role').textContent = (jl.open ? 'Applying for ' : 'Applying for (position may be closed) ') + jl.role;
+        document.getElementById('job-meta').textContent = [jl.location, jl.experience, jl.work_mode].filter(Boolean).join(' \u00b7 ');
+        document.getElementById('job-ctx').style.display = 'flex';
+        document.title = jl.role + ' — Apply';
+        return;
+      }
+    } catch(e) {}
+  }
   try {
     var r = await (await fetch('/api/public/openings' + (CID ? ('?c=' + encodeURIComponent(CID)) : ''))).json();
     if (r && r.company) {
@@ -355,6 +369,7 @@ document.getElementById('sub-btn').addEventListener('click', async function() {
   if (MID) qs.push('m=' + encodeURIComponent(MID));
   if (CID) qs.push('c=' + encodeURIComponent(CID));
   if (SRC) qs.push('src=' + encodeURIComponent(SRC));
+  if (KEY) qs.push('k=' + encodeURIComponent(KEY));
   try {
     var r = await fetch('/api/submit' + (qs.length ? ('?' + qs.join('&')) : ''), {method:'POST', body:fd});
     var data = await r.json();

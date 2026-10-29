@@ -504,6 +504,8 @@ button,input,textarea,select{font-family:inherit}
 @media(max-width:980px){.cp-two{grid-template-columns:1fr}}
 .cp-card2{background:#fff;border:0.5px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow-sm);margin-bottom:16px}
 /* AI Agent tab (Oct 2026) */
+.w1-jl{margin-left:6px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:600;color:#0f766e;cursor:pointer;font-family:inherit}
+.w1-jl:hover{background:#f0fdf9;border-color:#0f766e}
 .cpa-quick{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 14px !important}
 .cpa-quick input{flex:1;min-width:0;border:none;outline:none;font:inherit;font-size:13.5px;background:transparent;color:var(--ink)}
 .cpa-spark{font-size:15px}
@@ -1275,7 +1277,7 @@ body{font-size:14px !important; line-height:1.5}
         <button id="hamburger-btn" onclick="toggleSidebar()" aria-label="Menu">
           <span></span><span></span><span></span>
         </button>
-        <div style="min-width:0"><div id="topbar-crumb" style="display:none"></div><div class="w1-title-row"><div id="topbar-title">Home</div><button type="button" id="topbar-status" class="w1-only" style="display:none"></button></div><div id="topbar-sub">Today&rsquo;s focus &amp; business insights</div></div>
+        <div style="min-width:0"><div id="topbar-crumb" style="display:none"></div><div class="w1-title-row"><div id="topbar-title">Home</div><button type="button" id="topbar-status" class="w1-only" style="display:none"></button><button type="button" id="topbar-joblink" class="w1-only w1-jl" style="display:none" title="Link to post on LinkedIn / WhatsApp: applicants upload their CV straight into this job">&#128279; Job link</button></div><div id="topbar-sub">Today&rsquo;s focus &amp; business insights</div></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
         <span class="sop-pill" id="sop-pill" style="display:none"></span>
@@ -2700,6 +2702,7 @@ function _ntfMeta(n){
   if (n.kind === 'fl_upload') return { icon:'\uD83D\uDCE5', label:'New CV from freelancer', color:'#0F6E56', bg:'#ECFDF3' };
   if (n.kind === 'mandate_assigned') return { icon:'\uD83D\uDCBC', label:'New position assigned to you', color:'#3538CD', bg:'#EEF0FF' };
   if (n.kind === 'cand_update') return { icon:'\uD83D\uDCDD', label:'Candidate updated their profile', color:'#B54708', bg:'#FFF6E5' };
+  if (n.kind === 'job_apply') return { icon:'\uD83D\uDCE8', label:'New application via job link', color:'#0F6E56', bg:'#ECFDF3' };
   if (n.kind === 'agent_wa') return { icon:'\uD83D\uDCAC', label:'AI Agent \u00B7 WhatsApp draft ready', color:'#027A48', bg:'#ECFDF3' };
   if (n.kind === 'agent_sent') return { icon:'\u2709\uFE0F', label:'AI Agent \u00B7 e-mail sent', color:'#3538CD', bg:'#EEF4FF' };
   if (n.kind === 'agent_held' || n.kind === 'agent_failed') return { icon:'\u26A0\uFE0F', label:'AI Agent \u00B7 needs you', color:'#B42318', bg:'#FEF3F2' };
@@ -3565,6 +3568,8 @@ function updateTopbar(){
       stb.style.display='';
     } else stb.style.display='none';
   }
+  var jlb=document.getElementById('topbar-joblink');
+  if(jlb){ jlb.style.display=(m && m.status!=='central')?'':'none'; if(m) jlb.onclick=function(){ openJobLink(m.id); }; }
   document.getElementById('topbar-sub').innerHTML=m?w1MandateMeta(m):'Today’s focus &amp; business insights';
   const pill=document.getElementById('sop-pill');
   if(m&&m.sop_text){pill.textContent='SOP v'+m.sop_version;pill.style.display='';}else pill.style.display='none';
@@ -4132,6 +4137,50 @@ async function openProfileById(cid, mandateId) {
 }
 
 // ── MANDATE SETUP ──────────────────────────────────────────────────────────
+// ── Job application link (Oct 2026) — modules/job_link.py ─────────────────────
+// One signed link per job. Posted on LinkedIn / WhatsApp / Facebook / Naukri;
+// whoever applies through it lands on THIS job's pipeline (Screening, CV attached)
+// and the job's recruiters get a notification. &src=<channel> records where they came from.
+window._jobLinks = window._jobLinks || {};
+function openJobLink(mid){
+  var m=(S.mandates||[]).find(function(x){ return x.id===mid; })||S.activeMandate||{};
+  var ex=document.getElementById('modal-joblink'); if(ex) ex.remove();
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-joblink';
+  bg.onclick=function(ev){ if(ev.target===bg) bg.remove(); };
+  bg.innerHTML='<div class="modal" style="max-width:600px;width:96%" role="dialog" aria-modal="true" aria-label="Job link"><div class="modal-head"><span class="modal-title" style="font-size:15px">&#128279; Job link &mdash; '+esc(m.role||'')+'</span>'
+    +'<button class="modal-x" aria-label="Close" onclick="document.getElementById(\'modal-joblink\').remove()">&#10005;</button></div><div class="modal-body" id="jl-modal-body">Loading…</div></div>';
+  document.body.appendChild(bg);
+  loadJobLink(mid, 'jl-modal-body');
+}
+async function loadJobLink(mid, boxId){
+  var box=document.getElementById(boxId); if(!box) return;
+  var d=await req('GET','/mandates/'+mid+'/apply-link');
+  box=document.getElementById(boxId); if(!box) return;
+  if(!d || d.error){ box.innerHTML='<div style="font-size:12px;color:#B42318">'+esc((d&&d.error)||'Could not load the link')+'</div>'; return; }
+  window._jobLinks[mid]=d;
+  var post="We're hiring: "+d.role+(d.location?' \u2013 '+d.location:'')+'\n\nInterested or know someone? Upload your CV here:\n';
+  var ch=d.channels||[], by={}; ch.forEach(function(c){ by[c.key]=c.url; });
+  box.innerHTML=(d.active?'':'<div style="font-size:12px;color:#B54708;margin-bottom:8px">This job is not active. People can still apply through the link.</div>')
+    +'<div style="display:flex;gap:6px"><input class="inp" readonly value="'+esc(d.url)+'" style="flex:1;font-family:\'IBM Plex Mono\',monospace;font-size:12px" onclick="this.select()">'
+    +'<button class="btn btn-g" onclick="jlCopy('+mid+',\'\')">Copy link</button><a class="btn btn-o" style="text-decoration:none" target="_blank" href="'+esc(d.url)+'">Preview</a></div>'
+    +'<div style="font-size:11.5px;color:var(--muted);margin:10px 0 4px">Copy the link for where you post it (so you can see which post brought each CV):</div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap">'+ch.map(function(c){ return '<button class="btn btn-o" style="font-size:12px;padding:5px 10px" onclick="jlCopy('+mid+',\''+c.key+'\')">'+esc(c.label)+'</button>'; }).join('')+'</div>'
+    +'<div style="font-size:11.5px;color:var(--muted);margin:12px 0 4px">Share now</div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+    +'<a class="btn btn-o" style="font-size:12px;text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/?text='+encodeURIComponent(post+(by.whatsapp||d.url))+'">&#128172; WhatsApp</a>'
+    +'<a class="btn btn-o" style="font-size:12px;text-decoration:none" target="_blank" rel="noopener" href="https://www.linkedin.com/sharing/share-offsite/?url='+encodeURIComponent(by.linkedin||d.url)+'">in LinkedIn</a>'
+    +'<a class="btn btn-o" style="font-size:12px;text-decoration:none" target="_blank" rel="noopener" href="https://www.facebook.com/sharer/sharer.php?u='+encodeURIComponent(by.facebook||d.url)+'">f Facebook</a></div>'
+    +'<div style="font-size:11.5px;color:var(--muted);margin:12px 0 4px">Ready-to-post text</div>'
+    +'<textarea class="ta" id="jl-post-'+boxId+'" rows="4" style="width:100%;font-size:12.5px">'+esc(post+(by.linkedin||d.url))+'</textarea>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap"><span style="font-size:11.5px;color:var(--muted)">Applications go straight into this job&rsquo;s pipeline at <b>Screening</b> with their CV'+(d.applications?' &middot; <b>'+d.applications+'</b> so far':'')+'. Someone already in your database is placed on the job, not duplicated.</span>'
+    +'<button class="btn btn-o" style="font-size:12px" onclick="var t=document.getElementById(\'jl-post-'+boxId+'\');navigator.clipboard.writeText(t.value).then(function(){toast(\'OK\',\'Post text copied\');})">Copy text</button></div>';
+}
+function jlCopy(mid, key){
+  var d=window._jobLinks[mid]; if(!d) return;
+  var url=d.url; (d.channels||[]).forEach(function(c){ if(c.key===key) url=c.url; });
+  navigator.clipboard.writeText(url).then(function(){ toast('OK', 'Link copied'+(key?' for '+key:'')); }, function(){ prompt('Copy this link:', url); });
+}
+
 // ── Per-job switch: automated e-mails OFF for this job's candidates (modules/mail_guard.py) ──
 async function loadAutoMail(mid, r){
   var box=document.getElementById('ms-automail'); if(!box) return;
@@ -4271,12 +4320,16 @@ function renderMandateSetup(el){
     + '<div id="cn-list"><div style="font-size:12px;color:var(--muted)">Loading notes...</div></div>'
     + '</div></div>'
     + '<div class="card setup-card" data-sc="manage" style="max-width:580px;margin-top:16px"><div class="card-head">'
+    + '<span style="font-weight:500">&#128279; Job application link <span style="font-size:10.5px;color:var(--muted);font-weight:400">(post on LinkedIn / WhatsApp &mdash; CVs land in this job)</span></span></div>'
+    + '<div class="card-body" id="ms-joblink"><div style="font-size:12px;color:var(--muted)">Loading…</div></div></div>'
+    + '<div class="card setup-card" data-sc="manage" style="max-width:580px;margin-top:16px"><div class="card-head">'
     + '<span style="font-weight:500">Automated e-mails <span style="font-size:10.5px;color:var(--muted);font-weight:400">(to the candidates of this job)</span></span></div>'
     + '<div class="card-body" id="ms-automail"><div style="font-size:12px;color:var(--muted)">Loading…</div></div></div>'
     + adminCard;
   attachJDToolbar();
   loadClientNotes();
   loadAutoMail(m.id);
+  loadJobLink(m.id, 'ms-joblink');
   loadSpocOptions();
   loadCcOptions();
   if (wsMode()==='corporate') { loadOrgOptions(m); loadApprovalHistory(m); }
@@ -16146,8 +16199,7 @@ function _talentSearchHTML(){
   return '<div class="w2-ts">'
     + '<section class="w2-ts-card">'
     + '<div class="w2-ts-head"><div><h2>Search talent</h2><p>Keyword search understands <b>AND</b>, <b>OR</b>, <b>NOT</b>, <b>( )</b>, <b>"exact phrase"</b> and <b>-exclude</b>. Switch to <b>AI match</b> to rank by meaning.</p></div>'
-    +   '<span style="display:flex;gap:8px;flex-wrap:wrap"><button class="w1-btn" onclick="copyApplyLink()" title="A link candidates can use to send you their CV">&#128279; Copy CV link</button>'
-    +   '<button class="w1-btn" onclick="talentUploadCVs()">&#8679; Upload CVs</button>'
+    +   '<span style="display:flex;gap:8px;flex-wrap:wrap"><button class="w1-btn" onclick="talentUploadCVs()">&#8679; Upload CVs</button>'
     +   '<button class="w1-btn pri" onclick="openAddCandidateModal()">+ Add candidate</button></span></div>'
     + '<div class="w2-ts-q"><div class="tc-mode" role="radiogroup" aria-label="Search mode">'
     +   '<button type="button" role="radio" id="tc-m-keyword" onclick="talentMode(\'keyword\')">Keyword</button>'
@@ -16296,45 +16348,63 @@ function talentOpen(ev, id, mid){
 function talentRow(c) {
   var phone=(c.phone||'').replace(/\D/g,''), dp=phone.length>=10?phone.slice(-10).replace(/(\d{5})(\d{5})/,'$1 $2'):'';
   var cur=c.ctc_current||c.ctc, ex=c.ctc_expected;
-  var dash='<span class="mu">&mdash;</span>';
-  var job=(c.mandate_role && !c.central) ? ('<div>'+esc(c.mandate_role)+'</div>'+(c.mandate_client?'<div class="mu sm">'+esc(c.mandate_client)+'</div>':'')) : '<span class="tc-pool">Central DB</span>';
+  var sel=!!_talentSel[c.id], T=_talentTerms(), full=_talentDetail;
+  var hl=function(x){ return _talentHL(x,T); };
+  var facts=[];
+  facts.push('<span title="Experience">&#128188; '+(c.experience?esc(String(c.experience))+' yrs':'<span class="mu">exp n/a</span>')+'</span>');
+  facts.push('<span title="Current / expected CTC">&#8377; '+(cur?esc(String(cur))+' Lacs':'<span class="mu">CTC n/a</span>')+(ex?' <span class="mu">&rarr; '+esc(String(ex))+' L expected</span>':'')+'</span>');
+  facts.push('<span title="Location">&#128205; '+(c.location?hl(c.location):'<span class="mu">n/a</span>')+'</span>');
+  if(c.notice_period) facts.push('<span title="Notice period">&#9201; '+esc(String(c.notice_period))+' days notice</span>');
+  var rows=[];
+  var curRole=[c.designation,c.company].filter(Boolean);
+  if(curRole.length) rows.push(['Current', hl(curRole.join(' at '))]);
+  if(c.previous && full) rows.push(['Previous', hl(c.previous)]);
+  if(c.qualification) rows.push(['Education', hl(c.qualification)]);
+  if(c.preferred_location) rows.push(['Pref. locations', hl(c.preferred_location)]);
+  var n=full?14:8, sk=(c.key_skills||[]).slice();
+  if(T.length) sk.sort(function(a,b){ var f=function(x){ return T.some(function(t){ return String(x).toLowerCase().indexOf(t.toLowerCase())>=0; }); }; return f(b)-f(a); });
+  if(sk.length) rows.push(['Key skills', sk.slice(0,n).map(hl).join(' <i>|</i> ')+(sk.length>n?' <span class="mu">+'+(sk.length-n)+' more</span>':'')]);
+  var sec=[]; try{ sec=Array.isArray(c.secondary_skills)?c.secondary_skills:JSON.parse(c.secondary_skills||'[]'); }catch(e){ sec=[]; }
+  if(full && sec.length) rows.push(['May also know', sec.slice(0,10).map(hl).join(' <i>|</i> ')+(sec.length>10?' <span class="mu">+'+(sec.length-10)+' more</span>':'')]);
+  var sum=String(c.career_summary||'').replace(/\s+/g,' ').trim();
+  if(full && sum) rows.push(['Summary', '<span class="tk-clamp" title="'+esc(sum)+'">'+hl(sum)+'</span>']);
+  var job=(c.mandate_role && !c.central) ? esc(c.mandate_role)+(c.mandate_client?' <span class="mu">&middot; '+esc(c.mandate_client)+'</span>':'') : 'Central Database';
   var oj=(c.other_jobs||[]);
-  if(oj.length) job+='<span class="tc-more-jobs" title="Also on: '+esc(oj.map(function(o){ return o.role+(o.stage&&!o.central?' ('+stageLabel(o.stage)+')':''); }).join(', '))+'">+'+oj.length+' more job'+(oj.length>1?'s':'')+'</span>';
-  var tags=(c.status_tags||[]).slice(0,3).map(function(t){ return '<span class="tc-tag">'+esc(t)+'</span>'; }).join('');
-  var sel=!!_talentSel[c.id], terms=_talentTerms();
-  var who='<div class="nm">' + esc(c.name||'') + '</div><div class="tc-role">' + _talentHL([c.designation,c.company].filter(Boolean).join(' · '), terms) + '</div>';
-  if(_talentDetail){
-    var sk=(c.key_skills||[]).slice(0,8);
-    if(terms.length) sk.sort(function(a,b){ var ha=terms.some(function(t){ return String(a).toLowerCase().indexOf(t.toLowerCase())>=0; }), hb=terms.some(function(t){ return String(b).toLowerCase().indexOf(t.toLowerCase())>=0; }); return hb-ha; });
-    if(sk.length) who+='<div class="tc-sks">'+sk.slice(0,6).map(function(x){ return '<span class="tc-sk">'+_talentHL(x,terms)+'</span>'; }).join('')+((c.key_skills||[]).length>6?'<span class="tc-sk mu">+'+((c.key_skills||[]).length-6)+'</span>':'')+'</div>';
-    var sum=String(c.career_summary||c.ai_insight_cv||'').replace(/\s+/g,' ').trim();
-    if(sum) who+='<div class="tc-sum" title="'+esc(sum)+'">'+_talentHL(sum.length>240?sum.slice(0,240)+'…':sum, terms)+'</div>';
-    var meta=[];
-    if(c.qualification) meta.push('&#127891; '+esc(String(c.qualification).slice(0,60)));
-    if(c.industry_background) meta.push(esc(String(c.industry_background).slice(0,40)));
-    if(c.preferred_location && c.preferred_location!==c.location) meta.push('Prefers '+esc(String(c.preferred_location).slice(0,50)));
-    if(c.source_channel) meta.push('via '+esc(c.source_channel));
-    var upd=c.update_submitted_at||c.updated_at||c.created_at;
-    if(upd) meta.push('Updated '+_talentAgo(upd));
-    meta.push(c.email?'&#9993; e-mail':'<span class="tc-warn">no e-mail</span>');
-    who+='<div class="tc-meta">'+meta.join(' &middot; ')+'</div>';
-  }
-  if(tags) who+='<div class="tc-tags">'+tags+'</div>';
-  return '<tr'+(sel?' class="tc-on"':'')+' data-id="'+c.id+'" title="Open the full profile in a new tab" onclick="talentOpen(event,'+c.id+','+(c.mandate_id||'null')+')" style="cursor:pointer">'
-    + '<td class="tc-cb"><input type="checkbox" aria-label="Select '+esc(c.name||'')+'"'+(sel?' checked':'')+' onchange="talentPick('+c.id+',this.checked)"></td>'
-    + (c._score!=null?'<td><span class="tc-score" style="color:'+(c._score>=60?'#067647':c._score>=40?'#b54708':'#667085')+'">'+c._score+'%</span></td>':'')
-    + '<td class="tc-cand">' + who + '</td>'
-    + '<td>' + (c.location?esc(c.location):dash) + '</td>'
-    + '<td>' + job + '</td>'
-    + '<td>' + (c.experience?esc(String(c.experience))+'y':dash) + '</td>'
-    + '<td>' + (cur?esc(String(cur))+' L':dash) + '</td>'
-    + '<td>' + (ex?esc(String(ex))+' L':dash) + '</td>'
-    + '<td>' + (c.notice_period?esc(String(c.notice_period))+'d':dash) + '</td>'
-    + '<td>' + (c.stage?'<span class="w2-stg">'+esc(stageLabel(c.stage))+'</span>':dash) + '</td>'
-    + '<td>' + (dp?'<a href="tel:'+esc(phone)+'">'+dp+'</a>':dash) + '</td>'
-    + '<td style="white-space:nowrap">'
-    + (c.cv_path?'<a href="#" onclick="event.preventDefault();openCvWindow(\''+esc(c.cv_path).replace(/'/g,'')+'\')">CV &#8599;</a>':'<span class="mu">no CV</span>') + '</td>'
-    + '</tr>';
+  var tags=(c.status_tags||[]).slice(0,4).map(function(t){ return '<span class="tc-tag">'+esc(t)+'</span>'; }).join('');
+  var upd=c.update_submitted_at||c.updated_at||c.created_at;
+  var nm=String(c.name||'?').trim(), ini=nm.split(/\s+/).map(function(w){ return w.charAt(0); }).slice(0,2).join('').toUpperCase();
+  var head=[c.designation, c.industry_background].filter(Boolean).join(' | ');
+  var ext=c.cv_original_name?String(c.cv_original_name).split('.').pop().toUpperCase():'';
+  var cvLink=c.cv_path
+    ? '<a href="#" class="tk-cv" title="Open the CV in a new tab" onclick="event.preventDefault();event.stopPropagation();openCvWindow(\''+esc(c.cv_path).replace(/'/g,'')+'\')">&#128206; CV'+(ext?' <span class="mu">('+esc(ext)+')</span>':'')+'</a>'
+    : '<span class="mu">&#128206; No CV</span>';
+  return '<div class="tk'+(sel?' tc-on':'')+'" data-id="'+c.id+'">'
+    + '<div class="tk-card" onclick="talentOpen(event,'+c.id+','+(c.mandate_id||'null')+')" title="Open the full profile in a new tab">'
+    +   '<div class="tk-main">'
+    +     '<div class="tk-top"><input type="checkbox" class="tk-cb" aria-label="Select '+esc(c.name||'')+'"'+(sel?' checked':'')+' onchange="talentPick('+c.id+',this.checked)">'
+    +       '<span class="tk-name">'+esc(c.name||'')+'</span>'
+    +       (c._score!=null?'<span class="tc-score" style="color:'+(c._score>=60?'#067647':c._score>=40?'#b54708':'#667085')+'">'+c._score+'% match</span>':'')
+    +       (c.stage?'<span class="w2-stg">'+esc(stageLabel(c.stage))+'</span>':'')+tags+'</div>'
+    +     '<div class="tk-facts">'+facts.join('')+'</div>'
+    +     '<div class="tk-rows">'+rows.map(function(r){ return '<div class="tk-k">'+r[0]+'</div><div class="tk-v">'+r[1]+'</div>'; }).join('')+'</div>'
+    +   '</div>'
+    +   '<div class="tk-side">'
+    +     '<div class="tk-av">'+esc(ini)+'</div>'
+    +     (head?'<div class="tk-head">'+hl(head)+'</div>':'')
+    +     (dp?'<a class="tk-btn" href="tel:'+esc(phone)+'" onclick="event.stopPropagation()">&#128222; '+dp+'</a>'
+           +'<a class="tk-btn" href="https://wa.me/'+esc(waNumber(phone))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">&#128172; WhatsApp</a>'
+         :'<span class="mu" style="font-size:12px">No phone</span>')
+    +     '<div class="tk-ver">'+(c.email?'&#9993; '+esc(c.email):'<span class="tc-warn">No e-mail</span>')+'</div>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="tk-foot">'+cvLink
+    +   '<span class="tk-sep">|</span><span title="Job / pool">&#128188; '+job
+    +     (oj.length?' <span class="tc-more-jobs" title="Also on: '+esc(oj.map(function(o){ return o.role+(o.stage&&!o.central?' ('+stageLabel(o.stage)+')':''); }).join(', '))+'">+'+oj.length+' more</span>':'')+'</span>'
+    +   (c.source_channel?'<span class="tk-sep">|</span><span>via '+esc(c.source_channel)+'</span>':'')
+    +   '<span class="tk-grow"></span>'
+    +   (upd?'<span>Modified '+_talentAgo(upd)+'</span>':'')
+    +   (c.created_at?'<span class="tk-sep">|</span><span>Added '+_talentAgo(c.created_at)+'</span>':'')
+    + '</div></div>';
 }
 // ── Upload CVs (Oct 2026): pick one or many CV files -> each is read by AI, saved as a
 // candidate (Central Database or a job) with the CV attached. Server: modules/cv_upload.py
@@ -16349,7 +16419,7 @@ function talentUploadCVs(){
     +'<b>Choose CV files</b> or drop them here<span>PDF or Word &middot; pick as many as you like</span></label>'
     +'<div id="tcup-list"></div>'
     +'<p style="font-size:12px;color:#667085;margin:10px 0 0;line-height:1.5">Each CV is read by AI (name, contact, company, experience, CTC, skills) and saved with the CV file on the profile. Someone already in your database (same e-mail or phone) is not added twice. '
-    +'To let a candidate send their own CV, use <a href="#" onclick="event.preventDefault();copyApplyLink()">Copy CV link</a>.</p>');
+    +'To collect CVs for a job from LinkedIn / WhatsApp posts, open the job and use <b>&#128279; Job link</b>.</p>');
   bg.querySelector('.modal').style.maxWidth='620px';
   var dz=document.getElementById('tcup-drop');
   ['dragenter','dragover'].forEach(function(t){ dz.addEventListener(t,function(e){ e.preventDefault(); dz.classList.add('on'); }); });
@@ -16421,28 +16491,23 @@ async function _tcUpReplace(i){
 function _talentDetailBtn(){
   return '<span class="tc-dens" role="group" aria-label="Row detail"><button type="button" class="'+(_talentDetail?'on':'')+'" onclick="talentDetail(true)">Detailed</button><button type="button" class="'+(_talentDetail?'':'on')+'" onclick="talentDetail(false)">Compact</button></span>';
 }
+var _TC_SORTS=[['','Newest first'],['updated_at:desc','Recently modified'],['name:asc','Name A–Z'],['experience:desc','Experience (high–low)'],
+  ['experience:asc','Experience (low–high)'],['ctc_current:desc','Current CTC (high–low)'],['ctc_current:asc','Current CTC (low–high)'],
+  ['ctc_expected:asc','Expected CTC (low–high)'],['notice:asc','Notice (shortest)']];
+function _talentSortSel(){
+  var v=_talentSort.col?(_talentSort.col+':'+_talentSort.dir):'';
+  return '<select class="inp tc-per" aria-label="Sort by" onchange="talentSortTo(this.value)">'
+    + _TC_SORTS.map(function(o){ return '<option value="'+o[0]+'"'+(o[0]===v?' selected':'')+'>Sort: '+o[1]+'</option>'; }).join('')+'</select>';
+}
+function talentSortTo(v){ var p=String(v||'').split(':'); _talentSort={col:p[0]||'', dir:p[1]||'desc'}; _talentPage=1; talentFilterSearch(_talentLastF || readTalentFilters(), true); }
+// Naukri-style result cards (Oct 2026). `scored` rows carry c._score (AI match).
 function _talentTable(rows, scored){
   var all=rows.length && rows.every(function(c){ return _talentSel[c.id]; });
-  return '<div class="w1-pltable w2-tt"><table><thead><tr>'
-    + '<th class="tc-cb"><input type="checkbox" aria-label="Select all on this page"'+(all?' checked':'')+' onchange="talentPickPage(this.checked)"></th>'
-    + (scored?'<th><button type="button" disabled>Match</button></th>':'')
-    + (scored?'<th><button type="button" disabled>Candidate</button></th><th><button type="button" disabled>Location</button></th><th><button type="button" disabled>Job / pool</button></th><th><button type="button" disabled>Exp</button></th><th><button type="button" disabled>Current</button></th><th><button type="button" disabled>Expected</button></th><th><button type="button" disabled>Notice</button></th><th><button type="button" disabled>Stage</button></th>'
-      : _talentTh('name','Candidate') + _talentTh('location','Location') + _talentTh('job','Job / pool') + _talentTh('experience','Exp')
-      + _talentTh('ctc_current','Current') + _talentTh('ctc_expected','Expected') + _talentTh('notice','Notice') + _talentTh('stage','Stage'))
-    + '<th>Phone</th><th>CV</th></tr></thead><tbody>'
-    + rows.map(talentRow).join('') + '</tbody></table></div>';
+  return '<div class="tk-list"><div class="tk-selall"><label><input type="checkbox"'+(all?' checked':'')+' onchange="talentPickPage(this.checked)"> Select all on this page</label>'
+    + '<span class="mu">Click a card to open the full profile in a new tab &middot; &#128206; CV opens the CV file in a new tab</span></div>'
+    + rows.map(talentRow).join('') + '</div>';
 }
 var _talentPage = 1, _talentLastF = null, _talentSort = {col:'', dir:'desc'}, _talentRows = [];
-function talentSort(col){
-  if (_talentSort.col === col) _talentSort.dir = (_talentSort.dir === 'asc' ? 'desc' : 'asc');
-  else { _talentSort.col = col; _talentSort.dir = (col === 'name' || col === 'location' || col === 'job' || col === 'stage') ? 'asc' : 'desc'; }
-  _talentPage = 1;
-  talentFilterSearch(_talentLastF || readTalentFilters(), true);
-}
-function _talentTh(col, label){
-  var on = _talentSort.col === col, arrow = on ? (_talentSort.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
-  return '<th' + (on ? ' aria-sort="' + (_talentSort.dir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '><button type="button" onclick="talentSort(\'' + col + '\')">' + label + arrow + '</button></th>';
-}
 function talentPage(d){ _talentPage = Math.max(1, _talentPage + d); talentFilterSearch(_talentLastF || readTalentFilters(), true); }
 function talentPer(n){ _talentPer=parseInt(n,10)||30; _talentPage=1; talentFilterSearch(_talentLastF || readTalentFilters(), true); }
 async function talentFilterSearch(f, keepPage) {
@@ -16469,12 +16534,12 @@ async function talentFilterSearch(f, keepPage) {
   var html = _note + '<div class="w2-tt-bar"><span>Showing ' + from + '–' + to + ' of <b>' + total + '</b> candidates &middot; ' + (filtered ? 'filtered' : 'newest first') + '</span>'
     + '<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
     + (admin?'<a class="w1-btn" style="display:inline-flex;align-items:center" href="'+API+'/central-db/export?'+_talentQS(f).slice(1)+'" title="Download every result as CSV">&#8681; Export '+total+'</a>':'')
-    + _talentDetailBtn()
+    + _talentSortSel() + _talentDetailBtn()
     + '<select class="inp tc-per" aria-label="Rows per page" onchange="talentPer(this.value)">'+[30,50,100].map(function(n){ return '<option'+(n===per?' selected':'')+'>'+n+'</option>'; }).join('')+'</select>'
     + '<button class="w1-btn" onclick="talentPage(-1)"' + (_talentPage<=1?' disabled':'') + '>&larr; Prev</button>'
     + '<span>' + _talentPage + ' / ' + pages + '</span><button class="w1-btn" onclick="talentPage(1)"' + (_talentPage>=pages?' disabled':'') + '>Next &rarr;</button></span></div>';
   html += _talentTable(cands, false);
-  html += '<p class="w1-plnote">Click a row to open the full profile in a new tab (this search stays open here). &ldquo;CV &#8599;&rdquo; opens only the CV. Tick candidates to add them to a job or tag them.</p>';
+  html += '<p class="w1-plnote">Click a card to open the full profile in a new tab (this search stays open here). &#128206; CV opens the CV file in a new tab. Tick candidates to add them to a job or tag them.</p>';
   res.innerHTML = '<div id="tc-dupnote"></div>' + html;
   _talentPaintBulk();
   _talentDupNote();
@@ -16500,9 +16565,9 @@ async function _talentLinkDup(btn){
   talentFilterSearch(_talentLastF||readTalentFilters(), true);
 }
 function talentPick(id,on){ if(on) _talentSel[id]=1; else delete _talentSel[id];
-  var tr=document.querySelector('.w2-tt tr[data-id="'+id+'"]'); if(tr) tr.classList.toggle('tc-on',!!on); _talentPaintBulk(); }
+  var tr=document.querySelector('.tk[data-id="'+id+'"]'); if(tr) tr.classList.toggle('tc-on',!!on); _talentPaintBulk(); }
 function talentPickPage(on){ (_talentRows||[]).forEach(function(c){ if(on) _talentSel[c.id]=1; else delete _talentSel[c.id]; });
-  document.querySelectorAll('.w2-tt tbody tr').forEach(function(tr){ tr.classList.toggle('tc-on',!!on); var cb=tr.querySelector('input'); if(cb) cb.checked=!!on; }); _talentPaintBulk(); }
+  document.querySelectorAll('.tk').forEach(function(tr){ tr.classList.toggle('tc-on',!!on); var cb=tr.querySelector('.tk-cb'); if(cb) cb.checked=!!on; }); _talentPaintBulk(); }
 function _talentPaintBulk(){
   var bar=document.getElementById('tc-bulk'); if(!bar) return;
   var ids=Object.keys(_talentSel); var n=ids.length;
@@ -25885,6 +25950,36 @@ document.addEventListener('mousedown',function(e){
 .tc-warn{color:#b54708}
 mark.tc-hl{background:#fef08a;color:inherit;border-radius:3px;padding:0 1px}
 .tc-dens{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+/* Talent result cards (Naukri-style, Oct 2026) */
+.tk-list{display:flex;flex-direction:column;gap:14px}
+.tk-selall{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 16px;font-size:13px}
+.tk-selall label{display:flex;gap:8px;align-items:center;cursor:pointer;font-weight:600}
+.tk-card{display:flex;gap:18px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;cursor:pointer;box-shadow:0 1px 2px rgba(16,24,40,.04);transition:box-shadow .12s,border-color .12s}
+.tk-card:hover{border-color:#b6c7e6;box-shadow:0 4px 14px rgba(16,24,40,.08)}
+.tk.tc-on .tk-card{border-color:#0f766e;box-shadow:0 0 0 2px rgba(15,118,110,.15)}
+.tk-main{flex:1;min-width:0}
+.tk-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tk-cb{width:17px;height:17px;accent-color:#0f766e;cursor:pointer;margin:0}
+.tk-name{font-size:17px;font-weight:600;color:#101828}
+.tk-card:hover .tk-name{color:#1d4ed8}
+.tk-facts{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:#344054;margin:6px 0 10px 27px}
+.tk-rows{display:grid;grid-template-columns:112px minmax(0,1fr);gap:7px 14px;font-size:13px;margin-left:27px}
+.tk-k{color:#667085}
+.tk-v{color:#1d2939;line-height:1.5;word-break:break-word}
+.tk-v i{color:#cbd5e1;font-style:normal;margin:0 2px}
+.tk-clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tk-side{width:210px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:8px;border-left:1px solid #f1f2f4;padding-left:16px;text-align:center}
+.tk-av{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#e0e7ff,#ccfbf1);color:#3538cd;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:21px}
+.tk-head{font-size:12.5px;color:#344054;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tk-btn{display:block;width:100%;box-sizing:border-box;border:1px solid #1d4ed8;color:#1d4ed8;border-radius:8px;padding:6px 8px;font-size:13px;font-weight:600;text-decoration:none;background:#fff}
+.tk-btn:hover{background:#eff6ff}
+.tk-ver{font-size:11.5px;color:#667085;word-break:break-all}
+.tk-foot{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:#475467;padding:8px 6px 0}
+.tk-foot .tk-cv{font-weight:600;color:#1d4ed8;text-decoration:none}
+.tk-foot .tk-cv:hover{text-decoration:underline}
+.tk-sep{color:#d0d5dd}
+.tk-grow{flex:1}
+@media(max-width:820px){.tk-card{flex-direction:column}.tk-side{width:auto;border-left:0;padding-left:0;border-top:1px solid #f1f2f4;padding-top:12px;flex-direction:row;flex-wrap:wrap;justify-content:flex-start}.tk-btn{width:auto}.tk-rows{grid-template-columns:96px minmax(0,1fr);margin-left:0}.tk-facts{margin-left:0}}
 .tcup-drop{display:flex;flex-direction:column;align-items:center;gap:3px;border:2px dashed #cbd5e1;border-radius:10px;padding:18px;margin-top:12px;cursor:pointer;font-size:13px;color:#334155;text-align:center}
 .tcup-drop span{font-size:11.5px;color:#667085}
 .tcup-drop.on,.tcup-drop:hover{border-color:#0f766e;background:#f0fdf9}

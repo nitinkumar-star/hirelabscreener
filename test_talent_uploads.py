@@ -163,3 +163,67 @@ def test_designed_issue_saved_and_composed(srv):
     # duplicating the issue keeps the design
     d = cl.post('/api/newsletter/issues', json={'copy_of': iid}).get_json()['issue']
     assert 'Renewable Talent Pulse' in d['body_html']
+
+
+# ── Job application link (modules/job_link.py) ───────────────────────────
+def _apply(cl, url_qs, name, email, phone, cv=True):
+    data = {'name': name, 'email': email, 'phone': phone, 'company': 'Acme'}
+    if cv:
+        data['resume'] = (io.BytesIO(b'%PDF-1.4 cv'), name.replace(' ', '_') + '.pdf')
+    return cl.post('/api/submit?' + url_qs, data=data, content_type='multipart/form-data')
+
+
+def test_job_link_puts_applicant_on_the_job(srv):
+    server, ids, _ = srv
+    cl = cl_for(srv, ids['a'])
+    d = cl.get(f'/api/mandates/{ids["mid_a"]}/apply-link').get_json()
+    assert d['ok'] and '&k=' in d['url'] and any(c['key'] == 'linkedin' for c in d['channels'])
+    assert cl_for(srv, ids['b']).get(f'/api/mandates/{ids["mid_a"]}/apply-link').status_code == 404
+    qs = d['url'].split('?', 1)[1]
+    pub = server.app.test_client()
+    j = pub.get('/api/public/job-link?' + qs).get_json()
+    assert j['ok'] and j['role'] == 'Java Lead' and 'Infosys' not in json.dumps(j)      # client stays confidential
+    assert pub.get('/api/public/job-link?' + qs.replace(qs.split('k=')[1], '0' * 16)).status_code == 404
+
+    r = _apply(pub, qs + '&src=linkedin', 'Neha Joshi', 'neha@x.com', '9811122233')
+    assert r.status_code == 200, r.get_json()
+    conn = server.get_db()
+    c = conn.execute("SELECT * FROM candidates WHERE LOWER(email)='neha@x.com'").fetchone()
+    sub = conn.execute("SELECT * FROM submissions WHERE email='neha@x.com'").fetchone()
+    hist = conn.execute('SELECT note FROM stage_history WHERE candidate_id=?', (c['id'],)).fetchone()['note']
+    ntf = conn.execute("SELECT COUNT(*) n FROM notifications WHERE kind='job_apply' AND candidate_id=?", (c['id'],)).fetchone()['n']
+    conn.close()
+    assert c['mandate_id'] == ids['mid_a'] and c['stage'] == 'Screening' and c['owner_id'] == ids['A']
+    assert c['cv_path'] and sub['status'] == 'added_to_pipeline' and sub['job_link'] == 1
+    assert 'LinkedIn' in hist and ntf >= 1
+
+    # same person applies again -> no second profile
+    _apply(pub, qs, 'Neha J', 'neha@x.com', '9811122233')
+    conn = server.get_db()
+    n = conn.execute("SELECT COUNT(*) n FROM candidates WHERE LOWER(email)='neha@x.com'").fetchone()['n']
+    conn.close()
+    assert n == 1
+
+
+def test_application_without_valid_key_stays_in_responses(srv):
+    server, ids, _ = srv
+    pub = server.app.test_client()
+    r = _apply(pub, f'c={ids["A"]}&m={ids["mid_a"]}&k=bad', 'Ravi K', 'ravi@x.com', '9822233344')
+    assert r.status_code == 200
+    conn = server.get_db()
+    assert conn.execute("SELECT COUNT(*) n FROM candidates WHERE LOWER(email)='ravi@x.com'").fetchone()['n'] == 0
+    assert conn.execute("SELECT status FROM submissions WHERE email='ravi@x.com'").fetchone()['status'] == 'new'
+    conn.close()
+
+
+def test_search_returns_previous_role(srv):
+    server, ids, people = srv
+    people['PREV-CV'] = {'name': 'Kundan Patil', 'company': 'Go Build Mart', 'designation': 'Technical Sales Manager'}
+    cl = cl_for(srv, ids['a'])
+    cid = up(cl, 'PREV-CV ' + 'x' * 40).get_json()['id']
+    conn = server.get_db()
+    conn.executemany('INSERT INTO work_history (candidate_id,company,designation,is_current,sort_order) VALUES (?,?,?,?,?)',
+                     [(cid, 'Go Build Mart', 'Technical Sales Manager', 1, 0), (cid, 'TRPL Paint', 'Senior Technical Sales Executive', 0, 1)])
+    conn.commit(); conn.close()
+    rows = cl.get('/api/central-db/search?q=Kundan').get_json()['candidates']
+    assert [r['previous'] for r in rows if r['id'] == cid] == ['Senior Technical Sales Executive at TRPL Paint']
