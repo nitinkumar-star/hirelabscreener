@@ -45,6 +45,12 @@ a{color:var(--blue)}
 .sec .row{justify-content:space-between}
 .preview{border:1px solid var(--line);border-radius:10px;padding:14px 16px;background:#fff;font-size:13.5px;max-height:72vh;overflow:auto}
 .preview .subj{font-weight:700;margin-bottom:8px}
+.modes{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-bottom:12px}
+.modes button{border:none;background:#fff;padding:7px 14px;font-weight:600;cursor:pointer;font-size:13px}
+.modes button.on{background:var(--navy);color:#fff}
+.htmlbox{border:1px dashed #9DB8AD;border-radius:10px;background:#fff;min-height:260px;max-height:640px;overflow:auto;padding:14px;outline:none}
+.htmlbox:focus{border-style:solid;border-color:var(--green)}
+.htmlbox:empty:before{content:attr(data-ph);color:#98A2B3;white-space:pre-line}
 .kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
 .kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px}
 .kpi b{display:block;font-size:22px;font-variant-numeric:tabular-nums;color:var(--navy)}
@@ -90,7 +96,7 @@ td .m{color:var(--muted);font-size:12px}
 (function(){
   var $ = function(id){ return document.getElementById(id); };
   var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
-  var CFG = null, META = null, I = null, R = [], saveT = null, reachT = null;
+  var CFG = null, META = null, I = null, R = [], saveT = null, reachT = null, MODE = '';
   var STATUS = {draft: 'Draft', sending: 'Sending', done: 'Finished', stopped: 'Stopped'};
   async function api(method, path, body, base){
     try {
@@ -160,7 +166,7 @@ td .m{color:var(--muted);font-size:12px}
   async function openIssue(id){
     var r = await api('GET', '/issue/' + id);
     if (!r.ok) { $('app').innerHTML = '<div class="card"><div class="err">' + esc(r.error || 'Not found') + '</div><p><a href="/newsletter">← All issues</a></p></div>'; return; }
-    I = r.issue; R = r.recipients || [];
+    I = r.issue; R = r.recipients || []; MODE = '';
     $('app').oninput = null;
     if (I.status === 'draft') paintEditor(); else paintSent();
   }
@@ -183,27 +189,47 @@ td .m{color:var(--muted);font-size:12px}
         + (i ? '<button class="btn sm" data-up="' + i + '">↑</button> ' : '') + '<button class="btn sm" data-del="' + i + '">Remove</button></span></div>'
         + '<label class="fl" style="margin-top:6px">Heading<input data-f="heading" value="' + esc(s.heading) + '" maxlength="120"></label>'
         + '<label class="fl" style="margin:0">Text<textarea data-f="body" rows="4">' + esc(s.body) + '</textarea></label></div>'; }).join('');
-    var content = '<div class="card"><div class="h">2 · Content</div>'
+    var designed = MODE === 'html' || (MODE !== 'write' && !!(I.body_html || '').trim());
+    var common = '<label class="fl">Issue name (only you see this)<input id="c-title" value="' + esc(I.title) + '" maxlength="140"></label>'
+      + '<label class="fl">Subject — {first_name} is replaced per person<input id="c-subject" value="' + esc(I.subject) + '" maxlength="140" placeholder="{first_name}, what moved in Solar hiring this month"></label>'
+      + '<label class="fl">Preview line (shown after the subject in the inbox)<input id="c-pre" value="' + esc(I.preheader) + '" maxlength="200"></label>';
+    var modes = '<div class="modes" role="tablist"><button type="button" id="m-write" class="' + (designed ? '' : 'on') + '">Write / AI draft</button>'
+      + '<button type="button" id="m-html" class="' + (designed ? 'on' : '') + '">Paste a designed e-mail</button></div>';
+    if (designed) {
+      var content = '<div class="card"><div class="h">2 · Content</div>' + modes + common
+        + '<div class="flbl" style="margin-top:4px">Designed e-mail</div>'
+        + '<div class="sub" style="margin-bottom:6px">Copy the e-mail (e.g. press <b>Copy email</b> in your design, or select it in Gmail) and paste it below with Ctrl+V. Tables, colours, charts built from table cells and images are kept. Pasted images are hosted by HireLab so Gmail and Outlook show them. {first_name} works here too.</div>'
+        + '<div id="c-html" class="htmlbox" contenteditable="true" data-ph="Paste your designed e-mail here (Ctrl+V)"></div>'
+        + '<div class="row" style="margin-top:8px;justify-content:space-between"><label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="c-cvbox"' + (I.cv_box ? ' checked' : '') + '> Add the personal profile box at the end</label>'
+        + '<button class="btn sm" id="c-clear">Clear the e-mail</button></div>'
+        + '<div class="sub" style="margin-top:6px">An unsubscribe line is always added at the bottom.</div></div>';
+    } else {
+    var content = '<div class="card"><div class="h">2 · Content</div>' + modes
       + '<label class="fl">Your points for this month — news, hiring trends, salary moves, policy changes (the AI uses only these)<textarea id="c-points" rows="5" placeholder="e.g. 3 new hyperscale DC campuses announced in Navi Mumbai and Chennai&#10;Solar EPC hiring up after ALMM changes; O&amp;M engineers in short supply&#10;Notice periods for senior electrical roles moving to 60 days">' + esc(I.points) + '</textarea></label>'
       + '<div class="row" style="margin-bottom:12px"><button class="btn pri" id="ai">✦ ' + (I.subject ? 'Re-draft' : 'Draft') + ' with AI</button><span class="sub">or write it yourself below — everything is editable.</span></div>'
-      + '<label class="fl">Issue name (only you see this)<input id="c-title" value="' + esc(I.title) + '" maxlength="140"></label>'
-      + '<label class="fl">Subject — {first_name} is replaced per person<input id="c-subject" value="' + esc(I.subject) + '" maxlength="140" placeholder="{first_name}, what moved in Solar hiring this month"></label>'
-      + '<label class="fl">Preview line (shown after the subject in the inbox)<input id="c-pre" value="' + esc(I.preheader) + '" maxlength="200"></label>'
+      + common
       + '<label class="fl">Intro<textarea id="c-intro" rows="3">' + esc(I.intro) + '</textarea></label>'
       + '<div id="secs">' + secs + '</div><button class="btn sm" id="addsec">+ Add section</button>'
       + '<label class="fl" style="margin-top:12px">Closing<textarea id="c-closing" rows="2">' + esc(I.closing) + '</textarea></label>'
       + '<div class="sub">Every e-mail ends with a personal profile box: people with an old or missing CV are asked to refresh it (personal link); people with a fresh CV are invited to update their preferences.</div></div>';
+    }
     var right = '<div class="sticky"><div class="card"><div class="row" style="justify-content:space-between"><div class="h" style="margin:0">3 · Preview</div><span class="saved" id="saved"></span></div>'
       + '<div class="preview" id="pv" style="margin-top:10px">Loading…</div>'
       + '<div class="row" style="margin-top:12px;justify-content:space-between"><button class="btn" id="test">✉ Send a test to me</button><button class="btn pri" id="approve">Approve &amp; send</button></div>'
       + '<div class="sub" style="margin-top:8px" id="sendinfo"></div><div style="margin-top:10px"><button class="btn sm" id="discard">Delete draft</button></div></div></div>';
     $('app').innerHTML = head() + '<div class="ed"><div>' + aud + content + '</div>' + right + '</div>';
+    if ($('c-html')) $('c-html').innerHTML = I.body_html || '';
     bindEditor(); reach(); preview();
   }
   function collect(){
+    var o = {title: $('c-title').value, subject: $('c-subject').value, preheader: $('c-pre').value};
+    if ($('c-html')) {                       // designed e-mail
+      o.body_html = $('c-html').innerHTML; o.cv_box = $('c-cvbox').checked;
+      return o;
+    }
     var secs = Array.prototype.map.call(document.querySelectorAll('.sec'), function(el){ return {heading: el.querySelector('[data-f=heading]').value, body: el.querySelector('[data-f=body]').value}; });
-    return {title: $('c-title').value, points: $('c-points').value, subject: $('c-subject').value, preheader: $('c-pre').value,
-            intro: $('c-intro').value, closing: $('c-closing').value, sections: secs};
+    o.points = $('c-points').value; o.intro = $('c-intro').value; o.closing = $('c-closing').value; o.sections = secs;
+    return o;
   }
   function audience(){
     var a = {freshness: $('a-fresh').value, exclude_live: $('a-live').checked};
@@ -214,7 +240,12 @@ td .m{color:var(--muted);font-size:12px}
     var body = collect(); if (withAud) body.audience = audience();
     $('saved').textContent = 'Saving…';
     var r = await api('PUT', '/issue/' + I.id, body);
-    if (r.ok) { I = r.issue; $('saved').textContent = 'Saved'; preview(); if (withAud) reach(); }
+    if (r.ok) {
+      I = r.issue; $('saved').textContent = 'Saved'; preview(); if (withAud) reach();
+      // pasted images come back as hosted links: show that version so they are not re-sent each save
+      var hb = $('c-html');
+      if (hb && /src=["']?data:/i.test(body.body_html || '') && hb.innerHTML === body.body_html) hb.innerHTML = I.body_html || '';
+    }
     else $('saved').textContent = r.error || 'Not saved';
   }
   async function reach(){
@@ -235,7 +266,20 @@ td .m{color:var(--muted);font-size:12px}
     $('toList').onclick = function(e){ e.preventDefault(); go(''); };
     document.querySelectorAll('.chips').forEach(function(box){ box.onclick = function(e){ var b = e.target.closest('.chip'); if (!b) return; b.classList.toggle('on'); save(true); }; });
     $('a-fresh').onchange = function(){ save(true); }; $('a-live').onchange = function(){ save(true); };
-    $('app').oninput = function(e){ if (e.target.closest('.card') && e.target.matches('input:not([type=checkbox]),textarea')) { clearTimeout(saveT); $('saved').textContent = '…'; saveT = setTimeout(function(){ save(false); }, 700); } };
+    $('app').oninput = function(e){ if (e.target.closest('.card') && (e.target.matches('input:not([type=checkbox]),textarea') || e.target.closest('#c-html'))) { clearTimeout(saveT); $('saved').textContent = '…'; saveT = setTimeout(function(){ save(false); }, 700); } };
+    $('m-write').onclick = async function(){
+      if ($('m-write').classList.contains('on')) return;
+      if ((I.body_html || '').trim() && !confirm('Switch back to writing? The pasted e-mail is removed from this issue.')) return;
+      MODE = 'write'; await api('PUT', '/issue/' + I.id, {body_html: ''}); var r = await api('GET', '/issue/' + I.id); if (r.ok) I = r.issue; paintEditor();
+    };
+    $('m-html').onclick = async function(){ if ($('m-html').classList.contains('on')) return; await save(false); MODE = 'html'; paintEditor(); if ($('c-html')) $('c-html').focus(); };
+    if ($('c-html')) {
+      $('c-cvbox').onchange = function(){ save(false); };
+      $('c-clear').onclick = function(){ if (!confirm('Clear the pasted e-mail?')) return; $('c-html').innerHTML = ''; save(false); };
+    } else bindWriter();
+    bindSend();
+  }
+  function bindWriter(){
     $('addsec').onclick = async function(){ var b = collect(); b.sections.push({heading: 'New section', body: ''}); var r = await api('PUT', '/issue/' + I.id, b); if (r.ok) { I = r.issue; paintEditor(); } };
     $('secs').onclick = async function(e){
       var d = e.target.closest('[data-del]'), u = e.target.closest('[data-up]'); if (!d && !u) return;
@@ -252,6 +296,8 @@ td .m{color:var(--muted);font-size:12px}
       if (!r.ok) { this.disabled = false; this.textContent = '✦ Draft with AI'; return msg(esc(r.error || 'Failed'), 'err'); }
       I = r.issue; paintEditor(); msg('✓ Draft ready — read it through and edit anything before approving.');
     };
+  }
+  function bindSend(){
     $('test').onclick = async function(){ await save(false); this.disabled = true; var r = await api('POST', '/issue/' + I.id + '/test'); this.disabled = false;
       msg(r.ok ? '✓ Test sent to ' + esc(r.to) + '.' : esc(r.error || 'Test failed'), r.ok ? 'note' : 'err'); };
     $('approve').onclick = async function(){

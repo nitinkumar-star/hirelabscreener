@@ -22858,11 +22858,13 @@ def central_search():
                 'WHERE c.id IN (%s)' % ','.join('?' * len(page_ids)), page_ids).fetchall()}
             rows = [_full[i] for i in page_ids if i in _full]
         others = _talent_other_jobs(conn, [r['person_key'] for r in rows])
+        prev = _talent_previous_roles(conn, [r['id'] for r in rows])
     finally:
         conn.close()
     out = []
     for r in rows:
         d = _cand_public(r)
+        d['previous'] = prev.get(r['id'], '')
         try: d['key_skills'] = json.loads(d['key_skills'] or '[]')
         except Exception: d['key_skills'] = []
         try: d['status_tags'] = json.loads(d.get('status_tags') or '[]')
@@ -22875,6 +22877,34 @@ def central_search():
         out.append(d)
     return jsonify({'ok': True, 'total': total, 'page': page, 'per_page': per_page, 'candidates': out,
                     'sort': skey if col else 'created_at', 'dir': 'desc' if sort_desc else 'asc'})
+
+
+def _talent_previous_roles(conn, ids):
+    """candidate id -> 'Designation at Company' of the latest job before the
+    current one (work_history, filled by Naukri / extension imports)."""
+    if not ids:
+        return {}
+    out = {}
+    try:
+        rows = conn.execute('SELECT candidate_id, company, designation, is_current FROM work_history '
+                            'WHERE candidate_id IN (%s) ORDER BY candidate_id, sort_order, id'
+                            % ','.join('?' * len(ids)), list(ids)).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    by = {}
+    for r in rows:
+        by.setdefault(r['candidate_id'], []).append(r)
+    for cid, jobs in by.items():
+        if any(j['is_current'] for j in jobs):
+            past = [j for j in jobs if not j['is_current']]
+        else:
+            past = jobs[1:]                   # no flag: the first row is the current job
+        for j in past:
+            txt = ' at '.join(x for x in ((j['designation'] or '').strip(), (j['company'] or '').strip()) if x)
+            if txt:
+                out[cid] = txt
+                break
+    return out
 
 
 def _talent_other_jobs(conn, keys):
@@ -23386,6 +23416,13 @@ def submit_form():
     except sqlite3.OperationalError:
         pass
     conn.commit(); conn.close()
+    # Job link from the job's own page (signed k): straight onto that job's pipeline.
+    try:
+        from modules import job_link as _jl
+        _jl.on_submission(_sub_id, _sub_owner, _sub_mid, request.args.get('k') or request.form.get('k'),
+                          (request.args.get('src') or request.form.get('src') or '').strip().lower())
+    except Exception as _je:
+        print('[job-link]', _je)
     # Close the loop with the applicant. Fire-and-forget: their application is
     # already saved, so a mail failure must not surface as a failed submission.
     if email:

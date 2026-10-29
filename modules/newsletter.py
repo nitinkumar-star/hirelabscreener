@@ -107,6 +107,13 @@ def _migrate_newsletter(conn):
         created_at TEXT DEFAULT '',
         UNIQUE(issue_id, email)
     )''')
+    # Designed e-mail (Oct 2026): a pasted, formatted e-mail (tables, colours,
+    # images) sent as-is instead of intro + sections + closing.
+    for col, defn in (('body_html', "TEXT DEFAULT ''"), ('cv_box', 'INTEGER DEFAULT 1')):
+        try:
+            conn.execute('ALTER TABLE newsletter_issues ADD COLUMN %s %s' % (col, defn))
+        except Exception:
+            pass
     for sql in ('CREATE INDEX IF NOT EXISTS idx_nl_rec_status ON newsletter_recipients(company_id, status)',
                 'CREATE INDEX IF NOT EXISTS idx_nl_rec_email ON newsletter_recipients(company_id, email, sent_at)',
                 'CREATE INDEX IF NOT EXISTS idx_nl_rec_issue ON newsletter_recipients(issue_id)'):
@@ -328,9 +335,132 @@ def cv_block(p, fresh_days, now=None):
             'are looking for), you can update it any time.', 'Update my preferences')
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  Designed e-mail: clean pasted HTML (allow-list) + host pasted images
+# ══════════════════════════════════════════════════════════════════════════
+MAX_BODY_HTML = 400000
+MAX_IMG_BYTES = 3 * 1024 * 1024
+_ALLOWED_TAGS = {'a', 'b', 'strong', 'i', 'em', 'u', 's', 'p', 'br', 'hr', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'h5',
+                 'h6', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'caption', 'col',
+                 'colgroup', 'img', 'blockquote', 'pre', 'code', 'small', 'sup', 'sub', 'font', 'center'}
+_VOID_TAGS = {'br', 'hr', 'img', 'col'}
+_DROP_WITH_CONTENT = {'script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'select', 'textarea',
+                      'svg', 'math', 'noscript', 'template', 'head', 'title', 'meta', 'link', 'base', 'frame', 'frameset'}
+_ALLOWED_ATTRS = {'style', 'href', 'src', 'alt', 'title', 'width', 'height', 'align', 'valign', 'bgcolor', 'color',
+                  'colspan', 'rowspan', 'cellpadding', 'cellspacing', 'border', 'role', 'face', 'size', 'target', 'dir'}
+_BAD_CSS = re.compile(r'expression\s*\(|javascript:|vbscript:|behavior\s*:|-moz-binding|@import', re.I)
+_DATA_IMG = re.compile(r'^data:image/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/=\s]+)$', re.I)
+_IMG_NAME = re.compile(r'^[0-9]+_[0-9a-f]{20}\.(png|jpg|gif|webp)$')
+
+
+def _img_dir():
+    d = os.path.join(_core().DATA_DIR, 'newsletter_images')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def save_image(oid, raw_bytes, ext):
+    """Store one image; returns its file name (content-addressed, so re-saving is free)."""
+    ext = 'jpg' if ext in ('jpeg', 'jpg') else ext
+    name = '%d_%s.%s' % (int(oid), hashlib.sha256(raw_bytes).hexdigest()[:20], ext)
+    fp = os.path.join(_img_dir(), name)
+    if not os.path.exists(fp):
+        with open(fp, 'wb') as fh:
+            fh.write(raw_bytes)
+    return name
+
+
+def _safe_url(v, oid, for_img):
+    v = (v or '').strip()
+    if for_img:
+        m = _DATA_IMG.match(v)
+        if m:
+            import base64
+            try:
+                raw = base64.b64decode(re.sub(r'\s+', '', m.group(2)), validate=False)
+            except Exception:
+                return ''
+            if not raw or len(raw) > MAX_IMG_BYTES:
+                return ''
+            # inline images are blocked by Gmail / Outlook: host them and link instead
+            return '%s/nl/img/%s' % (_base(), save_image(oid, raw, m.group(1).lower()))
+        return v if re.match(r'^https?://', v, re.I) else ''
+    return v if re.match(r'^(https?://|mailto:|tel:|#)', v, re.I) else ''
+
+
+def clean_html(raw, oid):
+    """Pasted e-mail HTML -> safe HTML for sending: allow-listed tags and
+    attributes, inline styles kept (that is what draws tables, bars and colours),
+    scripts / forms / event handlers / javascript: links removed."""
+    from html.parser import HTMLParser
+    out, skip = [], []
+
+    class P(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if skip:
+                if tag in _DROP_WITH_CONTENT and tag not in _VOID_TAGS:
+                    skip.append(tag)
+                return
+            if tag in _DROP_WITH_CONTENT:
+                skip.append(tag)
+                return
+            if tag not in _ALLOWED_TAGS:
+                return
+            keep = []
+            for k, v in attrs:
+                k = (k or '').lower()
+                if k not in _ALLOWED_ATTRS or v is None:
+                    continue
+                if k in ('href', 'src'):
+                    v = _safe_url(v, oid, k == 'src' and tag == 'img')
+                    if not v:
+                        continue
+                if k == 'style' and _BAD_CSS.search(v):
+                    continue
+                if k == 'target':
+                    v = '_blank'
+                keep.append(' %s="%s"' % (k, html.escape(v, quote=True)))
+            if tag == 'img' and not any(a.startswith(' src=') for a in keep):
+                return
+            if tag == 'a' and any(a.startswith(' target=') for a in keep):
+                keep.append(' rel="noopener"')
+            out.append('<%s%s>' % (tag, ''.join(keep)))
+
+        def handle_endtag(self, tag):
+            if skip:
+                if tag == skip[-1]:
+                    skip.pop()
+                return
+            if tag in _ALLOWED_TAGS and tag not in _VOID_TAGS:
+                out.append('</%s>' % tag)
+
+        def handle_startendtag(self, tag, attrs):
+            self.handle_starttag(tag, attrs)
+
+        def handle_data(self, data):
+            if not skip:
+                out.append(html.escape(data, quote=False))
+
+        def handle_entityref(self, name):
+            if not skip:
+                out.append('&%s;' % name)
+
+        def handle_charref(self, name):
+            if not skip:
+                out.append('&#%s;' % name)
+
+    p = P(convert_charrefs=False)
+    p.feed(str(raw or '')[:20000000])          # pasted images arrive inline; they leave as short links
+    p.close()
+    res = ''.join(out).strip()
+    return res[:MAX_BODY_HTML]
+
+
 def compose(issue, p, cv_link, unsub, pixel='', fresh_days=180, has_signature=True):
     fn = first_name(p.get('name'))
     e = html.escape
+    if (issue.get('body_html') or '').strip():
+        return _compose_designed(issue, fn, cv_link, unsub, pixel, fresh_days, p)
     secs = _jl(issue.get('sections'), []) or []
     subject = (issue.get('subject') or 'Market Pulse from HireLab').replace('{first_name}', fn)
     intro = (issue.get('intro') or '').replace('{first_name}', fn)
@@ -365,6 +495,36 @@ def compose(issue, p, cv_link, unsub, pixel='', fresh_days=180, has_signature=Tr
              '<a href="%s" style="color:#888">Unsubscribe</a></p>%s</div>'
              % (e(h), e(t), e(cv_link), e(btn), e(sign_off).replace('\n', '<br>'), e(unsub),
                 ('<img src="%s" width="1" height="1" alt="" style="display:block">' % e(pixel)) if pixel else ''))
+    return subject, '\n'.join(plain), body
+
+
+def _compose_designed(issue, fn, cv_link, unsub, pixel, fresh_days, p):
+    """A pasted, designed e-mail goes out exactly as designed. HireLab only adds
+    the optional personal profile box and the unsubscribe line (required)."""
+    e = html.escape
+    subject = (issue.get('subject') or issue.get('title') or 'Market Pulse from HireLab').replace('{first_name}', fn)
+    designed = issue['body_html'].replace('{first_name}', e(fn))
+    box_html, box_plain = '', []
+    if int(issue.get('cv_box') if issue.get('cv_box') is not None else 1):
+        h, t, btn = cv_block(p, fresh_days)
+        box_html = ('<div style="border:1px solid #D9E7E1;background:#F2F8F5;border-radius:10px;padding:14px 16px;margin:18px 0;'
+                    'font-family:Arial,Helvetica,sans-serif"><div style="font-weight:700;color:#0E2A47;margin-bottom:4px">%s</div>'
+                    '<div style="font-size:14px;color:#333;margin-bottom:10px">%s</div><a href="%s" style="display:inline-block;'
+                    'background:#0F6E56;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600">%s</a></div>'
+                    % (e(h), e(t), e(cv_link), e(btn)))
+        box_plain = ['', h, t, '%s: %s' % (btn, cv_link)]
+    body = ('%s<div style="max-width:680px">%s%s'
+            '<p style="font-size:11px;color:#888;margin-top:22px;font-family:Arial,Helvetica,sans-serif">You are receiving this '
+            'because your profile is with HireLab. <a href="%s" style="color:#888">Unsubscribe</a></p>%s</div>'
+            % ((('<div style="display:none;max-height:0;overflow:hidden">%s</div>' % e(issue.get('preheader') or ''))
+                if issue.get('preheader') else ''),
+               designed, box_html, e(unsub),
+               ('<img src="%s" width="1" height="1" alt="" style="display:block">' % e(pixel)) if pixel else ''))
+    try:
+        text = _core().html_to_text(designed)
+    except Exception:
+        text = re.sub(r'<[^>]+>', ' ', designed)
+    plain = [text.strip()] + box_plain + ['', '---', 'To stop these e-mails: %s' % unsub]
     return subject, '\n'.join(plain), body
 
 
@@ -572,6 +732,8 @@ def _out(conn, i):
                            'ai_error', 'created_at', 'updated_at', 'approved_at', 'finished_at', 'queued', 'skipped_guard')}
     o['audience'] = _audience(i)
     o['sections'] = _jl(i['sections'], []) or []
+    o['body_html'] = i['body_html'] if 'body_html' in i.keys() else ''
+    o['cv_box'] = bool(i['cv_box'] if 'cv_box' in i.keys() and i['cv_box'] is not None else 1)
     o['counts'] = _counts(conn, i['id'])
     return o
 
@@ -655,6 +817,8 @@ def issue_create():
                 'points': src['points'] if src else '', 'subject': src['subject'] if src else '',
                 'preheader': src['preheader'] if src else '', 'intro': src['intro'] if src else '',
                 'sections': src['sections'] if src else '[]', 'closing': src['closing'] if src else '',
+                'body_html': (src.get('body_html') or '') if src else '',
+                'cv_box': (1 if src.get('cv_box') is None else src['cv_box']) if src else 1,
                 'created_by': int(real_user_id() or 0), 'created_at': ts(), 'updated_at': ts()}
         cur = conn.execute('INSERT INTO newsletter_issues (%s) VALUES (%s)' % (','.join(vals), ','.join('?' * len(vals))),
                            list(vals.values()))
@@ -710,6 +874,10 @@ def issue_update(iid):
         for k, n in (('title', 140), ('points', 4000), ('subject', 140), ('preheader', 200), ('intro', 1500), ('closing', 1000)):
             if k in d:
                 sets[k] = str(d[k] or '').strip()[:n]
+        if 'body_html' in d:
+            sets['body_html'] = clean_html(d.get('body_html') or '', _oid())
+        if 'cv_box' in d:
+            sets['cv_box'] = 1 if d.get('cv_box') else 0
         if isinstance(d.get('sections'), list):
             secs = [{'heading': str(x.get('heading') or '').strip()[:120], 'body': str(x.get('body') or '').strip()[:3000]}
                     for x in d['sections'][:8] if isinstance(x, dict) and (x.get('heading') or x.get('body'))]
@@ -949,6 +1117,21 @@ def issue_cancel(iid):
 # ── public: open pixel + CV-refresh click ─────────────────────────────────
 _GIF = (b'GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,'
         b'\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;')
+
+
+@pages.route('/nl/img/<name>')
+def nl_image(name):
+    """Images pasted into a designed e-mail. Public (mail clients fetch them),
+    content-addressed names, nothing else in the folder can be reached."""
+    if not _IMG_NAME.match(name or ''):
+        return Response('Not found', status=404)
+    fp = os.path.join(_img_dir(), name)
+    if not os.path.isfile(fp):
+        return Response('Not found', status=404)
+    from flask import send_file
+    resp = send_file(fp, max_age=31536000)
+    resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    return resp
 
 
 @pages.route('/nl/o/<tok>.gif')

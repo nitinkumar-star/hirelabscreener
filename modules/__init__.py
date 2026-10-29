@@ -49,6 +49,8 @@ _MODULE_NAMES = [
     'naukri_screen',   # Chrome extension: screen a Naukri search page with DeepSeek
     'job_profile',     # Job Breakdown (core/important/nice) + extension profile explanation
     'google_meet',     # Google Calendar + Meet invites for Video bookings
+    'job_link',        # job application link per mandate (social posts) -> straight onto that job's pipeline
+    'cv_upload',       # Talent page: upload CV files -> candidate + stored CV (Central Database or a job)
     'assistant',       # HireLab Assistant side panel (paste / CV, never reads Naukri)
     'linkedin_capture',# HireLab Assistant: 1-click LinkedIn profile -> Central DB or BD workspace
     'meeting_tasks',   # scheduler meetings -> Tasks, and 10-minute task alerts
