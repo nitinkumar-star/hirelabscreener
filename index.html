@@ -16146,7 +16146,9 @@ function _talentSearchHTML(){
   return '<div class="w2-ts">'
     + '<section class="w2-ts-card">'
     + '<div class="w2-ts-head"><div><h2>Search talent</h2><p>Keyword search understands <b>AND</b>, <b>OR</b>, <b>NOT</b>, <b>( )</b>, <b>"exact phrase"</b> and <b>-exclude</b>. Switch to <b>AI match</b> to rank by meaning.</p></div>'
-    +   '<button class="w1-btn pri" onclick="openAddCandidateModal()">+ Add candidate</button></div>'
+    +   '<span style="display:flex;gap:8px;flex-wrap:wrap"><button class="w1-btn" onclick="copyApplyLink()" title="A link candidates can use to send you their CV">&#128279; Copy CV link</button>'
+    +   '<button class="w1-btn" onclick="talentUploadCVs()">&#8679; Upload CVs</button>'
+    +   '<button class="w1-btn pri" onclick="openAddCandidateModal()">+ Add candidate</button></span></div>'
     + '<div class="w2-ts-q"><div class="tc-mode" role="radiogroup" aria-label="Search mode">'
     +   '<button type="button" role="radio" id="tc-m-keyword" onclick="talentMode(\'keyword\')">Keyword</button>'
     +   '<button type="button" role="radio" id="tc-m-ai" onclick="talentMode(\'ai\')">AI match</button></div>'
@@ -16258,41 +16260,176 @@ function _talentQS(f){
   add('phone',f.phone); add('job',f.job); add('stage',f.stage); add('source',f.source); add('has_cv',f.cv); add('added_days',f.added);
   return qs;
 }
-// Results table (candidate · location · job · exp · CTC · stage · phone · open)
+// Results table (Oct 2026): every row shows enough to decide without opening —
+// skills (search words highlighted), a summary line, qualification, preferred
+// location, notice, source and how fresh the profile is. A click opens the full
+// profile in a NEW tab so the search stays where it was.
+var _talentDetail = (function(){ try{ return localStorage.getItem('tc_detail')!=='0'; }catch(e){ return true; } })();
+function talentDetail(on){ _talentDetail=!!on; try{ localStorage.setItem('tc_detail', on?'1':'0'); }catch(e){}
+  if(_talentAI) _talentRenderAI(); else talentFilterSearch(_talentLastF || readTalentFilters(), true); }
+function _talentTerms(){
+  var f=_talentF||{}, out=[];
+  var q=String(f.q||'');
+  (q.match(/"[^"]+"/g)||[]).forEach(function(p){ out.push(p.slice(1,-1)); });
+  q.replace(/"[^"]+"/g,' ').split(/[\s()]+/).forEach(function(w){
+    if(!w || w.charAt(0)==='-' || /^(AND|OR|NOT)$/.test(w)) return;
+    w=w.replace(/^[+]/,''); if(w.length>=2) out.push(w);
+  });
+  String(f.skills||'').split(',').forEach(function(x){ x=x.trim(); if(x.length>=2) out.push(x); });
+  return out.slice(0,12);
+}
+function _talentHL(text, terms){
+  var h=esc(text||''); if(!terms.length || !h) return h;
+  var rx=new RegExp('('+terms.map(function(t){ return esc(t).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }).join('|')+')','gi');
+  return h.replace(rx,'<mark class="tc-hl">$1</mark>');
+}
+function _talentAgo(d){
+  var m=String(d||'').match(/^(\d{4})-(\d{2})-(\d{2})/); if(!m) return '';
+  var days=Math.floor((Date.now()-new Date(+m[1],+m[2]-1,+m[3]).getTime())/86400000);
+  if(days<1) return 'today'; if(days<31) return days+'d ago'; if(days<365) return Math.round(days/30)+' mo ago';
+  return (days/365).toFixed(days<730?1:0)+' yr ago';
+}
+function talentOpen(ev, id, mid){
+  if(ev && ev.target.closest('a,button,input,label,select')) return;
+  openCandidateInNewTab(id, mid);
+}
 function talentRow(c) {
   var phone=(c.phone||'').replace(/\D/g,''), dp=phone.length>=10?phone.slice(-10).replace(/(\d{5})(\d{5})/,'$1 $2'):'';
   var cur=c.ctc_current||c.ctc, ex=c.ctc_expected;
-  var open='onclick="openProfileById(' + c.id + ',' + (c.mandate_id||'null') + ')" style="cursor:pointer"';
   var dash='<span class="mu">&mdash;</span>';
   var job=(c.mandate_role && !c.central) ? ('<div>'+esc(c.mandate_role)+'</div>'+(c.mandate_client?'<div class="mu sm">'+esc(c.mandate_client)+'</div>':'')) : '<span class="tc-pool">Central DB</span>';
   var oj=(c.other_jobs||[]);
   if(oj.length) job+='<span class="tc-more-jobs" title="Also on: '+esc(oj.map(function(o){ return o.role+(o.stage&&!o.central?' ('+stageLabel(o.stage)+')':''); }).join(', '))+'">+'+oj.length+' more job'+(oj.length>1?'s':'')+'</span>';
   var tags=(c.status_tags||[]).slice(0,3).map(function(t){ return '<span class="tc-tag">'+esc(t)+'</span>'; }).join('');
-  var sel=!!_talentSel[c.id];
-  return '<tr'+(sel?' class="tc-on"':'')+' data-id="'+c.id+'">'
+  var sel=!!_talentSel[c.id], terms=_talentTerms();
+  var who='<div class="nm">' + esc(c.name||'') + '</div><div class="tc-role">' + _talentHL([c.designation,c.company].filter(Boolean).join(' · '), terms) + '</div>';
+  if(_talentDetail){
+    var sk=(c.key_skills||[]).slice(0,8);
+    if(terms.length) sk.sort(function(a,b){ var ha=terms.some(function(t){ return String(a).toLowerCase().indexOf(t.toLowerCase())>=0; }), hb=terms.some(function(t){ return String(b).toLowerCase().indexOf(t.toLowerCase())>=0; }); return hb-ha; });
+    if(sk.length) who+='<div class="tc-sks">'+sk.slice(0,6).map(function(x){ return '<span class="tc-sk">'+_talentHL(x,terms)+'</span>'; }).join('')+((c.key_skills||[]).length>6?'<span class="tc-sk mu">+'+((c.key_skills||[]).length-6)+'</span>':'')+'</div>';
+    var sum=String(c.career_summary||c.ai_insight_cv||'').replace(/\s+/g,' ').trim();
+    if(sum) who+='<div class="tc-sum" title="'+esc(sum)+'">'+_talentHL(sum.length>240?sum.slice(0,240)+'…':sum, terms)+'</div>';
+    var meta=[];
+    if(c.qualification) meta.push('&#127891; '+esc(String(c.qualification).slice(0,60)));
+    if(c.industry_background) meta.push(esc(String(c.industry_background).slice(0,40)));
+    if(c.preferred_location && c.preferred_location!==c.location) meta.push('Prefers '+esc(String(c.preferred_location).slice(0,50)));
+    if(c.source_channel) meta.push('via '+esc(c.source_channel));
+    var upd=c.update_submitted_at||c.updated_at||c.created_at;
+    if(upd) meta.push('Updated '+_talentAgo(upd));
+    meta.push(c.email?'&#9993; e-mail':'<span class="tc-warn">no e-mail</span>');
+    who+='<div class="tc-meta">'+meta.join(' &middot; ')+'</div>';
+  }
+  if(tags) who+='<div class="tc-tags">'+tags+'</div>';
+  return '<tr'+(sel?' class="tc-on"':'')+' data-id="'+c.id+'" title="Open the full profile in a new tab" onclick="talentOpen(event,'+c.id+','+(c.mandate_id||'null')+')" style="cursor:pointer">'
     + '<td class="tc-cb"><input type="checkbox" aria-label="Select '+esc(c.name||'')+'"'+(sel?' checked':'')+' onchange="talentPick('+c.id+',this.checked)"></td>'
     + (c._score!=null?'<td><span class="tc-score" style="color:'+(c._score>=60?'#067647':c._score>=40?'#b54708':'#667085')+'">'+c._score+'%</span></td>':'')
-    + '<td '+open+'><div class="nm">' + esc(c.name||'') + '</div><div class="mu sm">' + esc([c.designation,c.company].filter(Boolean).join(' · ')) + '</div>'+(tags?'<div class="tc-tags">'+tags+'</div>':'')+'</td>'
-    + '<td '+open+'>' + (c.location?esc(c.location):dash) + '</td>'
-    + '<td '+open+'>' + job + '</td>'
-    + '<td '+open+'>' + (c.experience?esc(String(c.experience))+'y':dash) + '</td>'
-    + '<td '+open+'>' + (cur?esc(String(cur))+' L':dash) + '</td>'
-    + '<td '+open+'>' + (ex?esc(String(ex))+' L':dash) + '</td>'
+    + '<td class="tc-cand">' + who + '</td>'
+    + '<td>' + (c.location?esc(c.location):dash) + '</td>'
+    + '<td>' + job + '</td>'
+    + '<td>' + (c.experience?esc(String(c.experience))+'y':dash) + '</td>'
+    + '<td>' + (cur?esc(String(cur))+' L':dash) + '</td>'
+    + '<td>' + (ex?esc(String(ex))+' L':dash) + '</td>'
+    + '<td>' + (c.notice_period?esc(String(c.notice_period))+'d':dash) + '</td>'
     + '<td>' + (c.stage?'<span class="w2-stg">'+esc(stageLabel(c.stage))+'</span>':dash) + '</td>'
     + '<td>' + (dp?'<a href="tel:'+esc(phone)+'">'+dp+'</a>':dash) + '</td>'
-    + '<td style="white-space:nowrap"><a href="#" onclick="event.preventDefault();openCandidateInNewTab(' + c.id + ',' + (c.mandate_id||'null') + ')">Profile &#8599;</a>'
-    + (c.cv_path?' &middot; <a href="#" onclick="event.preventDefault();openCvWindow(\''+esc(c.cv_path).replace(/'/g,'')+'\')">CV &#8599;</a>':' &middot; <span class="mu">no CV</span>') + '</td>'
+    + '<td style="white-space:nowrap">'
+    + (c.cv_path?'<a href="#" onclick="event.preventDefault();openCvWindow(\''+esc(c.cv_path).replace(/'/g,'')+'\')">CV &#8599;</a>':'<span class="mu">no CV</span>') + '</td>'
     + '</tr>';
+}
+// ── Upload CVs (Oct 2026): pick one or many CV files -> each is read by AI, saved as a
+// candidate (Central Database or a job) with the CV attached. Server: modules/cv_upload.py
+var _tcUp = {q:[], busy:false};
+function talentUploadCVs(){
+  var ms=(S.mandates||[]).filter(function(m){ return (m.status||'active')==='active'; });
+  var bg=_talentModal('modal-tcup','Upload CVs',
+    '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px" for="tcup-m">Save them to</label>'
+    +'<select class="inp" id="tcup-m" style="width:100%"><option value="0">Central Database (no job yet)</option>'
+    +ms.map(function(m){ return '<option value="'+m.id+'">'+esc((m.role||'')+(m.client?(' — '+m.client):''))+' (Screening)</option>'; }).join('')+'</select>'
+    +'<label class="tcup-drop" id="tcup-drop"><input type="file" id="tcup-f" accept=".pdf,.doc,.docx" multiple style="display:none" onchange="_tcUpAdd(this.files);this.value=\'\'">'
+    +'<b>Choose CV files</b> or drop them here<span>PDF or Word &middot; pick as many as you like</span></label>'
+    +'<div id="tcup-list"></div>'
+    +'<p style="font-size:12px;color:#667085;margin:10px 0 0;line-height:1.5">Each CV is read by AI (name, contact, company, experience, CTC, skills) and saved with the CV file on the profile. Someone already in your database (same e-mail or phone) is not added twice. '
+    +'To let a candidate send their own CV, use <a href="#" onclick="event.preventDefault();copyApplyLink()">Copy CV link</a>.</p>');
+  bg.querySelector('.modal').style.maxWidth='620px';
+  var dz=document.getElementById('tcup-drop');
+  ['dragenter','dragover'].forEach(function(t){ dz.addEventListener(t,function(e){ e.preventDefault(); dz.classList.add('on'); }); });
+  ['dragleave','drop'].forEach(function(t){ dz.addEventListener(t,function(e){ e.preventDefault(); dz.classList.remove('on'); }); });
+  dz.addEventListener('drop',function(e){ if(e.dataTransfer&&e.dataTransfer.files) _tcUpAdd(e.dataTransfer.files); });
+  _tcUp={q:[], busy:false};
+}
+function _tcUpAdd(files){
+  [].slice.call(files||[]).forEach(function(f){
+    var ok=/\.(pdf|docx?)$/i.test(f.name);
+    _tcUp.q.push({file:f, st:ok?'wait':'bad', msg:ok?'Waiting\u2026':'Not a PDF or Word file'});
+  });
+  _tcUpPaint(); _tcUpRun();
+}
+function _tcUpPaint(){
+  var box=document.getElementById('tcup-list'); if(!box) return;
+  box.innerHTML=_tcUp.q.map(function(it,i){
+    var ic={wait:'&#9203;',run:'&#9203;',ok:'&#9989;',dup:'&#128101;',need:'&#9998;&#65039;',bad:'&#9888;&#65039;'}[it.st]||'';
+    var h='<div class="tcup-row"><div class="tcup-l">'+ic+' <b>'+esc(it.file.name)+'</b><div class="tcup-msg">'+(it.html||esc(it.msg||''))+'</div></div>';
+    if(it.st==='ok') h+='<a href="#" onclick="event.preventDefault();openCandidateInNewTab('+it.id+','+it.mid+')">Open &#8599;</a>';
+    if(it.st==='dup') h+='<span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><a href="#" onclick="event.preventDefault();openCandidateInNewTab('+it.dup.id+','+(it.dup.mandate_id||'null')+')">Open &#8599;</a>'
+      +'<button class="w1-btn" style="padding:3px 9px;font-size:12px" onclick="_tcUpReplace('+i+')">Use this CV for them</button></span>';
+    if(it.st==='need') h+='<span class="tcup-need"><input class="inp" id="tcup-n'+i+'" placeholder="Name" value="'+esc(it.guess&&it.guess.name||'')+'">'
+      +'<input class="inp" id="tcup-c'+i+'" placeholder="Company" value="'+esc(it.guess&&it.guess.company||'')+'"><button class="w1-btn pri" style="padding:3px 10px;font-size:12px" onclick="_tcUpRetry('+i+')">Save</button></span>';
+    return h+'</div>';
+  }).join('');
+}
+async function _tcUpOne(it, extra){
+  var fd=new FormData(); fd.append('cv', it.file);
+  var sel=document.getElementById('tcup-m'); fd.append('mandate_id', it.mid_req!=null?it.mid_req:(sel?sel.value:'0'));
+  it.mid_req=fd.get('mandate_id');
+  Object.keys(extra||{}).forEach(function(k){ fd.append(k, extra[k]); });
+  it.st='run'; it.msg='Reading the CV\u2026'; it.html=''; _tcUpPaint();
+  var r=await reqFile('/talent/upload-cv', fd);
+  if(r && r.ok){ it.st='ok'; it.id=r.id; it.mid=r.mandate_id;
+    it.html='Added <b>'+esc(r.name)+'</b>'+(r.designation||r.company?' &middot; '+esc([r.designation,r.company].filter(Boolean).join(' · ')):'')+' to '+(r.central?'Central Database':'the job')+(r.note?'<br><span style="color:#b54708">'+esc(r.note)+'</span>':''); }
+  else if(r && r.duplicate){ it.st='dup'; it.dup=r.duplicate; it.html='<b>'+esc(r.duplicate.name||'')+'</b> is already in your database. Nothing was added.'; }
+  else if(r && r.need){ it.st='need'; it.guess=r.guess||{}; it.msg=(r.error||'Name not found')+' Type the name to save it.'; }
+  else { it.st='bad'; it.msg=(r&&r.error)||'Upload failed'; }
+  _tcUpPaint();
+}
+async function _tcUpRun(){
+  if(_tcUp.busy) return; _tcUp.busy=true;
+  var added=0;
+  for(var i=0;i<_tcUp.q.length;i++){
+    var it=_tcUp.q[i]; if(it.st!=='wait') continue;
+    if(!document.getElementById('tcup-list')) break;
+    await _tcUpOne(it); if(it.st==='ok') added++;
+  }
+  _tcUp.busy=false;
+  if(added){ toast('OK', added+' CV'+(added>1?'s':'')+' added'); _talentFacets=null; try{ _talentFillMenus(); talentFilterSearch(_talentLastF||readTalentFilters(), true); }catch(e){} }
+}
+async function _tcUpRetry(i){
+  var it=_tcUp.q[i]; if(!it) return;
+  var n=(document.getElementById('tcup-n'+i)||{}).value||'', c=(document.getElementById('tcup-c'+i)||{}).value||'';
+  if(!n.trim()){ toast('ERR','Type the name'); return; }
+  await _tcUpOne(it, {name:n.trim(), company:c.trim()});
+  if(it.st==='ok'){ toast('OK','CV added'); try{ talentFilterSearch(_talentLastF||readTalentFilters(), true); }catch(e){} }
+}
+async function _tcUpReplace(i){
+  var it=_tcUp.q[i]; if(!it||!it.dup) return;
+  if(!confirm('Replace '+(it.dup.name||'their')+'\'s CV on file with '+it.file.name+'?')) return;
+  var fd=new FormData(); fd.append('cv', it.file);
+  var r=await reqFile('/candidates/'+it.dup.id+'/cv', fd);
+  if(r && r.ok){ it.html='CV of <b>'+esc(it.dup.name||'')+'</b> replaced with this file.'; it.st='ok'; it.id=it.dup.id; it.mid=it.dup.mandate_id||'null'; toast('OK','CV updated'); }
+  else toast('ERR',(r&&r.error)||'Could not replace the CV');
+  _tcUpPaint();
+}
+function _talentDetailBtn(){
+  return '<span class="tc-dens" role="group" aria-label="Row detail"><button type="button" class="'+(_talentDetail?'on':'')+'" onclick="talentDetail(true)">Detailed</button><button type="button" class="'+(_talentDetail?'':'on')+'" onclick="talentDetail(false)">Compact</button></span>';
 }
 function _talentTable(rows, scored){
   var all=rows.length && rows.every(function(c){ return _talentSel[c.id]; });
   return '<div class="w1-pltable w2-tt"><table><thead><tr>'
     + '<th class="tc-cb"><input type="checkbox" aria-label="Select all on this page"'+(all?' checked':'')+' onchange="talentPickPage(this.checked)"></th>'
     + (scored?'<th><button type="button" disabled>Match</button></th>':'')
-    + (scored?'<th><button type="button" disabled>Candidate</button></th><th><button type="button" disabled>Location</button></th><th><button type="button" disabled>Job / pool</button></th><th><button type="button" disabled>Exp</button></th><th><button type="button" disabled>Current</button></th><th><button type="button" disabled>Expected</button></th><th><button type="button" disabled>Stage</button></th>'
+    + (scored?'<th><button type="button" disabled>Candidate</button></th><th><button type="button" disabled>Location</button></th><th><button type="button" disabled>Job / pool</button></th><th><button type="button" disabled>Exp</button></th><th><button type="button" disabled>Current</button></th><th><button type="button" disabled>Expected</button></th><th><button type="button" disabled>Notice</button></th><th><button type="button" disabled>Stage</button></th>'
       : _talentTh('name','Candidate') + _talentTh('location','Location') + _talentTh('job','Job / pool') + _talentTh('experience','Exp')
-      + _talentTh('ctc_current','Current') + _talentTh('ctc_expected','Expected') + _talentTh('stage','Stage'))
-    + '<th>Phone</th><th>Open</th></tr></thead><tbody>'
+      + _talentTh('ctc_current','Current') + _talentTh('ctc_expected','Expected') + _talentTh('notice','Notice') + _talentTh('stage','Stage'))
+    + '<th>Phone</th><th>CV</th></tr></thead><tbody>'
     + rows.map(talentRow).join('') + '</tbody></table></div>';
 }
 var _talentPage = 1, _talentLastF = null, _talentSort = {col:'', dir:'desc'}, _talentRows = [];
@@ -16332,11 +16469,12 @@ async function talentFilterSearch(f, keepPage) {
   var html = _note + '<div class="w2-tt-bar"><span>Showing ' + from + '–' + to + ' of <b>' + total + '</b> candidates &middot; ' + (filtered ? 'filtered' : 'newest first') + '</span>'
     + '<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
     + (admin?'<a class="w1-btn" style="display:inline-flex;align-items:center" href="'+API+'/central-db/export?'+_talentQS(f).slice(1)+'" title="Download every result as CSV">&#8681; Export '+total+'</a>':'')
+    + _talentDetailBtn()
     + '<select class="inp tc-per" aria-label="Rows per page" onchange="talentPer(this.value)">'+[30,50,100].map(function(n){ return '<option'+(n===per?' selected':'')+'>'+n+'</option>'; }).join('')+'</select>'
     + '<button class="w1-btn" onclick="talentPage(-1)"' + (_talentPage<=1?' disabled':'') + '>&larr; Prev</button>'
     + '<span>' + _talentPage + ' / ' + pages + '</span><button class="w1-btn" onclick="talentPage(1)"' + (_talentPage>=pages?' disabled':'') + '>Next &rarr;</button></span></div>';
   html += _talentTable(cands, false);
-  html += '<p class="w1-plnote">Tick candidates to add them to a job or tag them. &ldquo;Profile &#8599;&rdquo; opens the full profile in a new tab; &ldquo;CV &#8599;&rdquo; opens only the CV.</p>';
+  html += '<p class="w1-plnote">Click a row to open the full profile in a new tab (this search stays open here). &ldquo;CV &#8599;&rdquo; opens only the CV. Tick candidates to add them to a job or tag them.</p>';
   res.innerHTML = '<div id="tc-dupnote"></div>' + html;
   _talentPaintBulk();
   _talentDupNote();
@@ -16479,7 +16617,7 @@ function _talentRenderAI(){
       + '<div style="font-size:11px;font-weight:700;color:#6B4FA0;margin-bottom:6px">&#10024; AI REASONING</div>'
       + '<div style="font-size:12px;color:#3D2E63;white-space:pre-wrap;line-height:1.5">' + esc(A.reasoning) + '</div></div>';
   }
-  html += '<div class="w2-tt-bar"><span><b>'+A.rows.length+'</b> best matches'+(A.rows.length<A.hits?' after your filters ('+A.hits+' before)':'')+' &middot; searched '+(A.searched||0)+' indexed candidates</span></div>';
+  html += '<div class="w2-tt-bar"><span><b>'+A.rows.length+'</b> best matches'+(A.rows.length<A.hits?' after your filters ('+A.hits+' before)':'')+' &middot; searched '+(A.searched||0)+' indexed candidates</span><span>'+_talentDetailBtn()+'</span></div>';
   html += A.rows.length?_talentTable(A.rows, true):'<div class="w3-empty" style="padding:24px;text-align:center">None of the AI matches pass these filters.</div>';
   res.innerHTML=html; _talentPaintBulk();
 }
@@ -25733,6 +25871,31 @@ document.addEventListener('mousedown',function(e){
 .w2-tt tr.tc-on td{background:#f0fdfa}
 .tc-pool{display:inline-block;font-size:11.5px;color:#475063;background:#f2f4f7;border-radius:6px;padding:1px 7px}
 .tc-tags{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
+/* Talent rows with details (Oct 2026) */
+.w2-tt td.tc-cand{white-space:normal;min-width:280px;max-width:400px;vertical-align:top}
+.w2-tt td.tc-cb,.w2-tt th.tc-cb{min-width:0 !important;width:36px}
+.w2-tt tbody td{vertical-align:top}
+.w2-tt tbody tr:hover td{background:#f8fafc}
+.tc-role{font-size:12px;color:#475063;margin-top:1px}
+.tc-sks{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.tc-sk{font-size:11px;background:#eef4ff;color:#3538cd;border-radius:6px;padding:1px 7px;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.tc-sk.mu{background:#f1f5f9;color:#667085}
+.tc-sum{font-size:12px;color:#344054;line-height:1.45;margin-top:5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tc-meta{font-size:11.5px;color:#667085;margin-top:4px;line-height:1.5}
+.tc-warn{color:#b54708}
+mark.tc-hl{background:#fef08a;color:inherit;border-radius:3px;padding:0 1px}
+.tc-dens{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.tcup-drop{display:flex;flex-direction:column;align-items:center;gap:3px;border:2px dashed #cbd5e1;border-radius:10px;padding:18px;margin-top:12px;cursor:pointer;font-size:13px;color:#334155;text-align:center}
+.tcup-drop span{font-size:11.5px;color:#667085}
+.tcup-drop.on,.tcup-drop:hover{border-color:#0f766e;background:#f0fdf9}
+#tcup-list{margin-top:10px;max-height:300px;overflow:auto}
+.tcup-row{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;padding:8px 0;border-top:1px solid #f1f2f4;font-size:12.5px}
+.tcup-l{min-width:0;flex:1;word-break:break-word}
+.tcup-msg{color:#475063;margin-top:2px}
+.tcup-need{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:300px}
+.tcup-need .inp{width:120px;height:30px;font-size:12px}
+.tc-dens button{border:0;background:#fff;padding:5px 10px;font:inherit;font-size:12px;cursor:pointer;color:#475063}
+.tc-dens button.on{background:#0f766e;color:#fff}
 .tc-tag{font-size:10.5px;background:#fef3c7;color:#92400e;border-radius:6px;padding:0 6px;font-weight:600}
 .tc-score{font-weight:700;font-size:13px}
 .tc-per{height:34px !important;width:auto;padding:0 26px 0 10px !important;font-size:13px !important}
