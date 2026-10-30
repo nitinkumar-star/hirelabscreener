@@ -116,3 +116,22 @@ def test_team_handling(srv):
     m = c.get('/api/talent-map/company?name=Polycab').get_json()['people']
     assert {p['name']: p['team_total'] for p in m} == {'Team Lead One': 46, 'Solo Seller': 2}
     assert 'Team (direct)' in c.get('/api/central-db/export').get_data(as_text=True).splitlines()[0]
+
+
+def test_sales_card_single_save(srv):
+    server, ids = srv
+    c = cl(srv)
+    a = push(c, ids['mA'], 'Card Save', '9000000021', 'Finolex')
+    r = c.put(f'/api/candidates/{a}', json={'gender': 'Male', 'yearly_target': 12.5, 'team_direct': 6, 'team_indirect': 24,
+                                            'product_handles': ['LV Switchgear', 'MV Switchgear', 'lv switchgear'],
+                                            'function_tags': ['Sales', 'Key Accounts'], 'geography_tags': 'North India, UP'})
+    assert r.status_code == 200, r.get_json()
+    d = c.get(f'/api/candidates/{a}').get_json()
+    assert (d['gender'], d['yearly_target'], d['team_direct'], d['team_indirect']) == ('Male', 12.5, 6, 24)
+    assert json.loads(d['product_handles']) == ['LV Switchgear', 'MV Switchgear']
+    assert json.loads(d['function_tags']) == ['Sales', 'Key Accounts'] and json.loads(d['geography_tags']) == ['North India', 'UP']
+    # saving the same again adds no journey noise
+    hist = lambda: [h['note'] for h in c.get(f'/api/candidates/{a}').get_json().get('history', []) if 'Product handling' in (h.get('note') or '')]
+    n = len(hist())
+    c.put(f'/api/candidates/{a}', json={'product_handles': ['LV Switchgear', 'MV Switchgear']})
+    assert len(hist()) == n

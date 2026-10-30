@@ -21353,7 +21353,8 @@ def update_candidate(cid):
               'notice_period','location','preferred_location','phone','email','qualification','specialization','career_summary',
               'key_skills','secondary_skills','recruiter_feedback','client_feedback','general_comments',
               'linkedin_url','ai_insight_cv','ctc_offered','offer_date',
-              'source_channel','referrer_name','gender','yearly_target','team_direct','team_indirect']
+              'source_channel','referrer_name','gender','yearly_target','team_direct','team_indirect',
+              'product_handles','function_tags','geography_tags']
     if 'gender' in d:
         d = dict(d); d['gender'] = norm_gender(d.get('gender'))
     if 'yearly_target' in d:
@@ -21361,6 +21362,9 @@ def update_candidate(cid):
     for _tk in ('team_direct', 'team_indirect'):
         if _tk in d:
             d = dict(d); d[_tk] = clean_team(d.get(_tk))
+    for _tk in ('product_handles', 'function_tags', 'geography_tags'):   # Sales profile card: one save
+        if _tk in d:
+            d = dict(d); d[_tk] = clean_tag_list(d.get(_tk))
     sets = []; vals = []
     for f in fields:
         if f in d:
@@ -21385,13 +21389,20 @@ def update_candidate(cid):
             'notice_period':'Notice period','location':'Location','preferred_location':'Preferred location','phone':'Phone','email':'Email',
             'qualification':'Qualification','specialization':'Specialization','career_summary':'Summary',
             'linkedin_url':'LinkedIn URL','ai_insight_cv':'AI Insight (CV)','gender':'Gender',
-            'yearly_target':'Yearly target (Rs Cr)','team_direct':'Team (direct)','team_indirect':'Team (indirect)'
+            'yearly_target':'Yearly target (Rs Cr)','team_direct':'Team (direct)','team_indirect':'Team (indirect)',
+            'product_handles':'Product handling','function_tags':'Function','geography_tags':'Geography'
         }
         changes = []
         for f, lbl in labels.items():
             if f in d:
                 old_v = c[f] if f in c.keys() else ''
                 new_v = d[f]
+                if isinstance(new_v, list):               # tag lists: compare as lists, show joined
+                    try: old_l = json.loads(old_v or '[]')
+                    except Exception: old_l = []
+                    if old_l != new_v:
+                        changes.append(f"{lbl}: {', '.join(old_l) or '—'} \u2192 {', '.join(new_v) or '—'}")
+                    continue
                 if str(old_v or '') != str(new_v or ''):
                     if new_v not in (None, '', 0):
                         changes.append(f"{lbl}: {old_v or '—'} \u2192 {new_v}")
