@@ -99,6 +99,7 @@ def clean_fields(j):
         'qualification': _s(j.get('qualification'), 120),
         'key_skills': skills,
         'career_summary': _s(j.get('career_summary'), 600),
+        'gender': _core().norm_gender(j.get('gender')),
         'work_history': wh,
     }
 
@@ -112,7 +113,7 @@ PARSE_PROMPT = (
     'notice_period (int days; "Immediate"=0, "15 days or less"=15, "1 month"=30, "2 months"=60, '
     '"3 months"=90), location (current city), preferred_location, qualification (highest degree), '
     'key_skills (array, max 10, domain/technical skills only), career_summary (2 sentences), '
-    'work_history (array of {company, designation, duration}, newest first, max 6). '
+    'work_history (array of {company, designation, duration}, newest first, max 6), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
     'Prefer the NAUKRI PAGE for CTC, notice period and location; prefer the CV for skills and history. '
     'Use "" for unknown text and 0 for unknown numbers. Never invent values.')
 
@@ -167,6 +168,7 @@ def assistant_parse():
         return ns._ai_error(core, exc)
     fields = clean_fields(j)
     fields['phone'], fields['email'] = phone, email
+    fields['gender'] = core.detect_gender(page, resume) or fields['gender']
     # The profile text used for scoring: the pasted page if there is one,
     # else a compact profile built from the parsed fields.
     if page.strip():

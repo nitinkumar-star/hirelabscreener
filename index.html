@@ -7214,14 +7214,14 @@ function keyFactsCardHTML(c){
     + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
     + infoRow('Expected CTC', c.ctc_expected?('\u20B9'+c.ctc_expected+' LPA'):'') + infoRow('Notice', c.notice_period?(/^\d+$/.test(String(c.notice_period).trim())?(c.notice_period+' days'):String(c.notice_period)):'')
     + (c.ctc_offered?infoRow('Offered CTC','\u20B9'+c.ctc_offered+' LPA'+(c.offer_date?(' \u00b7 '+esc(c.offer_date)):'')):'')
-    + infoRow('Location', c.location) + infoRow('Preferred', c.preferred_location)
+    + infoRow('Location', c.location) + infoRow('Preferred', c.preferred_location) + infoRow('Gender', c.gender)
     + infoRow('Qualification', c.qualification) + infoRow('Specialization', c.specialization) + infoRow('Industry', c.industry_background||c.industry)
     + phoneRow + emailRow
     + (c.linkedin_url?'<div class="info-row"><span class="info-label">LinkedIn</span><span class="info-value"><a href="'+esc(c.linkedin_url)+'" target="_blank" style="color:#0A66C2;text-decoration:none;word-break:break-all">&#128279; Profile</a></span></div>':'')
     +'</div>'
     +'<div id="pd-edit" style="display:none">'
     +'<div class="g2">'+sInp('pf-company','Current Company',c.company||'')+sInp('pf-designation','Designation',c.designation||'')+'</div>'
-    +'<div class="g3" style="margin-top:8px">'+sNum('pf-exp','Experience (yrs)',c.experience||'')+sNum('pf-ctc','Current CTC (LPA)',c.ctc_current||'')+sNum('pf-ectc','Expected CTC (LPA)',c.ctc_expected||'')+sNum('pf-notice','Notice (days)',c.notice_period||'')+sInp('pf-location','Location',c.location||'')+sInp('pf-preferred_location','Preferred Location',c.preferred_location||'')+sInp('pf-qualification','Qualification',c.qualification||'')+sInp('pf-specialization','Specialization',c.specialization||'')+sInp('pf-phone','Phone',c.phone||'','Add when called')+sInp('pf-email','Email',c.email||'','candidate@email.com')+'</div>'
+    +'<div class="g3" style="margin-top:8px">'+sNum('pf-exp','Experience (yrs)',c.experience||'')+sNum('pf-ctc','Current CTC (LPA)',c.ctc_current||'')+sNum('pf-ectc','Expected CTC (LPA)',c.ctc_expected||'')+sNum('pf-notice','Notice (days)',c.notice_period||'')+sInp('pf-location','Location',c.location||'')+sInp('pf-preferred_location','Preferred Location',c.preferred_location||'')+sInp('pf-qualification','Qualification',c.qualification||'')+sInp('pf-specialization','Specialization',c.specialization||'')+sGender('pf-gender',c.gender||'')+sInp('pf-phone','Phone',c.phone||'','Add when called')+sInp('pf-email','Email',c.email||'','candidate@email.com')+'</div>'
     +'<div class="g2" style="margin-top:8px">'+sNum('pf-ctc_offered','Offered CTC (LPA)',c.ctc_offered||'')+sInp('pf-offer_date','Offer date',c.offer_date||'','e.g. 12 Aug 2026')+'</div>'
     +'<div style="margin-top:8px">'+sInp('pf-linkedin_url','LinkedIn URL',c.linkedin_url||'','https://www.linkedin.com/in/...')+'</div>'
     +'<textarea id="pf-ai_insight_cv" class="inp" rows="3" style="width:100%;margin-top:8px;font-size:12px;display:none">'+esc(c.ai_insight_cv||'')+'</textarea>'
@@ -8694,6 +8694,7 @@ async function saveProfile(cid){
     company:v('pf-company'),designation:v('pf-designation'),experience:parseFloat(v('pf-exp'))||0,
     ctc_current:parseFloat(v('pf-ctc'))||0,ctc_expected:parseFloat(v('pf-ectc'))||0,
     notice_period:parseInt(v('pf-notice'))||0,location:v('pf-location'),preferred_location:v('pf-preferred_location'),qualification:v('pf-qualification'),specialization:v('pf-specialization'),phone:v('pf-phone'),email:v('pf-email'),
+    gender:(document.getElementById('pf-gender')||{}).value||'',
     linkedin_url:v('pf-linkedin_url'),ai_insight_cv:v('pf-ai_insight_cv'),
     ctc_offered:parseFloat(v('pf-ctc_offered'))||0,offer_date:v('pf-offer_date'),
     key_skills:skills,career_summary:v('pf-summary')
@@ -8713,7 +8714,7 @@ async function parseSnippet(cid){
   const setF=(id,val)=>{const el=document.getElementById(id);if(el&&val!=null&&val!==''&&val!==0){el.value=val;el.style.background='#E1F5EE';setTimeout(()=>{el.style.background='';},1200);}};
   setF('pf-company',d.company);setF('pf-designation',d.designation);setF('pf-exp',d.experience);
   setF('pf-ctc',d.ctc_current);setF('pf-ectc',d.ctc_expected);setF('pf-notice',d.notice_period);
-  setF('pf-location',d.location);setF('pf-preferred_location',d.preferred_location);setF('pf-qualification',d.qualification);setF('pf-specialization',d.specialization);setF('pf-phone',d.phone);setF('pf-email',d.email);
+  setF('pf-location',d.location);setF('pf-preferred_location',d.preferred_location);setF('pf-qualification',d.qualification);setF('pf-specialization',d.specialization);setF('pf-phone',d.phone);setF('pf-email',d.email);setF('pf-gender',d.gender);
   setF('pf-linkedin_url',d.linkedin_url);setF('pf-ai_insight_cv',d.ai_insight_cv);
   if(d.key_skills?.length)setF('pf-skills',d.key_skills.join(', '));
   if(d.career_summary)setF('pf-summary',d.career_summary);
@@ -12126,6 +12127,7 @@ function expRangeText(mn,mx){
 }
 function numfield(id,lbl,val){return '<div class="fg-row"><label>'+lbl+'</label><input class="inp" id="'+id+'" type="number" step="0.5" value="'+esc(val)+'"></div>';}
 function sInp(id,lbl,val,ph){return '<div><div class="lbl">'+lbl+'</div><input class="inp" id="'+id+'" value="'+esc(val)+'"'+(ph?' placeholder="'+esc(ph)+'"':'')+' style="width:100%"></div>';}
+function sGender(id,val){ return '<div><div class="lbl">Gender</div><select class="inp" id="'+id+'" style="width:100%">'+[['','Not known'],['Male','Male'],['Female','Female'],['Other','Other']].map(function(o){ return '<option value="'+o[0]+'"'+(o[0]===(val||'')?' selected':'')+'>'+o[1]+'</option>'; }).join('')+'</select></div>'; }
 function sNum(id,lbl,val){return '<div><div class="lbl">'+lbl+'</div><input class="inp" id="'+id+'" type="number" step="0.5" value="'+esc(val)+'" style="width:100%"></div>';}
 function scoreBar(lbl,pct,color){return '<div style="text-align:center"><div style="font-size:24px;font-weight:500;color:'+color+'">'+pct+'<span style="font-size:13px">%</span></div><div style="font-size:10px;color:#888">'+lbl+'</div><div style="height:5px;background:#eee;border-radius:3px;margin-top:5px;overflow:hidden"><div style="height:100%;background:'+color+';border-radius:3px;width:'+pct+'%"></div></div></div>';}
 
@@ -16192,7 +16194,7 @@ async function runReindex(force) {
 // whole database. Keyword box = boolean search; "AI match" ranks by meaning and
 // the same filters still apply. Tick rows to add them to a job, tag or export.
 var _talentF = null, _talentSel = {}, _talentFacets = null, _talentMode = 'keyword', _talentAI = null, _talentPer = 30;
-var _TF_IDS = ['tf-skills','tf-company','tf-loc','tf-phone','tf-emin','tf-emax','tf-cmin','tf-cmax','tf-notice','tf-job','tf-stage','tf-source','tf-cv','tf-added'];
+var _TF_IDS = ['tf-skills','tf-company','tf-loc','tf-phone','tf-emin','tf-emax','tf-cmin','tf-cmax','tf-notice','tf-job','tf-stage','tf-source','tf-cv','tf-gender','tf-added'];
 function _tfSel(id,label,opts){ return '<label>'+label+'<select class="inp" id="'+id+'">'+opts+'</select></label>'; }
 function _talentSearchHTML(){
   var rec=_isRecruiterScoped();
@@ -16221,6 +16223,7 @@ function _talentSearchHTML(){
     +   _tfSel('tf-stage','Stage','<option value="">Any</option>')
     +   _tfSel('tf-source','Source','<option value="">Any</option>')
     +   _tfSel('tf-cv','CV','<option value="">Any</option><option value="1">Has CV</option><option value="0">No CV</option>')
+    +   _tfSel('tf-gender','Gender','<option value="">Any</option><option value="Female">Female</option><option value="Male">Male</option><option value="Other">Other</option><option value="unknown">Not known</option>')
     +   _tfSel('tf-added','Added','<option value="">Any time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last year</option>')
     + '</div>'
     + '<div class="w2-ts-foot"><button class="w1-btn pri" onclick="runTalentSearch()">Apply filters</button><button class="w1-btn" onclick="clearTalentFilters(true)">Clear all</button>'
@@ -16259,11 +16262,11 @@ async function _talentFillMenus(){
 function readTalentFilters() {
   var v = function(id){ var e=document.getElementById(id); return e?String(e.value||'').trim():''; };
   return {company:v('tf-company'), loc:v('tf-loc'), emin:v('tf-emin'), emax:v('tf-emax'), cmin:v('tf-cmin'), cmax:v('tf-cmax'), notice:v('tf-notice'),
-    skills:v('tf-skills'), skmode:v('tf-skmode'), phone:v('tf-phone'), job:v('tf-job'), stage:v('tf-stage'), source:v('tf-source'), cv:v('tf-cv'), added:v('tf-added')};
+    skills:v('tf-skills'), skmode:v('tf-skmode'), phone:v('tf-phone'), job:v('tf-job'), stage:v('tf-stage'), source:v('tf-source'), cv:v('tf-cv'), gender:v('tf-gender'), added:v('tf-added')};
 }
 function _talentRestore(){
   var f=_talentF; if(!f) return;
-  var map={'tf-company':'company','tf-loc':'loc','tf-emin':'emin','tf-emax':'emax','tf-cmin':'cmin','tf-cmax':'cmax','tf-notice':'notice','tf-skills':'skills','tf-skmode':'skmode','tf-phone':'phone','tf-job':'job','tf-stage':'stage','tf-source':'source','tf-cv':'cv','tf-added':'added'};
+  var map={'tf-company':'company','tf-loc':'loc','tf-emin':'emin','tf-emax':'emax','tf-cmin':'cmin','tf-cmax':'cmax','tf-notice':'notice','tf-skills':'skills','tf-skmode':'skmode','tf-phone':'phone','tf-job':'job','tf-stage':'stage','tf-source':'source','tf-cv':'cv','tf-gender':'gender','tf-added':'added'};
   Object.keys(map).forEach(function(id){ var e=document.getElementById(id); if(e && f[map[id]]!=null) e.value=f[map[id]]; });
   var q=document.getElementById('ai-search-q'); if(q && f.q!=null && !q.value) q.value=f.q;
 }
@@ -16272,7 +16275,7 @@ function clearTalentFilters(run) {
   _talentF=null; _talentSel={};
   if(run) runTalentSearch();
 }
-var _TF_LABEL={q:'Search',skills:'Skills',company:'Company',loc:'Location',phone:'Phone',emin:'Exp ≥',emax:'Exp ≤',cmin:'CTC ≥',cmax:'CTC ≤',notice:'Notice ≤',job:'Job',stage:'Stage',source:'Source',cv:'CV',added:'Added'};
+var _TF_LABEL={q:'Search',skills:'Skills',company:'Company',loc:'Location',phone:'Phone',emin:'Exp ≥',emax:'Exp ≤',cmin:'CTC ≥',cmax:'CTC ≤',notice:'Notice ≤',job:'Job',stage:'Stage',source:'Source',cv:'CV',gender:'Gender',added:'Added'};
 function _talentChips(f){
   var box=document.getElementById('tc-chips'); if(!box) return;
   var fac=_talentFacets||{};
@@ -16280,6 +16283,7 @@ function _talentChips(f){
     if(k==='job'){ if(v==='central') return 'Central Database'; if(v==='jobs') return 'On any job'; var j=(fac.jobs||[]).find(function(x){return String(x.id)===String(v);}); return j?j.role:v; }
     if(k==='source'){ if(v==='__none__') return 'Not recorded'; var s=(fac.sources||[]).find(function(x){return x.value===v;}); return s?(s.label||v):v; }
     if(k==='cv') return v==='1'?'has CV':'no CV';
+    if(k==='gender') return v==='unknown'?'not known':v;
     if(k==='added') return 'last '+v+' days';
     if(k==='stage') return stageLabel(v);
     if(k==='skills' && f.skmode==='any') return v+' (any)';
@@ -16291,7 +16295,7 @@ function _talentChips(f){
   }).join(''):'';
 }
 function talentDropFilter(k){
-  var ids={q:'ai-search-q',skills:'tf-skills',company:'tf-company',loc:'tf-loc',phone:'tf-phone',emin:'tf-emin',emax:'tf-emax',cmin:'tf-cmin',cmax:'tf-cmax',notice:'tf-notice',job:'tf-job',stage:'tf-stage',source:'tf-source',cv:'tf-cv',added:'tf-added'};
+  var ids={q:'ai-search-q',skills:'tf-skills',company:'tf-company',loc:'tf-loc',phone:'tf-phone',emin:'tf-emin',emax:'tf-emax',cmin:'tf-cmin',cmax:'tf-cmax',notice:'tf-notice',job:'tf-job',stage:'tf-stage',source:'tf-source',cv:'tf-cv',gender:'tf-gender',added:'tf-added'};
   var e=document.getElementById(ids[k]); if(e) e.value='';
   if(_talentF) delete _talentF[k];
   runTalentSearch();
@@ -16309,7 +16313,7 @@ function _talentQS(f){
   add('q',f.q); add('company',f.company); add('location',f.loc); add('exp_min',f.emin); add('exp_max',f.emax);
   add('ctc_min',f.cmin); add('ctc_max',f.cmax); add('notice',f.notice); add('skills',f.skills);
   if(f.skills && f.skmode==='any') add('skills_mode','any');
-  add('phone',f.phone); add('job',f.job); add('stage',f.stage); add('source',f.source); add('has_cv',f.cv); add('added_days',f.added);
+  add('phone',f.phone); add('job',f.job); add('stage',f.stage); add('source',f.source); add('has_cv',f.cv); add('gender',f.gender); add('added_days',f.added);
   return qs;
 }
 // Results table (Oct 2026): every row shows enough to decide without opening —
@@ -16355,6 +16359,7 @@ function talentRow(c) {
   facts.push('<span title="Current / expected CTC">&#8377; '+(cur?esc(String(cur))+' Lacs':'<span class="mu">CTC n/a</span>')+(ex?' <span class="mu">&rarr; '+esc(String(ex))+' L expected</span>':'')+'</span>');
   facts.push('<span title="Location">&#128205; '+(c.location?hl(c.location):'<span class="mu">n/a</span>')+'</span>');
   if(c.notice_period) facts.push('<span title="Notice period">&#9201; '+esc(String(c.notice_period))+' days notice</span>');
+  if(c.gender) facts.push('<span title="Gender">&#128100; '+esc(c.gender)+'</span>');
   var rows=[];
   var curRole=[c.designation,c.company].filter(Boolean);
   if(curRole.length) rows.push(['Current', hl(curRole.join(' at '))]);
