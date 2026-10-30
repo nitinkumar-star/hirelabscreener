@@ -33,7 +33,7 @@ a{color:var(--blue)}
 .empty{color:var(--muted);text-align:center;padding:40px}
 .head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin:4px 0 14px}
 .head h2{margin:0;font-size:24px;color:var(--navy)}
-.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:12px;margin-bottom:16px}
 .kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px;min-width:0}
 .kpi b{display:block;font-size:22px;color:var(--navy);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .kpi span{font-size:12px;color:var(--muted)}
@@ -158,6 +158,7 @@ td .m{color:var(--muted);font-size:12px}
       ['Avg experience', exps.length ? num(exps.reduce(function(a, b){ return a + b; }, 0) / exps.length) + ' yrs' : '—', exps.length + ' known'],
       ['CTC range', OPT.hideCtc ? 'Hidden' : (ctcs.length ? num(Math.min.apply(null, ctcs)) + '–' + num(Math.max.apply(null, ctcs)) + ' L' : '—'), 'per annum'],
       ['Yearly targets', tg.length ? '₹' + num(tg.reduce(function(a, b){ return a + b; }, 0)) + ' Cr' : '—', tg.length ? ppl(tg.length) + ' · top ₹' + num(Math.max.apply(null, tg)) + ' Cr' : 'add on profiles'],
+      ['Team handled', (function(){ var t = all.reduce(function(a, p){ return a + (p.team_total || 0); }, 0); return t ? t + ' people' : '—'; })(), (function(){ var n = all.filter(function(p){ return p.team_total; }).length; return n ? 'across ' + ppl(n) : 'add on profiles'; })()],
       ['Top product', prods.length ? prods[0][0] : '—', prods.length ? ppl(prods[0][1]) : ''],
       ['Top geography', geos.length ? geos[0][0] : '—', geos.length ? ppl(geos[0][1]) : '']];
     var h = '<div class="printhead">Talent map prepared by HireLab · ' + new Date().toLocaleDateString('en-IN', {day: 'numeric', month: 'short', year: 'numeric'}) + '</div>'
@@ -183,7 +184,7 @@ td .m{color:var(--muted);font-size:12px}
     var th = function(k, l){ return '<th data-s="' + k + '">' + l + (OPT.sort === k ? (OPT.dir < 0 ? ' ▼' : ' ▲') : '') + '</th>'; };
     h += '<div class="card"><div class="row" style="justify-content:space-between"><div class="h">Side-by-side comparison</div><span class="sub">' + list.length + ' people' + (OPT.product || OPT.geo ? ' (filtered)' : '') + '</span></div><div class="scroll"><table><thead><tr>'
       + th('name', OPT.client ? 'Candidate' : 'Name') + th('designation', 'Designation') + th('experience', 'Exp') + '<th class="ns">Product handling</th><th class="ns">Geography</th>'
-      + th('yearly_target', 'Yearly target') + (OPT.hideCtc ? '' : th('ctc_current', 'CTC')) + th('notice_period', 'Notice') + '<th class="ns">Location</th>'
+      + th('yearly_target', 'Yearly target') + th('team_total', 'Team') + (OPT.hideCtc ? '' : th('ctc_current', 'CTC')) + th('notice_period', 'Notice') + '<th class="ns">Location</th>'
       + (OPT.client ? '' : '<th class="ns noprint"></th>') + '</tr></thead><tbody>'
       + list.map(function(p){
           var i = idx[p.id];
@@ -195,6 +196,7 @@ td .m{color:var(--muted);font-size:12px}
             + '<td>' + (p.products.length ? p.products.map(function(x){ return '<span class="tg">' + esc(x) + '</span>'; }).join('') : '<span class="mu">—</span>') + '</td>'
             + '<td>' + (p.geography.length ? p.geography.map(function(x){ return '<span class="tg g">' + esc(x) + '</span>'; }).join('') : '<span class="mu">—</span>') + '</td>'
             + '<td>' + (p.yearly_target ? '<div class="tbar"><span style="width:' + Math.max(4, Math.round(90 * p.yearly_target / (maxT || 1))) + 'px"></span>₹' + num(p.yearly_target) + ' Cr</div>' : '<span class="mu">—</span>') + '</td>'
+            + '<td>' + (p.team_total ? '<b>' + p.team_total + '</b><div class="m">' + (p.team_direct || 0) + ' direct · ' + (p.team_indirect || 0) + ' indirect</div>' : '<span class="mu">—</span>') + '</td>'
             + (OPT.hideCtc ? '' : '<td>' + (p.ctc_current ? num(p.ctc_current) + ' L' : '<span class="mu">—</span>') + '</td>')
             + '<td>' + (p.notice_period ? p.notice_period + ' d' : '<span class="mu">—</span>') + '</td>'
             + '<td>' + esc(p.location || '—') + '</td>'

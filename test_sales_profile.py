@@ -96,3 +96,23 @@ def test_talent_map(srv):
     o = cl(srv, 'B').get('/api/talent-map/company?former=1&name=KEI Wires and Cables').get_json()
     assert o['people'] == [] and o['former'] == []
     assert c.get('/talent-map').status_code == 200
+
+
+def test_team_handling(srv):
+    server, ids = srv
+    c = cl(srv)
+    a = push(c, ids['mA'], 'Team Lead One', '9000000011', 'Polycab', team_direct='6', team_indirect=40)
+    d = c.get(f'/api/candidates/{a}').get_json()
+    assert d['team_direct'] == 6 and d['team_indirect'] == 40
+    push(c, ids['mA'], 'Team Lead One', '9000000011', 'Polycab')                 # blank push keeps it
+    assert c.get(f'/api/candidates/{a}').get_json()['team_direct'] == 6
+    b = push(c, ids['mA'], 'Solo Seller', '9000000012', 'Polycab')
+    assert c.put(f'/api/candidates/{b}', json={'team_direct': '2', 'team_indirect': ''}).status_code == 200
+    d = c.get(f'/api/candidates/{b}').get_json()
+    assert d['team_direct'] == 2 and d['team_indirect'] is None
+    ids_of = lambda q: [x['id'] for x in c.get('/api/central-db/search?' + q).get_json()['candidates']]
+    assert ids_of('team_min=10') == [a] and set(ids_of('team_min=2')) == {a, b}
+    assert ids_of('company=polycab&sort=team&dir=desc') == [a, b]
+    m = c.get('/api/talent-map/company?name=Polycab').get_json()['people']
+    assert {p['name']: p['team_total'] for p in m} == {'Team Lead One': 46, 'Solo Seller': 2}
+    assert 'Team (direct)' in c.get('/api/central-db/export').get_data(as_text=True).splitlines()[0]

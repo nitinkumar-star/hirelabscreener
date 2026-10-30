@@ -7272,15 +7272,14 @@ function keyFactsCardHTML(c){
     + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
     + infoRow('Expected CTC', c.ctc_expected?('\u20B9'+c.ctc_expected+' LPA'):'') + infoRow('Notice', c.notice_period?(/^\d+$/.test(String(c.notice_period).trim())?(c.notice_period+' days'):String(c.notice_period)):'')
     + (c.ctc_offered?infoRow('Offered CTC','\u20B9'+c.ctc_offered+' LPA'+(c.offer_date?(' \u00b7 '+esc(c.offer_date)):'')):'')
-    + infoRow('Location', c.location) + infoRow('Preferred', c.preferred_location) + infoRow('Gender', c.gender)
-    + infoRow('Yearly target', c.yearly_target?('\u20B9'+c.yearly_target+' Cr / year'):'')
+    + infoRow('Location', c.location) + infoRow('Preferred', c.preferred_location)
     + infoRow('Qualification', c.qualification) + infoRow('Specialization', c.specialization) + infoRow('Industry', c.industry_background||c.industry)
     + phoneRow + emailRow
     + (c.linkedin_url?'<div class="info-row"><span class="info-label">LinkedIn</span><span class="info-value"><a href="'+esc(c.linkedin_url)+'" target="_blank" style="color:#0A66C2;text-decoration:none;word-break:break-all">&#128279; Profile</a></span></div>':'')
     +'</div>'
     +'<div id="pd-edit" style="display:none">'
     +'<div class="g2">'+sInp('pf-company','Current Company',c.company||'')+sInp('pf-designation','Designation',c.designation||'')+'</div>'
-    +'<div class="g3" style="margin-top:8px">'+sNum('pf-exp','Experience (yrs)',c.experience||'')+sNum('pf-ctc','Current CTC (LPA)',c.ctc_current||'')+sNum('pf-ectc','Expected CTC (LPA)',c.ctc_expected||'')+sNum('pf-notice','Notice (days)',c.notice_period||'')+sInp('pf-location','Location',c.location||'')+sInp('pf-preferred_location','Preferred Location',c.preferred_location||'')+sInp('pf-qualification','Qualification',c.qualification||'')+sInp('pf-specialization','Specialization',c.specialization||'')+sGender('pf-gender',c.gender||'')+sNum('pf-yearly_target','Yearly target (\u20B9 Cr)',c.yearly_target||'')+sInp('pf-phone','Phone',c.phone||'','Add when called')+sInp('pf-email','Email',c.email||'','candidate@email.com')+'</div>'
+    +'<div class="g3" style="margin-top:8px">'+sNum('pf-exp','Experience (yrs)',c.experience||'')+sNum('pf-ctc','Current CTC (LPA)',c.ctc_current||'')+sNum('pf-ectc','Expected CTC (LPA)',c.ctc_expected||'')+sNum('pf-notice','Notice (days)',c.notice_period||'')+sInp('pf-location','Location',c.location||'')+sInp('pf-preferred_location','Preferred Location',c.preferred_location||'')+sInp('pf-qualification','Qualification',c.qualification||'')+sInp('pf-specialization','Specialization',c.specialization||'')+sInp('pf-phone','Phone',c.phone||'','Add when called')+sInp('pf-email','Email',c.email||'','candidate@email.com')+'</div>'
     +'<div class="g2" style="margin-top:8px">'+sNum('pf-ctc_offered','Offered CTC (LPA)',c.ctc_offered||'')+sInp('pf-offer_date','Offer date',c.offer_date||'','e.g. 12 Aug 2026')+'</div>'
     +'<div style="margin-top:8px">'+sInp('pf-linkedin_url','LinkedIn URL',c.linkedin_url||'','https://www.linkedin.com/in/...')+'</div>'
     +'<textarea id="pf-ai_insight_cv" class="inp" rows="3" style="width:100%;margin-top:8px;font-size:12px;display:none">'+esc(c.ai_insight_cv||'')+'</textarea>'
@@ -7356,7 +7355,14 @@ function renderProfileDetail(c){
   var productTags=[]; try{productTags=JSON.parse(c.product_handles||'[]');}catch(e){}
   var funcTags=[]; try{funcTags=JSON.parse(c.function_tags||'[]');}catch(e){}
   var geoTags=[]; try{geoTags=JSON.parse(c.geography_tags||'[]');}catch(e){}
-  var tagsCard='<div class="cp-card2"><div class="cp-lbl2">Sales profile <span style="font-weight:400;color:var(--muted);font-size:11px">&middot; type and press Enter, then Save &middot; searchable in Talent and shown on the Company Talent Map</span></div><div style="display:flex;gap:14px;flex-wrap:wrap">'
+  var _n=function(v){ return (v===null||v===undefined)?'':v; };
+  var tagsCard='<div class="cp-card2" id="cp-sales"><div class="cp-lbl2">Sales profile <span style="font-weight:400;color:var(--muted);font-size:11px">&middot; searchable in Talent and shown on the Company Talent Map</span></div>'
+    +'<div class="sp-grid">'+sGender('sp-gender',c.gender||'')
+    +'<div><div class="lbl">Yearly target (&#8377; Cr)</div><input class="inp" id="sp-target" type="number" step="0.5" min="0" value="'+esc(_n(c.yearly_target))+'" placeholder="e.g. 12.5" style="width:100%"></div>'
+    +'<div><div class="lbl">Team handling &middot; direct</div><input class="inp" id="sp-tdirect" type="number" min="0" step="1" value="'+esc(_n(c.team_direct))+'" placeholder="Reporting to them" style="width:100%"></div>'
+    +'<div><div class="lbl">Team handling &middot; indirect</div><input class="inp" id="sp-tindirect" type="number" min="0" step="1" value="'+esc(_n(c.team_indirect))+'" placeholder="Through their team" style="width:100%"></div>'
+    +'<div style="display:flex;align-items:flex-end;gap:8px"><button class="btn btn-g" style="font-size:11px" onclick="saveSalesProfile('+c.id+')">Save</button><span id="sp-status" style="font-size:10.5px;color:#1D9E75"></span></div></div>'
+    +'<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px">'
     +'<div style="flex:1;min-width:200px;position:relative"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div class="cp-lbl2" style="margin:0">Product Handling</div><button class="btn btn-g tag-save-btn" data-cid="'+c.id+'" data-tagtype="product" style="font-size:10px;padding:4px 10px">Save</button></div>'
     +'<div class="tag-input-box" id="product-tagbox" data-cid="'+c.id+'" data-tagtype="product">'+productTags.map(function(t){return '<span class="tag-chip" data-tag="'+esc(t)+'">'+esc(t)+'<span class="tag-x" data-remove="'+esc(t)+'">&times;</span></span>';}).join('')+'<input class="tag-text-inp" id="product-tag-inp" placeholder="e.g. LV Switchgear..."></div>'
     +'<div id="product-suggest" class="tag-suggest" style="display:none"></div><div id="product-tag-status" style="font-size:10px;color:#1D9E75;margin-top:4px;min-height:12px"></div></div>'
@@ -8757,8 +8763,7 @@ async function saveProfile(cid){
     company:v('pf-company'),designation:v('pf-designation'),experience:parseFloat(v('pf-exp'))||0,
     ctc_current:parseFloat(v('pf-ctc'))||0,ctc_expected:parseFloat(v('pf-ectc'))||0,
     notice_period:parseInt(v('pf-notice'))||0,location:v('pf-location'),preferred_location:v('pf-preferred_location'),qualification:v('pf-qualification'),specialization:v('pf-specialization'),phone:v('pf-phone'),email:v('pf-email'),
-    gender:(document.getElementById('pf-gender')||{}).value||'',
-    yearly_target:(document.getElementById('pf-yearly_target')||{}).value||'',
+
     linkedin_url:v('pf-linkedin_url'),ai_insight_cv:v('pf-ai_insight_cv'),
     ctc_offered:parseFloat(v('pf-ctc_offered'))||0,offer_date:v('pf-offer_date'),
     key_skills:skills,career_summary:v('pf-summary')
@@ -8778,7 +8783,7 @@ async function parseSnippet(cid){
   const setF=(id,val)=>{const el=document.getElementById(id);if(el&&val!=null&&val!==''&&val!==0){el.value=val;el.style.background='#E1F5EE';setTimeout(()=>{el.style.background='';},1200);}};
   setF('pf-company',d.company);setF('pf-designation',d.designation);setF('pf-exp',d.experience);
   setF('pf-ctc',d.ctc_current);setF('pf-ectc',d.ctc_expected);setF('pf-notice',d.notice_period);
-  setF('pf-location',d.location);setF('pf-preferred_location',d.preferred_location);setF('pf-qualification',d.qualification);setF('pf-specialization',d.specialization);setF('pf-phone',d.phone);setF('pf-email',d.email);setF('pf-gender',d.gender);
+  setF('pf-location',d.location);setF('pf-preferred_location',d.preferred_location);setF('pf-qualification',d.qualification);setF('pf-specialization',d.specialization);setF('pf-phone',d.phone);setF('pf-email',d.email);setF('sp-gender',d.gender);
   setF('pf-linkedin_url',d.linkedin_url);setF('pf-ai_insight_cv',d.ai_insight_cv);
   if(d.key_skills?.length)setF('pf-skills',d.key_skills.join(', '));
   if(d.career_summary)setF('pf-summary',d.career_summary);
@@ -12192,6 +12197,13 @@ function expRangeText(mn,mx){
 function numfield(id,lbl,val){return '<div class="fg-row"><label>'+lbl+'</label><input class="inp" id="'+id+'" type="number" step="0.5" value="'+esc(val)+'"></div>';}
 function sInp(id,lbl,val,ph){return '<div><div class="lbl">'+lbl+'</div><input class="inp" id="'+id+'" value="'+esc(val)+'"'+(ph?' placeholder="'+esc(ph)+'"':'')+' style="width:100%"></div>';}
 function sGender(id,val){ return '<div><div class="lbl">Gender</div><select class="inp" id="'+id+'" style="width:100%">'+[['','Not known'],['Male','Male'],['Female','Female'],['Other','Other']].map(function(o){ return '<option value="'+o[0]+'"'+(o[0]===(val||'')?' selected':'')+'>'+o[1]+'</option>'; }).join('')+'</select></div>'; }
+async function saveSalesProfile(cid){
+  var g=function(id){ var e=document.getElementById(id); return e?e.value:''; };
+  var st=document.getElementById('sp-status'); if(st){ st.textContent='Saving…'; st.style.color='#888'; }
+  var r=await req('PUT','/candidates/'+cid,{gender:g('sp-gender'), yearly_target:g('sp-target'), team_direct:g('sp-tdirect'), team_indirect:g('sp-tindirect')});
+  if(r && r.ok){ if(st){ st.textContent='Saved'; st.style.color='#1D9E75'; setTimeout(function(){ if(st) st.textContent=''; },2500); } toast('OK','Sales profile saved'); }
+  else { if(st){ st.textContent='Failed'; st.style.color='#E24B4A'; } toast('ERR',(r&&r.error)||'Save failed'); }
+}
 function sNum(id,lbl,val){return '<div><div class="lbl">'+lbl+'</div><input class="inp" id="'+id+'" type="number" step="0.5" value="'+esc(val)+'" style="width:100%"></div>';}
 function scoreBar(lbl,pct,color){return '<div style="text-align:center"><div style="font-size:24px;font-weight:500;color:'+color+'">'+pct+'<span style="font-size:13px">%</span></div><div style="font-size:10px;color:#888">'+lbl+'</div><div style="height:5px;background:#eee;border-radius:3px;margin-top:5px;overflow:hidden"><div style="height:100%;background:'+color+';border-radius:3px;width:'+pct+'%"></div></div></div>';}
 
@@ -16258,7 +16270,7 @@ async function runReindex(force) {
 // whole database. Keyword box = boolean search; "AI match" ranks by meaning and
 // the same filters still apply. Tick rows to add them to a job, tag or export.
 var _talentF = null, _talentSel = {}, _talentFacets = null, _talentMode = 'keyword', _talentAI = null, _talentPer = 30;
-var _TF_IDS = ['tf-skills','tf-company','tf-loc','tf-phone','tf-product','tf-geo','tf-tmin','tf-tmax','tf-emin','tf-emax','tf-cmin','tf-cmax','tf-notice','tf-job','tf-stage','tf-source','tf-cv','tf-gender','tf-added'];
+var _TF_IDS = ['tf-skills','tf-company','tf-loc','tf-phone','tf-product','tf-geo','tf-tmin','tf-tmax','tf-team','tf-emin','tf-emax','tf-cmin','tf-cmax','tf-notice','tf-job','tf-stage','tf-source','tf-cv','tf-gender','tf-added'];
 function _tfSel(id,label,opts){ return '<label>'+label+'<select class="inp" id="'+id+'">'+opts+'</select></label>'; }
 function _talentSearchHTML(){
   var rec=_isRecruiterScoped();
@@ -16282,6 +16294,7 @@ function _talentSearchHTML(){
     + '<div class="w2-ts-f">'
     +   '<label>Product handling<input class="inp" id="tf-product" list="tf-product-l" placeholder="e.g. Cables, LV Switchgear" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()"><datalist id="tf-product-l"></datalist></label>'
     +   '<label>Geography handling<input class="inp" id="tf-geo" list="tf-geo-l" placeholder="e.g. North India, UP" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()"><datalist id="tf-geo-l"></datalist></label>'
+    +   '<label>Team handled &#8805;<input class="inp" id="tf-team" type="number" min="0" placeholder="Direct + indirect" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()"></label>'
     +   '<label>Yearly target (&#8377; Cr)<span class="w2-rng"><input class="inp" id="tf-tmin" type="number" step="0.5" placeholder="Min" aria-label="Target min"><i>–</i><input class="inp" id="tf-tmax" type="number" step="0.5" placeholder="Max" aria-label="Target max"></span></label>'
     + '</div>'
     + '<div class="w2-ts-f tc-more" id="tc-more">'
@@ -16333,11 +16346,11 @@ function readTalentFilters() {
   var v = function(id){ var e=document.getElementById(id); return e?String(e.value||'').trim():''; };
   return {company:v('tf-company'), loc:v('tf-loc'), emin:v('tf-emin'), emax:v('tf-emax'), cmin:v('tf-cmin'), cmax:v('tf-cmax'), notice:v('tf-notice'),
     skills:v('tf-skills'), skmode:v('tf-skmode'), phone:v('tf-phone'), job:v('tf-job'), stage:v('tf-stage'), source:v('tf-source'), cv:v('tf-cv'), gender:v('tf-gender'), added:v('tf-added'),
-    product:v('tf-product'), geo:v('tf-geo'), tmin:v('tf-tmin'), tmax:v('tf-tmax')};
+    product:v('tf-product'), geo:v('tf-geo'), tmin:v('tf-tmin'), tmax:v('tf-tmax'), team:v('tf-team')};
 }
 function _talentRestore(){
   var f=_talentF; if(!f) return;
-  var map={'tf-company':'company','tf-loc':'loc','tf-emin':'emin','tf-emax':'emax','tf-cmin':'cmin','tf-cmax':'cmax','tf-notice':'notice','tf-skills':'skills','tf-skmode':'skmode','tf-phone':'phone','tf-job':'job','tf-stage':'stage','tf-source':'source','tf-cv':'cv','tf-gender':'gender','tf-added':'added','tf-product':'product','tf-geo':'geo','tf-tmin':'tmin','tf-tmax':'tmax'};
+  var map={'tf-company':'company','tf-loc':'loc','tf-emin':'emin','tf-emax':'emax','tf-cmin':'cmin','tf-cmax':'cmax','tf-notice':'notice','tf-skills':'skills','tf-skmode':'skmode','tf-phone':'phone','tf-job':'job','tf-stage':'stage','tf-source':'source','tf-cv':'cv','tf-gender':'gender','tf-added':'added','tf-product':'product','tf-geo':'geo','tf-tmin':'tmin','tf-tmax':'tmax','tf-team':'team'};
   Object.keys(map).forEach(function(id){ var e=document.getElementById(id); if(e && f[map[id]]!=null) e.value=f[map[id]]; });
   var q=document.getElementById('ai-search-q'); if(q && f.q!=null && !q.value) q.value=f.q;
 }
@@ -16346,7 +16359,7 @@ function clearTalentFilters(run) {
   _talentF=null; _talentSel={};
   if(run) runTalentSearch();
 }
-var _TF_LABEL={q:'Search',skills:'Skills',company:'Company',loc:'Location',phone:'Phone',emin:'Exp ≥',emax:'Exp ≤',cmin:'CTC ≥',cmax:'CTC ≤',notice:'Notice ≤',job:'Job',stage:'Stage',source:'Source',cv:'CV',gender:'Gender',added:'Added',product:'Product',geo:'Geography',tmin:'Target ≥ ₹Cr',tmax:'Target ≤ ₹Cr'};
+var _TF_LABEL={q:'Search',skills:'Skills',company:'Company',loc:'Location',phone:'Phone',emin:'Exp ≥',emax:'Exp ≤',cmin:'CTC ≥',cmax:'CTC ≤',notice:'Notice ≤',job:'Job',stage:'Stage',source:'Source',cv:'CV',gender:'Gender',added:'Added',product:'Product',geo:'Geography',tmin:'Target ≥ ₹Cr',tmax:'Target ≤ ₹Cr',team:'Team ≥'};
 function _talentChips(f){
   var box=document.getElementById('tc-chips'); if(!box) return;
   var fac=_talentFacets||{};
@@ -16366,7 +16379,7 @@ function _talentChips(f){
   }).join(''):'';
 }
 function talentDropFilter(k){
-  var ids={q:'ai-search-q',skills:'tf-skills',company:'tf-company',loc:'tf-loc',phone:'tf-phone',emin:'tf-emin',emax:'tf-emax',cmin:'tf-cmin',cmax:'tf-cmax',notice:'tf-notice',job:'tf-job',stage:'tf-stage',source:'tf-source',cv:'tf-cv',gender:'tf-gender',added:'tf-added',product:'tf-product',geo:'tf-geo',tmin:'tf-tmin',tmax:'tf-tmax'};
+  var ids={q:'ai-search-q',skills:'tf-skills',company:'tf-company',loc:'tf-loc',phone:'tf-phone',emin:'tf-emin',emax:'tf-emax',cmin:'tf-cmin',cmax:'tf-cmax',notice:'tf-notice',job:'tf-job',stage:'tf-stage',source:'tf-source',cv:'tf-cv',gender:'tf-gender',added:'tf-added',product:'tf-product',geo:'tf-geo',tmin:'tf-tmin',tmax:'tf-tmax',team:'tf-team'};
   var e=document.getElementById(ids[k]); if(e) e.value='';
   if(_talentF) delete _talentF[k];
   runTalentSearch();
@@ -16385,7 +16398,7 @@ function _talentQS(f){
   add('ctc_min',f.cmin); add('ctc_max',f.cmax); add('notice',f.notice); add('skills',f.skills);
   if(f.skills && f.skmode==='any') add('skills_mode','any');
   add('phone',f.phone); add('job',f.job); add('stage',f.stage); add('source',f.source); add('has_cv',f.cv); add('gender',f.gender); add('added_days',f.added);
-  add('product',f.product); add('geography',f.geo); add('target_min',f.tmin); add('target_max',f.tmax);
+  add('product',f.product); add('geography',f.geo); add('target_min',f.tmin); add('target_max',f.tmax); add('team_min',f.team);
   return qs;
 }
 // Results table (Oct 2026): every row shows enough to decide without opening —
@@ -16433,6 +16446,7 @@ function talentRow(c) {
   if(c.notice_period) facts.push('<span title="Notice period">&#9201; '+esc(String(c.notice_period))+' days notice</span>');
   if(c.gender) facts.push('<span title="Gender">&#128100; '+esc(c.gender)+'</span>');
   if(c.yearly_target) facts.push('<span title="Yearly target">&#127919; &#8377;'+esc(String(c.yearly_target))+' Cr target</span>');
+  if(c.team_direct||c.team_indirect) facts.push('<span title="Team handling">&#128101; Team '+(c.team_direct?esc(String(c.team_direct))+' direct':'')+(c.team_direct&&c.team_indirect?' &middot; ':'')+(c.team_indirect?esc(String(c.team_indirect))+' indirect':'')+'</span>');
   var rows=[];
   var curRole=[c.designation,c.company].filter(Boolean);
   if(curRole.length) rows.push(['Current', hl(curRole.join(' at '))]);
@@ -16473,7 +16487,7 @@ function talentRow(c) {
     +   '<div class="tk-side">'
     +     '<div class="tk-av">'+esc(ini)+'</div>'
     +     (head?'<div class="tk-head">'+hl(head)+'</div>':'')
-    +     (dp?'<a class="tk-btn" href="tel:'+esc(phone)+'" onclick="event.stopPropagation()">&#128222; '+dp+'</a>'
+    +     (dp?'<button type="button" class="tk-btn tk-call" title="Sends the number to the HireLab app on your phone — tap the notification to call" onclick="event.stopPropagation();pushCall(\''+esc(c.phone||'').replace(/'/g,'')+'\',\''+esc(c.name||'').replace(/'/g,'')+'\')">&#128222; Call &middot; '+dp+'</button>'
            +'<a class="tk-btn" href="https://wa.me/'+esc(waNumber(phone))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">&#128172; WhatsApp</a>'
          :'<span class="mu" style="font-size:12px">No phone</span>')
     +     '<div class="tk-ver">'+(c.email?'&#9993; '+esc(c.email):'<span class="tc-warn">No e-mail</span>')+'</div>'
@@ -16575,7 +16589,7 @@ function _talentDetailBtn(){
 }
 var _TC_SORTS=[['','Newest first'],['updated_at:desc','Recently modified'],['name:asc','Name A–Z'],['experience:desc','Experience (high–low)'],
   ['experience:asc','Experience (low–high)'],['ctc_current:desc','Current CTC (high–low)'],['ctc_current:asc','Current CTC (low–high)'],
-  ['ctc_expected:asc','Expected CTC (low–high)'],['notice:asc','Notice (shortest)'],['target:desc','Yearly target (high–low)']];
+  ['ctc_expected:asc','Expected CTC (low–high)'],['notice:asc','Notice (shortest)'],['target:desc','Yearly target (high–low)'],['team:desc','Team handled (largest)']];
 function _talentSortSel(){
   var v=_talentSort.col?(_talentSort.col+':'+_talentSort.dir):'';
   return '<select class="inp tc-per" aria-label="Sort by" onchange="talentSortTo(this.value)">'
@@ -26055,6 +26069,9 @@ mark.tc-hl{background:#fef08a;color:inherit;border-radius:3px;padding:0 1px}
 .tk-head{font-size:12.5px;color:#344054;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .tk-btn{display:block;width:100%;box-sizing:border-box;border:1px solid #1d4ed8;color:#1d4ed8;border-radius:8px;padding:6px 8px;font-size:13px;font-weight:600;text-decoration:none;background:#fff}
 .tk-btn:hover{background:#eff6ff}
+button.tk-btn{cursor:pointer;font-family:inherit}
+.sp-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:8px;align-items:end}
+@media(max-width:900px){.sp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .tk-ver{font-size:11.5px;color:#667085;word-break:break-all}
 .tk-foot{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:#475467;padding:8px 6px 0}
 .tk-foot .tk-cv{font-weight:600;color:#1d4ed8;text-decoration:none}
