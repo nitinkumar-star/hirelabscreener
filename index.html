@@ -7352,27 +7352,8 @@ function renderProfileDetail(c){
   var historyCard='';
 
   // Tags (product / function)
-  var productTags=[]; try{productTags=JSON.parse(c.product_handles||'[]');}catch(e){}
-  var funcTags=[]; try{funcTags=JSON.parse(c.function_tags||'[]');}catch(e){}
-  var geoTags=[]; try{geoTags=JSON.parse(c.geography_tags||'[]');}catch(e){}
-  var _n=function(v){ return (v===null||v===undefined)?'':v; };
-  var tagsCard='<div class="cp-card2" id="cp-sales"><div class="cp-lbl2">Sales profile <span style="font-weight:400;color:var(--muted);font-size:11px">&middot; searchable in Talent and shown on the Company Talent Map</span></div>'
-    +'<div class="sp-grid">'+sGender('sp-gender',c.gender||'')
-    +'<div><div class="lbl">Yearly target (&#8377; Cr)</div><input class="inp" id="sp-target" type="number" step="0.5" min="0" value="'+esc(_n(c.yearly_target))+'" placeholder="e.g. 12.5" style="width:100%"></div>'
-    +'<div><div class="lbl">Team handling &middot; direct</div><input class="inp" id="sp-tdirect" type="number" min="0" step="1" value="'+esc(_n(c.team_direct))+'" placeholder="Reporting to them" style="width:100%"></div>'
-    +'<div><div class="lbl">Team handling &middot; indirect</div><input class="inp" id="sp-tindirect" type="number" min="0" step="1" value="'+esc(_n(c.team_indirect))+'" placeholder="Through their team" style="width:100%"></div>'
-    +'<div style="display:flex;align-items:flex-end;gap:8px"><button class="btn btn-g" style="font-size:11px" onclick="saveSalesProfile('+c.id+')">Save</button><span id="sp-status" style="font-size:10.5px;color:#1D9E75"></span></div></div>'
-    +'<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px">'
-    +'<div style="flex:1;min-width:200px;position:relative"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div class="cp-lbl2" style="margin:0">Product Handling</div><button class="btn btn-g tag-save-btn" data-cid="'+c.id+'" data-tagtype="product" style="font-size:10px;padding:4px 10px">Save</button></div>'
-    +'<div class="tag-input-box" id="product-tagbox" data-cid="'+c.id+'" data-tagtype="product">'+productTags.map(function(t){return '<span class="tag-chip" data-tag="'+esc(t)+'">'+esc(t)+'<span class="tag-x" data-remove="'+esc(t)+'">&times;</span></span>';}).join('')+'<input class="tag-text-inp" id="product-tag-inp" placeholder="e.g. LV Switchgear..."></div>'
-    +'<div id="product-suggest" class="tag-suggest" style="display:none"></div><div id="product-tag-status" style="font-size:10px;color:#1D9E75;margin-top:4px;min-height:12px"></div></div>'
-    +'<div style="flex:1;min-width:200px;position:relative"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div class="cp-lbl2" style="margin:0">Function</div><button class="btn btn-g tag-save-btn" data-cid="'+c.id+'" data-tagtype="function" style="font-size:10px;padding:4px 10px">Save</button></div>'
-    +'<div class="tag-input-box" id="function-tagbox" data-cid="'+c.id+'" data-tagtype="function">'+funcTags.map(function(t){return '<span class="tag-chip" data-tag="'+esc(t)+'">'+esc(t)+'<span class="tag-x" data-remove="'+esc(t)+'">&times;</span></span>';}).join('')+'<input class="tag-text-inp" id="function-tag-inp" placeholder="e.g. Sales, Marketing..."></div>'
-    +'<div id="function-suggest" class="tag-suggest" style="display:none"></div><div id="function-tag-status" style="font-size:10px;color:#1D9E75;margin-top:4px;min-height:12px"></div></div>'
-    +'<div style="flex:1;min-width:200px;position:relative"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div class="cp-lbl2" style="margin:0">Geography Handling</div><button class="btn btn-g tag-save-btn" data-cid="'+c.id+'" data-tagtype="geography" style="font-size:10px;padding:4px 10px">Save</button></div>'
-    +'<div class="tag-input-box" id="geography-tagbox" data-cid="'+c.id+'" data-tagtype="geography">'+geoTags.map(function(t){return '<span class="tag-chip" data-tag="'+esc(t)+'">'+esc(t)+'<span class="tag-x" data-remove="'+esc(t)+'">&times;</span></span>';}).join('')+'<input class="tag-text-inp" id="geography-tag-inp" placeholder="e.g. North India, UP..."></div>'
-    +'<div id="geography-suggest" class="tag-suggest" style="display:none"></div><div id="geography-tag-status" style="font-size:10px;color:#1D9E75;margin-top:4px;min-height:12px"></div></div>'
-    +'</div></div>';
+  // Sales profile (view / edit) — see salesCardHTML()
+  var tagsCard=salesCardHTML(c);
 
   // Work Experience
   var wh=c.work_history||[];
@@ -7495,6 +7476,7 @@ function renderProfileDetail(c){
   attachWAResponseHandlers(c);
   attachEmailHandler(c);
   initTagInputs(c);
+  _spWire(c.id);
   // Pre-load tab content so Communications / Interviews / History are ready
   try{ cpLoadEmailThread(c.id); }catch(e){}
   try{ cpLoadWaThread(c.id); }catch(e){}
@@ -8783,7 +8765,7 @@ async function parseSnippet(cid){
   const setF=(id,val)=>{const el=document.getElementById(id);if(el&&val!=null&&val!==''&&val!==0){el.value=val;el.style.background='#E1F5EE';setTimeout(()=>{el.style.background='';},1200);}};
   setF('pf-company',d.company);setF('pf-designation',d.designation);setF('pf-exp',d.experience);
   setF('pf-ctc',d.ctc_current);setF('pf-ectc',d.ctc_expected);setF('pf-notice',d.notice_period);
-  setF('pf-location',d.location);setF('pf-preferred_location',d.preferred_location);setF('pf-qualification',d.qualification);setF('pf-specialization',d.specialization);setF('pf-phone',d.phone);setF('pf-email',d.email);setF('sp-gender',d.gender);
+  setF('pf-location',d.location);setF('pf-preferred_location',d.preferred_location);setF('pf-qualification',d.qualification);setF('pf-specialization',d.specialization);setF('pf-phone',d.phone);setF('pf-email',d.email);
   setF('pf-linkedin_url',d.linkedin_url);setF('pf-ai_insight_cv',d.ai_insight_cv);
   if(d.key_skills?.length)setF('pf-skills',d.key_skills.join(', '));
   if(d.career_summary)setF('pf-summary',d.career_summary);
@@ -12197,12 +12179,143 @@ function expRangeText(mn,mx){
 function numfield(id,lbl,val){return '<div class="fg-row"><label>'+lbl+'</label><input class="inp" id="'+id+'" type="number" step="0.5" value="'+esc(val)+'"></div>';}
 function sInp(id,lbl,val,ph){return '<div><div class="lbl">'+lbl+'</div><input class="inp" id="'+id+'" value="'+esc(val)+'"'+(ph?' placeholder="'+esc(ph)+'"':'')+' style="width:100%"></div>';}
 function sGender(id,val){ return '<div><div class="lbl">Gender</div><select class="inp" id="'+id+'" style="width:100%">'+[['','Not known'],['Male','Male'],['Female','Female'],['Other','Other']].map(function(o){ return '<option value="'+o[0]+'"'+(o[0]===(val||'')?' selected':'')+'>'+o[1]+'</option>'; }).join('')+'</select></div>'; }
-async function saveSalesProfile(cid){
-  var g=function(id){ var e=document.getElementById(id); return e?e.value:''; };
-  var st=document.getElementById('sp-status'); if(st){ st.textContent='Saving…'; st.style.color='#888'; }
-  var r=await req('PUT','/candidates/'+cid,{gender:g('sp-gender'), yearly_target:g('sp-target'), team_direct:g('sp-tdirect'), team_indirect:g('sp-tindirect')});
-  if(r && r.ok){ if(st){ st.textContent='Saved'; st.style.color='#1D9E75'; setTimeout(function(){ if(st) st.textContent=''; },2500); } toast('OK','Sales profile saved'); }
-  else { if(st){ st.textContent='Failed'; st.style.color='#E24B4A'; } toast('ERR',(r&&r.error)||'Save failed'); }
+// ── Sales profile card (Oct 2026 redesign) ──────────────────────────────────
+// View mode: target / direct / indirect / gender stats + product, function and
+// geography tags. Edit mode: Basics · Team handling · Coverage, one Save that
+// sends all seven fields in a single PUT /candidates/<id>.
+window._sp = window._sp || {};
+var _SP_TAGS = [['product_handles', 'product', 'Product handling', 'Add product…'],
+                ['function_tags', 'function', 'Function', 'Add function…'],
+                ['geography_tags', 'geography', 'Geography', 'Add region…']];
+function _spList(v){ try{ var x = Array.isArray(v) ? v : JSON.parse(v || '[]'); return Array.isArray(x) ? x.filter(Boolean) : []; }catch(e){ return []; } }
+function _spNum(v){ return (v === null || v === undefined || v === '') ? null : Number(v); }
+function _spFrom(c){
+  return {gender: c.gender || '', target: _spNum(c.yearly_target), direct: _spNum(c.team_direct), indirect: _spNum(c.team_indirect),
+          product_handles: _spList(c.product_handles), function_tags: _spList(c.function_tags), geography_tags: _spList(c.geography_tags),
+          updated_at: c.updated_at || ''};
+}
+function _spFilled(d){
+  return [d.gender, d.target, d.direct !== null && d.direct !== undefined ? 1 : 0, d.indirect !== null && d.indirect !== undefined ? 1 : 0,
+          d.product_handles.length, d.function_tags.length, d.geography_tags.length].filter(Boolean).length;
+}
+function _spWhen(s){
+  var m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/); if(!m) return '';
+  var d = new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5]), now = new Date();
+  var h = d.getHours(), ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12;
+  var t = h + ':' + m[5] + ' ' + ap;
+  var day = d.toDateString() === now.toDateString() ? 'today' : (new Date(now - 86400000).toDateString() === d.toDateString() ? 'yesterday'
+          : d.toLocaleDateString('en-IN', {day: 'numeric', month: 'short'}));
+  return 'Updated ' + day + ', ' + t;
+}
+function salesCardHTML(c){
+  window._sp[c.id] = {cid: c.id, data: _spFrom(c), edit: false};
+  return '<div class="cp-card2 sp-card" id="cp-sales">' + _spInner(c.id) + '</div>';
+}
+function _spPaint(cid){
+  var el = document.getElementById('cp-sales'); if(!el) return;
+  el.innerHTML = _spInner(cid); _spWire(cid);
+}
+function _spInner(cid){
+  var S0 = window._sp[cid]; return S0.edit ? _spEditHTML(S0) : _spViewHTML(S0);
+}
+function _spChips(list){ return list.length ? list.map(function(t){ return '<span class="sp-chip">' + esc(t) + '</span>'; }).join('') : '<span class="sp-none">Not added</span>'; }
+function _spViewHTML(S0){
+  var d = S0.data, n = _spFilled(d);
+  var stat = function(lbl, val, sub){ return '<div class="sp-stat"><div class="sp-sl">' + lbl + '</div><div class="sp-sv' + (val === '' ? ' sp-empty' : '') + '">' + (val === '' ? '&mdash;' : val) + '</div><div class="sp-ss">' + sub + '</div></div>'; };
+  var h = '<div class="sp-head"><div><div class="sp-title">Sales profile' + (n ? ' <span class="sp-pill">&#10003; On Talent Map</span>' : '') + '</div>'
+    + '<div class="sp-sub">' + (n ? esc(_spWhen(d.updated_at)) : 'Not filled in yet &mdash; searchable in Talent and shown on the Company Talent Map') + '</div></div>'
+    + '<button type="button" class="sp-btn" data-sp="edit">&#9998; Edit</button></div>'
+    + '<div class="sp-stats">'
+    + stat('Yearly target', d.target ? '&#8377;' + esc(String(d.target)) + ' Cr' : '', 'per year')
+    + stat('Direct reports', d.direct !== null && d.direct !== undefined ? esc(String(d.direct)) : '', 'report to them')
+    + stat('Indirect team', d.indirect !== null && d.indirect !== undefined ? esc(String(d.indirect)) : '', 'through their team')
+    + stat('Gender', d.gender ? esc(d.gender) : '', '&nbsp;') + '</div>'
+    + '<div class="sp-rows">' + _SP_TAGS.map(function(t){ return '<div class="sp-rk">' + t[2] + '</div><div class="sp-rv">' + _spChips(d[t[0]]) + '</div>'; }).join('') + '</div>';
+  return h;
+}
+function _spEditHTML(S0){
+  var d = S0.draft, n = _spFilled(d);
+  var seg = ['Male', 'Female', 'Other', ''].map(function(g){ return '<button type="button" class="' + (d.gender === g ? 'on' : '') + '" data-sp="gender" data-v="' + g + '">' + (g || 'Not known') + '</button>'; }).join('');
+  var tot = (d.direct || 0) + (d.indirect || 0);
+  var h = '<div class="sp-head"><div><div class="sp-title">Sales profile <span class="sp-pill sp-cnt" id="sp-cnt">' + n + ' of 7 filled</span></div>'
+    + '<div class="sp-sub">Searchable in Talent and shown on the Company Talent Map</div></div>'
+    + '<div class="sp-acts"><button type="button" class="sp-btn" data-sp="cancel">Cancel</button><button type="button" class="sp-btn pri" data-sp="save">Save profile</button></div></div>'
+    + '<div class="sp-two"><div class="sp-sec"><div class="sp-cap">Basics</div>'
+    +   '<div class="sp-fl">Gender</div><div class="sp-seg" role="radiogroup" aria-label="Gender">' + seg + '</div>'
+    +   '<div class="sp-fl" style="margin-top:14px">Yearly target</div><div class="sp-money"><span>&#8377;</span><input type="number" min="0" step="0.5" data-spf="target" value="' + (d.target === null ? '' : esc(String(d.target))) + '" placeholder="12.5"><em>Cr / yr</em></div></div>'
+    + '<div class="sp-sec"><div class="sp-cap">Team handling</div><div class="sp-pair">'
+    +   '<label><div class="sp-fl">Direct reports</div><input type="number" min="0" step="1" data-spf="direct" value="' + (d.direct === null ? '' : esc(String(d.direct))) + '" placeholder="0"><div class="sp-hint">Report straight to them</div></label>'
+    +   '<label><div class="sp-fl">Indirect</div><input type="number" min="0" step="1" data-spf="indirect" value="' + (d.indirect === null ? '' : esc(String(d.indirect))) + '" placeholder="0"><div class="sp-hint">Through their team</div></label></div>'
+    +   '<div class="sp-total"><span>Total team size</span><b id="sp-total">' + (tot ? tot : '&mdash;') + '</b></div></div></div>'
+    + '<div class="sp-sec sp-cov"><div class="sp-covh"><div class="sp-cap" style="margin:0">Coverage</div><span class="sp-hint">Press Enter to add &middot; each tag is searchable</span></div><div class="sp-three">'
+    + _SP_TAGS.map(function(t){
+        return '<div><div class="sp-fl">' + t[2] + '</div><div class="sp-tagbox" data-spbox="' + t[0] + '">'
+          + d[t[0]].map(function(x, i){ return '<span class="sp-chip">' + esc(x) + '<button type="button" aria-label="Remove ' + esc(x) + '" data-sp="rm" data-k="' + t[0] + '" data-i="' + i + '">&times;</button></span>'; }).join('')
+          + '<input data-sptag="' + t[0] + '" placeholder="' + t[3] + '"></div><div class="sp-sugg" id="sp-sugg-' + t[0] + '">' + _spSugg(S0, t) + '</div></div>';
+      }).join('') + '</div></div>';
+  return h;
+}
+var _spSuggCache = {};
+function _spSugg(S0, t){
+  var all = _spSuggCache[t[1]] || [], have = S0.draft[t[0]].map(function(x){ return x.toLowerCase(); });
+  return all.filter(function(x){ return have.indexOf(String(x).toLowerCase()) < 0; }).slice(0, 3)
+    .map(function(x){ return '<button type="button" data-sp="add" data-k="' + t[0] + '" data-v="' + esc(x) + '">+ ' + esc(x) + '</button>'; }).join('');
+}
+function _spCount(cid){
+  var S0 = window._sp[cid], e = document.getElementById('sp-cnt'), t = document.getElementById('sp-total');
+  if(e) e.textContent = _spFilled(S0.draft) + ' of 7 filled';
+  if(t){ var tot = (S0.draft.direct || 0) + (S0.draft.indirect || 0); t.innerHTML = tot ? tot : '&mdash;'; }
+}
+function _spAddTag(cid, k, v){
+  var S0 = window._sp[cid]; v = String(v || '').replace(/\s+/g, ' ').trim().slice(0, 60); if(!v) return;
+  if(S0.draft[k].some(function(x){ return x.toLowerCase() === v.toLowerCase(); })) return;
+  if(S0.draft[k].length >= 12){ toast('ERR', 'Up to 12 tags'); return; }
+  S0.draft[k].push(v); _spPaint(cid);
+  var inp = document.querySelector('#cp-sales [data-sptag="' + k + '"]'); if(inp) inp.focus();
+}
+function _spWire(cid){
+  var el = document.getElementById('cp-sales'); if(!el) return;
+  var S0 = window._sp[cid];
+  el.onclick = function(e){
+    var b = e.target.closest('[data-sp]'); if(!b) { var box = e.target.closest('.sp-tagbox'); if(box){ var i = box.querySelector('input'); if(i) i.focus(); } return; }
+    var a = b.getAttribute('data-sp');
+    if(a === 'edit'){ S0.draft = JSON.parse(JSON.stringify(S0.data)); S0.edit = true; _spPaint(cid); _spLoadSugg(cid); return; }
+    if(a === 'cancel'){ S0.edit = false; S0.draft = null; _spPaint(cid); return; }
+    if(a === 'save') return _spSave(cid, b);
+    if(a === 'gender'){ S0.draft.gender = b.getAttribute('data-v'); el.querySelectorAll('.sp-seg button').forEach(function(x){ x.classList.toggle('on', x === b); }); _spCount(cid); return; }
+    if(a === 'rm'){ S0.draft[b.getAttribute('data-k')].splice(+b.getAttribute('data-i'), 1); _spPaint(cid); return; }
+    if(a === 'add') return _spAddTag(cid, b.getAttribute('data-k'), b.getAttribute('data-v'));
+  };
+  el.oninput = function(e){
+    var f = e.target.getAttribute('data-spf'); if(!f || !S0.draft) return;
+    var v = e.target.value.trim(); S0.draft[f] = v === '' ? null : Number(v); _spCount(cid);
+  };
+  el.onkeydown = function(e){
+    var k = e.target.getAttribute('data-sptag'); if(!k) return;
+    if(e.key === 'Enter' || e.key === ','){ e.preventDefault(); var v = e.target.value; e.target.value = ''; _spAddTag(cid, k, v); }
+    else if(e.key === 'Backspace' && !e.target.value && S0.draft[k].length){ S0.draft[k].pop(); _spPaint(cid); }
+  };
+}
+async function _spLoadSugg(cid){
+  var need = _SP_TAGS.filter(function(t){ return !_spSuggCache[t[1]]; });
+  await Promise.all(need.map(function(t){ return req('GET', '/tags/' + t[1]).then(function(r){ _spSuggCache[t[1]] = (r && r.tags) || []; }); }));
+  var S0 = window._sp[cid]; if(!S0 || !S0.edit) return;
+  _SP_TAGS.forEach(function(t){ var s = document.getElementById('sp-sugg-' + t[0]); if(s) s.innerHTML = _spSugg(S0, t); });
+}
+async function _spSave(cid, btn){
+  var S0 = window._sp[cid], d = S0.draft;
+  // a tag typed but not yet entered still counts
+  document.querySelectorAll('#cp-sales [data-sptag]').forEach(function(i){ if(i.value.trim()){ var k = i.getAttribute('data-sptag'); if(d[k].indexOf(i.value.trim()) < 0) d[k].push(i.value.trim()); } });
+  btn.disabled = true; btn.textContent = 'Saving…';
+  var r = await req('PUT', '/candidates/' + cid, {gender: d.gender, yearly_target: d.target === null ? '' : d.target,
+    team_direct: d.direct === null ? '' : d.direct, team_indirect: d.indirect === null ? '' : d.indirect,
+    product_handles: d.product_handles, function_tags: d.function_tags, geography_tags: d.geography_tags});
+  if(!r || r.error){ btn.disabled = false; btn.textContent = 'Save profile'; toast('ERR', (r && r.error) || 'Save failed'); return; }
+  var fresh = await req('GET', '/candidates/' + cid);
+  S0.data = (fresh && fresh.id) ? _spFrom(fresh) : JSON.parse(JSON.stringify(d));
+  S0.edit = false; S0.draft = null; _spPaint(cid);
+  _spSuggCache = {};
+  toast('OK', 'Sales profile saved');
 }
 function sNum(id,lbl,val){return '<div><div class="lbl">'+lbl+'</div><input class="inp" id="'+id+'" type="number" step="0.5" value="'+esc(val)+'" style="width:100%"></div>';}
 function scoreBar(lbl,pct,color){return '<div style="text-align:center"><div style="font-size:24px;font-weight:500;color:'+color+'">'+pct+'<span style="font-size:13px">%</span></div><div style="font-size:10px;color:#888">'+lbl+'</div><div style="height:5px;background:#eee;border-radius:3px;margin-top:5px;overflow:hidden"><div style="height:100%;background:'+color+';border-radius:3px;width:'+pct+'%"></div></div></div>';}
@@ -26070,8 +26183,56 @@ mark.tc-hl{background:#fef08a;color:inherit;border-radius:3px;padding:0 1px}
 .tk-btn{display:block;width:100%;box-sizing:border-box;border:1px solid #1d4ed8;color:#1d4ed8;border-radius:8px;padding:6px 8px;font-size:13px;font-weight:600;text-decoration:none;background:#fff}
 .tk-btn:hover{background:#eff6ff}
 button.tk-btn{cursor:pointer;font-family:inherit}
-.sp-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:8px;align-items:end}
-@media(max-width:900px){.sp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.sp-card{padding:0 !important;overflow:hidden}
+.sp-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:16px 20px;border-bottom:1px solid #eef0f2}
+.sp-title{font-size:16px;font-weight:700;color:#101828;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sp-sub{font-size:12.5px;color:#667085;margin-top:2px}
+.sp-pill{font-size:11px;font-weight:600;background:#e6f4ee;color:#0f6e56;border-radius:999px;padding:2px 9px}
+.sp-acts{display:flex;gap:8px}
+.sp-btn{border:1px solid #d0d5dd;background:#fff;color:#344054;border-radius:9px;padding:8px 16px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+.sp-btn:hover{background:#f9fafb}
+.sp-btn.pri{background:#0f6e56;border-color:#0f6e56;color:#fff}
+.sp-btn.pri:hover{background:#0b5a46}
+.sp-btn:disabled{opacity:.6;cursor:default}
+.sp-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid #eef0f2}
+.sp-stat{padding:14px 20px;border-right:1px solid #eef0f2;min-width:0}
+.sp-stat:last-child{border-right:0}
+.sp-sl{font-size:12px;color:#475467}
+.sp-sv{font-size:21px;font-weight:700;color:#101828;margin:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp-sv.sp-empty{color:#d0d5dd}
+.sp-ss{font-size:11.5px;color:#98a2b3}
+.sp-rows{display:grid;grid-template-columns:150px minmax(0,1fr);gap:10px 16px;padding:16px 20px;align-items:center}
+.sp-rk{font-size:13px;color:#475467}
+.sp-rv{display:flex;flex-wrap:wrap;gap:6px}
+.sp-chip{display:inline-flex;align-items:center;gap:6px;background:#e6f4ee;color:#0b5a46;border-radius:6px;padding:4px 10px;font-size:13px;font-weight:500}
+.sp-chip button{border:0;background:none;color:#0b5a46;cursor:pointer;font-size:15px;line-height:1;padding:0}
+.sp-none{font-size:12.5px;color:#98a2b3}
+.sp-two{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #eef0f2}
+.sp-sec{padding:16px 20px}
+.sp-two .sp-sec:first-child{border-right:1px solid #eef0f2}
+.sp-cap{font-size:11px;font-weight:700;letter-spacing:.08em;color:#667085;text-transform:uppercase;margin-bottom:12px}
+.sp-fl{font-size:13px;color:#344054;margin-bottom:6px}
+.sp-seg{display:inline-flex;background:#f2f4f7;border-radius:10px;padding:3px;gap:2px;flex-wrap:wrap}
+.sp-seg button{border:0;background:none;padding:7px 14px;border-radius:8px;font:inherit;font-size:13px;color:#475467;cursor:pointer}
+.sp-seg button.on{background:#fff;color:#101828;font-weight:600;box-shadow:0 1px 3px rgba(16,24,40,.12)}
+.sp-money{display:inline-flex;align-items:stretch;border:1px solid #d0d5dd;border-radius:10px;overflow:hidden;max-width:260px;width:100%}
+.sp-money span{background:#f2f4f7;color:#475467;padding:0 12px;display:flex;align-items:center;border-right:1px solid #d0d5dd}
+.sp-money input{border:0;outline:none;padding:10px 12px;font:inherit;font-size:14px;flex:1;min-width:0;background:#fff}
+.sp-money em{font-style:normal;color:#667085;padding:0 12px;display:flex;align-items:center;font-size:13px}
+.sp-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.sp-pair input{width:100%;box-sizing:border-box;border:1px solid #d0d5dd;border-radius:10px;padding:10px 12px;font:inherit;font-size:14px;outline:none}
+.sp-pair input:focus,.sp-money:focus-within,.sp-tagbox:focus-within{border-color:#0f6e56;box-shadow:0 0 0 3px rgba(15,110,86,.12)}
+.sp-hint{font-size:11.5px;color:#667085;margin-top:5px}
+.sp-total{display:flex;justify-content:space-between;align-items:center;background:#f2f4f7;border-radius:10px;padding:10px 14px;margin-top:12px;font-size:13px;color:#475467}
+.sp-total b{color:#101828;font-size:15px}
+.sp-covh{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.sp-three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.sp-tagbox{display:flex;flex-wrap:wrap;gap:6px;align-content:flex-start;min-height:92px;border:1px solid #d0d5dd;border-radius:10px;padding:8px;cursor:text}
+.sp-tagbox input{border:0;outline:none;font:inherit;font-size:13px;flex:1;min-width:90px;padding:4px}
+.sp-sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.sp-sugg button{border:1px dashed #b9c0cc;background:#fff;color:#344054;border-radius:999px;padding:3px 10px;font:inherit;font-size:12px;cursor:pointer}
+.sp-sugg button:hover{border-color:#0f6e56;color:#0f6e56}
+@media(max-width:900px){.sp-stats{grid-template-columns:1fr 1fr}.sp-stat:nth-child(2){border-right:0}.sp-two,.sp-three{grid-template-columns:1fr}.sp-two .sp-sec:first-child{border-right:0;border-bottom:1px solid #eef0f2}.sp-rows{grid-template-columns:1fr}}
 .tk-ver{font-size:11.5px;color:#667085;word-break:break-all}
 .tk-foot{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:#475467;padding:8px 6px 0}
 .tk-foot .tk-cv{font-weight:600;color:#1d4ed8;text-decoration:none}
