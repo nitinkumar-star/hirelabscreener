@@ -47,6 +47,28 @@ except Exception as _json_err:
 # responses to keep payloads small and memory low (fixes OOM on large mandates).
 _HEAVY_CAND_COLS = ('embedding', 'embedding_text', 'embedding_vec')
 
+# ── Gender (Oct 2026) ──────────────────────────────────────────────────────
+# Only what the CV / Naukri page states ("Gender: Male", "Male, Single/unmarried").
+# Never inferred from a name or photo.
+_GENDER_WORDS = {'male': 'Male', 'm': 'Male', 'man': 'Male', 'female': 'Female', 'f': 'Female', 'woman': 'Female',
+                 'other': 'Other', 'transgender': 'Other', 'non-binary': 'Other', 'nonbinary': 'Other'}
+_GENDER_RX = (re.compile(r'\b(?:gender|sex)\s*[:\-\u2013|]?\s*(male|female|m|f|other|transgender|non-binary)\b', re.I),
+              re.compile(r'\b(male|female)\s*,\s*(?:single|married|unmarried|divorced|widowed|separated)', re.I))
+
+
+def norm_gender(v):
+    return _GENDER_WORDS.get(str(v or '').strip().lower().rstrip('.'), '')
+
+
+def detect_gender(*texts):
+    for t in texts:
+        for rx in _GENDER_RX:
+            m = rx.search(str(t or ''))
+            if m:
+                return norm_gender(m.group(1))
+    return ''
+
+
 def _cand_public(row):
     """Row -> client-safe dict without the heavy embedding columns."""
     d = dict(row)
@@ -3934,6 +3956,7 @@ def init_db():
         ('update_requested_at', "TEXT DEFAULT ''"),
         ('update_submitted_at', "TEXT DEFAULT ''"),
         ('linkedin_url', "TEXT DEFAULT ''"),
+        ('gender', "TEXT DEFAULT ''"),          # Male / Female / Other / '' (only when stated)
         ('ai_insight_cv', "TEXT DEFAULT ''"),
         ('sourced_by', "INTEGER DEFAULT 0"),
         ('sourced_at', "TEXT DEFAULT ''"),
@@ -6125,6 +6148,8 @@ def extension_push():
         conn.execute('UPDATE candidates SET qualification=?, specialization=?, preferred_location=?, linkedin_url=?, ai_insight_cv=? WHERE id=?',
                      (d.get('qualification',''), d.get('specialization',''), d.get('preferred_location',''),
                       d.get('linkedin_url',''), d.get('ai_insight_cv',''), existing['id']))
+        if norm_gender(d.get('gender')):          # a blank never wipes a known gender
+            conn.execute('UPDATE candidates SET gender=? WHERE id=?', (norm_gender(d.get('gender')), existing['id']))
         _save_naukri_ref(conn, existing['id'], d.get('naukri_ref'))
         conn.commit(); conn.close()
         return jsonify({'ok': True, 'action': 'updated', 'candidate_id': existing['id'],
@@ -6143,9 +6168,9 @@ def extension_push():
          (CENTRAL_STAGE if _to_central else 'Screening'), ts(), ts())
     )
     cid = c.lastrowid
-    c.execute('UPDATE candidates SET qualification=?, specialization=?, preferred_location=?, linkedin_url=?, ai_insight_cv=? WHERE id=?',
+    c.execute('UPDATE candidates SET qualification=?, specialization=?, preferred_location=?, linkedin_url=?, ai_insight_cv=?, gender=? WHERE id=?',
               (d.get('qualification',''), d.get('specialization',''), d.get('preferred_location',''),
-               d.get('linkedin_url',''), d.get('ai_insight_cv',''), cid))
+               d.get('linkedin_url',''), d.get('ai_insight_cv',''), norm_gender(d.get('gender')), cid))
     # If a freelancer sourced this candidate, stamp attribution
     if _is_freelancer_upload:
         c.execute('UPDATE candidates SET sourced_by=?, sourced_at=? WHERE id=?',
@@ -21213,7 +21238,7 @@ def candidate_add_to_job(cid):
 # the other pipeline. Stage, feedback, offers and billing stay per job.
 _PERSON_SYNC_COLS = ('name', 'company', 'designation', 'experience', 'ctc_current', 'ctc_expected', 'notice_period',
                      'location', 'preferred_location', 'phone', 'email', 'qualification', 'specialization',
-                     'career_summary', 'key_skills', 'secondary_skills', 'linkedin_url')
+                     'career_summary', 'key_skills', 'secondary_skills', 'linkedin_url', 'gender')
 
 
 def _sync_person_fields(conn, cid, fields):
@@ -21258,7 +21283,9 @@ def update_candidate(cid):
               'notice_period','location','preferred_location','phone','email','qualification','specialization','career_summary',
               'key_skills','secondary_skills','recruiter_feedback','client_feedback','general_comments',
               'linkedin_url','ai_insight_cv','ctc_offered','offer_date',
-              'source_channel','referrer_name']
+              'source_channel','referrer_name','gender']
+    if 'gender' in d:
+        d = dict(d); d['gender'] = norm_gender(d.get('gender'))
     sets = []; vals = []
     for f in fields:
         if f in d:
@@ -21282,7 +21309,7 @@ def update_candidate(cid):
             'ctc_offered':'Offered CTC','offer_date':'Offer date',
             'notice_period':'Notice period','location':'Location','preferred_location':'Preferred location','phone':'Phone','email':'Email',
             'qualification':'Qualification','specialization':'Specialization','career_summary':'Summary',
-            'linkedin_url':'LinkedIn URL','ai_insight_cv':'AI Insight (CV)'
+            'linkedin_url':'LinkedIn URL','ai_insight_cv':'AI Insight (CV)','gender':'Gender'
         }
         changes = []
         for f, lbl in labels.items():
@@ -21385,8 +21412,8 @@ def add_manual(mid):
         _ch = 'manual'
     c.execute('UPDATE candidates SET source_channel=?, referrer_name=? WHERE id=?',
               (_ch, str(d.get('referrer_name') or '').strip()[:120], cid))
-    c.execute('UPDATE candidates SET qualification=?, preferred_location=? WHERE id=?',
-              (d.get('qualification',''), d.get('preferred_location',''), cid))
+    c.execute('UPDATE candidates SET qualification=?, preferred_location=?, gender=? WHERE id=?',
+              (d.get('qualification',''), d.get('preferred_location',''), norm_gender(d.get('gender')), cid))
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
               (cid, '', stage,
                'Added to Central Database' if to_central else 'Manually added to pipeline', ts()))
@@ -21977,7 +22004,7 @@ def parse_naukri():
                   'ctc_current (float LPA), ctc_expected (float LPA), notice_period (int days), '
                   'location (current city), preferred_location (preferred/desired job location, if mentioned), '
                   'qualification (highest education degree e.g. B.Tech, MBA), key_skills (array max 6), secondary_skills (array), '
-                  'career_summary (2 sentences), is_mnc (bool). '
+                  'career_summary (2 sentences), is_mnc (bool), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
                   'Use null for missing strings, 0 for missing numbers.')
     try:
         resp = call_deepseek(key,
@@ -21991,6 +22018,8 @@ def parse_naukri():
     if resp.status_code != 200: return jsonify({'error': 'DeepSeek error: ' + resp.text[:150]}), 500
     text = resp.json()['choices'][0]['message']['content']
     parsed = parse_json(text)
+    if isinstance(parsed, dict):
+        parsed['gender'] = detect_gender(raw) or norm_gender(parsed.get('gender'))
     return jsonify({'ok': True, 'data': parsed}) if parsed else (jsonify({'error': 'Parse failed'}), 500)
 
 
@@ -22067,7 +22096,7 @@ def _ai_parse_resume_text(text, ds_key):
                   'key_skills (array of top 8 technical/domain skills), '
                   'secondary_skills (array of other skills), '
                   'career_summary (2-3 sentences about background and strengths), '
-                  'industry_background (e.g. FMCG, Manufacturing, IT), is_mnc (bool). '
+                  'industry_background (e.g. FMCG, Manufacturing, IT), is_mnc (bool), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
                   'Use null for missing strings, 0 for missing numbers.')
     try:
         resp = call_deepseek(ds_key,
@@ -22088,6 +22117,7 @@ def _ai_parse_resume_text(text, ds_key):
     parsed = parse_json(raw)
     if not isinstance(parsed, dict):
         return None, 'Parse failed', 500
+    parsed['gender'] = detect_gender(text) or norm_gender(parsed.get('gender'))
     return parsed, None, 200
 
 # ── Bulk Parse Multiple Naukri Snippets ───────────────────────────────────────
@@ -22784,6 +22814,11 @@ def _talent_where():
     src = (request.args.get('source') or '').strip()
     if src:
         where.append("COALESCE(c.source_channel,'') = ?"); params.append('' if src == '__none__' else src)
+    g = request.args.get('gender') or ''
+    if g == 'unknown':
+        where.append("COALESCE(c.gender,'') = ''")
+    elif norm_gender(g):
+        where.append('c.gender = ?'); params.append(norm_gender(g))
     cv = request.args.get('has_cv') or ''
     if cv == '1':
         where.append("COALESCE(c.cv_path,'') != ''")
@@ -23148,7 +23183,7 @@ def central_export():
     where, params = _talent_where()
     conn = get_db()
     rows = conn.execute('SELECT c.name, c.phone, c.email, c.company, c.designation, c.experience, c.ctc_current, '
-                        'c.ctc_expected, c.notice_period, c.location, c.stage, c.key_skills, c.status_tags, '
+                        'c.ctc_expected, c.notice_period, c.location, c.gender, c.stage, c.key_skills, c.status_tags, '
                         "CASE WHEN m.status='central' THEN 'Central Database' ELSE m.role END AS job, m.client, "
                         'c.source_channel, c.created_at FROM candidates c LEFT JOIN mandates m ON c.mandate_id=m.id '
                         'WHERE ' + where + ' ORDER BY c.created_at DESC LIMIT 20000', params).fetchall()
@@ -23156,7 +23191,7 @@ def central_export():
     buf = io.StringIO()
     w = csv.writer(buf)
     head = ['Name', 'Phone', 'Email', 'Company', 'Designation', 'Experience (yrs)', 'Current CTC (LPA)',
-            'Expected CTC (LPA)', 'Notice (days)', 'Location', 'Stage', 'Skills', 'Tags', 'Job', 'Client',
+            'Expected CTC (LPA)', 'Notice (days)', 'Location', 'Gender', 'Stage', 'Skills', 'Tags', 'Job', 'Client',
             'Source', 'Added']
     w.writerow(head)
     for r in rows:

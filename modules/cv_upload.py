@@ -188,6 +188,8 @@ def upload_cv():
         c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
                   (cid, '', stage, ('Added to Central Database' if to_central else 'Added to the job')
                    + ' from an uploaded CV: ' + f.filename[:120], now))
+        if core.norm_gender(parsed.get('gender')):
+            c.execute('UPDATE candidates SET gender=? WHERE id=?', (core.norm_gender(parsed.get('gender')), cid))
         core._link_to_known_person(conn, cid)
         conn.commit()
     finally:
