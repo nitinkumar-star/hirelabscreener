@@ -97,6 +97,8 @@ def _person(r, former=None):
         'notice_period': r['notice_period'] or 0, 'location': r['location'] or '',
         'products': _jl(r['product_handles']), 'geography': _jl(r['geography_tags']),
         'functions': _jl(r['function_tags']), 'yearly_target': r['yearly_target'],
+        'team_direct': r['team_direct'], 'team_indirect': r['team_indirect'],
+        'team_total': (r['team_direct'] or 0) + (r['team_indirect'] or 0),
         'qualification': r['qualification'] or '', 'gender': r['gender'] or '',
         'stage': r['stage'] or '', 'job': ('Central Database' if r['m_status'] == 'central' else (r['m_role'] or '')),
         'has_cv': bool(r['cv_path']), 'phone': r['phone'] or '', 'email': r['email'] or '',
@@ -116,6 +118,7 @@ def company():
     sc, sp = _scope()
     cols = ('c.id, c.mandate_id, c.name, c.company, c.designation, c.experience, c.ctc_current, c.ctc_expected, '
             'c.notice_period, c.location, c.product_handles, c.geography_tags, c.function_tags, c.yearly_target, '
+            'c.team_direct, c.team_indirect, '
             'c.qualification, c.gender, c.stage, c.cv_path, c.phone, c.email, c.updated_at, '
             'COALESCE(NULLIF(c.copied_from,0), c.id) AS pk, m.status AS m_status, m.role AS m_role')
     conn = get_db()

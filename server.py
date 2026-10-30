@@ -65,6 +65,17 @@ def clean_target(v):
     return n if 0 < n < 100000 else None
 
 
+def clean_team(v):
+    """Team size -> int or None (blank / nonsense = not known; 0 is a real answer)."""
+    if v is None or str(v).strip() == '':
+        return None
+    try:
+        n = int(float(str(v).replace(',', '').strip()))
+    except Exception:
+        return None
+    return n if 0 <= n <= 100000 else None
+
+
 def clean_tag_list(v, n=12):
     if isinstance(v, str):
         v = [x for x in re.split(r'[,;/\n]+', v)]
@@ -90,6 +101,10 @@ def save_sales_profile(conn, cid, d, keep_known=True):
         sets['geography_tags'] = json.dumps(geo)
     if tgt is not None or not keep_known:
         sets['yearly_target'] = tgt
+    for k in ('team_direct', 'team_indirect'):
+        tv = clean_team(d.get(k))
+        if (tv is not None and (tv > 0 or not keep_known)) or not keep_known:
+            sets[k] = tv
     if sets:
         conn.execute('UPDATE candidates SET ' + ', '.join(k + '=?' for k in sets) + ' WHERE id=?',
                      list(sets.values()) + [cid])
@@ -3998,6 +4013,8 @@ def init_db():
         ('gender', "TEXT DEFAULT ''"),          # Male / Female / Other / '' (only when stated)
         ('geography_tags', "TEXT DEFAULT '[]'"), # regions / states covered (Geography Handling)
         ('yearly_target', 'REAL'),              # annual sales target, Rs crore (NULL = not known)
+        ('team_direct', 'INTEGER'),             # Team Handling: direct reports (NULL = not known)
+        ('team_indirect', 'INTEGER'),           # Team Handling: indirect reports
         ('ai_insight_cv', "TEXT DEFAULT ''"),
         ('sourced_by', "INTEGER DEFAULT 0"),
         ('sourced_at', "TEXT DEFAULT ''"),
@@ -21291,7 +21308,7 @@ def candidate_add_to_job(cid):
 _PERSON_SYNC_COLS = ('name', 'company', 'designation', 'experience', 'ctc_current', 'ctc_expected', 'notice_period',
                      'location', 'preferred_location', 'phone', 'email', 'qualification', 'specialization',
                      'career_summary', 'key_skills', 'secondary_skills', 'linkedin_url', 'gender',
-                     'yearly_target')
+                     'yearly_target', 'team_direct', 'team_indirect')
 
 
 def _sync_person_fields(conn, cid, fields):
@@ -21336,11 +21353,14 @@ def update_candidate(cid):
               'notice_period','location','preferred_location','phone','email','qualification','specialization','career_summary',
               'key_skills','secondary_skills','recruiter_feedback','client_feedback','general_comments',
               'linkedin_url','ai_insight_cv','ctc_offered','offer_date',
-              'source_channel','referrer_name','gender','yearly_target']
+              'source_channel','referrer_name','gender','yearly_target','team_direct','team_indirect']
     if 'gender' in d:
         d = dict(d); d['gender'] = norm_gender(d.get('gender'))
     if 'yearly_target' in d:
         d = dict(d); d['yearly_target'] = clean_target(d.get('yearly_target'))
+    for _tk in ('team_direct', 'team_indirect'):
+        if _tk in d:
+            d = dict(d); d[_tk] = clean_team(d.get(_tk))
     sets = []; vals = []
     for f in fields:
         if f in d:
@@ -21365,7 +21385,7 @@ def update_candidate(cid):
             'notice_period':'Notice period','location':'Location','preferred_location':'Preferred location','phone':'Phone','email':'Email',
             'qualification':'Qualification','specialization':'Specialization','career_summary':'Summary',
             'linkedin_url':'LinkedIn URL','ai_insight_cv':'AI Insight (CV)','gender':'Gender',
-            'yearly_target':'Yearly target (Rs Cr)'
+            'yearly_target':'Yearly target (Rs Cr)','team_direct':'Team (direct)','team_indirect':'Team (indirect)'
         }
         changes = []
         for f, lbl in labels.items():
@@ -22061,7 +22081,7 @@ def parse_naukri():
                   'ctc_current (float LPA), ctc_expected (float LPA), notice_period (int days), '
                   'location (current city), preferred_location (preferred/desired job location, if mentioned), '
                   'qualification (highest education degree e.g. B.Tech, MBA), key_skills (array max 6), secondary_skills (array), '
-                  'career_summary (2 sentences), is_mnc (bool), product_handling (array of product lines the person sells or handles, e.g. "LV Switchgear", "Cables"; [] if not stated), geography (array of regions / states / cities the person covers, e.g. "North India", "UP"; [] if not stated), yearly_target_cr (float, annual sales target or revenue handled in Rs crore, ONLY if a number is stated; convert lakhs to crore; 0 if not stated), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
+                  'career_summary (2 sentences), is_mnc (bool), product_handling (array of product lines the person sells or handles, e.g. "LV Switchgear", "Cables"; [] if not stated), geography (array of regions / states / cities the person covers, e.g. "North India", "UP"; [] if not stated), yearly_target_cr (float, annual sales target or revenue handled in Rs crore, ONLY if a number is stated; convert lakhs to crore; 0 if not stated), team_direct (int, people reporting directly to the person, ONLY if stated; 0 if not), team_indirect (int, people under them through their direct reports, ONLY if stated; 0 if not), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
                   'Use null for missing strings, 0 for missing numbers.')
     try:
         resp = call_deepseek(key,
@@ -22153,7 +22173,7 @@ def _ai_parse_resume_text(text, ds_key):
                   'key_skills (array of top 8 technical/domain skills), '
                   'secondary_skills (array of other skills), '
                   'career_summary (2-3 sentences about background and strengths), '
-                  'industry_background (e.g. FMCG, Manufacturing, IT), is_mnc (bool), product_handling (array of product lines the person sells or handles, e.g. "LV Switchgear", "Cables"; [] if not stated), geography (array of regions / states / cities the person covers, e.g. "North India", "UP"; [] if not stated), yearly_target_cr (float, annual sales target or revenue handled in Rs crore, ONLY if a number is stated; convert lakhs to crore; 0 if not stated), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
+                  'industry_background (e.g. FMCG, Manufacturing, IT), is_mnc (bool), product_handling (array of product lines the person sells or handles, e.g. "LV Switchgear", "Cables"; [] if not stated), geography (array of regions / states / cities the person covers, e.g. "North India", "UP"; [] if not stated), yearly_target_cr (float, annual sales target or revenue handled in Rs crore, ONLY if a number is stated; convert lakhs to crore; 0 if not stated), team_direct (int, people reporting directly to the person, ONLY if stated; 0 if not), team_indirect (int, people under them through their direct reports, ONLY if stated; 0 if not), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
                   'Use null for missing strings, 0 for missing numbers.')
     try:
         resp = call_deepseek(ds_key,
@@ -22879,6 +22899,12 @@ def _talent_where():
             opts = [x.strip() for x in v.split(',') if x.strip()][:10]
             where.append('(' + ' OR '.join("LOWER(COALESCE(%s,'')) LIKE ?" % col for _ in opts) + ')')
             params += ['%' + x + '%' for x in opts]
+    tm = clean_team(request.args.get('team_min'))
+    if tm:
+        where.append('(COALESCE(c.team_direct,0)+COALESCE(c.team_indirect,0)) >= ?'); params.append(tm)
+    tdm = clean_team(request.args.get('team_direct_min'))
+    if tdm:
+        where.append('COALESCE(c.team_direct,0) >= ?'); params.append(tdm)
     for arg, op in (('target_min', '>='), ('target_max', '<=')):
         tv = clean_target(request.args.get(arg))
         if tv is not None:
@@ -22906,8 +22932,9 @@ def _talent_where():
 _TALENT_SORTS = {'name': 'c.name', 'location': 'c.location', 'experience': 'c.experience',
                  'ctc_current': 'c.ctc_current', 'ctc_expected': 'c.ctc_expected', 'stage': 'c.stage',
                  'job': 'm.role', 'created_at': 'c.created_at', 'notice': 'c.notice_period',
-                 'updated_at': 'c.updated_at', 'company': 'c.company', 'target': 'c.yearly_target'}
-_TALENT_NUM = ('experience', 'ctc_current', 'ctc_expected', 'notice', 'target')
+                 'updated_at': 'c.updated_at', 'company': 'c.company', 'target': 'c.yearly_target',
+                 'team': 'team_total'}
+_TALENT_NUM = ('experience', 'ctc_current', 'ctc_expected', 'notice', 'target', 'team')
 
 
 @app.route('/api/central-db/search')
@@ -22933,7 +22960,7 @@ def central_search():
     tcol = {'c.name': 't.name', 'c.location': 't.location', 'c.experience': 't.experience',
             'c.ctc_current': 't.ctc_current', 'c.ctc_expected': 't.ctc_expected', 'c.stage': 't.stage',
             'm.role': 't.mandate_role', 'c.created_at': 't.created_at', 'c.notice_period': 't.notice_period',
-            'c.updated_at': 't.updated_at', 'c.company': 't.company', 'c.yearly_target': 't.yearly_target'}.get(col or '', '')
+            'c.updated_at': 't.updated_at', 'c.company': 't.company', 'c.yearly_target': 't.yearly_target', 'team_total': 't.team_total'}.get(col or '', '')
     if tcol:
         # unknown / empty values always go last, whichever way you sort
         empty = ('COALESCE(%s,0)=0' % tcol) if skey in _TALENT_NUM else ("COALESCE(%s,'')=''" % tcol)
@@ -22950,7 +22977,8 @@ def central_search():
         # ~1.8 s on 30k candidates. Same rows, same order.
         page_ids = [r['id'] for r in conn.execute(
             'SELECT t.id FROM (SELECT c.id, c.name, c.location, c.experience, c.ctc_current, c.ctc_expected, '
-            'c.stage, c.created_at, c.notice_period, c.updated_at, c.company, c.yearly_target, m.role AS mandate_role, '
+            'c.stage, c.created_at, c.notice_period, c.updated_at, c.company, c.yearly_target, '
+            '(COALESCE(c.team_direct,0)+COALESCE(c.team_indirect,0)) AS team_total, m.role AS mandate_role, '
             'ROW_NUMBER() OVER (PARTITION BY ' + pkey + ' ORDER BY c.updated_at DESC, c.id DESC) AS _rn '
             + base + ') t WHERE t._rn=1 ORDER BY ' + order + ' LIMIT ? OFFSET ?',
             params + [per_page, (page - 1) * per_page]).fetchall()]
@@ -23253,7 +23281,7 @@ def central_export():
     conn = get_db()
     rows = conn.execute('SELECT c.name, c.phone, c.email, c.company, c.designation, c.experience, c.ctc_current, '
                         'c.ctc_expected, c.notice_period, c.location, c.gender, c.product_handles, c.geography_tags, '
-                        'c.yearly_target, c.stage, c.key_skills, c.status_tags, '
+                        'c.yearly_target, c.team_direct, c.team_indirect, c.stage, c.key_skills, c.status_tags, '
                         "CASE WHEN m.status='central' THEN 'Central Database' ELSE m.role END AS job, m.client, "
                         'c.source_channel, c.created_at FROM candidates c LEFT JOIN mandates m ON c.mandate_id=m.id '
                         'WHERE ' + where + ' ORDER BY c.created_at DESC LIMIT 20000', params).fetchall()
@@ -23262,7 +23290,7 @@ def central_export():
     w = csv.writer(buf)
     head = ['Name', 'Phone', 'Email', 'Company', 'Designation', 'Experience (yrs)', 'Current CTC (LPA)',
             'Expected CTC (LPA)', 'Notice (days)', 'Location', 'Gender', 'Product handling', 'Geography',
-            'Yearly target (Rs Cr)', 'Stage', 'Skills', 'Tags', 'Job', 'Client',
+            'Yearly target (Rs Cr)', 'Team (direct)', 'Team (indirect)', 'Stage', 'Skills', 'Tags', 'Job', 'Client',
             'Source', 'Added']
     w.writerow(head)
     for r in rows:
