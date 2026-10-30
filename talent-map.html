@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Company Talent Map · HireLab</title>
+<style>
+:root{--ink:#1F2328;--muted:#6B6F76;--line:#E3E1DA;--paper:#F7F6F2;--green:#0F6E56;--navy:#0E2A47;--blue:#1a73e8;--soft:#E6F4EE;--bar:#0F6E56;--bar2:#9DC9B8}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--paper)}
+button,input,select{font:inherit;color:inherit}
+a{color:var(--blue)}
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.top a.back{text-decoration:none;color:var(--muted);font-size:13px}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--green);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.top h1{font-size:17px;margin:0}
+.sp{flex:1}
+.wrap{max-width:1200px;margin:0 auto;padding:18px 20px 60px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px;min-width:0}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.h{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 4px}
+.sub{color:var(--muted);font-size:12.5px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.btn.sm{padding:5px 10px;font-size:12.5px}
+.inp{padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fff;min-width:0}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 11px;font-size:12.5px;cursor:pointer}
+.chip:hover,.chip.on{border-color:var(--green);color:var(--green);background:var(--soft)}
+.chip b{font-weight:700;margin-left:3px}
+.opt{display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer}
+.err{background:#FBE9E7;color:#B3261E;border-radius:10px;padding:10px 12px;font-size:13px}
+.empty{color:var(--muted);text-align:center;padding:40px}
+.head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin:4px 0 14px}
+.head h2{margin:0;font-size:24px;color:var(--navy)}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px;min-width:0}
+.kpi b{display:block;font-size:22px;color:var(--navy);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi span{font-size:12px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.bars{display:flex;flex-direction:column;gap:7px;margin-top:8px}
+.br{display:grid;grid-template-columns:minmax(90px,170px) 1fr 52px;gap:8px;align-items:center;font-size:12.5px}
+.br .l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.br .t{background:#EFEDE7;border-radius:6px;height:12px;overflow:hidden}
+.br .t i{display:block;height:100%;background:var(--bar);border-radius:6px}
+.br .v{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11.5px;color:var(--muted);font-weight:600;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap;cursor:pointer;user-select:none}
+th.ns{cursor:default}
+td{padding:9px 8px;border-bottom:1px solid #EFEDE7;vertical-align:top}
+td .m{color:var(--muted);font-size:12px}
+.tg{display:inline-block;font-size:11.5px;background:#EEF4FF;color:#3538CD;border-radius:6px;padding:1px 7px;margin:0 3px 3px 0}
+.tg.g{background:#ECFDF3;color:#067647}
+.tbar{display:flex;align-items:center;gap:6px;min-width:120px}
+.tbar span{display:block;height:10px;background:var(--bar);border-radius:5px}
+.fm{font-size:10.5px;background:#FFF6E5;color:#9A6512;border-radius:6px;padding:1px 6px;margin-left:5px}
+.mu{color:var(--muted)}
+.printhead{display:none}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.grid2{grid-template-columns:1fr}}
+@media print{
+  body{background:#fff}
+  .top,.noprint,#hln-btn{display:none !important}
+  .wrap{max-width:none;padding:0}
+  .card,.kpi{break-inside:avoid;border-color:#ddd}
+  .printhead{display:block;margin-bottom:10px;font-size:12px;color:#555}
+  a{color:inherit;text-decoration:none}
+}
+</style>
+</head>
+<body>
+<div class="top"><a class="back" href="/">← App</a><div class="logo">H</div><h1>Company Talent Map</h1><div class="sp"></div>
+  <a class="btn sm" href="/#central" style="text-decoration:none">Talent search</a></div>
+<div class="wrap">
+  <div class="card noprint">
+    <div class="h">Pick a company</div>
+    <div class="sub">See everyone you know there side by side — product handling, geography, yearly target, experience and CTC. Turn on <b>Client view</b> to hide names and contacts, then <b>Print / Save PDF</b> to share.</div>
+    <div class="row" style="margin-top:10px">
+      <input class="inp" id="q" list="cl" placeholder="Company name, e.g. KEI Wires" style="flex:1;min-width:220px" autocomplete="off">
+      <datalist id="cl"></datalist>
+      <button class="btn pri" id="go">Show talent</button>
+    </div>
+    <div class="chips" id="top"></div>
+  </div>
+  <div id="app"></div>
+</div>
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]; }); }
+  function api(p){ return fetch('/api/talent-map' + p, {credentials: 'same-origin'}).then(function(r){ return r.json(); }).catch(function(e){ return {error: e.message}; }); }
+  function ppl(n){ return n + (n === 1 ? ' person' : ' people'); }
+  function num(v, d){ v = Number(v) || 0; return v ? (Math.round(v * 10) / 10).toLocaleString('en-IN') : (d || '—'); }
+  var D = null, OPT = {former: false, client: false, hideCtc: false, sort: 'target', dir: -1, product: '', geo: ''};
+  try { var s = JSON.parse(localStorage.getItem('tmap_opt') || '{}'); ['former', 'client', 'hideCtc'].forEach(function(k){ if (k in s) OPT[k] = !!s[k]; }); } catch(e) {}
+  function saveOpt(){ try { localStorage.setItem('tmap_opt', JSON.stringify({former: OPT.former, client: OPT.client, hideCtc: OPT.hideCtc})); } catch(e) {} }
+
+  async function loadCompanies(q){
+    var r = await api('/companies?q=' + encodeURIComponent(q || ''));
+    if (!r.ok) return [];
+    $('cl').innerHTML = r.companies.map(function(c){ return '<option value="' + esc(c.name) + '">' + c.count + ' people</option>'; }).join('');
+    return r.companies;
+  }
+  async function init(){
+    var cs = await loadCompanies('');
+    $('top').innerHTML = cs.slice(0, 16).map(function(c){ return '<button class="chip" data-n="' + esc(c.name) + '">' + esc(c.name) + '<b>' + c.count + '</b></button>'; }).join('');
+    $('top').onclick = function(e){ var b = e.target.closest('[data-n]'); if (b) { $('q').value = b.dataset.n; show(b.dataset.n); } };
+    var t; $('q').oninput = function(){ clearTimeout(t); var v = this.value; t = setTimeout(function(){ loadCompanies(v); }, 250); };
+    $('q').onkeydown = function(e){ if (e.key === 'Enter') show(this.value); };
+    $('go').onclick = function(){ show($('q').value); };
+    var p = new URLSearchParams(location.search).get('company');
+    if (p) { $('q').value = p; show(p); }
+  }
+  async function show(name){
+    name = String(name || '').trim(); if (!name) return;
+    $('app').innerHTML = '<div class="card empty">Loading…</div>';
+    var r = await api('/company?former=1&name=' + encodeURIComponent(name));
+    if (!r.ok) { $('app').innerHTML = '<div class="card"><div class="err">' + esc(r.error || 'Could not load') + '</div></div>'; return; }
+    D = r; OPT.product = ''; OPT.geo = '';
+    try { history.replaceState(null, '', '?company=' + encodeURIComponent(r.company)); } catch(e) {}
+    paint();
+  }
+  function people(){
+    var list = D.people.concat(OPT.former ? D.former : []);
+    if (OPT.product) list = list.filter(function(p){ return p.products.indexOf(OPT.product) >= 0; });
+    if (OPT.geo) list = list.filter(function(p){ return p.geography.indexOf(OPT.geo) >= 0; });
+    var k = OPT.sort, dir = OPT.dir;
+    list = list.slice().sort(function(a, b){
+      var x = a[k], y = b[k];
+      if (k === 'name' || k === 'designation') { x = String(x || '').toLowerCase(); y = String(y || '').toLowerCase(); return x < y ? -dir : x > y ? dir : 0; }
+      x = Number(x) || 0; y = Number(y) || 0;
+      if (!x && y) return 1; if (x && !y) return -1;          // unknown last
+      return (x - y) * dir;
+    });
+    return list;
+  }
+  function count(list, field){
+    var m = {};
+    list.forEach(function(p){ (p[field] || []).forEach(function(v){ m[v] = (m[v] || 0) + 1; }); });
+    return Object.keys(m).map(function(k){ return [k, m[k]]; }).sort(function(a, b){ return b[1] - a[1] || (a[0] < b[0] ? -1 : 1); });
+  }
+  function bars(rows, max, fmt, click){
+    if (!rows.length) return '<div class="sub" style="margin-top:8px">Not filled in yet for these people — add it on their profiles.</div>';
+    return '<div class="bars">' + rows.map(function(r){
+      return '<div class="br"' + (click ? ' data-' + click + '="' + esc(r[0]) + '" style="cursor:pointer" title="Show only these"' : '') + '><span class="l" title="' + esc(r[0]) + '">' + esc(r[0]) + '</span>'
+        + '<span class="t"><i style="width:' + Math.max(3, Math.round(100 * r[1] / (max || 1))) + '%"></i></span><span class="v">' + (fmt ? fmt(r[1]) : r[1]) + '</span></div>';
+    }).join('') + '</div>';
+  }
+  function band(e){ e = Number(e) || 0; return !e ? 'Not known' : e < 3 ? '0–3 yrs' : e < 6 ? '3–6 yrs' : e < 10 ? '6–10 yrs' : e < 15 ? '10–15 yrs' : '15+ yrs'; }
+  function paint(){
+    var list = people(), all = D.people.concat(OPT.former ? D.former : []);
+    var label = function(p, i){ return OPT.client ? 'Candidate ' + String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : '') : p.name; };
+    var exps = all.map(function(p){ return Number(p.experience) || 0; }).filter(Boolean);
+    var ctcs = all.map(function(p){ return Number(p.ctc_current) || 0; }).filter(Boolean);
+    var tg = all.map(function(p){ return Number(p.yearly_target) || 0; }).filter(Boolean);
+    var prods = count(all, 'products'), geos = count(all, 'geography');
+    var kp = [['People', String(all.length), D.people.length + ' current' + (OPT.former ? ' · ' + D.former.length + ' former' : '')],
+      ['Avg experience', exps.length ? num(exps.reduce(function(a, b){ return a + b; }, 0) / exps.length) + ' yrs' : '—', exps.length + ' known'],
+      ['CTC range', OPT.hideCtc ? 'Hidden' : (ctcs.length ? num(Math.min.apply(null, ctcs)) + '–' + num(Math.max.apply(null, ctcs)) + ' L' : '—'), 'per annum'],
+      ['Yearly targets', tg.length ? '₹' + num(tg.reduce(function(a, b){ return a + b; }, 0)) + ' Cr' : '—', tg.length ? ppl(tg.length) + ' · top ₹' + num(Math.max.apply(null, tg)) + ' Cr' : 'add on profiles'],
+      ['Top product', prods.length ? prods[0][0] : '—', prods.length ? ppl(prods[0][1]) : ''],
+      ['Top geography', geos.length ? geos[0][0] : '—', geos.length ? ppl(geos[0][1]) : '']];
+    var h = '<div class="printhead">Talent map prepared by HireLab · ' + new Date().toLocaleDateString('en-IN', {day: 'numeric', month: 'short', year: 'numeric'}) + '</div>'
+      + '<div class="head"><div><div class="sub">Company talent map</div><h2>' + esc(D.company) + '</h2></div>'
+      + '<div class="row noprint"><label class="opt"><input type="checkbox" id="o-former"' + (OPT.former ? ' checked' : '') + '> Include former employees (' + D.former.length + ')</label>'
+      + '<label class="opt"><input type="checkbox" id="o-client"' + (OPT.client ? ' checked' : '') + '> Client view (hide names &amp; contacts)</label>'
+      + '<label class="opt"><input type="checkbox" id="o-ctc"' + (OPT.hideCtc ? ' checked' : '') + '> Hide CTC</label>'
+      + '<button class="btn sm" onclick="window.print()">&#128424; Print / Save PDF</button></div></div>';
+    if (!all.length) { $('app').innerHTML = h + '<div class="card empty">Nobody from this company in your database yet' + (D.former.length ? ' — tick “Include former employees”.' : '.') + '</div>'; bind(); return; }
+    h += '<div class="kpis">' + kp.map(function(k){ return '<div class="kpi"><span>' + k[0] + '</span><b title="' + esc(k[1]) + '">' + esc(k[1]) + '</b><span>' + esc(k[2]) + '</span></div>'; }).join('') + '</div>';
+    var withT = all.filter(function(p){ return Number(p.yearly_target) > 0; }).sort(function(a, b){ return b.yearly_target - a.yearly_target; });
+    var idx = {}; all.forEach(function(p, i){ idx[p.id] = i; });
+    var bandsM = {}; all.forEach(function(p){ var b = band(p.experience); bandsM[b] = (bandsM[b] || 0) + 1; });
+    var bandRows = ['0–3 yrs', '3–6 yrs', '6–10 yrs', '10–15 yrs', '15+ yrs', 'Not known'].filter(function(b){ return bandsM[b]; }).map(function(b){ return [b, bandsM[b]]; });
+    h += '<div class="grid2">'
+      + '<div class="card"><div class="h">Product handling</div><div class="sub">People per product line' + (OPT.product ? ' · showing <b>' + esc(OPT.product) + '</b> <a href="#" id="clrp" class="noprint">clear</a>' : ' · click a bar to filter') + '</div>' + bars(prods.slice(0, 12), prods.length ? prods[0][1] : 1, null, 'p') + '</div>'
+      + '<div class="card"><div class="h">Geography handling</div><div class="sub">People per region / state' + (OPT.geo ? ' · showing <b>' + esc(OPT.geo) + '</b> <a href="#" id="clrg" class="noprint">clear</a>' : ' · click a bar to filter') + '</div>' + bars(geos.slice(0, 12), geos.length ? geos[0][1] : 1, null, 'g') + '</div>'
+      + '<div class="card"><div class="h">Yearly target</div><div class="sub">₹ crore per person, highest first</div>'
+      +   bars(withT.slice(0, 12).map(function(p){ return [label(p, idx[p.id]) + (p.designation ? ' · ' + p.designation : ''), p.yearly_target]; }), withT.length ? withT[0].yearly_target : 1, function(v){ return '₹' + num(v); }) + '</div>'
+      + '<div class="card"><div class="h">Experience mix</div><div class="sub">How senior the team is</div>' + bars(bandRows, Math.max.apply(null, bandRows.map(function(b){ return b[1]; }).concat([1]))) + '</div>'
+      + '</div>';
+    var maxT = withT.length ? withT[0].yearly_target : 0;
+    var th = function(k, l){ return '<th data-s="' + k + '">' + l + (OPT.sort === k ? (OPT.dir < 0 ? ' ▼' : ' ▲') : '') + '</th>'; };
+    h += '<div class="card"><div class="row" style="justify-content:space-between"><div class="h">Side-by-side comparison</div><span class="sub">' + list.length + ' people' + (OPT.product || OPT.geo ? ' (filtered)' : '') + '</span></div><div class="scroll"><table><thead><tr>'
+      + th('name', OPT.client ? 'Candidate' : 'Name') + th('designation', 'Designation') + th('experience', 'Exp') + '<th class="ns">Product handling</th><th class="ns">Geography</th>'
+      + th('yearly_target', 'Yearly target') + (OPT.hideCtc ? '' : th('ctc_current', 'CTC')) + th('notice_period', 'Notice') + '<th class="ns">Location</th>'
+      + (OPT.client ? '' : '<th class="ns noprint"></th>') + '</tr></thead><tbody>'
+      + list.map(function(p){
+          var i = idx[p.id];
+          return '<tr><td><b>' + esc(label(p, i)) + '</b>' + (p.former ? '<span class="fm">Former' + (p.former_period ? ' · ' + esc(p.former_period) : '') + '</span>' : '')
+            + (p.former && !OPT.client && p.current_company ? '<div class="m">Now: ' + esc([p.current_designation, p.current_company].filter(Boolean).join(' at ')) + '</div>' : '')
+            + (!OPT.client && p.phone ? '<div class="m">' + esc(p.phone) + '</div>' : '') + '</td>'
+            + '<td>' + esc(p.designation || '—') + (p.qualification ? '<div class="m">' + esc(p.qualification) + '</div>' : '') + '</td>'
+            + '<td>' + (p.experience ? num(p.experience) + ' y' : '<span class="mu">—</span>') + '</td>'
+            + '<td>' + (p.products.length ? p.products.map(function(x){ return '<span class="tg">' + esc(x) + '</span>'; }).join('') : '<span class="mu">—</span>') + '</td>'
+            + '<td>' + (p.geography.length ? p.geography.map(function(x){ return '<span class="tg g">' + esc(x) + '</span>'; }).join('') : '<span class="mu">—</span>') + '</td>'
+            + '<td>' + (p.yearly_target ? '<div class="tbar"><span style="width:' + Math.max(4, Math.round(90 * p.yearly_target / (maxT || 1))) + 'px"></span>₹' + num(p.yearly_target) + ' Cr</div>' : '<span class="mu">—</span>') + '</td>'
+            + (OPT.hideCtc ? '' : '<td>' + (p.ctc_current ? num(p.ctc_current) + ' L' : '<span class="mu">—</span>') + '</td>')
+            + '<td>' + (p.notice_period ? p.notice_period + ' d' : '<span class="mu">—</span>') + '</td>'
+            + '<td>' + esc(p.location || '—') + '</td>'
+            + (OPT.client ? '' : '<td class="noprint"><a href="/#mandate/' + p.mandate_id + '/profiles/' + p.id + '" target="_blank" rel="noopener">Profile ↗</a></td>')
+            + '</tr>';
+        }).join('') + '</tbody></table></div>'
+      + '<div class="sub" style="margin-top:8px">Product handling, geography and yearly target come from each profile (Key Facts and the tag boxes). Empty cells mean it is not filled in yet.</div></div>';
+    $('app').innerHTML = h; bind();
+  }
+  function bind(){
+    var f = $('o-former'), c = $('o-client'), x = $('o-ctc');
+    if (f) f.onchange = function(){ OPT.former = this.checked; saveOpt(); paint(); };
+    if (c) c.onchange = function(){ OPT.client = this.checked; if (OPT.client) OPT.hideCtc = true; saveOpt(); paint(); };
+    if (x) x.onchange = function(){ OPT.hideCtc = this.checked; saveOpt(); paint(); };
+    document.querySelectorAll('[data-s]').forEach(function(t){ t.onclick = function(){ var k = t.dataset.s; if (OPT.sort === k) OPT.dir = -OPT.dir; else { OPT.sort = k; OPT.dir = (k === 'name' || k === 'designation') ? 1 : -1; } paint(); }; });
+    document.querySelectorAll('[data-p]').forEach(function(b){ b.onclick = function(){ OPT.product = b.dataset.p; paint(); }; });
+    document.querySelectorAll('[data-g]').forEach(function(b){ b.onclick = function(){ OPT.geo = b.dataset.g; paint(); }; });
+    var cp = $('clrp'), cg = $('clrg');
+    if (cp) cp.onclick = function(e){ e.preventDefault(); OPT.product = ''; paint(); };
+    if (cg) cg.onclick = function(e){ e.preventDefault(); OPT.geo = ''; paint(); };
+  }
+  init();
+})();
+</script>
+</body>
+</html>

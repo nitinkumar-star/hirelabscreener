@@ -100,6 +100,9 @@ def clean_fields(j):
         'key_skills': skills,
         'career_summary': _s(j.get('career_summary'), 600),
         'gender': _core().norm_gender(j.get('gender')),
+        'product_handling': _core().clean_tag_list(j.get('product_handling')),
+        'geography': _core().clean_tag_list(j.get('geography')),
+        'yearly_target_cr': _core().clean_target(j.get('yearly_target_cr')) or 0,
         'work_history': wh,
     }
 
@@ -113,7 +116,7 @@ PARSE_PROMPT = (
     'notice_period (int days; "Immediate"=0, "15 days or less"=15, "1 month"=30, "2 months"=60, '
     '"3 months"=90), location (current city), preferred_location, qualification (highest degree), '
     'key_skills (array, max 10, domain/technical skills only), career_summary (2 sentences), '
-    'work_history (array of {company, designation, duration}, newest first, max 6), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
+    'work_history (array of {company, designation, duration}, newest first, max 6), product_handling (array of product lines the person sells or handles, e.g. "LV Switchgear", "Cables"; [] if not stated), geography (array of regions / states / cities the person covers, e.g. "North India", "UP"; [] if not stated), yearly_target_cr (float, annual sales target or revenue handled in Rs crore, ONLY if a number is stated; convert lakhs to crore; 0 if not stated), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
     'Prefer the NAUKRI PAGE for CTC, notice period and location; prefer the CV for skills and history. '
     'Use "" for unknown text and 0 for unknown numbers. Never invent values.')
 
