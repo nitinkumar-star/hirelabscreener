@@ -2018,6 +2018,11 @@ async function readHash() {
     if (head === 'mandate' && parts[1]) {
       var mid = parseInt(parts[1]);
       var m = (S.mandates || []).find(function(x){ return x.id === mid; });
+      if (!m && parts[2] === 'profiles' && parseInt(parts[3])) {   // Central Database profile (new tab / refresh)
+        __restoringHash = false;
+        await openCandidateOnly(parseInt(parts[3]));
+        return;
+      }
       if (!m) { await renderContent(); return; }  // mandate gone -> home
       S.activeMandate = m;
       var sub = parts[2] || 'setup';
@@ -3554,10 +3559,13 @@ function updateTopbar(){
   document.getElementById('topbar-title').textContent=m?m.role:'Home';
   if(crumb){
     if(m){
-      crumb.innerHTML='<a href="#jobs" onclick="return navClick(event,openJobs)">Jobs</a><span>/</span><span>'+esc(m.client||'')+'</span>';
+      crumb.innerHTML=m._central
+        ? '<a href="#central" onclick="return navClick(event,openCentralDB)">Talent</a><span>/</span><span>Central Database</span>'
+        : '<a href="#jobs" onclick="return navClick(event,openJobs)">Jobs</a><span>/</span><span>'+esc(m.client||'')+'</span>';
       crumb.style.display='';
     } else { crumb.innerHTML=''; crumb.style.display='none'; }
   }
+  if(stb && m && m._central){ stb.style.display='none'; stb=null; }
   if(stb){
     if(m){
       var st=(m.status||'active'), lbl=st==='hold'?'On hold':st==='closed'?'Closed':'Active';
@@ -3570,7 +3578,7 @@ function updateTopbar(){
   }
   var jlb=document.getElementById('topbar-joblink');
   if(jlb){ jlb.style.display=(m && m.status!=='central')?'':'none'; if(m) jlb.onclick=function(){ openJobLink(m.id); }; }
-  document.getElementById('topbar-sub').innerHTML=m?w1MandateMeta(m):'Today’s focus &amp; business insights';
+  document.getElementById('topbar-sub').innerHTML=m?(m._central?'Not on a job yet &middot; add them to a job from the profile':w1MandateMeta(m)):'Today’s focus &amp; business insights';
   const pill=document.getElementById('sop-pill');
   if(m&&m.sop_text){pill.textContent='SOP v'+m.sop_version;pill.style.display='';}else pill.style.display='none';
 }
@@ -3637,6 +3645,12 @@ async function renderContent(){
   el.scrollTop=0; el.style.padding=''; el.style.overflow='auto'; el.style.display='block';
   el.innerHTML='<div class="loading"><div class="spinner"></div>Loading...</div>';
   if(!S.activeMandate){await renderDashboard(el);return;}
+  if(S.activeMandate._central){
+    if(!S.selectedCandidateId){ S.activeMandate=null; await renderDashboard(el); return; }
+    var _cd=await req('GET','/candidates/'+S.selectedCandidateId);
+    if(_cd && _cd.id){ _renderCentralProfile(el,_cd); writeHash(); return; }
+    S.activeMandate=null; await renderDashboard(el); return;
+  }
   if(S.activeTab==='Mandate Setup')renderMandateSetup(el);
   else if(S.activeTab==='Pipeline')await renderPipeline(el);
   else if(S.activeTab==='Candidate Profiles')await renderProfiles(el);
@@ -4111,6 +4125,12 @@ async function dashReminderDone(rid, btn) {
 }
 
 async function openProfileById(cid, mandateId) {
+  // Central Database people (and anyone whose job is not in S.mandates) have no
+  // job page to open inside: show their profile on its own (Oct 2026 fix — this
+  // used to fall back to Home).
+  if (cid && (!mandateId || !(S.mandates || []).some(function(m){ return m.id === +mandateId; }))) {
+    return openCandidateOnly(cid);
+  }
   // Close overlay views (tasks/responses/central/settings)
   ['tasks-view','ai-view','admin-view','responses-view','central-view','cdb-view','settings-view'].forEach(function(id){
     var v = document.getElementById(id); if (v) v.style.display = 'none';
@@ -4134,6 +4154,44 @@ async function openProfileById(cid, mandateId) {
   await renderContent();
 
   writeHash();
+}
+
+// One candidate's full profile without a job page around it (Central Database).
+// S.activeMandate becomes a stand-in for the pool so every profile action that
+// needs a mandate id keeps working; renderContent() redraws this view, never the
+// pool's (possibly huge) candidate list.
+// Back on a profile: the previous page, or — in a tab opened from Talent with
+// nothing to go back to — the Talent search (Central DB) / the job's pipeline.
+function cpBack(){
+  if (history.length > 1) { history.back(); return; }
+  if (S.activeMandate && S.activeMandate._central) { openCentralDB(); return; }
+  if (S.activeMandate) { S.activeTab = 'Pipeline'; S.selectedCandidateId = null; renderTabs(); renderContent(); return; }
+  openCentralDB();
+}
+async function openCandidateOnly(cid){
+  var d = await req('GET', '/candidates/' + cid);
+  if (!d || d.error || !d.id) {
+    toast('&#9888;&#65039;', esc((d && d.error) || 'Candidate not found'));
+    S.activeMandate = null; await renderContent(); return;
+  }
+  try { closeSidebarOnMobile(); } catch (e) {}
+  _hideAllViews();
+  ['sb-tasks','sb-responses','sb-central'].forEach(function(id){ var b = document.getElementById(id); if (b) b.className = 'sb-gear'; });
+  document.getElementById('mandate-view').style.display = 'flex';
+  S.settingsOpen = false;
+  S.activeMandate = {id: d.mandate_id, role: 'Central Database', client: 'Talent', status: 'central', _central: true};
+  S.activeTab = 'Candidate Profiles';
+  S.selectedCandidateId = d.id;
+  document.title = (d.name || 'Candidate') + ' · Central Database · HireLab';
+  try { renderSidebar(); updateTopbar(); } catch (e) {}
+  var tb = document.getElementById('tabs'); if (tb) tb.style.display = 'none';
+  _renderCentralProfile(document.getElementById('content'), d);
+  writeHash();
+}
+function _renderCentralProfile(el, d){
+  el.scrollTop = 0; el.style.padding = '0'; el.style.display = 'flex'; el.style.flexDirection = 'column'; el.style.overflow = 'hidden';
+  el.innerHTML = '<div class="prof-wrap w1-coll w1-solo"><div class="prof-detail" id="prof-detail"></div></div>';
+  renderProfileDetail(d);
 }
 
 // ── MANDATE SETUP ──────────────────────────────────────────────────────────
@@ -7357,7 +7415,7 @@ function renderProfileDetail(c){
   var cdbBadge = ((c.stage||'')==='Central DB') ? '<span class="w1-badge cdb" title="In your Central Database — no position yet">CENTRAL DB</span>' : '';
   let html='';
   html+='<div class="cp-head w1-cphead">';
-  html+='<div class="cp-back" onclick="history.back()">&#8592; Back</div>';
+  html+='<div class="cp-back" onclick="cpBack()">&#8592; Back</div>';
   html+='<div class="w1-cp-top">';
   html+=avatarHtml(c.name,52);
   html+='<div class="w1-cp-id"><div class="w1-cp-name"><h1>'+esc(c.name||'')+'</h1>'+refBadge+cdbBadge+'</div>'
