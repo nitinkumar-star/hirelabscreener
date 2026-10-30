@@ -56,6 +56,45 @@ _GENDER_RX = (re.compile(r'\b(?:gender|sex)\s*[:\-\u2013|]?\s*(male|female|m|f|o
               re.compile(r'\b(male|female)\s*,\s*(?:single|married|unmarried|divorced|widowed|separated)', re.I))
 
 
+def clean_target(v):
+    """Yearly target in Rs crore -> float or None (blank / 0 / nonsense = not known)."""
+    try:
+        n = round(float(str(v).replace(',', '').replace('\u20b9', '').strip()), 2)
+    except Exception:
+        return None
+    return n if 0 < n < 100000 else None
+
+
+def clean_tag_list(v, n=12):
+    if isinstance(v, str):
+        v = [x for x in re.split(r'[,;/\n]+', v)]
+    if not isinstance(v, list):
+        return []
+    out = []
+    for x in v:
+        x = re.sub(r'\s+', ' ', str(x or '')).strip()[:60]
+        if x and x.lower() not in ('null', 'none', 'n/a') and x.lower() not in [o.lower() for o in out]:
+            out.append(x)
+    return out[:n]
+
+
+def save_sales_profile(conn, cid, d, keep_known=True):
+    """Product handling / geography / yearly target from a push or a parse.
+    keep_known: a blank value never wipes what the profile already has."""
+    sets = {}
+    prods, geo = clean_tag_list(d.get('product_handling')), clean_tag_list(d.get('geography'))
+    tgt = clean_target(d.get('yearly_target_cr', d.get('yearly_target')))
+    if prods or not keep_known:
+        sets['product_handles'] = json.dumps(prods)
+    if geo or not keep_known:
+        sets['geography_tags'] = json.dumps(geo)
+    if tgt is not None or not keep_known:
+        sets['yearly_target'] = tgt
+    if sets:
+        conn.execute('UPDATE candidates SET ' + ', '.join(k + '=?' for k in sets) + ' WHERE id=?',
+                     list(sets.values()) + [cid])
+
+
 def norm_gender(v):
     return _GENDER_WORDS.get(str(v or '').strip().lower().rstrip('.'), '')
 
@@ -3957,6 +3996,8 @@ def init_db():
         ('update_submitted_at', "TEXT DEFAULT ''"),
         ('linkedin_url', "TEXT DEFAULT ''"),
         ('gender', "TEXT DEFAULT ''"),          # Male / Female / Other / '' (only when stated)
+        ('geography_tags', "TEXT DEFAULT '[]'"), # regions / states covered (Geography Handling)
+        ('yearly_target', 'REAL'),              # annual sales target, Rs crore (NULL = not known)
         ('ai_insight_cv', "TEXT DEFAULT ''"),
         ('sourced_by', "INTEGER DEFAULT 0"),
         ('sourced_at', "TEXT DEFAULT ''"),
@@ -6150,6 +6191,7 @@ def extension_push():
                       d.get('linkedin_url',''), d.get('ai_insight_cv',''), existing['id']))
         if norm_gender(d.get('gender')):          # a blank never wipes a known gender
             conn.execute('UPDATE candidates SET gender=? WHERE id=?', (norm_gender(d.get('gender')), existing['id']))
+        save_sales_profile(conn, existing['id'], d)
         _save_naukri_ref(conn, existing['id'], d.get('naukri_ref'))
         conn.commit(); conn.close()
         return jsonify({'ok': True, 'action': 'updated', 'candidate_id': existing['id'],
@@ -6171,6 +6213,7 @@ def extension_push():
     c.execute('UPDATE candidates SET qualification=?, specialization=?, preferred_location=?, linkedin_url=?, ai_insight_cv=?, gender=? WHERE id=?',
               (d.get('qualification',''), d.get('specialization',''), d.get('preferred_location',''),
                d.get('linkedin_url',''), d.get('ai_insight_cv',''), norm_gender(d.get('gender')), cid))
+    save_sales_profile(conn, cid, d)
     # If a freelancer sourced this candidate, stamp attribution
     if _is_freelancer_upload:
         c.execute('UPDATE candidates SET sourced_by=?, sourced_at=? WHERE id=?',
@@ -12387,12 +12430,20 @@ def get_tag_suggestions(tag_type):
     """Return distinct tags used across all candidates for autocomplete.
     tag_type: 'product' (Product Handles) or 'function' (Function)
     """
-    col_map = {'product': 'product_handles', 'function': 'function_tags', 'status': 'status_tags'}
+    col_map = {'product': 'product_handles', 'function': 'function_tags', 'status': 'status_tags',
+               'geography': 'geography_tags'}
     col = col_map.get(tag_type)
     if not col:
         return jsonify({'ok': False, 'error': 'Invalid tag type'}), 400
 
     defaults_map = {
+        'geography': [
+            'PAN India', 'North India', 'South India', 'East India', 'West India', 'Central India', 'North East',
+            'Delhi NCR', 'Uttar Pradesh', 'Uttarakhand', 'Punjab', 'Haryana', 'Rajasthan', 'Gujarat', 'Maharashtra',
+            'Madhya Pradesh', 'Chhattisgarh', 'Bihar', 'Jharkhand', 'Odisha', 'West Bengal', 'Karnataka',
+            'Tamil Nadu', 'Kerala', 'Andhra Pradesh', 'Telangana', 'Mumbai', 'Pune', 'Bengaluru', 'Chennai',
+            'Hyderabad', 'Kolkata', 'Ahmedabad', 'Middle East', 'Africa', 'SAARC', 'Export'
+        ],
         'product': [
             'Electrical Wires & Cables', 'Switches & Sockets', 'Low Voltage Switchgear',
             'Medium Voltage Switchgear', 'Circuit Breakers', 'Distribution Boards',
@@ -12436,7 +12487,8 @@ def save_candidate_tags(cid):
     d = request.json or {}
     tag_type = d.get('tag_type')
     tags = d.get('tags', [])
-    col_map = {'product': 'product_handles', 'function': 'function_tags', 'status': 'status_tags'}
+    col_map = {'product': 'product_handles', 'function': 'function_tags', 'status': 'status_tags',
+               'geography': 'geography_tags'}
     col = col_map.get(tag_type)
     if not col:
         return jsonify({'ok': False, 'error': 'Invalid tag type'}), 400
@@ -21238,7 +21290,8 @@ def candidate_add_to_job(cid):
 # the other pipeline. Stage, feedback, offers and billing stay per job.
 _PERSON_SYNC_COLS = ('name', 'company', 'designation', 'experience', 'ctc_current', 'ctc_expected', 'notice_period',
                      'location', 'preferred_location', 'phone', 'email', 'qualification', 'specialization',
-                     'career_summary', 'key_skills', 'secondary_skills', 'linkedin_url', 'gender')
+                     'career_summary', 'key_skills', 'secondary_skills', 'linkedin_url', 'gender',
+                     'yearly_target')
 
 
 def _sync_person_fields(conn, cid, fields):
@@ -21283,9 +21336,11 @@ def update_candidate(cid):
               'notice_period','location','preferred_location','phone','email','qualification','specialization','career_summary',
               'key_skills','secondary_skills','recruiter_feedback','client_feedback','general_comments',
               'linkedin_url','ai_insight_cv','ctc_offered','offer_date',
-              'source_channel','referrer_name','gender']
+              'source_channel','referrer_name','gender','yearly_target']
     if 'gender' in d:
         d = dict(d); d['gender'] = norm_gender(d.get('gender'))
+    if 'yearly_target' in d:
+        d = dict(d); d['yearly_target'] = clean_target(d.get('yearly_target'))
     sets = []; vals = []
     for f in fields:
         if f in d:
@@ -21309,7 +21364,8 @@ def update_candidate(cid):
             'ctc_offered':'Offered CTC','offer_date':'Offer date',
             'notice_period':'Notice period','location':'Location','preferred_location':'Preferred location','phone':'Phone','email':'Email',
             'qualification':'Qualification','specialization':'Specialization','career_summary':'Summary',
-            'linkedin_url':'LinkedIn URL','ai_insight_cv':'AI Insight (CV)','gender':'Gender'
+            'linkedin_url':'LinkedIn URL','ai_insight_cv':'AI Insight (CV)','gender':'Gender',
+            'yearly_target':'Yearly target (Rs Cr)'
         }
         changes = []
         for f, lbl in labels.items():
@@ -21414,6 +21470,7 @@ def add_manual(mid):
               (_ch, str(d.get('referrer_name') or '').strip()[:120], cid))
     c.execute('UPDATE candidates SET qualification=?, preferred_location=?, gender=? WHERE id=?',
               (d.get('qualification',''), d.get('preferred_location',''), norm_gender(d.get('gender')), cid))
+    save_sales_profile(conn, cid, d)
     c.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
               (cid, '', stage,
                'Added to Central Database' if to_central else 'Manually added to pipeline', ts()))
@@ -22004,7 +22061,7 @@ def parse_naukri():
                   'ctc_current (float LPA), ctc_expected (float LPA), notice_period (int days), '
                   'location (current city), preferred_location (preferred/desired job location, if mentioned), '
                   'qualification (highest education degree e.g. B.Tech, MBA), key_skills (array max 6), secondary_skills (array), '
-                  'career_summary (2 sentences), is_mnc (bool), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
+                  'career_summary (2 sentences), is_mnc (bool), product_handling (array of product lines the person sells or handles, e.g. "LV Switchgear", "Cables"; [] if not stated), geography (array of regions / states / cities the person covers, e.g. "North India", "UP"; [] if not stated), yearly_target_cr (float, annual sales target or revenue handled in Rs crore, ONLY if a number is stated; convert lakhs to crore; 0 if not stated), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
                   'Use null for missing strings, 0 for missing numbers.')
     try:
         resp = call_deepseek(key,
@@ -22096,7 +22153,7 @@ def _ai_parse_resume_text(text, ds_key):
                   'key_skills (array of top 8 technical/domain skills), '
                   'secondary_skills (array of other skills), '
                   'career_summary (2-3 sentences about background and strengths), '
-                  'industry_background (e.g. FMCG, Manufacturing, IT), is_mnc (bool), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
+                  'industry_background (e.g. FMCG, Manufacturing, IT), is_mnc (bool), product_handling (array of product lines the person sells or handles, e.g. "LV Switchgear", "Cables"; [] if not stated), geography (array of regions / states / cities the person covers, e.g. "North India", "UP"; [] if not stated), yearly_target_cr (float, annual sales target or revenue handled in Rs crore, ONLY if a number is stated; convert lakhs to crore; 0 if not stated), gender ("Male", "Female" or "Other" ONLY when the text states it, e.g. "Gender: Male" or the Naukri line "Male, Single/unmarried"; otherwise "". Never guess it from the name), '
                   'Use null for missing strings, 0 for missing numbers.')
     try:
         resp = call_deepseek(ds_key,
@@ -22644,7 +22701,8 @@ _TALENT_TEXT = ("LOWER(COALESCE(c.name,'')||' '||COALESCE(c.company,'')||' '||CO
                 "COALESCE(c.key_skills,'')||' '||COALESCE(c.key_skill_tags,'')||' '||COALESCE(c.secondary_skills,'')||' '||"
                 "COALESCE(c.career_summary,'')||' '||COALESCE(c.location,'')||' '||COALESCE(c.industry_background,'')||' '||"
                 "COALESCE(c.qualification,'')||' '||COALESCE(c.email,'')||' '||COALESCE(c.phone,'')||' '||"
-                "COALESCE(c.status_tags,'')||' '||COALESCE(c.product_handles,'')||' '||COALESCE(c.function_tags,''))")
+                "COALESCE(c.status_tags,'')||' '||COALESCE(c.product_handles,'')||' '||COALESCE(c.function_tags,'')||' '||"
+                "COALESCE(c.geography_tags,''))")
 _TALENT_SKILLS = ("LOWER(COALESCE(c.key_skills,'')||' '||COALESCE(c.key_skill_tags,'')||' '||"
                   "COALESCE(c.secondary_skills,'')||' '||COALESCE(c.product_handles,'')||' '||COALESCE(c.designation,''))")
 
@@ -22814,6 +22872,17 @@ def _talent_where():
     src = (request.args.get('source') or '').strip()
     if src:
         where.append("COALESCE(c.source_channel,'') = ?"); params.append('' if src == '__none__' else src)
+    for arg, col in (('product', 'c.product_handles'), ('geography', 'c.geography_tags')):
+        v = (request.args.get(arg) or '').strip().lower()
+        if v:
+            # "cables, switchgear" = either
+            opts = [x.strip() for x in v.split(',') if x.strip()][:10]
+            where.append('(' + ' OR '.join("LOWER(COALESCE(%s,'')) LIKE ?" % col for _ in opts) + ')')
+            params += ['%' + x + '%' for x in opts]
+    for arg, op in (('target_min', '>='), ('target_max', '<=')):
+        tv = clean_target(request.args.get(arg))
+        if tv is not None:
+            where.append('c.yearly_target IS NOT NULL AND c.yearly_target %s ?' % op); params.append(tv)
     g = request.args.get('gender') or ''
     if g == 'unknown':
         where.append("COALESCE(c.gender,'') = ''")
@@ -22837,8 +22906,8 @@ def _talent_where():
 _TALENT_SORTS = {'name': 'c.name', 'location': 'c.location', 'experience': 'c.experience',
                  'ctc_current': 'c.ctc_current', 'ctc_expected': 'c.ctc_expected', 'stage': 'c.stage',
                  'job': 'm.role', 'created_at': 'c.created_at', 'notice': 'c.notice_period',
-                 'updated_at': 'c.updated_at', 'company': 'c.company'}
-_TALENT_NUM = ('experience', 'ctc_current', 'ctc_expected', 'notice')
+                 'updated_at': 'c.updated_at', 'company': 'c.company', 'target': 'c.yearly_target'}
+_TALENT_NUM = ('experience', 'ctc_current', 'ctc_expected', 'notice', 'target')
 
 
 @app.route('/api/central-db/search')
@@ -22864,7 +22933,7 @@ def central_search():
     tcol = {'c.name': 't.name', 'c.location': 't.location', 'c.experience': 't.experience',
             'c.ctc_current': 't.ctc_current', 'c.ctc_expected': 't.ctc_expected', 'c.stage': 't.stage',
             'm.role': 't.mandate_role', 'c.created_at': 't.created_at', 'c.notice_period': 't.notice_period',
-            'c.updated_at': 't.updated_at', 'c.company': 't.company'}.get(col or '', '')
+            'c.updated_at': 't.updated_at', 'c.company': 't.company', 'c.yearly_target': 't.yearly_target'}.get(col or '', '')
     if tcol:
         # unknown / empty values always go last, whichever way you sort
         empty = ('COALESCE(%s,0)=0' % tcol) if skey in _TALENT_NUM else ("COALESCE(%s,'')=''" % tcol)
@@ -22881,7 +22950,7 @@ def central_search():
         # ~1.8 s on 30k candidates. Same rows, same order.
         page_ids = [r['id'] for r in conn.execute(
             'SELECT t.id FROM (SELECT c.id, c.name, c.location, c.experience, c.ctc_current, c.ctc_expected, '
-            'c.stage, c.created_at, c.notice_period, c.updated_at, c.company, m.role AS mandate_role, '
+            'c.stage, c.created_at, c.notice_period, c.updated_at, c.company, c.yearly_target, m.role AS mandate_role, '
             'ROW_NUMBER() OVER (PARTITION BY ' + pkey + ' ORDER BY c.updated_at DESC, c.id DESC) AS _rn '
             + base + ') t WHERE t._rn=1 ORDER BY ' + order + ' LIMIT ? OFFSET ?',
             params + [per_page, (page - 1) * per_page]).fetchall()]
@@ -23183,7 +23252,8 @@ def central_export():
     where, params = _talent_where()
     conn = get_db()
     rows = conn.execute('SELECT c.name, c.phone, c.email, c.company, c.designation, c.experience, c.ctc_current, '
-                        'c.ctc_expected, c.notice_period, c.location, c.gender, c.stage, c.key_skills, c.status_tags, '
+                        'c.ctc_expected, c.notice_period, c.location, c.gender, c.product_handles, c.geography_tags, '
+                        'c.yearly_target, c.stage, c.key_skills, c.status_tags, '
                         "CASE WHEN m.status='central' THEN 'Central Database' ELSE m.role END AS job, m.client, "
                         'c.source_channel, c.created_at FROM candidates c LEFT JOIN mandates m ON c.mandate_id=m.id '
                         'WHERE ' + where + ' ORDER BY c.created_at DESC LIMIT 20000', params).fetchall()
@@ -23191,14 +23261,15 @@ def central_export():
     buf = io.StringIO()
     w = csv.writer(buf)
     head = ['Name', 'Phone', 'Email', 'Company', 'Designation', 'Experience (yrs)', 'Current CTC (LPA)',
-            'Expected CTC (LPA)', 'Notice (days)', 'Location', 'Gender', 'Stage', 'Skills', 'Tags', 'Job', 'Client',
+            'Expected CTC (LPA)', 'Notice (days)', 'Location', 'Gender', 'Product handling', 'Geography',
+            'Yearly target (Rs Cr)', 'Stage', 'Skills', 'Tags', 'Job', 'Client',
             'Source', 'Added']
     w.writerow(head)
     for r in rows:
         vals = []
         for k in r.keys():
             v = r[k]
-            if k in ('key_skills', 'status_tags'):
+            if k in ('key_skills', 'status_tags', 'product_handles', 'geography_tags'):
                 try: v = ', '.join(str(x) for x in json.loads(v or '[]'))
                 except Exception: pass
             v = '' if v is None else str(v)
