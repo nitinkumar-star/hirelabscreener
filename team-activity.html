@@ -167,6 +167,21 @@ table.dd{width:100%;border-collapse:collapse;font-size:12.5px}
 .ev time{color:var(--muted);white-space:nowrap;width:92px;flex-shrink:0;font-variant-numeric:tabular-nums}
 .ev .k{font-weight:600;white-space:nowrap}
 .ev a{text-decoration:none}
+/* positions in the drawer */
+.ps{display:flex;flex-direction:column;gap:8px}
+.ps-i{border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:#fff}
+.ps-i.idle{opacity:.78}
+.ps-t{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.ps-t a{font-weight:700;color:var(--ink);text-decoration:none}.ps-t a:hover{text-decoration:underline}
+.ps-t .c{color:var(--ink2);font-size:12px}
+.ps-t .pill{margin-left:auto}
+.ps-m{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin-top:5px;font-variant-numeric:tabular-nums}
+.ps-m b{color:var(--ink)}
+.ps-f{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.ps-f span{font-size:11px;font-weight:600;background:#F2F0EA;border-radius:8px;padding:1px 7px;color:var(--ink2)}
+.ps-tab{display:flex;gap:6px;margin-bottom:8px}
+.ps-tab button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:3px 10px;font-size:12px;font-weight:600;cursor:pointer;color:var(--ink2)}
+.ps-tab button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 .note{background:#EEF4FB;color:#185FA5;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:14px}
 .err{background:#FBE9E7;color:var(--bad-ink);border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:12px}
 .skel{background:linear-gradient(90deg,#EFEDE7,#F7F6F2,#EFEDE7);background-size:200% 100%;animation:sk 1.2s infinite;border-radius:10px;height:90px;margin-bottom:16px}
@@ -505,6 +520,7 @@ async function openUser(id){
     '<div><span>Stage moves</span><b>' + u.moves + '</b></div><div><span>Added</span><b>' + u.added + '</b></div>' +
     '<div><span>Calls</span><b>' + (u.actions.call || 0) + '</b></div><div><span>WhatsApp</span><b>' + (u.actions.whatsapp || 0) + '</b></div>' +
     '<div><span>E-mails</span><b>' + (u.actions.email || 0) + '</b></div><div><span>Submitted → interview</span><b>' + u.submissions + ' → ' + u.interviews + '</b></div></div>';
+  h += positionsCard(u, d);
   if (u.last_seen && !u.live) h += '<div class="note" style="background:#F2F0EA;color:var(--ink2)">Last seen in HireLab: ' + esc(dlabel(u.last_seen.slice(0, 10), true)) + ', ' + fmtClock(u.last_seen.slice(11)) + '</div>';
   h += '<div class="card"><h2 style="margin-bottom:8px">Day by day</h2>' + (days.length ? '<table class="dd"><tr><th>Day</th><th>First</th><th>Last</th><th>Active</th><th>Breaks · total</th></tr>' + days.map(function(k){
     var x = u.days[k];
@@ -517,6 +533,7 @@ async function openUser(id){
   }).join('') : '<div class="empty">No stage moves.</div>') + '</div>';
   h += '<div class="card"><h2 style="margin-bottom:4px">Activity log</h2><div id="dlog"><div class="skel" style="height:120px"></div></div></div>';
   $('drb').innerHTML = h;
+  wirePositions(u, d);
   $('dr').classList.add('on'); $('ov').classList.add('on');
   try {
     var r = await (await fetch('/api/team/user/' + u.id + '/log?from=' + d.from + '&to=' + d.to, {credentials: 'same-origin'})).json();
@@ -528,6 +545,40 @@ async function openUser(id){
       return '<div class="ev"><time>' + esc(dlabel(t.slice(0, 10))) + ' ' + fmtClock(t.slice(11, 16)) + '</time><div><span class="k">' + what + '</span>' + who + '</div></div>';
     }).join('') : '<div class="empty">Nothing recorded in this period.</div>';
   } catch (e) { $('dlog').innerHTML = '<div class="err">Could not load the log.</div>'; }
+}
+// Positions the recruiter works on: assigned active jobs + any job they worked on in this period
+function positionsCard(u, d){
+  var P = u.positions || [];
+  var worked = P.filter(function(x){ return x.moves || x.added || x.actions; }).length;
+  return '<div class="card"><div class="ch" style="margin-bottom:8px"><div><h2>Positions</h2><div class="sub">' +
+    (P.length ? P.length + ' position' + (P.length === 1 ? '' : 's') + ' · worked on ' + worked + ' in this period' : 'Not assigned to any active job') +
+    '</div></div></div>' + (P.length > 1 ? '<div class="ps-tab" id="pstab"><button data-f="all" class="on">All</button><button data-f="worked">Worked on</button><button data-f="idle">No work</button></div>' : '') +
+    '<div class="ps" id="pslist">' + positionsList(P, 'all', d) + '</div></div>';
+}
+function positionsList(P, f, d){
+  var L = P.filter(function(x){ var w = x.moves || x.added || x.actions; return f === 'all' || (f === 'worked' ? w : !w); });
+  if (!L.length) return '<div class="empty">' + (P.length ? 'Nothing here.' : 'No job is assigned and no work was recorded on any job in this period.') + '</div>';
+  return L.map(function(x){
+    var w = x.moves || x.added || x.actions, pp = x.pipeline || {};
+    var tag = x.status !== 'active' ? '<span class="pill" style="background:#F2F0EA;color:var(--ink2)">' + esc(x.status || 'closed') + '</span>' :
+      x.idle_days != null ? '<span class="pill ' + (x.idle_days >= 7 ? 'bad' : 'warn') + '">idle ' + x.idle_days + 'd</span>' : '';
+    var did = w ? '<b>' + x.moves + '</b> moves · <b>' + x.added + '</b> added · <b>' + x.actions + '</b> actions' + (x.submitted ? ' · <b>' + x.submitted + '</b> to client+' : '') +
+      (x.last ? ' · last ' + esc(dlabel(x.last.slice(0, 10))) + ' ' + fmtClock(x.last.slice(11, 16)) : '') : '<span style="color:var(--warn-ink)">No work in this period</span>';
+    return '<div class="ps-i' + (w ? '' : ' idle') + '"><div class="ps-t"><a href="/#mandate/' + x.mandate_id + '/pipeline" target="_blank" rel="noopener">' + esc(x.job || 'Untitled job') + '</a>' +
+      '<span class="c">' + esc(x.client) + (x.location ? ' · ' + esc(x.location) : '') + '</span>' + tag + '</div>' +
+      '<div class="ps-m">' + did + '</div>' +
+      '<div class="ps-f"><span>' + (x.assigned ? (x.co_owners > 1 ? 'Assigned · with ' + (x.co_owners - 1) + ' other' + (x.co_owners > 2 ? 's' : '') : 'Assigned') : 'Not assigned') + '</span>' +
+      '<span>Pipeline ' + (pp.total || 0) + '</span><span>In process ' + (pp.working || 0) + '</span><span>Submitted ' + (pp.submitted || 0) + '</span>' +
+      '<span>Interview ' + (pp.interview || 0) + '</span><span>Offer ' + (pp.offer || 0) + '</span></div></div>';
+  }).join('');
+}
+function wirePositions(u, d){
+  var t = $('pstab'); if (!t) return;
+  t.onclick = function(e){
+    var b = e.target.closest('button'); if (!b) return;
+    t.querySelectorAll('button').forEach(function(x){ x.classList.toggle('on', x === b); });
+    $('pslist').innerHTML = positionsList(u.positions || [], b.dataset.f, d);
+  };
 }
 function closeDr(){ $('dr').classList.remove('on'); $('ov').classList.remove('on'); }
 $('ov').onclick = closeDr; document.querySelector('#dr .x').onclick = closeDr;

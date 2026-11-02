@@ -389,11 +389,18 @@ def build_overview(conn, co, d1, d2, only_user=0, now=None):
         if 'days' not in u:
             u.update({'days': {}, 'active_min': 0, 'moves': 0, 'added': 0, 'stages': {k: 0 for k in BUCKETS},
                       'actions': {}, 'hours': [0] * 24, 'out_hours': [0] * 24, 'contact_lags': [], 'stuck': 0,
-                      'jobs': 0, 'untouched_jobs': 0, 'last_seen': ''})
+                      'jobs': 0, 'untouched_jobs': 0, 'last_seen': '', '_pos': {}})
         return u
 
     for uid in list(team):
         U(uid)
+
+    def P(u, mid, at):
+        """Per-recruiter work on one job in the range (for the 'Positions' list)."""
+        x = u['_pos'].setdefault(int(mid or 0), {'moves': 0, 'added': 0, 'actions': 0, 'submitted': 0, 'last': ''})
+        if at and at > x['last']:
+            x['last'] = at
+        return x
 
     # ── presence ────────────────────────────────────────────────────────
     heat = [[0] * 24 for _ in range(7)]          # weekday (Mon=0) × hour, active minutes
@@ -430,7 +437,8 @@ def build_overview(conn, co, d1, d2, only_user=0, now=None):
     has_actor = 'actor_id' in sh_cols
     untracked = 0
     move_rows = conn.execute(
-        'SELECT sh.candidate_id, sh.from_stage, sh.to_stage, sh.created_at, %s AS actor, c.created_at AS c_created '
+        'SELECT sh.candidate_id, sh.from_stage, sh.to_stage, sh.created_at, %s AS actor, c.created_at AS c_created, '
+        'c.mandate_id '
         'FROM stage_history sh JOIN candidates c ON c.id=sh.candidate_id '
         'WHERE c.owner_id=? AND sh.created_at>=? AND sh.created_at<? ORDER BY sh.created_at'
         % ('COALESCE(sh.actor_id,0)' if has_actor else '0'), (co, a, b_excl)).fetchall()
@@ -446,13 +454,18 @@ def build_overview(conn, co, d1, d2, only_user=0, now=None):
             continue
         u = U(actor)
         t = _parse_ts(r['created_at'])
+        pw = P(u, r['mandate_id'], r['created_at'])
         if not frm:
             u['added'] += 1
+            pw['added'] += 1
             if t:
                 added_at[int(r['candidate_id'])] = (actor, t)
             continue
         u['moves'] += 1
+        pw['moves'] += 1
         bk = bucket(to)
+        if bk in ('client', 'interview', 'offer', 'placed'):
+            pw['submitted'] += 1
         u['stages'][bk] = u['stages'].get(bk, 0) + 1
         if t and bk in ('client', 'interview', 'offer', 'placed'):
             u['out_hours'][t.hour] += 1
@@ -461,11 +474,14 @@ def build_overview(conn, co, d1, d2, only_user=0, now=None):
             first_touch[cid] = t
 
     # ── actions ─────────────────────────────────────────────────────────
-    for r in conn.execute('SELECT user_id, kind, candidate_id, created_at FROM team_events '
-                          'WHERE company_id=? AND created_at>=? AND created_at<? ORDER BY created_at', (co, a, b_excl)):
+    for r in conn.execute('SELECT t.user_id, t.kind, t.candidate_id, t.created_at, c.mandate_id FROM team_events t '
+                          'LEFT JOIN candidates c ON c.id=t.candidate_id AND c.owner_id=t.company_id '
+                          'WHERE t.company_id=? AND t.created_at>=? AND t.created_at<? ORDER BY t.created_at', (co, a, b_excl)):
         u = U(r['user_id'])
         k = r['kind']
         u['actions'][k] = u['actions'].get(k, 0) + 1
+        if r['mandate_id']:
+            P(u, r['mandate_id'], r['created_at'])['actions'] += 1
         cid = int(r['candidate_id'] or 0)
         t = _parse_ts(r['created_at'])
         if k in CONTACT_KINDS + ('note',) and t and cid in added_at and t > added_at[cid][1]:
@@ -526,6 +542,50 @@ def build_overview(conn, co, d1, d2, only_user=0, now=None):
                 U(o)['untouched_jobs'] += 1
     stuck_list.sort(key=lambda x: -x['days'])
     untouched.sort(key=lambda x: -x['days'])
+
+    # ── positions each recruiter works on: assigned active jobs + jobs touched in the range ──
+    jobs_info = {int(r['id']): dict(r) for r in conn.execute(
+        'SELECT id, role, client, status, location FROM mandates WHERE owner_id=?', (co,))}
+    pipe = {}                                       # mandate -> current pipeline counts
+    for c in cand_rows:
+        mid = int(c['mandate_id'] or 0)
+        x = pipe.setdefault(mid, {'total': 0, 'working': 0, 'submitted': 0, 'interview': 0, 'offer': 0})
+        x['total'] += 1
+        bk = bucket(c['stage'])
+        if bk in WORKING:
+            x['working'] += 1
+        if bk in ('client', 'interview', 'offer', 'placed'):
+            x['submitted'] += 1
+        if bk == 'interview':
+            x['interview'] += 1
+        if bk in ('offer', 'placed'):
+            x['offer'] += 1
+    mine = {}
+    for mid, owners in assign.items():
+        if mid in active:
+            for o in owners:
+                mine.setdefault(o, set()).add(mid)
+    untouched_by = {x['mandate_id']: x['days'] for x in untouched}
+    for uid, u in team.items():
+        if 'days' not in u:
+            continue
+        work = u.pop('_pos', {})
+        out = []
+        for mid in set(work) | mine.get(uid, set()):
+            m = jobs_info.get(mid)
+            if not m or m['status'] == 'central':
+                continue
+            w = work.get(mid) or {'moves': 0, 'added': 0, 'actions': 0, 'submitted': 0, 'last': ''}
+            pp = pipe.get(mid) or {'total': 0, 'working': 0, 'submitted': 0, 'interview': 0, 'offer': 0}
+            out.append({'mandate_id': mid, 'job': m['role'] or '', 'client': m['client'] or '',
+                        'location': m['location'] or '', 'status': m['status'] or '',
+                        'assigned': mid in mine.get(uid, set()), 'co_owners': len(assign.get(mid) or ()),
+                        'moves': w['moves'], 'added': w['added'], 'actions': w['actions'],
+                        'submitted': w['submitted'], 'last': w['last'], 'pipeline': pp,
+                        'idle_days': untouched_by.get(mid)})
+        out.sort(key=lambda x: (-(x['moves'] + x['added'] + x['actions']), not x['assigned'], x['job'].lower()))
+        u['positions'] = out
+        u['positions_active'] = sum(1 for x in out if x['moves'] or x['added'] or x['actions'])
 
     # ── per-user summary ────────────────────────────────────────────────
     users = []
