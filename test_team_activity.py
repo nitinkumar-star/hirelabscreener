@@ -95,6 +95,15 @@ def test_overview_is_admin_only_and_adds_up(srv):
     assert riya['submissions'] >= 1 and riya['actions'].get('whatsapp') == 1 and riya['actions'].get('note') == 1
     assert 'Riya' in j['digest'] or 'sc_riya' in j['digest']
     assert isinstance(j['insights'], list)
+    # positions: the assigned job, with her work on it and its pipeline
+    pos = {p['mandate_id']: p for p in riya['positions']}
+    assert set(pos) == {M_R}
+    p = pos[M_R]
+    assert p['assigned'] and p['job'] == 'Riya Job' and p['moves'] >= 1 and p['submitted'] >= 1 and p['actions'] >= 2
+    assert p['pipeline']['total'] >= 1 and p['pipeline']['submitted'] >= 1
+    adm = next(u for u in j['users'] if u['id'] == ADMIN)
+    assert [x['mandate_id'] for x in adm['positions']] == [M_A] and adm['positions'][0]['moves'] == 0
+    assert all('_pos' not in u for u in j['users'])
     log = cl(srv, ADMIN).get('/api/team/user/%d/log?from=%s&to=%s' % (RIYA, today, today)).get_json()
     assert any(x['kind'] == 'move' and x['to'] == 'Shared with Client' for x in log['items'])
 
