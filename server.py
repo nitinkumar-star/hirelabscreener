@@ -181,6 +181,15 @@ def add_cors_headers(resp):
         resp.headers['Vary'] = 'Origin'
     resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    # Security headers (commercial launch, Nov 2026)
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    if request.is_secure or request.headers.get('X-Forwarded-Proto', '') == 'https':
+        resp.headers.setdefault('Strict-Transport-Security', 'max-age=31536000')
+    # No framing of the signed-in app (clickjacking). Public pages a visitor
+    # opens without signing in (careers, apply, job links) stay embeddable.
+    if session.get('user_id') or request.path in ('/', '/login'):
+        resp.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
     return resp
 
 
@@ -676,7 +685,12 @@ def auth_status():
         return jsonify({'state': 'setup'})
     u = current_user()
     if not u:
-        return jsonify({'state': 'login'})
+        try:
+            td = int(get_setting('billing_trial_days', '30') or 30)
+        except Exception:
+            td = 30
+        return jsonify({'state': 'login', 'signup_auto': (get_setting('signup_auto_approve', '1') or '1') == '1',
+                        'trial_days': td})
     va = session.get('view_as_company')
     viewing = None
     conn = get_db()
@@ -696,8 +710,17 @@ def auth_status():
         'id': u['id'], 'username': u['username'], 'display_name': u['display_name'],
         'role': u['role'], 'company': own_company,
         'is_company_admin': (u.get('role') == 'admin' or u.get('is_company_admin') == 1),
-        'workflow_mode': (get_setting('workflow_mode', 'agency') or 'agency')
+        'workflow_mode': (get_setting('workflow_mode', 'agency') or 'agency'),
+        'tour_done': _tour_done(u['id']),
     }, 'viewing_as': viewing, 'pending_count': pending_count})
+
+
+def _tour_done(uid):
+    try:
+        from modules.intro_tour import tour_done
+        return tour_done(uid)
+    except Exception:
+        return True
 
 
 @app.route('/api/auth/setup', methods=['POST'])
@@ -740,6 +763,8 @@ def auth_signup():
     — see auth_setup for that bootstrap path.)"""
     if not any_users_exist():
         return jsonify({'error': 'No admin account exists yet. Use the initial setup screen instead.'}), 400
+    if not _rate_ok('signup', 5, 3600):
+        return jsonify({'error': 'Too many sign-up attempts from this network. Please try again in an hour.'}), 429
     d = request.json or {}
     username = (d.get('username') or '').strip().lower()
     password = d.get('password') or ''
@@ -765,16 +790,91 @@ def auth_signup():
     # 'user' accounts within their own company — they get full access to their
     # own workspace but NOT the platform-level super-admin panel (which is
     # reserved for the platform owner).
+    if conn.execute('SELECT id FROM users WHERE lower(COALESCE(email,""))=?', (email,)).fetchone():
+        conn.close()
+        return jsonify({'error': 'An account with this e-mail already exists. Sign in, or use "Forgot password".'}), 400
     company_label = company or (display + "'s agency")
-    conn.execute("INSERT INTO companies (name,status,plan,created_at) VALUES (?,?,?,?)",
-                 (company_label, 'pending', 'standard', ts()))
+    # Automatic sign-up (Nov 2026): when the owner allows it (Billing configuration,
+    # default on) the agency starts its free trial straight away — no waiting for
+    # approval. Otherwise the old flow: pending until the owner approves.
+    auto = (get_setting('signup_auto_approve', '1') or '1') == '1'
+    try:
+        trial_days = int(get_setting('billing_trial_days', '30') or 30)
+    except Exception:
+        trial_days = 30
+    try:
+        cap = int(get_setting('billing_default_token_cap', '2000000') or 0)
+    except Exception:
+        cap = 0
+    trial_end = (datetime.datetime.now() + datetime.timedelta(days=trial_days)).isoformat()
+    if auto:
+        conn.execute("INSERT INTO companies (name,status,plan,billing_status,trial_ends_at,token_cap,created_at) "
+                     "VALUES (?,?,?,?,?,?,?)", (company_label, 'active', 'standard', 'trial', trial_end, cap, ts()))
+    else:
+        conn.execute("INSERT INTO companies (name,status,plan,token_cap,created_at) VALUES (?,?,?,?,?)",
+                     (company_label, 'pending', 'standard', cap, ts()))
     new_company_id = conn.execute('SELECT id FROM companies ORDER BY id DESC LIMIT 1').fetchone()['id']
     conn.execute('''INSERT INTO users (username,password_hash,display_name,role,created_at,status,company_name,requested_at,company_id,is_company_admin,email)
                      VALUES (?,?,?,?,?,?,?,?,?,1,?)''',
-                 (username, hash_password(password), display, 'user', ts(), 'pending', company, ts(), new_company_id, email))
+                 (username, hash_password(password), display, 'user', ts(), 'approved' if auto else 'pending',
+                  company, ts(), new_company_id, email))
+    uid = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()['id']
     conn.commit(); conn.close()
-    log_activity('signup_requested', username + (' (' + company + ')' if company else ''))
-    return jsonify({'ok': True, 'pending': True})
+    log_activity('signup_auto' if auto else 'signup_requested', username + (' (' + company + ')' if company else ''))
+    _alert_owner_new_signup(username, display, company, email, auto)
+    if not auto:
+        return jsonify({'ok': True, 'pending': True})
+    _welcome_new_agency(email, display, trial_days)
+    session['user_id'] = uid
+    session.permanent = True
+    return jsonify({'ok': True, 'pending': False, 'trial_days': trial_days, 'trial_ends_at': trial_end})
+
+
+def _welcome_new_agency(email, display, trial_days):
+    """Welcome e-mail to a self-signed-up agency (background; never blocks sign-up)."""
+    base = (os.environ.get('PUBLIC_BASE_URL', '') or request.host_url).rstrip('/')
+    plain = (f'Hi {display},\n\nWelcome to HireLab! Your {trial_days}-day free trial has started.\n\n'
+             f'Sign in: {base}/\n\nA short tour shows each tab the first time you sign in. '
+             f'Questions? Just reply to this e-mail ({_LEGAL_EMAIL}).\n\nTeam HireLab')
+
+    def _send():
+        try:
+            _platform_smtp_send(email, f'Welcome to HireLab — your {trial_days}-day free trial has started', plain, None)
+        except Exception as e:
+            print(f'[signup] welcome mail failed (non-fatal): {e}')
+    import threading as _th
+    _th.Thread(target=_send, daemon=True).start()
+
+
+def _alert_owner_new_signup(username, display, company, email, auto=False):
+    """E-mail the platform owner(s) so a new agency is not left waiting for approval."""
+    try:
+        conn = get_db()
+        to = [r['email'] for r in conn.execute(
+            "SELECT DISTINCT email FROM users WHERE role='admin' AND COALESCE(status,'approved')='approved' "
+            "AND COALESCE(email,'')!=''").fetchall()]
+        conn.close()
+        base = (os.environ.get('PUBLIC_BASE_URL', '') or request.host_url).rstrip('/')
+        if auto:
+            subject = 'New HireLab agency on free trial: ' + (company or display or username)
+            body = (f'{display} ({username}, {email}) signed up for {company or "a new agency"} '
+                    f'and the free trial has started.\n\nAgencies: {base}/#admin')
+        else:
+            subject = 'New HireLab sign-up waiting: ' + (company or display or username)
+            body = (f'{display} ({username}, {email}) signed up for {company or "a new agency"}.\n\n'
+                    f'Approve or decline: {base}/#admin')
+    except Exception as e:
+        print(f'[signup] owner alert failed (non-fatal): {e}')
+        return
+
+    def _send():                      # in the background: a slow mail server never delays the sign-up
+        for addr in to[:3]:
+            try:
+                _platform_smtp_send(addr, subject, body, None)
+            except Exception as e:
+                print(f'[signup] owner alert failed (non-fatal): {e}')
+    import threading as _th
+    _th.Thread(target=_send, daemon=True).start()
 
 
 @app.route('/api/admin/pending-users', methods=['GET'])
@@ -824,9 +924,9 @@ def approve_pending_user(uid):
     if u['company_id']:
         # Activate the company and start its free trial.
         try:
-            trial_days = int(get_setting('billing_trial_days', '14') or 14)
+            trial_days = int(get_setting('billing_trial_days', '30') or 30)
         except Exception:
-            trial_days = 14
+            trial_days = 30
         trial_end = (datetime.datetime.now() + datetime.timedelta(days=trial_days)).isoformat()
         conn.execute("UPDATE companies SET status='active', billing_status='trial', trial_ends_at=? WHERE id=? AND (trial_ends_at IS NULL OR trial_ends_at='')",
                      (trial_end, u['company_id']))
@@ -849,6 +949,90 @@ def reject_pending_user(uid):
     conn.commit(); conn.close()
     log_activity('reject_user', u['username'])
     return jsonify({'ok': True})
+
+
+def trial_is_over(company_id, plan, billing_status, trial_ends_at, conn=None):
+    """True when a free trial has ended and the agency never paid.
+
+    One rule for sign-in and for every API request (modules/tenant_guard.py).
+    An agency with a recorded payment is never locked out by an old trial date:
+    'past_due' on a paying agency is a reminder badge, not a lock."""
+    if plan == 'owner' or billing_status not in ('trial', 'past_due') or not trial_ends_at:
+        return False
+    try:
+        if datetime.datetime.now() <= datetime.datetime.fromisoformat(trial_ends_at):
+            return False
+    except Exception:
+        return False
+    own = conn is None
+    conn = conn or get_db()
+    try:
+        paid = conn.execute('SELECT 1 FROM payments WHERE company_id=? LIMIT 1', (company_id,)).fetchone()
+    except Exception:
+        paid = None
+    finally:
+        if own:
+            conn.close()
+    return not paid
+
+
+def billing_block(company_id, plan, billing_status, trial_ends_at, paid_until=None, conn=None):
+    """Why this agency cannot use the ATS right now, or None.
+
+    'trial_ended'  free trial over and never paid (see trial_is_over)
+    'renewal_due'  the paid period (paid_until) ended more than billing_grace_days ago.
+                   Only agencies that paid after Nov 2026 have paid_until; older
+                   paying agencies are never blocked by this."""
+    if plan == 'owner':
+        return None
+    if trial_is_over(company_id, plan, billing_status, trial_ends_at, conn):
+        return 'trial_ended'
+    if paid_until and billing_status != 'suspended':
+        try:
+            grace = int(get_setting('billing_grace_days', '3') or 3)
+        except Exception:
+            grace = 3
+        try:
+            if datetime.datetime.now() > datetime.datetime.fromisoformat(paid_until) + datetime.timedelta(days=grace):
+                return 'renewal_due'
+        except Exception:
+            pass
+    return None
+
+
+BLOCK_MESSAGES = {
+    'trial_ended': 'Your free trial has ended. Please subscribe to continue using HireLab.',
+    'renewal_due': 'Your HireLab subscription is due for renewal. Please pay to continue.',
+}
+
+
+def extend_paid_until(conn, cid, days=None):
+    """A payment buys one billing period: paid_until moves forward from today,
+    or from the current end if that is still ahead. Returns the new end."""
+    if days is None:
+        try:
+            days = int(get_setting('billing_period_days', '30') or 30)
+        except Exception:
+            days = 30
+    start = datetime.datetime.now()
+    try:
+        r = conn.execute('SELECT paid_until FROM companies WHERE id=?', (cid,)).fetchone()
+        if r and r['paid_until']:
+            start = max(start, datetime.datetime.fromisoformat(r['paid_until']))
+    except Exception:
+        pass
+    end = (start + datetime.timedelta(days=days)).isoformat()
+    try:
+        conn.execute('UPDATE companies SET paid_until=? WHERE id=?', (end, cid))
+    except Exception:
+        pass
+    return end
+
+
+def billing_contact():
+    """How an agency pays / reaches us — shown when a trial ends and on the billing card."""
+    return {'pay_instructions': (get_setting('billing_pay_instructions', '') or '').strip(),
+            'support_email': _LEGAL_EMAIL}
 
 
 @app.route('/api/auth/login', methods=['POST'])
@@ -885,21 +1069,24 @@ def auth_login():
     # Block login if the tenant company is suspended (super-admin can suspend
     # an agency e.g. for non-payment). The platform owner is never blocked.
     if u['role'] != 'admin' and u['company_id']:
-        comp = conn.execute('SELECT status, billing_status, trial_ends_at, plan FROM companies WHERE id=?', (u['company_id'],)).fetchone()
+        comp = conn.execute('SELECT * FROM companies WHERE id=?', (u['company_id'],)).fetchone()
         if comp and comp['status'] == 'suspended':
             conn.close()
             return jsonify({'error': 'Your agency account is currently suspended. Please contact support.'}), 403
-        # Trial expiry: if on trial and the trial period has passed without
-        # converting to a paid subscription, block until they subscribe.
-        if comp and comp['plan'] != 'owner' and comp['billing_status'] == 'trial' and comp['trial_ends_at']:
-            try:
-                te = datetime.datetime.fromisoformat(comp['trial_ends_at'])
-                if datetime.datetime.now() > te:
-                    conn.execute("UPDATE companies SET billing_status='past_due' WHERE id=?", (u['company_id'],))
-                    conn.commit(); conn.close()
-                    return jsonify({'error': 'Your free trial has ended. Please subscribe to continue using HireLab.'}), 402
-            except Exception:
-                pass
+        # Trial expiry: if the trial period has passed without a payment, block
+        # until they subscribe (every sign-in, not only the first after expiry).
+        why = comp and billing_block(u['company_id'], comp['plan'], comp['billing_status'], comp['trial_ends_at'],
+                                     (comp['paid_until'] if 'paid_until' in comp.keys() else None), conn)
+        if why:
+            if why == 'trial_ended' and comp['billing_status'] == 'trial':
+                conn.execute("UPDATE companies SET billing_status='past_due' WHERE id=?", (u['company_id'],))
+                conn.commit()
+            conn.close()
+            # Sign in anyway, so the agency can pay online and carry on (every
+            # other API answers 402 until it pays — modules/tenant_guard.py).
+            session['user_id'] = u['id']
+            session.permanent = True
+            return jsonify(dict(billing_contact(), code=why, error=BLOCK_MESSAGES[why])), 402
     conn.execute('UPDATE users SET last_login=? WHERE id=?', (ts(), u['id']))
     conn.commit(); conn.close()
     session['user_id'] = u['id']
@@ -926,6 +1113,8 @@ def auth_forgot():
     generic = {'ok': True, 'message': 'If an account matches, a reset link has been sent to its email.'}
     if not ident:
         return jsonify(generic)
+    if not _rate_ok('forgot', 5, 900):
+        return jsonify({'error': 'Too many reset requests. Please wait 15 minutes and try again.'}), 429
     conn = get_db()
     u = conn.execute('SELECT id, username, COALESCE(email, "") AS email FROM users WHERE lower(username)=lower(?) OR lower(COALESCE(email,""))=lower(?)',
                      (ident, ident)).fetchone()
@@ -943,7 +1132,7 @@ def auth_forgot():
     conn.execute('INSERT INTO password_resets (token,user_id,expires_at,used,created_at) VALUES (?,?,?,0,?)',
                  (token, u['id'], expires, ts()))
     conn.commit(); conn.close()
-    base = request.host_url.rstrip('/')
+    base = (os.environ.get('PUBLIC_BASE_URL', '') or request.host_url).rstrip('/')
     link = f'{base}/?reset={token}'
     subject = 'Reset your HireLab Screener password'
     plain = (f'Hi {u["username"]},\n\nWe received a request to reset your password. '
@@ -1594,6 +1783,13 @@ def admin_api_usage():
                     'usage': out})
 
 
+def _days_left(iso):
+    try:
+        return (datetime.datetime.fromisoformat(iso) - datetime.datetime.now()).days if iso else None
+    except Exception:
+        return None
+
+
 def compute_company_bill(company_id, days=30):
     """Compute one company's bill: (recruiters x price) + token charges (API
     cost passed through, USD→INR x markup), then GST. The platform owner's own
@@ -1635,6 +1831,8 @@ def compute_company_bill(company_id, days=30):
         'base_inr': base, 'token_usd': round(token_usd, 4), 'token_inr': token_inr,
         'subtotal_inr': subtotal, 'gst_rate': gst_rate, 'gst_inr': gst, 'total_inr': total,
         'trial_ends_at': comp['trial_ends_at'], 'trial_days_left': trial_left,
+        'paid_until': (comp['paid_until'] if 'paid_until' in comp.keys() else '') or '',
+        'paid_days_left': _days_left(comp['paid_until'] if 'paid_until' in comp.keys() else ''),
         'is_owner': (comp['plan'] == 'owner' or comp['billing_status'] == 'owner'),
         'workspace_mode': ((comp['workspace_mode'] if 'workspace_mode' in comp.keys() else '') or 'agency'),
         'token_cap': company_token_cap(company_id),
@@ -1867,9 +2065,9 @@ def create_agency():
     if conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone():
         conn.close(); return jsonify({'error': 'Username already taken'}), 400
     try:
-        trial_days = int(get_setting('billing_trial_days', '14') or 14)
+        trial_days = int(get_setting('billing_trial_days', '30') or 30)
     except Exception:
-        trial_days = 14
+        trial_days = 30
     trial_end = (datetime.datetime.now() + datetime.timedelta(days=trial_days)).isoformat()
     ws_mode = (d.get('workspace_mode') or 'agency').strip().lower()
     if ws_mode not in VOCAB_DEFAULTS:
@@ -1915,7 +2113,39 @@ def my_billing():
     if not is_company_admin():
         return jsonify({'error': 'Not allowed'}), 403
     b = compute_company_bill(effective_company_id(), 30)
+    if b:
+        b.update(billing_contact())
     return jsonify({'ok': True, 'bill': b}) if b else (jsonify({'error': 'No company'}), 404)
+
+
+@app.route('/api/admin/billing/<int:cid>/extend-trial', methods=['POST'])
+@admin_required
+def extend_trial(cid):
+    """Platform owner gives an agency more trial days (from today, or from the
+    current end date if that is still ahead)."""
+    try:
+        days = int((request.json or {}).get('days') or 0)
+    except Exception:
+        days = 0
+    if not 1 <= days <= 365:
+        return jsonify({'error': 'Days must be between 1 and 365.'}), 400
+    conn = get_db()
+    comp = conn.execute('SELECT name, plan, trial_ends_at FROM companies WHERE id=?', (cid,)).fetchone()
+    if not comp:
+        conn.close(); return jsonify({'error': 'Company not found'}), 404
+    if comp['plan'] == 'owner':
+        conn.close(); return jsonify({'error': 'The owner workspace has no trial.'}), 400
+    start = datetime.datetime.now()
+    try:
+        cur = datetime.datetime.fromisoformat(comp['trial_ends_at'] or '')
+        start = max(start, cur)
+    except Exception:
+        pass
+    end = (start + datetime.timedelta(days=days)).isoformat()
+    conn.execute("UPDATE companies SET trial_ends_at=?, billing_status='trial', status='active' WHERE id=?", (end, cid))
+    conn.commit(); conn.close()
+    log_activity('trial_extended', f"{comp['name']} +{days} days")
+    return jsonify({'ok': True, 'trial_ends_at': end})
 
 
 @app.route('/api/admin/billing/<int:cid>/status', methods=['POST'])
@@ -1934,6 +2164,13 @@ def set_billing_status(cid):
     company_status = 'suspended' if status == 'suspended' else 'active'
     conn.execute('UPDATE companies SET billing_status=?, status=? WHERE id=?',
                  (status, company_status, cid))
+    if status == 'active':
+        # The owner switching an agency on by hand lifts an ended paid period too.
+        try:
+            conn.execute("UPDATE companies SET paid_until='' WHERE id=? AND COALESCE(paid_until,'')!='' AND paid_until<?",
+                         (cid, datetime.datetime.now().isoformat()))
+        except Exception:
+            pass
     conn.commit(); conn.close()
     log_activity('billing_status', f"{comp['name']} → {status}")
     return jsonify({'ok': True})
@@ -1958,9 +2195,10 @@ def record_payment(cid):
                  (cid, invoice_no, amount, period, d.get('method', 'manual'), note, ts()))
     # Mark active and clear trial so they're a paying customer now.
     conn.execute("UPDATE companies SET billing_status='active', status='active' WHERE id=?", (cid,))
+    paid_until = extend_paid_until(conn, cid)
     conn.commit(); conn.close()
     log_activity('payment', f"{comp['name']} ₹{amount} ({invoice_no})")
-    return jsonify({'ok': True, 'invoice_no': invoice_no, 'amount': amount})
+    return jsonify({'ok': True, 'invoice_no': invoice_no, 'amount': amount, 'paid_until': paid_until})
 
 
 def _next_invoice_no(conn):
@@ -2701,7 +2939,9 @@ def init_db():
         ('template_fu2', 'Hi {Name}, this is my last follow up regarding the {Position} opportunity at {Location}.\n\nIf the timing is not right, no worries. But do let me know if you would like to explore this.\n\nHave a great day!'),
         # ── Billing config (super-admin editable) ──
         ('billing_price_per_recruiter', '700'),   # INR per recruiter / month
-        ('billing_trial_days', '14'),
+        ('billing_trial_days', '30'),
+        ('signup_auto_approve', '1'),             # self sign-up starts the trial at once (0 = owner approves)
+        ('billing_default_token_cap', '2000000'), # AI tokens / month for a new self-signed-up agency (0 = no cap)
         ('billing_usd_inr', '88'),                # rate to convert API cost USD→INR
         ('billing_token_markup', '1.0'),          # multiplier on pass-through token cost
         ('billing_gst_rate', '18'),               # GST % on the invoice
@@ -2711,6 +2951,11 @@ def init_db():
     ]
     for k, v in defaults:
         c.execute('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)', (k, v))
+    # Nov 2026: the free trial is 30 days. Move the old default (14) only if it
+    # was never changed by the owner (a changed value is left alone).
+    if not c.execute("SELECT 1 FROM settings WHERE key='trial30_migrated'").fetchone():
+        c.execute("UPDATE settings SET value='30' WHERE key='billing_trial_days' AND value='14'")
+        c.execute("INSERT OR IGNORE INTO settings (key,value) VALUES ('trial30_migrated','1')")
     # Migrate: add owner_id to mandates, candidates, reminders (multi-user)
     for tbl in ['mandates', 'candidates', 'reminders']:
         try:
@@ -4402,13 +4647,18 @@ def log_api_usage(provider, model='', input_tokens=0, output_tokens=0, audio_sec
             company_id = effective_company_id() or 0
         except Exception:
             company_id = 0
+        try:            # who asked for it (AI cost meter); 0 = background work
+            from flask import has_request_context as _hrc
+            user_id = int(session.get('user_id') or 0) if _hrc() else 0
+        except Exception:
+            user_id = 0
         conn = get_db()
         conn.execute('''INSERT INTO api_usage
-            (company_id,provider,model,endpoint,input_tokens,output_tokens,audio_seconds,cost_usd,created_at)
-            VALUES (?,?,?,?,?,?,?,?,?)''',
+            (company_id,provider,model,endpoint,input_tokens,output_tokens,audio_seconds,cost_usd,created_at,user_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?)''',
             (company_id, provider, model, endpoint,
              int(input_tokens or 0), int(output_tokens or 0),
-             float(audio_seconds or 0), round(cost, 6), ts()))
+             float(audio_seconds or 0), round(cost, 6), ts(), user_id))
         conn.commit(); conn.close()
     except Exception as e:
         print(f'log_api_usage warning (non-fatal): {e}')
@@ -12523,7 +12773,7 @@ def save_candidate_tags(cid):
 
 @app.route('/api/health')
 def health():
-    return jsonify({'ok': True, 'data_dir': DATA_DIR, 'db': DB_PATH})
+    return jsonify({'ok': True})
 
 # Settings
 @app.route('/api/settings', methods=['GET'])
@@ -15636,15 +15886,28 @@ def _sync_mailbox(oid):
     """Wrapper: the company inbox is always read with the COMPANY mailbox
     (never a recruiter's personal Gmail) and with the tenant pinned, so the
     background Email-Agent loop reads this company's settings, not globals."""
-    with tenant_pin(oid), mail_sender(0):
-        return _sync_mailbox_impl(oid)
+    def run():
+        with tenant_pin(oid), mail_sender(0):
+            return _sync_mailbox_impl(oid)
+    return _mail_sync_guarded(oid, 0, run)
 
 
 def _sync_user_mailbox(oid, uid):
     """A recruiter's (or admin's) OWN Gmail, read with their saved identity and
     filed under their user id — never mixed into the company mailbox."""
-    with tenant_pin(oid), mail_sender(uid):
-        return _sync_mailbox_impl(oid, uid)
+    def run():
+        with tenant_pin(oid), mail_sender(uid):
+            return _sync_mailbox_impl(oid, uid)
+    return _mail_sync_guarded(oid, uid, run)
+
+
+def _mail_sync_guarded(oid, uid, run):
+    """One pass per mailbox at a time + sync status + plain errors (modules/mail_sync.py)."""
+    try:
+        from modules.mail_sync import guarded
+    except Exception:
+        return run()
+    return guarded(oid, uid, run)
 
 
 def _sync_mailbox_impl(oid, box_uid=0):
