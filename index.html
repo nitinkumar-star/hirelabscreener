@@ -1810,12 +1810,51 @@ function _reqFetch(method,path,body){
 function _reqParse(res){
   if(res.neterr) return {error:'Server not reachable. Check your internet connection and try again. ('+res.neterr.message+')'};
   if(!res.ok && res.status!==200){
-    try{return JSON.parse(res.txt);}catch(e){return{error:'Server error '+res.status+': '+res.txt.slice(0,100)};}
+    var j; try{ j=JSON.parse(res.txt); }catch(e){ return{error:'Server error '+res.status+': '+res.txt.slice(0,100)}; }
+    if(res.status===402 && j && j.code==='trial_ended') showTrialEnded(j);
+    return j;
   }
   try{ return JSON.parse(res.txt); }
   catch(e){ return{error:'Server not reachable. Check your internet connection and try again. ('+e.message+')'}; }
 }
 // BD workspace (Oct 2026): every /bd/ call carries the open BD workspace (?ws=)
+// Trial over (Nov 2026): one clear screen instead of every panel failing with 402
+function showTrialEnded(j){
+  if(document.getElementById('trial-ended')) return;
+  var pay=(j&&j.pay_instructions)||'', mail=(j&&j.support_email)||'';
+  var d=document.createElement('div'); d.id='trial-ended';
+  d.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(13,27,42,.55);display:flex;align-items:center;justify-content:center;padding:16px';
+  d.innerHTML='<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:26px 26px 22px;box-shadow:0 20px 50px rgba(0,0,0,.25);font-size:14px;color:#1f2937">'
+    +'<div style="font-size:30px;line-height:1">&#9203;</div>'
+    +'<div style="font-size:19px;font-weight:700;margin:10px 0 6px;color:#0d1b2a">Your free trial has ended</div>'
+    +'<div style="color:#5b6475;line-height:1.55">Your data is safe. Subscribe to continue using HireLab &mdash; access opens again as soon as the payment is recorded.</div>'
+    +(pay?'<div style="margin-top:14px;background:#F4F8F6;border:1px solid #D7E9E1;border-radius:10px;padding:11px 13px;white-space:pre-wrap;line-height:1.5"><b style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:#0F8A6B;margin-bottom:4px">How to pay</b>'+esc(pay)+'</div>':'')
+    +(mail?'<div style="margin-top:12px;color:#5b6475">Questions? <a href="mailto:'+esc(mail)+'" style="color:#0F8A6B;font-weight:600">'+esc(mail)+'</a></div>':'')
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">'
+    +(mail?'<a class="btn btn-g" href="mailto:'+esc(mail)+'?subject='+encodeURIComponent('Subscribe to HireLab')+'" style="text-decoration:none">Contact us to subscribe</a>':'')
+    +'<button class="btn btn-o" id="trial-ended-out">Sign out</button></div></div>';
+  document.body.appendChild(d);
+  document.getElementById('trial-ended-out').onclick=async function(){
+    try{ await fetch(API+'/auth/logout',{method:'POST',credentials:'include'}); }catch(e){}
+    location.href='/';
+  };
+}
+// Trial ending soon: a slim banner for the agency admin (last 5 days)
+async function trialBanner(){
+  try{
+    if(!S.currentUser || !S.currentUser.is_company_admin || S.currentUser.role==='admin') return;
+    var r=await req('GET','/billing/me'); var b=r&&r.bill;
+    if(!b || b.is_owner || b.billing_status!=='trial' || b.trial_days_left==null || b.trial_days_left>5) return;
+    if(document.getElementById('trial-banner')) return;
+    var n=b.trial_days_left, d=document.createElement('div'); d.id='trial-banner';
+    d.style.cssText='position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9000;background:#FFF4DA;color:#7A4E00;border:1px solid #F1D79A;border-radius:10px;padding:9px 14px;font-size:13px;box-shadow:0 6px 18px rgba(0,0,0,.12);display:flex;gap:10px;align-items:center;max-width:calc(100vw - 32px)';
+    d.innerHTML='<span>&#9203; <b>'+(n<=0?'Your free trial ends today':n+' day'+(n===1?'':'s')+' left in your free trial')+'</b>'
+      +(b.pay_instructions?' &middot; '+esc(b.pay_instructions.split('\n')[0]):(b.support_email?' &middot; to subscribe, write to '+esc(b.support_email):''))+'</span>'
+      +'<button style="border:none;background:none;font-size:18px;line-height:1;cursor:pointer;color:#7A4E00" aria-label="Close">&times;</button>';
+    d.querySelector('button').onclick=function(){ d.remove(); };
+    document.body.appendChild(d);
+  }catch(e){}
+}
 function _bdWsPath(path){
   try{ if(typeof BDW!=='undefined' && BDW.ws && String(path).indexOf('/bd/')===0) return path+(path.indexOf('?')<0?'?':'&')+'ws='+BDW.ws; }catch(e){}
   return path;
@@ -2166,7 +2205,7 @@ async function init(){
   ntfStart();
   await loadMandates();
   renderSettings();
-  _afterFirstPaint(function(){ updateTasksBadge(); updateWaBadge(); updateBdBadge(); });
+  _afterFirstPaint(function(){ updateTasksBadge(); updateWaBadge(); updateBdBadge(); trialBanner(); });
   try { await readHash(); }   // restore last view from URL (refresh-safe)
   finally { setTimeout(_flushFirstPaint, 400); }   // then load what the first screen does not show
 
@@ -9450,7 +9489,9 @@ async function loadMyBillingCard(){
     + '<div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">Plan</div><div style="font-size:13px;font-weight:600;color:var(--navy);padding-top:3px">'+sm[2]+trial+'</div></div>'
     + '</div>'
     + capBlock
-    + '<div style="font-size:10.5px;color:var(--muted);margin-top:12px;border-top:0.5px solid var(--line);padding-top:8px">Bill: '+b.recruiters+' recruiter(s) &times; '+inr(b.price_per_recruiter)+' = '+inr(b.base_inr)+' + AI usage '+inr(b.token_inr)+' + GST '+b.gst_rate+'% = <b>'+inr(b.total_inr)+'/month</b>. Pay via UPI to your account manager.</div>'
+    + '<div style="font-size:10.5px;color:var(--muted);margin-top:12px;border-top:0.5px solid var(--line);padding-top:8px">Bill: '+b.recruiters+' recruiter(s) &times; '+inr(b.price_per_recruiter)+' = '+inr(b.base_inr)+' + AI usage '+inr(b.token_inr)+' + GST '+b.gst_rate+'% = <b>'+inr(b.total_inr)+'/month</b>.'
+    + (b.pay_instructions ? '<div style="white-space:pre-wrap;margin-top:6px;color:var(--navy)"><b>How to pay:</b> '+esc(b.pay_instructions)+'</div>' : ' Pay via UPI to your account manager.')
+    + (b.support_email ? '<div style="margin-top:4px">Questions: <a href="mailto:'+esc(b.support_email)+'">'+esc(b.support_email)+'</a></div>' : '') + '</div>'
     + '</div></div>';
 }
 
@@ -10128,6 +10169,7 @@ function billingConfigHTML(s){
     + '</div>'
     + row('b-legal','Business legal name (invoice)',s.billing_legal_name||'')
     + row('b-addr','Business address (invoice)',s.billing_address||'')
+    + '<div class="fg-row"><label>How agencies pay (shown on their billing card and when a trial ends)</label><textarea class="inp" id="b-pay" rows="3" style="width:100%" placeholder="UPI: yourname@okhdfcbank&#10;Bank: A/c 1234…, IFSC HDFC0001234&#10;Send the screenshot to support@…">'+esc(s.billing_pay_instructions||'')+'</textarea></div>'
 
     + '<span id="b-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
     + '</div></div></div>';
@@ -10143,7 +10185,8 @@ async function saveBillingConfig(){
     billing_usd_inr:v('b-usdinr')||'88',
     billing_token_markup:v('b-markup')||'1.0',
     billing_legal_name:v('b-legal'),
-    billing_address:v('b-addr')
+    billing_address:v('b-addr'),
+    billing_pay_instructions:v('b-pay')
   };
   var r=await req('POST','/settings',data);
   if(r.ok){Object.assign(S.settings,data);toast('✅','Billing config saved');var ss=document.getElementById('b-save-status');if(ss){ss.textContent='Saved &#10003;';setTimeout(()=>{ss.textContent='';},2000);}}
@@ -15287,6 +15330,7 @@ async function loadBilling() {
       actions += '<button class="btn btn-o" style="font-size:10px;padding:3px 8px;color:#A32D2D;border-color:#E8C4C4" onclick="setBillStatus('+b.company_id+',\'suspended\')">Suspend</button>';
     }
     actions += '<button class="btn btn-o" style="font-size:10px;padding:3px 8px" onclick="showInvoice('+b.company_id+')">Invoice</button>'
+      + '<button class="btn btn-o" style="font-size:10px;padding:3px 8px" onclick="extendTrial('+b.company_id+')" title="Give this agency more free-trial days">+ Trial days</button>'
       + '</div>';
     var lim = '<div style="display:flex;gap:6px;align-items:center;margin-top:7px;flex-wrap:wrap;padding-top:7px;border-top:0.5px dashed #eee">'
       + '<span style="font-size:10px;color:var(--muted)">AI tokens this month: <b>' + (b.tokens_used_month||0).toLocaleString('en-IN') + '</b>' + (b.token_cap ? ' / ' + (b.token_cap).toLocaleString('en-IN') : '') + '</span>'
@@ -15393,6 +15437,14 @@ async function submitCreateAgency() {
   var r = await req('POST', '/admin/agencies', payload);
   if (r.ok) { var o = document.getElementById('ca-overlay'); if (o) o.remove(); toast('OK', 'Agency created'); loadBilling(); }
   else err.textContent = r.error || 'Failed';
+}
+
+async function extendTrial(cid) {
+  var n = prompt('Add how many free-trial days? (from today, or from the current end date if later)', '14');
+  if (n === null) return;
+  var r = await req('POST', '/admin/billing/' + cid + '/extend-trial', {days: parseInt(n, 10) || 0});
+  if (r.ok) { toast('OK', 'Trial extended to ' + String(r.trial_ends_at).slice(0, 10)); loadBilling(); }
+  else toast('ERR', r.error || 'Failed');
 }
 
 async function setBillStatus(cid, status) {

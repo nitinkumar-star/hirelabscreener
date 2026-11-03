@@ -42,7 +42,7 @@ import datetime
 
 from flask import Blueprint, request, jsonify, session, g
 
-from modules.shared import get_db
+from modules.shared import get_db, _core
 
 bp = Blueprint('tenant_guard', __name__)
 
@@ -188,9 +188,11 @@ def _agency_blocked(me, path):
                         'message': 'Your agency account is currently suspended. Please contact support.'}), 401
     if (me.get('co_plan') != 'owner' and (me.get('co_billing') or '') in ('trial', 'past_due')
             and not _ALWAYS_OPEN.match(path)):
-        try:            # same rule as sign-in: a trial (never converted to paid) whose end date passed
-            if me.get('co_trial') and datetime.datetime.now() > datetime.datetime.fromisoformat(me['co_trial']):
-                return jsonify({'error': 'Your free trial has ended. Please subscribe to continue using HireLab.'}), 402
+        try:            # same rule as sign-in (server.trial_is_over): trial date passed and never paid
+            core = _core()
+            if core.trial_is_over(me.get('company_id'), me.get('co_plan'), me.get('co_billing'), me.get('co_trial')):
+                return jsonify(dict(core.billing_contact(), code='trial_ended',
+                                    error='Your free trial has ended. Please subscribe to continue using HireLab.')), 402
         except Exception:
             pass
     return None
