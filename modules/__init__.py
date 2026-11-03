@@ -66,6 +66,10 @@ _MODULE_NAMES = [
     'job_pulse',       # Jobs page: status line, whose move, next event, ₹ value, focus, SPOC view, chase, digest
     'finance',         # Invoicing → Profit & Cash: real P&L, GST/TDS, cash forecast, collections, freelancer commission (/finance)
     'team_activity',   # Team Activity: time on app, stage moves by recruiter, actions, insights (/team-activity, admin)
+    'payments_online', # Razorpay: pay online after the trial / each month -> agency opens again automatically
+    'mail_sync',       # Gmail: guided connect, auto-sync of every mailbox, status + plain errors
+    'intro_tour',      # first sign-in: a guided walk through every tab
+    'ai_meter',        # AI cost meter in ₹: per agency and per recruiter
     'perf',            # Speed: indexes on the core tables (candidates, stage_history, events …)
 ]
 

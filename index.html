@@ -1811,7 +1811,7 @@ function _reqParse(res){
   if(res.neterr) return {error:'Server not reachable. Check your internet connection and try again. ('+res.neterr.message+')'};
   if(!res.ok && res.status!==200){
     var j; try{ j=JSON.parse(res.txt); }catch(e){ return{error:'Server error '+res.status+': '+res.txt.slice(0,100)}; }
-    if(res.status===402 && j && j.code==='trial_ended') showTrialEnded(j);
+    if(res.status===402 && j && (j.code==='trial_ended' || j.code==='renewal_due')) showTrialEnded(j);
     return j;
   }
   try{ return JSON.parse(res.txt); }
@@ -1821,38 +1821,275 @@ function _reqParse(res){
 // Trial over (Nov 2026): one clear screen instead of every panel failing with 402
 function showTrialEnded(j){
   if(document.getElementById('trial-ended')) return;
-  var pay=(j&&j.pay_instructions)||'', mail=(j&&j.support_email)||'';
+  var pay=(j&&j.pay_instructions)||'', mail=(j&&j.support_email)||'', renew=(j&&j.code==='renewal_due');
   var d=document.createElement('div'); d.id='trial-ended';
   d.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(13,27,42,.55);display:flex;align-items:center;justify-content:center;padding:16px';
   d.innerHTML='<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:26px 26px 22px;box-shadow:0 20px 50px rgba(0,0,0,.25);font-size:14px;color:#1f2937">'
     +'<div style="font-size:30px;line-height:1">&#9203;</div>'
-    +'<div style="font-size:19px;font-weight:700;margin:10px 0 6px;color:#0d1b2a">Your free trial has ended</div>'
-    +'<div style="color:#5b6475;line-height:1.55">Your data is safe. Subscribe to continue using HireLab &mdash; access opens again as soon as the payment is recorded.</div>'
+    +'<div style="font-size:19px;font-weight:700;margin:10px 0 6px;color:#0d1b2a">'+(renew?'Your subscription is due for renewal':'Your free trial has ended')+'</div>'
+    +'<div style="color:#5b6475;line-height:1.55">Your data is safe. Pay to continue using HireLab &mdash; it opens again as soon as the payment goes through.</div>'
+    +'<div id="te-online"></div>'
     +(pay?'<div style="margin-top:14px;background:#F4F8F6;border:1px solid #D7E9E1;border-radius:10px;padding:11px 13px;white-space:pre-wrap;line-height:1.5"><b style="display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:#0F8A6B;margin-bottom:4px">How to pay</b>'+esc(pay)+'</div>':'')
     +(mail?'<div style="margin-top:12px;color:#5b6475">Questions? <a href="mailto:'+esc(mail)+'" style="color:#0F8A6B;font-weight:600">'+esc(mail)+'</a></div>':'')
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">'
     +(mail?'<a class="btn btn-g" href="mailto:'+esc(mail)+'?subject='+encodeURIComponent('Subscribe to HireLab')+'" style="text-decoration:none">Contact us to subscribe</a>':'')
     +'<button class="btn btn-o" id="trial-ended-out">Sign out</button></div></div>';
   document.body.appendChild(d);
+  _onlinePayButton('te-online');
   document.getElementById('trial-ended-out').onclick=async function(){
     try{ await fetch(API+'/auth/logout',{method:'POST',credentials:'include'}); }catch(e){}
     location.href='/';
   };
+}
+// ── Gmail sync (Nov 2026): guided connect + live status of each mailbox ──
+function _ago(iso){
+  if(!iso) return '';
+  var t=new Date(String(iso).replace(' ','T')); if(isNaN(t)) return '';
+  var m=Math.round((Date.now()-t.getTime())/60000);
+  if(m<1) return 'just now'; if(m<60) return m+' min ago';
+  var h=Math.round(m/60); if(h<24) return h+' h ago'; return Math.round(h/24)+' days ago';
+}
+function _syncLine(b, every){
+  if(!b.connected) return {tone:'warn', html:'Gmail not connected yet'};
+  if(b.syncing) return {tone:'ok', html:'&#8635; Syncing '+esc(b.email)+' now&hellip;'};
+  if(b.error && b.error_kind!=='network') return {tone:'bad', html:'&#9888; '+esc(b.error)+' <a href="#" onclick="openGmailWizard(\''+b.box+'\');return false" style="font-weight:700;color:inherit">Reconnect</a>'};
+  var when=b.last_ok_at?('synced '+_ago(b.last_ok_at)):'first sync pending';
+  return {tone: b.error?'warn':'ok', html:'&#9679; '+esc(b.email)+' &middot; '+when+' &middot; auto every '+every+' min'+(b.error?' &middot; <span title="'+esc(b.error)+'">retrying</span>':'')
+    +' &middot; <a href="#" onclick="mailSyncNow(\''+b.box+'\');return false" style="color:inherit;font-weight:600">Sync now</a>'};
+}
+var _TONES={ok:['#E6F6F1','#0F6E56'], warn:['#FFF6E6','#8A5A0B'], bad:['#FCEBEB','#A32D2D']};
+async function loadMailSyncStrips(){
+  var strips=document.querySelectorAll('.mail-sync-strip'), pill=document.getElementById('eb-sync-pill');
+  if(!strips.length && !pill) return;
+  var r=await req('GET','/mail/status'); if(!r||!r.ok) return;
+  var by={}; r.boxes.forEach(function(b){ by[b.box]=b; });
+  strips.forEach(function(el){
+    var b=by[el.getAttribute('data-box')]; if(!b){ el.innerHTML=''; return; }
+    var l=_syncLine(b, r.auto_minutes), t=_TONES[l.tone];
+    el.innerHTML='<div style="font-size:11.5px;padding:7px 11px;border-radius:8px;background:'+t[0]+';color:'+t[1]+';line-height:1.45">'+l.html+'</div>';
+  });
+  if(pill){
+    var rec=_ebIsRec(), b=by[(rec||window._eb.box==='me')?'me':'company'];
+    if(b && b.connected){ var l=_syncLine(b, r.auto_minutes), t=_TONES[l.tone];
+      pill.innerHTML='<span style="display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:10px;background:'+t[0]+';color:'+t[1]+';margin-left:6px">'+l.html+'</span>'; }
+    else pill.innerHTML='';
+  }
+  if(r.boxes.some(function(b){ return b.syncing; })) setTimeout(loadMailSyncStrips, 5000);
+}
+async function mailSyncNow(box){
+  var r=await req('POST','/mail/sync-now',{box:box});
+  if(r&&r.ok){ toast('&#8635;', r.running?'A sync is already running':'Syncing — new mail appears in a minute'); setTimeout(loadMailSyncStrips, 1200); setTimeout(function(){ if(document.getElementById('eb-list')) ebLoadList(false); }, 20000); }
+  else toast('ERR',(r&&r.error)||'Could not start the sync');
+}
+function openGmailWizard(box){
+  box = box==='company'?'company':'me';
+  var x=document.getElementById('gw-modal'); if(x) x.remove();
+  var me=S.currentUser||{};
+  var d=document.createElement('div'); d.id='gw-modal';
+  d.style.cssText='position:fixed;inset:0;z-index:100001;background:rgba(13,27,42,.5);display:flex;align-items:center;justify-content:center;padding:16px';
+  var step=function(n,title,body){ return '<div style="display:flex;gap:12px;margin-bottom:14px"><div style="flex:none;width:26px;height:26px;border-radius:50%;background:#E6F6F1;color:#0F6E56;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:13px">'+n+'</div><div style="flex:1"><div style="font-weight:700;color:#0d1b2a;margin-bottom:3px">'+title+'</div><div style="color:#4b5563;line-height:1.5;font-size:13px">'+body+'</div></div></div>'; };
+  d.innerHTML='<div style="background:#fff;border-radius:14px;max-width:520px;width:100%;max-height:92vh;overflow:auto;padding:22px 22px 18px;box-shadow:0 20px 50px rgba(0,0,0,.25);font-size:13.5px">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><div style="font-size:18px;font-weight:800;color:#0d1b2a">Connect '+(box==='company'?'the company':'your')+' Gmail</div><button onclick="document.getElementById(\'gw-modal\').remove()" aria-label="Close" style="margin-left:auto;border:none;background:none;font-size:22px;cursor:pointer;color:#8a93a3">&times;</button></div>'
+    +'<div style="color:#5b6475;margin-bottom:16px">About one minute. HireLab then reads replies and sends mail from this Gmail, and keeps it synced every few minutes by itself.</div>'
+    +step(1,'Turn on 2-Step Verification','Skip if it is already on. <a href="https://myaccount.google.com/signinoptions/two-step-verification" target="_blank" rel="noopener">Open Google &rarr; 2-Step Verification</a>')
+    +step(2,'Create an App Password','<a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">Open Google &rarr; App passwords</a>, type the name <b>HireLab</b>, click <b>Create</b> and copy the 16 letters.')
+    +step(3,'Paste it here','<div style="display:grid;gap:8px;margin-top:4px">'
+      +'<input class="inp" id="gw-email" type="email" placeholder="you@gmail.com" autocomplete="off" value="'+esc(box==='me'?(me.email||''):'')+'">'
+      +'<input class="inp" id="gw-pass" type="password" placeholder="16-letter App Password (spaces are fine)" autocomplete="new-password">'
+      +'<input class="inp" id="gw-name" placeholder="Sender name candidates see (optional)" value="'+esc(box==='me'?(me.display_name||''):'')+'"></div>')
+    +'<div id="gw-res" style="margin:6px 0 0"></div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn btn-o" onclick="document.getElementById(\'gw-modal\').remove()">Cancel</button>'
+    +'<button class="btn btn-g" id="gw-go" onclick="gmailConnect(\''+box+'\')">Connect &amp; test</button></div>'
+    +'<div style="font-size:11px;color:#8a93a3;margin-top:10px">Tip: if Google says App passwords are not available, the Gmail is a work account whose admin switched them off &mdash; ask them, or use another Gmail.</div></div>';
+  document.body.appendChild(d);
+  setTimeout(function(){ var e=document.getElementById(box==='me'&&me.email?'gw-pass':'gw-email'); if(e) e.focus(); }, 50);
+}
+async function gmailConnect(box){
+  var v=function(id){ var e=document.getElementById(id); return e?e.value.trim():''; };
+  var res=document.getElementById('gw-res'), go=document.getElementById('gw-go');
+  go.disabled=true; res.innerHTML='<div style="color:#5b6475;font-size:12.5px">Testing with Gmail&hellip; (takes a few seconds)</div>';
+  var r=await req('POST','/mail/connect',{box:box, email:v('gw-email'), app_password:v('gw-pass'), display_name:v('gw-name')});
+  go.disabled=false;
+  var checks=(r&&r.checks)||[];
+  var list=checks.map(function(c){ return '<div style="display:flex;gap:8px;font-size:12.5px;margin:3px 0"><span style="color:'+(c.ok?'#0F8A6B':'#A32D2D')+';font-weight:800">'+(c.ok?'&#10003;':'&#10007;')+'</span><span><b>'+esc(c.name)+'</b> &mdash; '+esc(c.detail)+'</span></div>'; }).join('');
+  if(r&&r.ok){
+    res.innerHTML='<div style="background:#E6F6F1;border-radius:10px;padding:10px 12px">'+list+'</div>';
+    go.textContent='Done'; go.onclick=function(){ document.getElementById('gw-modal').remove(); };
+    toast('&#9989;','Gmail connected — syncing every '+(r.auto_minutes||5)+' min');
+    try{ if(box==='me') loadMyMail(); }catch(e){}
+    loadMailSyncStrips();
+  } else {
+    res.innerHTML='<div style="background:#FCEBEB;color:#A32D2D;border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.5">'+(list||'')+(list?'':esc((r&&r.error)||'Could not connect'))+'</div>';
+  }
+}
+
+// ── Intro tour (Nov 2026): first sign-in opens each tab and explains it ──
+var TOUR_STEPS = [
+  ['sb-home', 'Home', 'Your day at a glance: today\'s focus, follow-ups that are due and insights on what needs attention.'],
+  ['sb-jobs', 'Jobs', 'Every mandate with its pipeline. Open a job to add candidates, move them stage by stage and share profiles with the client.'],
+  ['sb-tasks', 'Tasks', 'Reminders, interviews and follow-ups in one list. Type a task in plain words &mdash; the date and time are picked up for you.'],
+  ['sb-waai', 'Communications', 'WhatsApp conversations handled by the AI assistant, and the chats that need you (escalations).'],
+  ['sb-crm', 'Clients (CRM)', 'Your clients: companies, contacts and their org chart, with every mandate and conversation in one place.'],
+  ['sb-invoicing', 'Invoicing', 'Raise GST invoices for placements and see what is paid and what is still due.'],
+  ['sb-email', 'Email Box', 'Your Gmail inside HireLab: inbox and sent mail, with candidate replies linked to their profile automatically.'],
+  ['sb-freelancers', 'Freelancers', 'Give jobs to freelance sourcers and see the candidates they send.'],
+  ['sb-bd', 'BD Command Center', 'Business development: prospects, follow-ups and meetings with companies you want as clients.'],
+  ['sb-central', 'Talent', 'Search everyone in your database &mdash; skill, company, product, region, CTC, team size &mdash; and add or upload CVs. Click a number to call from your phone.'],
+  ['sb-schedule', 'Scheduler', 'Share your free slots; candidates and clients book a time and the invite goes out by itself. Opens in its own page.'],
+  ['sb-reengage', 'Re-engage', 'Every 6 months candidates get an e-mail to update their profile, so the database stays fresh. Opens in its own page.'],
+  ['sb-jobmail', 'Job Mail', 'Pick a job, AI finds matching candidates, you approve, and the job goes out by e-mail. Opens in its own page.'],
+  ['sb-talentpool', 'Talent Pool', 'Your database in segments, with how fresh each CV is. Opens in its own page.'],
+  ['sb-talentmap', 'Company Talent Map', 'Everyone you know at one company side by side &mdash; a clean view you can show a client. Opens in its own page.'],
+  ['sb-newsletter', 'Market Pulse', 'A monthly newsletter to your talent segments. Opens in its own page.'],
+  ['sb-hotlist', 'Hot List', 'Who to call today, ranked by how engaged each candidate is. Opens in its own page.'],
+  ['sb-teamactivity', 'Team Activity', 'For admins: who worked when, stage moves and which positions each recruiter is on. Opens in its own page.'],
+  ['sb-orgmap', 'Org Map', 'Map a company\'s reporting lines for talent mapping. Opens in its own page.'],
+  ['sb-admin', 'Admin Panel', 'Users, agencies, billing and AI usage across the platform.'],
+  ['sb-gear', 'Settings', 'Your profile, Gmail, templates, plan &amp; AI cost meter. You can replay this tour any time from Settings &rarr; My Account.']
+];
+var _tour = null;
+function _tourVisible(el){ return el && el.offsetParent !== null && el.getClientRects().length > 0; }
+function startTour(){
+  endTour(true);
+  var steps = TOUR_STEPS.filter(function(x){ return _tourVisible(document.getElementById(x[0])); }).map(function(x){
+    var t = document.querySelector('#' + x[0] + ' .sb-nav-title');           // the name the sidebar shows (Jobs / Mandates …)
+    var lbl = t ? t.textContent.trim() : '';
+    return [x[0], lbl ? esc(lbl) : x[1], x[2]];
+  });
+  var name = (S.currentUser && (S.currentUser.display_name || S.currentUser.username) || '').split(' ')[0];
+  steps.unshift([null, 'Welcome to HireLab' + (name ? ', ' + esc(name) : '') + '!', 'Let us take a quick look at each tab &mdash; I will open it and tell you what it is for. Use <b>Next</b> or the &rarr; key; <b>Esc</b> skips.']);
+  steps.push([null, 'You are all set &#127881;', 'Start with <b>Jobs</b> to add your first mandate, or <b>Talent</b> to upload CVs. Replay this tour from Settings &rarr; My Account.']);
+  _tour = {steps: steps, i: 0};
+  var blk = document.createElement('div'); blk.id = 'tour-block';
+  blk.style.cssText = 'position:fixed;inset:0;z-index:99990;background:transparent';
+  var spot = document.createElement('div'); spot.id = 'tour-spot';
+  spot.style.cssText = 'position:fixed;z-index:99991;border-radius:10px;box-shadow:0 0 0 3px #1D9E75,0 0 0 9999px rgba(13,27,42,.38);pointer-events:none;transition:all .25s ease';
+  var bub = document.createElement('div'); bub.id = 'tour-bub';
+  bub.style.cssText = 'position:fixed;z-index:99992;width:320px;max-width:calc(100vw - 32px);background:#fff;border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.25);padding:16px 16px 12px;font-size:13.5px;color:#1f2937;transition:top .25s ease,left .25s ease';
+  document.body.appendChild(blk); document.body.appendChild(spot); document.body.appendChild(bub);
+  document.addEventListener('keydown', _tourKey);
+  window.addEventListener('resize', _tourPlace);
+  _tourShow();
+}
+function _tourKey(e){
+  if (!_tour) return;
+  if (e.key === 'Escape') endTour();
+  else if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); tourGo(1); }
+  else if (e.key === 'ArrowLeft') tourGo(-1);
+}
+function tourGo(d){
+  if (!_tour) return;
+  var n = _tour.i + d;
+  if (n >= _tour.steps.length) return endTour();
+  if (n < 0) return;
+  _tour.i = n; _tourShow();
+}
+function _tourShow(){
+  var st = _tour.steps[_tour.i], last = _tour.i === _tour.steps.length - 1;
+  var el = st[0] ? document.getElementById(st[0]) : null;
+  if (el) {
+    try { el.scrollIntoView({block: 'nearest'}); } catch (e) {}
+    var href = el.getAttribute('href') || '';
+    if (href.charAt(0) === '#') { try { el.click(); } catch (e) {} }     // in-app tab: open it; own-page tabs are only pointed at
+  }
+  var bub = document.getElementById('tour-bub');
+  bub.innerHTML = '<div style="font-size:11px;font-weight:700;color:#1D9E75;letter-spacing:.05em;text-transform:uppercase;margin-bottom:4px">' + (_tour.i + 1) + ' of ' + _tour.steps.length + '</div>'
+    + '<div style="font-size:16px;font-weight:700;color:#0d1b2a;margin-bottom:6px">' + st[1] + '</div>'
+    + '<div style="line-height:1.55;color:#4b5563">' + st[2] + '</div>'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-top:14px">'
+    + (last ? '' : '<a href="#" onclick="endTour();return false" style="font-size:12.5px;color:#8a93a3;text-decoration:none">Skip tour</a>')
+    + '<span style="flex:1"></span>'
+    + (_tour.i ? '<button class="btn btn-o" style="font-size:12.5px;padding:6px 12px" onclick="tourGo(-1)">Back</button>' : '')
+    + '<button class="btn btn-g" id="tour-next" style="font-size:12.5px;padding:6px 14px" onclick="tourGo(1)">' + (last ? 'Finish' : (_tour.i ? 'Next' : 'Start')) + '</button></div>';
+  setTimeout(_tourPlace, 60);
+}
+function _tourPlace(){
+  if (!_tour) return;
+  var st = _tour.steps[_tour.i], el = st[0] ? document.getElementById(st[0]) : null;
+  var spot = document.getElementById('tour-spot'), bub = document.getElementById('tour-bub');
+  if (!spot || !bub) return;
+  var bw = bub.offsetWidth, bh = bub.offsetHeight, W = window.innerWidth, H = window.innerHeight;
+  if (el && _tourVisible(el)) {
+    var r = el.getBoundingClientRect();
+    spot.style.left = (r.left - 4) + 'px'; spot.style.top = (r.top - 4) + 'px';
+    spot.style.width = (r.width + 8) + 'px'; spot.style.height = (r.height + 8) + 'px'; spot.style.opacity = '1';
+    var left = r.right + 16, top = r.top + r.height / 2 - bh / 2;
+    if (left + bw > W - 12) { left = Math.max(12, (W - bw) / 2); top = r.bottom + 14; }
+    bub.style.left = left + 'px'; bub.style.top = Math.max(12, Math.min(top, H - bh - 12)) + 'px';
+  } else {
+    spot.style.left = (W / 2) + 'px'; spot.style.top = (H / 2) + 'px'; spot.style.width = '0px'; spot.style.height = '0px';
+    bub.style.left = Math.max(12, (W - bw) / 2) + 'px'; bub.style.top = Math.max(12, (H - bh) / 2) + 'px';
+  }
+}
+function endTour(silent){
+  ['tour-block', 'tour-spot', 'tour-bub'].forEach(function(id){ var x = document.getElementById(id); if (x) x.remove(); });
+  document.removeEventListener('keydown', _tourKey);
+  window.removeEventListener('resize', _tourPlace);
+  var was = !!_tour; _tour = null;
+  if (silent || !was) return;
+  if (S.currentUser) S.currentUser.tour_done = true;
+  req('POST', '/me/tour', {done: true});
+  try { goHome(); } catch (e) {}
+}
+
+// ── Online payment (Razorpay): pay → verified → the ATS opens again by itself ──
+async function _onlinePayButton(boxId){
+  var box=document.getElementById(boxId); if(!box) return;
+  var c=await req('GET','/billing/pay/config');
+  if(!c||!c.ok||!c.enabled) return;
+  if(!c.can_pay){ box.innerHTML='<div style="margin-top:12px;font-size:13px;color:#5b6475">Ask your agency admin to pay online &mdash; HireLab opens for everyone the moment they do.</div>'; return; }
+  box.innerHTML='<button class="btn btn-g" style="margin-top:14px;width:100%;justify-content:center;font-size:14px;padding:10px" onclick="startOnlinePay()">Pay '+_rs(c.amount_inr)+' now &middot; UPI / card / net-banking</button>'
+    +'<div style="font-size:11px;color:#8a93a3;margin-top:5px;text-align:center">'+c.recruiters+' recruiter(s) &middot; one month &middot; secured by Razorpay</div>';
+}
+function _loadRazorpay(){
+  return new Promise(function(ok, bad){
+    if(window.Razorpay) return ok();
+    var sc=document.createElement('script'); sc.src='https://checkout.razorpay.com/v1/checkout.js';
+    sc.onload=ok; sc.onerror=function(){ bad(new Error('Could not load the payment window. Check your internet and try again.')); };
+    document.head.appendChild(sc);
+  });
+}
+async function startOnlinePay(){
+  try{ await _loadRazorpay(); }catch(e){ toast('ERR', e.message); return; }
+  var o=await req('POST','/billing/pay/order',{});
+  if(!o||!o.ok){ toast('ERR',(o&&o.error)||'Could not start the payment'); return; }
+  var c=await req('GET','/billing/pay/config');
+  var rz=new Razorpay({key:o.key_id, amount:o.amount_paise, currency:'INR', order_id:o.order_id, name:'HireLab',
+    description:'HireLab subscription — '+(o.company||''), prefill:{name:(c&&c.name)||'', email:(c&&c.email)||''},
+    theme:{color:'#0F8A6B'},
+    handler: async function(resp){
+      var v=await req('POST','/billing/pay/verify',resp);
+      if(v&&v.ok){
+        var x=document.getElementById('trial-ended'); if(x) x.remove();
+        toast('&#9989;','Payment received — thank you! HireLab is active till '+String(v.paid_until||'').slice(0,10)+'.');
+        setTimeout(function(){ location.reload(); }, 1500);
+      } else toast('ERR',(v&&v.error)||'Payment could not be verified');
+    }});
+  rz.on('payment.failed', function(r){ toast('ERR','Payment failed: '+((r&&r.error&&r.error.description)||'please try again')); });
+  rz.open();
 }
 // Trial ending soon: a slim banner for the agency admin (last 5 days)
 async function trialBanner(){
   try{
     if(!S.currentUser || !S.currentUser.is_company_admin || S.currentUser.role==='admin') return;
     var r=await req('GET','/billing/me'); var b=r&&r.bill;
-    if(!b || b.is_owner || b.billing_status!=='trial' || b.trial_days_left==null || b.trial_days_left>5) return;
+    if(!b || b.is_owner) return;
+    var trialSoon = b.billing_status==='trial' && b.trial_days_left!=null && b.trial_days_left<=5;
+    var renewSoon = b.billing_status==='active' && b.paid_days_left!=null && b.paid_days_left<=5;
+    if(!trialSoon && !renewSoon) return;
     if(document.getElementById('trial-banner')) return;
-    var n=b.trial_days_left, d=document.createElement('div'); d.id='trial-banner';
+    var n=trialSoon?b.trial_days_left:b.paid_days_left, d=document.createElement('div'); d.id='trial-banner';
     d.style.cssText='position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9000;background:#FFF4DA;color:#7A4E00;border:1px solid #F1D79A;border-radius:10px;padding:9px 14px;font-size:13px;box-shadow:0 6px 18px rgba(0,0,0,.12);display:flex;gap:10px;align-items:center;max-width:calc(100vw - 32px)';
-    d.innerHTML='<span>&#9203; <b>'+(n<=0?'Your free trial ends today':n+' day'+(n===1?'':'s')+' left in your free trial')+'</b>'
-      +(b.pay_instructions?' &middot; '+esc(b.pay_instructions.split('\n')[0]):(b.support_email?' &middot; to subscribe, write to '+esc(b.support_email):''))+'</span>'
+    var what=trialSoon?(n<=0?'Your free trial ends today':n+' day'+(n===1?'':'s')+' left in your free trial')
+                      :(n<=0?'Your subscription renews today':'Subscription renews in '+n+' day'+(n===1?'':'s'));
+    d.innerHTML='<span>&#9203; <b>'+what+'</b>'
+      +(b.pay_instructions?' &middot; '+esc(b.pay_instructions.split('\n')[0]):(b.support_email?' &middot; to subscribe, write to '+esc(b.support_email):''))
+      +' <span id="tb-pay"></span></span>'
       +'<button style="border:none;background:none;font-size:18px;line-height:1;cursor:pointer;color:#7A4E00" aria-label="Close">&times;</button>';
-    d.querySelector('button').onclick=function(){ d.remove(); };
+    d.querySelector('button[aria-label=Close]').onclick=function(){ d.remove(); };
     document.body.appendChild(d);
+    var c=await req('GET','/billing/pay/config');
+    if(c&&c.ok&&c.enabled&&c.can_pay) document.getElementById('tb-pay').innerHTML=' &middot; <a href="#" onclick="startOnlinePay();return false" style="color:#7A4E00;font-weight:700">Pay '+_rs(c.amount_inr)+' now</a>';
   }catch(e){}
 }
 function _bdWsPath(path){
@@ -2164,7 +2401,7 @@ async function init(){
   if (status.error) { showConnError(status.error); return; }
 
   if (status.state === 'setup') { showAuthScreen('setup'); return; }
-  if (status.state === 'login') { showAuthScreen('login'); return; }
+  if (status.state === 'login') { window._authInfo = status; showAuthScreen('login'); return; }
 
   // state === 'app' — logged in
   S.currentUser = status.user || null;
@@ -2205,7 +2442,8 @@ async function init(){
   ntfStart();
   await loadMandates();
   renderSettings();
-  _afterFirstPaint(function(){ updateTasksBadge(); updateWaBadge(); updateBdBadge(); trialBanner(); });
+  _afterFirstPaint(function(){ updateTasksBadge(); updateWaBadge(); updateBdBadge(); trialBanner();
+    if (S.currentUser && S.currentUser.tour_done === false) setTimeout(startTour, 600); });
   try { await readHash(); }   // restore last view from URL (refresh-safe)
   finally { setTimeout(_flushFirstPaint, 400); }   // then load what the first screen does not show
 
@@ -2968,12 +3206,12 @@ function showAuthScreen(mode) {
   var isForgot = (mode === 'forgot');
   var isReset  = (mode === 'reset');
   var title = isSetup ? 'Create your admin account'
-            : isSignup ? 'Request an account'
+            : isSignup ? (_authAuto() ? 'Start your free trial' : 'Request an account')
             : isForgot ? 'Reset your password'
             : isReset  ? 'Set a new password'
             : 'Sign in';
   var lead = isSetup ? 'This first account becomes the admin and owns all existing data.'
-           : isSignup ? 'Tell us who you are. An admin reviews every request.'
+           : isSignup ? (_authAuto() ? _authTrialDays() + ' days free. No card needed — you are in as soon as you sign up.' : 'Tell us who you are. An admin reviews every request.')
            : isForgot ? 'Enter your username or email and we will send a reset link.'
            : isReset  ? 'Choose a new password for your account.'
            : 'Welcome back. Sign in to your workspace.';
@@ -3012,7 +3250,7 @@ function showAuthScreen(mode) {
       + F('auth-pass','Password','password', (isSetup||isSignup) ? 'new-password' : 'current-password', enter(mode))
       + ((isSetup||isSignup) ? '<div class="w4-ahint">At least 8 characters</div>' : '<div class="w4-afg"><a href="#" onclick="showAuthScreen(&#39;forgot&#39;);return false">Forgot password?</a></div>')
       + (isSignup ? '<label class="w4-aterms"><input type="checkbox" id="auth-terms"><span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a>.</span></label>' : '')
-      + '<button class="w4-abtn" onclick="submitAuth(&#39;'+mode+'&#39;)">' + (isSetup ? 'Create admin &amp; continue' : (isSignup ? 'Request account' : 'Sign in')) + '</button>';
+      + '<button class="w4-abtn" onclick="submitAuth(&#39;'+mode+'&#39;)">' + (isSetup ? 'Create admin &amp; continue' : (isSignup ? (_authAuto() ? 'Start free trial' : 'Request account') : 'Sign in')) + '</button>';
   }
 
   h += '<div id="auth-err" class="w4-aerr" role="alert" aria-live="polite"></div>';
@@ -3025,9 +3263,9 @@ function showAuthScreen(mode) {
     h += '<div class="w4-aalt">'
       + (isSignup
           ? 'Already have an account? <a href="#" onclick="showAuthScreen(&#39;login&#39;);return false">Sign in</a>'
-          : 'New here? <a href="#" onclick="showAuthScreen(&#39;signup&#39;);return false">Request an account</a>')
+          : 'New here? <a href="#" onclick="showAuthScreen(&#39;signup&#39;);return false">' + (_authAuto() ? 'Start a ' + _authTrialDays() + '-day free trial' : 'Request an account') + '</a>')
       + '</div>';
-    if (isSignup) h += '<div class="w4-anote">You can sign in as soon as an admin approves the request.</div>';
+    if (isSignup && !_authAuto()) h += '<div class="w4-anote">You can sign in as soon as an admin approves the request.</div>';
   }
   h += '</div></main>';
   ov.innerHTML = h;
@@ -3041,6 +3279,8 @@ function _authEye(btn){
   btn.textContent = show ? 'Hide' : 'Show';
   btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
 }
+function _authAuto(){ return !!(window._authInfo && window._authInfo.signup_auto); }
+function _authTrialDays(){ return (window._authInfo && window._authInfo.trial_days) || 30; }
 // Replaces the auth card with a short result message (sent / updated / requested).
 function _authDone(kind, title, text, btn){
   var o = document.getElementById('auth-overlay'); if (!o) return;
@@ -3100,6 +3340,13 @@ async function submitAuth(mode) {
   err.textContent = 'Please wait...';
   var r = await req('POST', endpoint, payload);
   if (r.ok) {
+    if (mode === 'signup' && !r.pending) {
+      // Automatic sign-up: the trial has started and the session is open
+      var o3 = document.getElementById('auth-overlay'); if (o3) o3.remove();
+      await init();
+      toast('&#127881;', 'Welcome! Your ' + (r.trial_days || 30) + '-day free trial has started.');
+      return;
+    }
     if (mode === 'signup' && r.pending) {
       _authDone('wait', 'Request submitted', 'Your account is awaiting admin approval. You can sign in as soon as it is approved.', 'Back to sign in');
       return;
@@ -5882,7 +6129,7 @@ function _ebHeader(active){
   var boxSw=(!rec && me.own_mailbox)?('<select class="inp eb2-boxsel" aria-label="Mailbox" onchange="ebSwitchBox(this.value)">'
       +'<option value=""'+(window._eb.box!=='me'?' selected':'')+'>Company mailbox</option>'
       +'<option value="me"'+(window._eb.box==='me'?' selected':'')+'>My mailbox</option></select>'):'';
-  return '<div class="w2-ebhead"><div><h1>Email</h1><p>'+who+'</p></div>'
+  return '<div class="w2-ebhead"><div><h1>Email</h1><p>'+who+' <span id="eb-sync-pill"></span></p></div>'
     +(rec?'':'<div class="w2-ebtabs" role="tablist" aria-label="Email section">'+t('mail','Mailbox','Inbox')+t('camp','Campaigns','__campaigns')+t('agent','Email Agent','__agent')+'</div>')
     +'<div class="w2-ebtools">'+boxSw+'<button class="w1-btn" onclick="syncEmail(this)" title="Pull new mail now">&#8635; Sync</button>'
     +(rec?'':'<div class="w1-acct"><button class="w1-btn ic" aria-label="More email tools" aria-haspopup="menu" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle(\'open\')">&#8943;</button>'
@@ -5937,7 +6184,7 @@ async function renderEmailBox(){
   var c=window._eb.counts||{};
   el.innerHTML=_ebHeader('mail')
     +(needMail?'<div class="eb2-banner" role="status"><b>Connect your Gmail to get your own inbox.</b> Mail you send and receive there will show up here &mdash; only you can see it. '
-      +'<button class="w1-btn pri" onclick="ebGoMyMail()">Connect in Settings &rarr; My Account</button></div>':'')
+      +'<button class="w1-btn pri" onclick="openGmailWizard(\'me\')">Connect Gmail (1 minute)</button></div>':'')
     +'<div class="w2-ebbar">'
     +'<div class="eb2-chips" id="eb2-chips">'+tab('Inbox','Inbox',c.unread)+tab('Unread','Unread')+tab('Starred','Starred')+tab('Sent','Sent')+tab('Drafts','Drafts',c.drafts)+tab('Candidates','Candidates')+tab('Archived','Archived')+tab('','All mail')+'</div>'
     +'<input class="inp" id="eb-search" type="search" placeholder="Search all mail" aria-label="Search mail" value="'+esc(window._eb.q||'')+'" style="margin-left:auto;font-size:13px;width:240px;padding:7px 11px" oninput="ebSearchDebounced()">'
@@ -5946,6 +6193,7 @@ async function renderEmailBox(){
     +'<div class="eb2-listcol"><div class="eb2-bulk" id="eb2-bulk"></div><div class="w2-eblist" id="eb-list"><div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div></div><div id="eb2-more"></div></div>'
     +(_ebSplit()?'<div class="eb2-pane" id="eb2-pane" aria-live="polite"><div class="eb2-pane-empty">Select a conversation to read it here.</div></div>':'')
     +'</div>';
+  loadMailSyncStrips();
   await ebLoadList(false);
   if(window._eb.openId && _ebSplit()) openEmail(window._eb.openId, true);
 }
@@ -8945,7 +9193,9 @@ function renderSettings(){
     + '<div class="set-pane" id="setpane-account" style="display:none">'
       + _setHead('My Account', 'Just about you. Nothing here affects your teammates.')
       + _sec('sec-plan', 'account', 'My plan &amp; usage', 'billing subscription plan usage invoice',
-             '<div id="my-billing-card"></div>')
+             '<div id="my-billing-card"></div><div id="ai-meter-card"></div>')
+      + _sec('sec-tour', 'account', 'Product tour', 'tour help intro guide walkthrough tabs',
+             '<div class="card" style="margin-bottom:14px"><div class="card-body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:200px;font-size:12.5px;color:var(--muted)">A 2-minute walk through every tab: what it is for and when to use it.</div><button class="btn btn-g" onclick="startTour()">&#9654; Take the tour</button></div></div>')
       + _sec('sec-profile', 'account', 'My Profile &amp; Email Signature', 'name designation phone email signature',
           '<div class="card" style="margin-bottom:14px;border-top:2px solid #534AB7"><div class="card-head"><span style="font-weight:500">&#128100; My Profile &amp; Email Signature</span></div><div class="card-body">'
           + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">These details are used automatically in your email signature and AI-composed emails.</div>'
@@ -9457,9 +9707,48 @@ async function savePipelineStages(){
   } else { toast('ERR', r.error || 'Failed'); }
 }
 
+// ── AI cost meter in ₹ (Nov 2026): per recruiter, per feature, per day ──
+function _rs(n){ n = n || 0; return '\u20b9' + (n >= 100 ? Math.round(n).toLocaleString('en-IN') : n.toFixed(2)); }
+function aiMeterHTML(d, compact){
+  var maxP = Math.max.apply(null, [0.01].concat(d.people.map(function(p){ return p.rupees; })));
+  var maxD = Math.max.apply(null, [0.01].concat(d.daily.map(function(x){ return x.rupees; })));
+  var h = '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+    + '<div style="font-size:24px;font-weight:800;color:var(--navy)">' + _rs(d.total_rupees) + '</div>'
+    + '<div style="font-size:12px;color:var(--muted)">AI cost in the last ' + d.days + ' days &middot; ' + d.calls.toLocaleString('en-IN') + ' AI calls</div></div>';
+  h += '<div title="Daily AI cost" style="display:flex;align-items:flex-end;gap:2px;height:42px;margin-bottom:14px">' + d.daily.map(function(x){
+    return '<div title="' + esc(x.day) + ': ' + _rs(x.rupees) + '" style="flex:1;min-width:2px;background:' + (x.rupees ? '#1D9E75' : '#EAE8E2') + ';border-radius:2px 2px 0 0;height:' + Math.max(3, Math.round(40 * x.rupees / maxD)) + 'px"></div>';
+  }).join('') + '</div>';
+  h += '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">By recruiter</div>';
+  h += d.people.length ? d.people.map(function(p){
+    return '<div style="display:grid;grid-template-columns:minmax(90px,170px) 1fr 70px;gap:10px;align-items:center;padding:5px 0;font-size:12.5px">'
+      + '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap' + (p.user_id ? '' : ';color:var(--muted);font-style:italic') + '" title="' + esc(p.name) + '">' + esc(p.name) + '</div>'
+      + '<div style="height:8px;background:#EFEEF2;border-radius:5px;overflow:hidden"><div style="height:100%;width:' + (100 * p.rupees / maxP) + '%;background:#0F8A6B;border-radius:5px"></div></div>'
+      + '<div style="text-align:right;font-weight:700" title="' + p.calls + ' calls · ' + p.tokens.toLocaleString('en-IN') + ' tokens' + (p.audio_min ? ' · ' + p.audio_min + ' min audio' : '') + '">' + _rs(p.rupees) + '</div></div>';
+  }).join('') : '<div style="font-size:12px;color:var(--muted);padding:6px 0">No AI usage in this period.</div>';
+  if (!compact && d.features.length) {
+    h += '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px">By feature</div><div style="display:flex;flex-wrap:wrap;gap:6px">'
+      + d.features.slice(0, 12).map(function(f){ return '<span style="font-size:11.5px;background:#F2F0EA;border-radius:8px;padding:3px 9px">' + esc(f.feature) + ' <b>' + _rs(f.rupees) + '</b> <span style="color:var(--muted)">· ' + f.calls + '</span></span>'; }).join('') + '</div>';
+  }
+  return h;
+}
+async function loadAiMeterCard(days){
+  var box = document.getElementById('ai-meter-card');
+  if (!box) return;
+  if (_isRecruiterScoped()) { box.innerHTML=''; return; }
+  days = days || 30;
+  var d = await req('GET', '/ai-meter?days=' + days);
+  if (!d || !d.ok) { box.innerHTML=''; return; }
+  box.innerHTML = '<div class="card" style="margin-bottom:14px;border-top:2px solid #1D9E75"><div class="card-head"><span style="font-weight:500">&#129302; AI cost meter</span>'
+    + '<select onchange="loadAiMeterCard(parseInt(this.value))" style="margin-left:auto;font-size:11px;padding:3px 6px;border:0.5px solid var(--line);border-radius:6px">'
+    + [7,30,90].map(function(n){ return '<option value="'+n+'"'+(n===days?' selected':'')+'>Last '+n+' days</option>'; }).join('') + '</select></div>'
+    + '<div class="card-body">' + aiMeterHTML(d) + '<div style="font-size:10.5px;color:var(--muted);margin-top:12px">Rupee cost of every AI action (CV reading, screening, e-mail drafting, call analysis …), by the person who ran it. "Automatic" is background work such as the e-mail agent.</div></div></div>';
+}
+
 async function loadMyBillingCard(){
   var box = document.getElementById('my-billing-card');
   if (!box) return;
+  loadAiMeterCard();
+  loadMailSyncStrips();
   if (_isRecruiterScoped()) { box.innerHTML=''; return; }      // subscription is the admin's
   var r = await req('GET', '/billing/me');
   if (!r || !r.ok || !r.bill) { box.innerHTML=''; return; }
@@ -9491,14 +9780,18 @@ async function loadMyBillingCard(){
     + capBlock
     + '<div style="font-size:10.5px;color:var(--muted);margin-top:12px;border-top:0.5px solid var(--line);padding-top:8px">Bill: '+b.recruiters+' recruiter(s) &times; '+inr(b.price_per_recruiter)+' = '+inr(b.base_inr)+' + AI usage '+inr(b.token_inr)+' + GST '+b.gst_rate+'% = <b>'+inr(b.total_inr)+'/month</b>.'
     + (b.pay_instructions ? '<div style="white-space:pre-wrap;margin-top:6px;color:var(--navy)"><b>How to pay:</b> '+esc(b.pay_instructions)+'</div>' : ' Pay via UPI to your account manager.')
+    + (b.paid_until ? '<div style="margin-top:4px">Paid till <b>'+esc(String(b.paid_until).slice(0,10))+'</b></div>' : '')
+    + '<div id="bill-online"></div>'
     + (b.support_email ? '<div style="margin-top:4px">Questions: <a href="mailto:'+esc(b.support_email)+'">'+esc(b.support_email)+'</a></div>' : '') + '</div>'
     + '</div></div>';
+  _onlinePayButton('bill-online');
 }
 
 // ── My Email: each recruiter sends from their OWN Gmail ────────────────────
 var _myMail = null;
 function myMailCardHTML(){
   return '<div class="card" style="margin-bottom:14px;border-top:2px solid #0F8A6B"><div class="card-head"><span style="font-weight:500">&#9993; My Email &mdash; send from my own Gmail</span></div><div class="card-body">'
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><button class="btn btn-g" onclick="openGmailWizard(\'me\')">&#9889; Connect Gmail (guided)</button><div class="mail-sync-strip" data-box="me" style="flex:1;min-width:200px"></div></div>'
     + '<div id="mm-status" style="font-size:11.5px;margin-bottom:10px;padding:8px 11px;border-radius:8px;background:#F4F3EF;color:var(--muted)">Loading&hellip;</div>'
     + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.55">Emails you send to candidates (and Email-Agent follow-ups on jobs where you are the primary recruiter) go out from this Gmail, signed with your profile above. Replies land in <b>this Gmail inbox</b>.<br>'
     + 'Gmail needs an <b>App Password</b>, not your normal password: Google Account &rarr; Security &rarr; turn on <b>2-Step Verification</b> &rarr; search <b>App passwords</b> &rarr; create one and paste the 16 letters here.</div>'
@@ -10128,7 +10421,8 @@ function emailConfigHTML(s){
     + '<div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.5">'
     + 'Connect your Gmail to send emails from the ATS and receive candidate replies (2-way). The same App Password enables both sending and reading replies. Each agency can set their own email.'
     + '</div>'
-    + '<div class="card"><div class="card-body">'
+ + '<div class="card"><div class="card-body">'
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px"><button class="btn btn-g" onclick="openGmailWizard(\'company\')">&#9889; Connect company Gmail (guided)</button><div class="mail-sync-strip" data-box="company" style="flex:1;min-width:200px"></div></div>'
     + '<div class="fg-row"><label>Gmail Address</label><input class="inp" id="s-smtp_email" value="' + esc(s.smtp_email||'') + '" placeholder="you@gmail.com"></div>'
     + '<div class="fg-row"><label>App Password</label><input class="inp" id="s-smtp_app_password" type="password" value="" placeholder="' + _secretPh(s.smtp_app_password, 'xxxx xxxx xxxx xxxx') + '">'
     + '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">' + (s.smtp_app_password === '__set__' ? 'A password is already saved. Leave this blank to keep it.' : 'Never shown again once saved.') + '</div></div>'
@@ -10161,7 +10455,7 @@ function billingConfigHTML(s){
     + '<div class="card"><div class="card-body">'
     + '<div class="g2">'
     + row('b-price','Price per recruiter (₹/month)',s.billing_price_per_recruiter||'700')
-    + row('b-trial','Free trial (days)',s.billing_trial_days||'14')
+    + row('b-trial','Free trial (days)',s.billing_trial_days||'30')
     + row('b-gst','GST rate (%)',s.billing_gst_rate||'18')
     + row('b-gstin','Your GSTIN (for invoices)',s.billing_gstin||'','22AAAAA0000A1Z5')
     + row('b-usdinr','USD → INR rate',s.billing_usd_inr||'88')
@@ -10169,6 +10463,10 @@ function billingConfigHTML(s){
     + '</div>'
     + row('b-legal','Business legal name (invoice)',s.billing_legal_name||'')
     + row('b-addr','Business address (invoice)',s.billing_address||'')
+    + '<div class="g2">'
+    + '<div class="fg-row"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="b-auto"'+((s.signup_auto_approve||'1')==='1'?' checked':'')+'> Start the free trial automatically on sign-up</label><div style="font-size:10.5px;color:var(--muted);margin-top:3px">Off = every new agency waits for your approval.</div></div>'
+    + row('b-cap','AI tokens / month for a new agency (0 = no cap)',s.billing_default_token_cap||'2000000')
+    + '</div>'
     + '<div class="fg-row"><label>How agencies pay (shown on their billing card and when a trial ends)</label><textarea class="inp" id="b-pay" rows="3" style="width:100%" placeholder="UPI: yourname@okhdfcbank&#10;Bank: A/c 1234…, IFSC HDFC0001234&#10;Send the screenshot to support@…">'+esc(s.billing_pay_instructions||'')+'</textarea></div>'
 
     + '<span id="b-save-status" style="font-size:11px;color:#888;margin-left:10px"></span>'
@@ -10179,7 +10477,9 @@ async function saveBillingConfig(){
   function v(id){var e=document.getElementById(id);return e?e.value.trim():'';}
   var data={
     billing_price_per_recruiter:v('b-price')||'700',
-    billing_trial_days:v('b-trial')||'14',
+    billing_trial_days:v('b-trial')||'30',
+    signup_auto_approve:(document.getElementById('b-auto')||{}).checked?'1':'0',
+    billing_default_token_cap:v('b-cap')||'0',
     billing_gst_rate:v('b-gst')||'18',
     billing_gstin:v('b-gstin'),
     billing_usd_inr:v('b-usdinr')||'88',
@@ -15322,6 +15622,7 @@ async function loadBilling() {
       return;
     }
     var trialNote = (b.billing_status==='trial' && b.trial_days_left!=null) ? (' &middot; ' + b.trial_days_left + ' trial days left') : '';
+    if (b.paid_until) trialNote += ' &middot; paid till ' + esc(String(b.paid_until).slice(0,10)) + (b.paid_days_left != null && b.paid_days_left < 0 ? ' <b style="color:#A32D2D">(renewal due)</b>' : '');
     var actions = '<div style="display:flex;gap:5px;margin-top:5px;flex-wrap:wrap">'
       + '<button class="btn btn-g" style="font-size:10px;padding:3px 8px" onclick="markPaid('+b.company_id+','+b.total_inr+')">Mark Paid</button>';
     if (b.billing_status==='suspended') {
@@ -15492,44 +15793,41 @@ async function loadApiUsage(days) {
   days = days || 30;
   var sec = document.getElementById('api-usage-section');
   if (!sec) return;
-  sec.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px">Loading API spend...</div>';
-  var r = await req('GET', '/admin/api-usage?days=' + days);
+  sec.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px">Loading AI cost...</div>';
+  var r = await req('GET', '/ai-meter/agencies?days=' + days);
   if (!r.ok) { sec.innerHTML = ''; return; }
-
   var h = '<div style="background:#fff;border:0.5px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:var(--shadow-sm)">'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:0.5px solid var(--line)">'
-    + '<div style="font-size:13px;font-weight:700;color:var(--navy)">API Spend per Agency</div>'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:0.5px solid var(--line);gap:10px;flex-wrap:wrap">'
+    + '<div style="font-size:13px;font-weight:700;color:var(--navy)">AI cost meter per agency</div>'
     + '<div style="display:flex;align-items:center;gap:10px">'
     + '<select onchange="loadApiUsage(parseInt(this.value))" style="font-size:11px;padding:3px 6px;border:0.5px solid var(--line);border-radius:6px">'
     + [7,30,90].map(function(d){return '<option value="'+d+'"'+(d===days?' selected':'')+'>Last '+d+' days</option>';}).join('')
     + '</select>'
-    + '<span style="font-size:12px;font-weight:700;color:#0F8A6B">Total: $' + (r.grand_total_usd||0).toFixed(2) + '</span>'
+    + '<span style="font-size:12px;font-weight:700;color:#0F8A6B">Cost ' + _rs(r.total_cost_rupees) + (r.markup !== 1 ? ' &middot; billed ' + _rs(r.total_billed_rupees) : '') + '</span>'
     + '</div></div>';
-
-  if (!r.usage.length) {
-    h += '<div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">No API usage recorded in this period</div>';
+  if (!r.agencies.length) {
+    h += '<div style="padding:16px;text-align:center;color:var(--muted);font-size:12px">No AI usage recorded in this period</div>';
   } else {
-    r.usage.forEach(function(a){
-      var provParts = Object.keys(a.providers).map(function(p){
-        var v = a.providers[p];
-        var detail = v.audio_minutes ? (v.audio_minutes + ' min audio') : ((v.input_tokens+v.output_tokens).toLocaleString() + ' tokens');
-        return p + ': $' + v.cost_usd.toFixed(3) + ' (' + detail + ')';
-      });
-      h += '<div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:0.5px solid #f5f5f5">'
+    r.agencies.forEach(function(a){
+      h += '<div style="border-bottom:0.5px solid #f5f5f5"><div style="display:flex;align-items:center;gap:14px;padding:12px 16px;cursor:pointer" onclick="toggleAgencyMeter(' + a.company_id + ',' + days + ')" title="Show recruiters">'
         + avatarHtml(a.company, 34)
-        + '<div style="flex:1;min-width:0">'
-        + '<div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(a.company) + '</div>'
-        + '<div style="font-size:10.5px;color:var(--muted)">' + esc(provParts.join('  ·  ')) + '</div>'
-        + '</div>'
-        + '<div style="text-align:right">'
-        + '<div style="font-size:15px;font-weight:800;color:#0F8A6B">$' + a.total_cost.toFixed(3) + '</div>'
-        + '<div style="font-size:9px;color:var(--muted);text-transform:uppercase">' + a.total_calls + ' calls</div>'
-        + '</div></div>';
+        + '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:var(--navy)">' + esc(a.company) + ' <span style="font-size:11px;color:var(--muted);font-weight:400">&#9662; recruiters</span></div>'
+        + '<div style="font-size:10.5px;color:var(--muted)">' + a.calls.toLocaleString('en-IN') + ' AI calls &middot; ' + a.people + ' people &middot; ' + a.tokens.toLocaleString('en-IN') + ' tokens</div></div>'
+        + '<div style="text-align:right"><div style="font-size:15px;font-weight:800;color:#0F8A6B">' + _rs(a.cost_rupees) + '</div>'
+        + (r.markup !== 1 ? '<div style="font-size:10px;color:var(--muted)">billed ' + _rs(a.billed_rupees) + '</div>' : '') + '</div></div>'
+        + '<div id="agm-' + a.company_id + '" style="display:none;padding:4px 16px 14px 64px"></div></div>';
     });
   }
-  h += '<div style="padding:9px 16px;font-size:10px;color:var(--muted);background:#FAFAFA">Costs are estimates based on configured per-model rates. Token counts are exact.</div>';
-  h += '</div>';
+  h += '<div style="padding:9px 16px;font-size:10px;color:var(--muted);background:#FAFAFA">&#8377; = USD cost &times; ' + r.usd_inr + ' (Billing configuration). Token counts are exact; rupees are estimates from per-model rates.</div></div>';
   sec.innerHTML = h;
+}
+async function toggleAgencyMeter(cid, days){
+  var box = document.getElementById('agm-' + cid);
+  if (!box) return;
+  if (box.style.display === 'block') { box.style.display = 'none'; return; }
+  box.style.display = 'block'; box.innerHTML = '<div style="font-size:12px;color:var(--muted)">Loading…</div>';
+  var d = await req('GET', '/ai-meter?company=' + cid + '&days=' + days);
+  box.innerHTML = d && d.ok ? aiMeterHTML(d, true) : '<div style="font-size:12px;color:#A32D2D">' + esc((d && d.error) || 'Could not load') + '</div>';
 }
 
 function adminStatCard(label, value, sub, color) {

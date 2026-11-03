@@ -139,9 +139,14 @@ def _me():
         return hit
     conn = get_db()
     try:
-        r = conn.execute('SELECT u.id, u.role, u.company_id, c.status AS co_status, c.plan AS co_plan, '
-                         'c.billing_status AS co_billing, c.trial_ends_at AS co_trial '
-                         'FROM users u LEFT JOIN companies c ON c.id=u.company_id WHERE u.id=?', (uid,)).fetchone()
+        try:
+            r = conn.execute('SELECT u.id, u.role, u.company_id, c.status AS co_status, c.plan AS co_plan, '
+                             'c.billing_status AS co_billing, c.trial_ends_at AS co_trial, c.paid_until AS co_paid '
+                             'FROM users u LEFT JOIN companies c ON c.id=u.company_id WHERE u.id=?', (uid,)).fetchone()
+        except Exception:         # paid_until not migrated yet
+            r = conn.execute('SELECT u.id, u.role, u.company_id, c.status AS co_status, c.plan AS co_plan, '
+                             'c.billing_status AS co_billing, c.trial_ends_at AS co_trial '
+                             'FROM users u LEFT JOIN companies c ON c.id=u.company_id WHERE u.id=?', (uid,)).fetchone()
     finally:
         conn.close()
     g._tg_user = dict(r) if r else None
@@ -186,13 +191,13 @@ def _agency_blocked(me, path):
         session.clear()
         return jsonify({'error': 'auth_required',
                         'message': 'Your agency account is currently suspended. Please contact support.'}), 401
-    if (me.get('co_plan') != 'owner' and (me.get('co_billing') or '') in ('trial', 'past_due')
-            and not _ALWAYS_OPEN.match(path)):
-        try:            # same rule as sign-in (server.trial_is_over): trial date passed and never paid
+    if me.get('co_plan') != 'owner' and not _ALWAYS_OPEN.match(path):
+        try:            # same rule as sign-in (server.billing_block): trial over unpaid, or paid period ended
             core = _core()
-            if core.trial_is_over(me.get('company_id'), me.get('co_plan'), me.get('co_billing'), me.get('co_trial')):
-                return jsonify(dict(core.billing_contact(), code='trial_ended',
-                                    error='Your free trial has ended. Please subscribe to continue using HireLab.')), 402
+            why = core.billing_block(me.get('company_id'), me.get('co_plan'), me.get('co_billing'),
+                                     me.get('co_trial'), me.get('co_paid'))
+            if why:
+                return jsonify(dict(core.billing_contact(), code=why, error=core.BLOCK_MESSAGES[why])), 402
         except Exception:
             pass
     return None
