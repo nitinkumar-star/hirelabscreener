@@ -27514,9 +27514,14 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
       modal('<div style="font-size:16px;font-weight:700;color:#101828">Chase client for feedback</div>'
         + '<div style="font-size:12.5px;color:#667085;margin-top:2px">' + r.candidates.length + ' profile' + (r.candidates.length === 1 ? '' : 's') + ' waiting. Edit anything, then send.'
         + (r.has_spoc || r.to.length ? '' : ' <b style="color:#B42318">No SPOC e-mail on this job — type it, or set the SPOC in Mandate Setup.</b>') + '</div>'
-        + (rt ? '<div style="margin-top:8px;font-size:12.5px;background:#EEF4FB;color:#185FA5;border-radius:8px;padding:8px 10px">&#8617; Goes as a reply in the thread <b>' + esc(rt.subject) + '</b>'
+        + (r.options && r.options.length
+            ? '<label>Reply in the thread of<select id="jp-th" style="width:100%">' + r.options.map(function(o, i){
+                  return '<option value="' + i + '">' + esc(o.subject) + ' — ' + esc(String(o.sent_at).slice(0, 10)) + (o.matched.length ? ' · ' + esc(o.matched.join(', ')) : '') + '</option>'; }).join('')
+                + '<option value="new">New e-mail (no thread)</option></select></label>'
+              + '<div id="jp-thn" style="font-size:12px;color:#185FA5;margin-top:4px">Found in your synced Gmail. The chosen e-mail (and any reply in it) is quoted below your message.</div>'
+            : rt ? '<div style="margin-top:8px;font-size:12.5px;background:#EEF4FB;color:#185FA5;border-radius:8px;padding:8px 10px">&#8617; Goes as a reply in the thread <b>' + esc(rt.subject) + '</b>'
               + (rt.sent_at ? ' (shared ' + esc(String(rt.sent_at).slice(0, 10)) + ')' : '') + ' &mdash; that e-mail is quoted below your message, so the client sees the full chain.</div>'
-            : '<div style="margin-top:8px;font-size:12px;color:#8a93a3">The original share e-mail was not found (shared before this feature, or from outside HireLab), so this goes as a new e-mail.</div>')
+            : '<div style="margin-top:8px;font-size:12px;color:#8a93a3;line-height:1.5">The share e-mail was not found in your synced mail of the last 8 months (searched by candidate names, CV file names, client e-mails and job title), so this goes as a new e-mail. Sent from another Gmail? Connect it in Settings &rarr; Email and sync, then open this again.</div>')
         + '<label>To' + (r.spoc_name ? ' (SPOC: ' + esc(r.spoc_name) + ')' : '') + '<input id="jp-to" value="' + esc(r.to.join(', ')) + '" placeholder="spoc@client.com"></label>'
         + '<label>CC<input id="jp-cc2" value="' + esc(r.cc.join(', ')) + '" placeholder="other client contacts, your team"></label>'
         + '<label>Subject<input id="jp-su" value="' + esc(r.subject) + '"></label><label>Message<textarea id="jp-bo">' + esc(r.body) + '</textarea></label>'
@@ -27525,6 +27530,14 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
             : '<div style="font-size:12px;color:#8a93a3;margin-top:8px">No CV file is saved for these profiles, so nothing is attached.</div>')
         + '<div id="jp-cm" style="font-size:12.5px;margin-top:8px"></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="jp-sec" id="jp-cc">Cancel</button><button class="jp-pri" id="jp-cs">Send</button></div>');
       document.getElementById('jp-cc').onclick = closeAll;
+      var th = document.getElementById('jp-th');
+      if (th) th.onchange = function(){
+        if (this.value === 'new') { rt = null; document.getElementById('jp-su').value = 'Feedback on profiles — ' + (r.role || ''); document.getElementById('jp-thn').textContent = 'Goes as a new e-mail.'; return; }
+        var o = r.options[+this.value]; rt = o;
+        document.getElementById('jp-to').value = o.to.join(', '); document.getElementById('jp-cc2').value = o.cc.join(', ');
+        document.getElementById('jp-su').value = o.reply_subject;
+        document.getElementById('jp-thn').textContent = 'The chosen e-mail (and any reply in it) is quoted below your message.';
+      };
       document.getElementById('jp-cs').onclick = function(){
         var b = this; b.disabled = true; b.textContent = 'Sending…';
         var ids = Array.prototype.map.call(document.querySelectorAll('.jp-att:checked'), function(x){ return +x.value; });
