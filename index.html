@@ -9194,6 +9194,8 @@ function renderSettings(){
       + _setHead('My Account', 'Just about you. Nothing here affects your teammates.')
       + _sec('sec-plan', 'account', 'My plan &amp; usage', 'billing subscription plan usage invoice',
              '<div id="my-billing-card"></div><div id="ai-meter-card"></div>')
+      + _sec('sec-pgroups', 'account', 'Profile groups', 'profile group groups sub group fields sales production custom candidate profile',
+             '<div id="pg-settings"></div>')
       + _sec('sec-tour', 'account', 'Product tour', 'tour help intro guide walkthrough tabs',
              '<div class="card" style="margin-bottom:14px"><div class="card-body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:200px;font-size:12.5px;color:var(--muted)">A 2-minute walk through every tab: what it is for and when to use it.</div><button class="btn btn-g" onclick="startTour()">&#9654; Take the tour</button></div></div>')
       + _sec('sec-profile', 'account', 'My Profile &amp; Email Signature', 'name designation phone email signature',
@@ -9749,6 +9751,7 @@ async function loadMyBillingCard(){
   if (!box) return;
   loadAiMeterCard();
   loadMailSyncStrips();
+  loadProfileGroupsSettings();
   if (_isRecruiterScoped()) { box.innerHTML=''; return; }      // subscription is the admin's
   var r = await req('GET', '/billing/me');
   if (!r || !r.ok || !r.bill) { box.innerHTML=''; return; }
@@ -12522,25 +12525,19 @@ function expRangeText(mn,mx){
 function numfield(id,lbl,val){return '<div class="fg-row"><label>'+lbl+'</label><input class="inp" id="'+id+'" type="number" step="0.5" value="'+esc(val)+'"></div>';}
 function sInp(id,lbl,val,ph){return '<div><div class="lbl">'+lbl+'</div><input class="inp" id="'+id+'" value="'+esc(val)+'"'+(ph?' placeholder="'+esc(ph)+'"':'')+' style="width:100%"></div>';}
 function sGender(id,val){ return '<div><div class="lbl">Gender</div><select class="inp" id="'+id+'" style="width:100%">'+[['','Not known'],['Male','Male'],['Female','Female'],['Other','Other']].map(function(o){ return '<option value="'+o[0]+'"'+(o[0]===(val||'')?' selected':'')+'>'+o[1]+'</option>'; }).join('')+'</select></div>'; }
-// ── Sales profile card (Oct 2026 redesign) ──────────────────────────────────
-// View mode: target / direct / indirect / gender stats + product, function and
-// geography tags. Edit mode: Basics · Team handling · Coverage, one Save that
-// sends all seven fields in a single PUT /candidates/<id>.
+// ── Profile groups card (Nov 2026) ─────────────────────────────────────────
+// The candidate picks ONE group the agency built in Settings → Profile groups
+// (Sales, Production, IT …) and fills only that group's fields. Built-in fields
+// (target, team, product, function, geography, gender) are stored on the
+// candidate as before; the group's own fields go to PUT /candidates/<id>/profile.
+// Everything is searchable in Talent. A candidate with old sales data and no
+// group shows as Sales.
 window._sp = window._sp || {};
-var _SP_TAGS = [['product_handles', 'product', 'Product handling', 'Add product…'],
-                ['function_tags', 'function', 'Function', 'Add function…'],
-                ['geography_tags', 'geography', 'Geography', 'Add region…']];
+var _PG = null;                                    // {groups, system} for this agency
+var _SP_SYS = {yearly_target: 'yearly_target', team_direct: 'team_direct', team_indirect: 'team_indirect',
+               product_handles: 'product_handles', function_tags: 'function_tags', geography_tags: 'geography_tags', gender: 'gender'};
 function _spList(v){ try{ var x = Array.isArray(v) ? v : JSON.parse(v || '[]'); return Array.isArray(x) ? x.filter(Boolean) : []; }catch(e){ return []; } }
 function _spNum(v){ return (v === null || v === undefined || v === '') ? null : Number(v); }
-function _spFrom(c){
-  return {gender: c.gender || '', target: _spNum(c.yearly_target), direct: _spNum(c.team_direct), indirect: _spNum(c.team_indirect),
-          product_handles: _spList(c.product_handles), function_tags: _spList(c.function_tags), geography_tags: _spList(c.geography_tags),
-          updated_at: c.updated_at || ''};
-}
-function _spFilled(d){
-  return [d.gender, d.target, d.direct !== null && d.direct !== undefined ? 1 : 0, d.indirect !== null && d.indirect !== undefined ? 1 : 0,
-          d.product_handles.length, d.function_tags.length, d.geography_tags.length].filter(Boolean).length;
-}
 function _spWhen(s){
   var m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/); if(!m) return '';
   var d = new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5]), now = new Date();
@@ -12550,115 +12547,288 @@ function _spWhen(s){
           : d.toLocaleDateString('en-IN', {day: 'numeric', month: 'short'}));
   return 'Updated ' + day + ', ' + t;
 }
+async function _pgLoad(force){
+  if(_PG && !force) return _PG;
+  var r = await req('GET', '/profile-groups');
+  _PG = (r && r.ok) ? r : {groups: [], system: []};
+  return _PG;
+}
+function _pgGroup(gid){ return ((_PG && _PG.groups) || []).find(function(g){ return String(g.id) === String(gid); }) || null; }
+function _pgSys(k){ return ((_PG && _PG.system) || []).find(function(x){ return x.sys === k; }) || {}; }
+// One field, resolved: {key, label, kind (number|text|tags|choice), unit, options, sys, tag_type}
+function _pgField(f){
+  if(f.type === 'system'){ var s0 = _pgSys(f.sys); return {key: f.key, label: s0.label || f.label, kind: s0.kind || 'text', unit: s0.unit || '',
+    options: s0.options || [], sys: f.sys, tag_type: s0.tag_type || ''}; }
+  return {key: f.key, label: f.label, kind: f.type, unit: f.unit || '', options: f.options || [], sys: '', tag_type: ''};
+}
+function _pgSysValue(c, k){
+  if(k === 'gender') return c.gender || '';
+  if(k === 'yearly_target' || k === 'team_direct' || k === 'team_indirect') return _spNum(c[k]);
+  return _spList(c[k]);
+}
+function _pgEmpty(f, v){ return v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length); }
+function _pgValues(S0){                             // the group's values: built-in from the candidate, own from the profile
+  var g = _pgGroup(S0.gid), out = {};
+  if(!g) return out;
+  g.fields.forEach(function(f0){ var f = _pgField(f0);
+    out[f.key] = f.sys ? _pgSysValue(S0.c, f.sys) : (S0.vals[f.key] !== undefined ? S0.vals[f.key] : (f.kind === 'tags' ? [] : null)); });
+  return out;
+}
 function salesCardHTML(c){
-  window._sp[c.id] = {cid: c.id, data: _spFrom(c), edit: false};
-  return '<div class="cp-card2 sp-card" id="cp-sales">' + _spInner(c.id) + '</div>';
+  window._sp[c.id] = {cid: c.id, c: c, gid: 0, vals: {}, edit: false, ready: false};
+  _pgLoad().then(function(){ return req('GET', '/candidates/' + c.id + '/profile'); }).then(function(r){
+    var S0 = window._sp[c.id]; if(!S0) return;
+    S0.gid = (r && r.ok) ? r.group_id : 0; S0.vals = (r && r.values) || {}; S0.ready = true; _spPaint(c.id);
+  });
+  return '<div class="cp-card2 sp-card" id="cp-sales"><div class="sp-head"><div><div class="sp-title">Profile</div><div class="sp-sub">Loading&hellip;</div></div></div></div>';
 }
 function _spPaint(cid){
   var el = document.getElementById('cp-sales'); if(!el) return;
-  el.innerHTML = _spInner(cid); _spWire(cid);
-}
-function _spInner(cid){
-  var S0 = window._sp[cid]; return S0.edit ? _spEditHTML(S0) : _spViewHTML(S0);
+  var S0 = window._sp[cid]; if(!S0 || !S0.ready) return;
+  el.innerHTML = S0.edit ? _spEditHTML(S0) : _spViewHTML(S0); _spWire(cid);
+  if(S0.edit) _spLoadSugg(cid);
 }
 function _spChips(list){ return list.length ? list.map(function(t){ return '<span class="sp-chip">' + esc(t) + '</span>'; }).join('') : '<span class="sp-none">Not added</span>'; }
+function _pgGroupSelect(cur, id){
+  var gs = (_PG && _PG.groups) || [];
+  return '<select class="inp pg-gsel" id="' + id + '" aria-label="Profile group">' + (cur ? '' : '<option value="">Choose a group&hellip;</option>')
+    + gs.map(function(g){ return '<option value="' + g.id + '"' + (String(g.id) === String(cur) ? ' selected' : '') + '>' + esc(g.name) + '</option>'; }).join('') + '</select>';
+}
+function _pgFilled(S0, vals){
+  var g = _pgGroup(S0.gid); if(!g) return [0, 0];
+  var n = 0; g.fields.forEach(function(f0){ var f = _pgField(f0); if(!_pgEmpty(f, vals[f.key])) n++; });
+  return [n, g.fields.length];
+}
 function _spViewHTML(S0){
-  var d = S0.data, n = _spFilled(d);
-  var stat = function(lbl, val, sub){ return '<div class="sp-stat"><div class="sp-sl">' + lbl + '</div><div class="sp-sv' + (val === '' ? ' sp-empty' : '') + '">' + (val === '' ? '&mdash;' : val) + '</div><div class="sp-ss">' + sub + '</div></div>'; };
-  var h = '<div class="sp-head"><div><div class="sp-title">Sales profile' + (n ? ' <span class="sp-pill">&#10003; On Talent Map</span>' : '') + '</div>'
-    + '<div class="sp-sub">' + (n ? esc(_spWhen(d.updated_at)) : 'Not filled in yet &mdash; searchable in Talent and shown on the Company Talent Map') + '</div></div>'
+  var g = _pgGroup(S0.gid);
+  if(!g){
+    var none = !((_PG && _PG.groups) || []).length;
+    return '<div class="sp-head"><div><div class="sp-title">Profile</div><div class="sp-sub">Pick the group this candidate belongs to &mdash; Sales, Production &hellip; &mdash; and fill its fields. All of it is searchable in Talent.</div></div></div>'
+      + '<div class="sp-sec pg-pick">' + (none ? '<span class="sp-none">No groups yet. Create one in Settings &rarr; My Account &rarr; Profile groups.</span>'
+        : _pgGroupSelect(0, 'pg-pick-' + S0.cid) + '<button type="button" class="sp-btn pri" data-sp="pick">Fill profile</button>')
+      + '<a href="#" class="pg-manage" onclick="openProfileGroupsSettings();return false">Manage groups</a></div>';
+  }
+  var vals = _pgValues(S0), fc = _pgFilled(S0, vals);
+  var fields = g.fields.map(_pgField);
+  var nums = fields.filter(function(f){ return f.kind === 'number'; }), rest = fields.filter(function(f){ return f.kind !== 'number'; });
+  var stat = function(f){ var v = vals[f.key], u = f.unit || '';
+    var shown = _pgEmpty(f, v) ? '' : (u.charAt(0) === '₹' ? '&#8377;' + esc(String(v)) + ' ' + esc(u.slice(1).split('/')[0].trim()) : esc(String(v)));
+    var sub = u.charAt(0) === '₹' ? (u.indexOf('/') > 0 ? 'per ' + esc(u.split('/')[1].trim().replace(/^yr$/, 'year')) : '&nbsp;') : (u ? esc(u) : '&nbsp;');
+    return '<div class="sp-stat"><div class="sp-sl">' + esc(f.label) + '</div><div class="sp-sv' + (shown === '' ? ' sp-empty' : '') + '">' + (shown === '' ? '&mdash;' : shown) + '</div><div class="sp-ss">' + sub + '</div></div>'; };
+  var row = function(f){ var v = vals[f.key];
+    var html = f.kind === 'tags' ? _spChips(v || []) : (_pgEmpty(f, v) ? '<span class="sp-none">Not added</span>' : '<span class="sp-chip">' + esc(String(v)) + '</span>');
+    return '<div class="sp-rk">' + esc(f.label) + '</div><div class="sp-rv">' + html + '</div>'; };
+  return '<div class="sp-head"><div><div class="sp-title">' + esc(g.name) + ' profile' + (fc[0] ? ' <span class="sp-pill">&#10003; ' + fc[0] + ' of ' + fc[1] + ' filled</span>' : '') + '</div>'
+    + '<div class="sp-sub">' + (fc[0] ? esc(_spWhen(S0.c.updated_at)) + ' &middot; searchable in Talent' : 'Not filled in yet &mdash; searchable in Talent once filled') + '</div></div>'
     + '<button type="button" class="sp-btn" data-sp="edit">&#9998; Edit</button></div>'
-    + '<div class="sp-stats">'
-    + stat('Yearly target', d.target ? '&#8377;' + esc(String(d.target)) + ' Cr' : '', 'per year')
-    + stat('Direct reports', d.direct !== null && d.direct !== undefined ? esc(String(d.direct)) : '', 'report to them')
-    + stat('Indirect team', d.indirect !== null && d.indirect !== undefined ? esc(String(d.indirect)) : '', 'through their team')
-    + stat('Gender', d.gender ? esc(d.gender) : '', '&nbsp;') + '</div>'
-    + '<div class="sp-rows">' + _SP_TAGS.map(function(t){ return '<div class="sp-rk">' + t[2] + '</div><div class="sp-rv">' + _spChips(d[t[0]]) + '</div>'; }).join('') + '</div>';
-  return h;
+    + (nums.length ? '<div class="sp-stats" style="grid-template-columns:repeat(' + Math.min(nums.length, 4) + ',minmax(0,1fr))">' + nums.map(stat).join('') + '</div>' : '')
+    + (rest.length ? '<div class="sp-rows">' + rest.map(row).join('') + '</div>' : '');
 }
 function _spEditHTML(S0){
-  var d = S0.draft, n = _spFilled(d);
-  var seg = ['Male', 'Female', 'Other', ''].map(function(g){ return '<button type="button" class="' + (d.gender === g ? 'on' : '') + '" data-sp="gender" data-v="' + g + '">' + (g || 'Not known') + '</button>'; }).join('');
-  var tot = (d.direct || 0) + (d.indirect || 0);
-  var h = '<div class="sp-head"><div><div class="sp-title">Sales profile <span class="sp-pill sp-cnt" id="sp-cnt">' + n + ' of 7 filled</span></div>'
-    + '<div class="sp-sub">Searchable in Talent and shown on the Company Talent Map</div></div>'
+  var g = _pgGroup(S0.gid), d = S0.draft;
+  var fields = g ? g.fields.map(_pgField) : [];
+  var fc = g ? _pgFilled(S0, d) : [0, 0];
+  var block = function(f){
+    var v = d[f.key], h = '<div class="pg-f' + (f.kind === 'tags' ? ' pg-wide' : '') + '"><div class="sp-fl">' + esc(f.label) + '</div>';
+    if(f.kind === 'number'){
+      var u = f.unit || '', pre = u.charAt(0) === '₹' ? '<span>&#8377;</span>' : '', post = (pre ? u.slice(1) : u).trim();
+      h += '<div class="sp-money">' + pre + '<input type="number" min="0" step="any" data-pgf="' + f.key + '" value="' + (_pgEmpty(f, v) ? '' : esc(String(v))) + '" placeholder="0">' + (post ? '<em>' + esc(post) + '</em>' : '') + '</div>';
+    } else if(f.kind === 'choice'){
+      var opts = f.options.concat(['']);
+      if(opts.length <= 6) h += '<div class="sp-seg" role="radiogroup" aria-label="' + esc(f.label) + '">' + opts.map(function(o){
+        return '<button type="button" class="' + ((v || '') === o ? 'on' : '') + '" data-sp="choice" data-k="' + f.key + '" data-v="' + esc(o) + '">' + (o ? esc(o) : (f.sys === 'gender' ? 'Not known' : '&mdash;')) + '</button>'; }).join('') + '</div>';
+      else h += '<select class="inp" data-pgf="' + f.key + '"><option value="">&mdash;</option>' + f.options.map(function(o){ return '<option' + (v === o ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>';
+    } else if(f.kind === 'tags'){
+      h += '<div class="sp-tagbox" data-spbox="' + f.key + '">' + (v || []).map(function(x, i){ return '<span class="sp-chip">' + esc(x) + '<button type="button" aria-label="Remove ' + esc(x) + '" data-sp="rm" data-k="' + f.key + '" data-i="' + i + '">&times;</button></span>'; }).join('')
+        + '<input data-sptag="' + f.key + '" placeholder="Type and press Enter"></div><div class="sp-sugg" id="sp-sugg-' + f.key + '"></div>';
+    } else {
+      h += '<input class="inp pg-text" data-pgf="' + f.key + '" value="' + esc(v == null ? '' : String(v)) + '">';
+    }
+    return h + '</div>';
+  };
+  return '<div class="sp-head"><div style="min-width:0;flex:1"><div class="sp-title">' + _pgGroupSelect(S0.gid, 'pg-switch-' + S0.cid)
+    + ' <span class="sp-pill sp-cnt" id="sp-cnt">' + fc[0] + ' of ' + fc[1] + ' filled</span></div>'
+    + '<div class="sp-sub">Searchable in Talent &middot; <a href="#" onclick="openProfileGroupsSettings();return false">change the fields of this group</a></div></div>'
     + '<div class="sp-acts"><button type="button" class="sp-btn" data-sp="cancel">Cancel</button><button type="button" class="sp-btn pri" data-sp="save">Save profile</button></div></div>'
-    + '<div class="sp-two"><div class="sp-sec"><div class="sp-cap">Basics</div>'
-    +   '<div class="sp-fl">Gender</div><div class="sp-seg" role="radiogroup" aria-label="Gender">' + seg + '</div>'
-    +   '<div class="sp-fl" style="margin-top:14px">Yearly target</div><div class="sp-money"><span>&#8377;</span><input type="number" min="0" step="0.5" data-spf="target" value="' + (d.target === null ? '' : esc(String(d.target))) + '" placeholder="12.5"><em>Cr / yr</em></div></div>'
-    + '<div class="sp-sec"><div class="sp-cap">Team handling</div><div class="sp-pair">'
-    +   '<label><div class="sp-fl">Direct reports</div><input type="number" min="0" step="1" data-spf="direct" value="' + (d.direct === null ? '' : esc(String(d.direct))) + '" placeholder="0"><div class="sp-hint">Report straight to them</div></label>'
-    +   '<label><div class="sp-fl">Indirect</div><input type="number" min="0" step="1" data-spf="indirect" value="' + (d.indirect === null ? '' : esc(String(d.indirect))) + '" placeholder="0"><div class="sp-hint">Through their team</div></label></div>'
-    +   '<div class="sp-total"><span>Total team size</span><b id="sp-total">' + (tot ? tot : '&mdash;') + '</b></div></div></div>'
-    + '<div class="sp-sec sp-cov"><div class="sp-covh"><div class="sp-cap" style="margin:0">Coverage</div><span class="sp-hint">Press Enter to add &middot; each tag is searchable</span></div><div class="sp-three">'
-    + _SP_TAGS.map(function(t){
-        return '<div><div class="sp-fl">' + t[2] + '</div><div class="sp-tagbox" data-spbox="' + t[0] + '">'
-          + d[t[0]].map(function(x, i){ return '<span class="sp-chip">' + esc(x) + '<button type="button" aria-label="Remove ' + esc(x) + '" data-sp="rm" data-k="' + t[0] + '" data-i="' + i + '">&times;</button></span>'; }).join('')
-          + '<input data-sptag="' + t[0] + '" placeholder="' + t[3] + '"></div><div class="sp-sugg" id="sp-sugg-' + t[0] + '">' + _spSugg(S0, t) + '</div></div>';
-      }).join('') + '</div></div>';
-  return h;
+    + '<div class="sp-sec"><div class="pg-grid">' + fields.map(block).join('') + '</div><div class="sp-hint" style="margin-top:10px">Tags: press Enter or comma to add &middot; each value is searchable</div></div>';
 }
 var _spSuggCache = {};
-function _spSugg(S0, t){
-  var all = _spSuggCache[t[1]] || [], have = S0.draft[t[0]].map(function(x){ return x.toLowerCase(); });
-  return all.filter(function(x){ return have.indexOf(String(x).toLowerCase()) < 0; }).slice(0, 3)
-    .map(function(x){ return '<button type="button" data-sp="add" data-k="' + t[0] + '" data-v="' + esc(x) + '">+ ' + esc(x) + '</button>'; }).join('');
+function _pgSuggKey(S0, f){ return f.sys ? 'sys:' + f.tag_type : 'g' + S0.gid + ':' + f.key; }
+function _spSugg(S0, f){
+  var all = _spSuggCache[_pgSuggKey(S0, f)] || [], have = (S0.draft[f.key] || []).map(function(x){ return String(x).toLowerCase(); });
+  return all.filter(function(x){ return have.indexOf(String(x).toLowerCase()) < 0; }).slice(0, 4)
+    .map(function(x){ return '<button type="button" data-sp="add" data-k="' + f.key + '" data-v="' + esc(x) + '">+ ' + esc(x) + '</button>'; }).join('');
 }
 function _spCount(cid){
-  var S0 = window._sp[cid], e = document.getElementById('sp-cnt'), t = document.getElementById('sp-total');
-  if(e) e.textContent = _spFilled(S0.draft) + ' of 7 filled';
-  if(t){ var tot = (S0.draft.direct || 0) + (S0.draft.indirect || 0); t.innerHTML = tot ? tot : '&mdash;'; }
+  var S0 = window._sp[cid], e = document.getElementById('sp-cnt');
+  if(e){ var fc = _pgFilled(S0, S0.draft); e.textContent = fc[0] + ' of ' + fc[1] + ' filled'; }
 }
 function _spAddTag(cid, k, v){
   var S0 = window._sp[cid]; v = String(v || '').replace(/\s+/g, ' ').trim().slice(0, 60); if(!v) return;
-  if(S0.draft[k].some(function(x){ return x.toLowerCase() === v.toLowerCase(); })) return;
-  if(S0.draft[k].length >= 12){ toast('ERR', 'Up to 12 tags'); return; }
+  S0.draft[k] = S0.draft[k] || [];
+  if(S0.draft[k].some(function(x){ return String(x).toLowerCase() === v.toLowerCase(); })) return;
+  if(S0.draft[k].length >= 20){ toast('ERR', 'Up to 20 values'); return; }
   S0.draft[k].push(v); _spPaint(cid);
   var inp = document.querySelector('#cp-sales [data-sptag="' + k + '"]'); if(inp) inp.focus();
 }
+function _pgStartEdit(cid, gid){
+  var S0 = window._sp[cid];
+  if(String(gid) !== String(S0.gid)){ S0.gid = +gid; S0.vals = {}; }
+  S0.draft = JSON.parse(JSON.stringify(_pgValues(S0))); S0.edit = true; _spPaint(cid);
+}
 function _spWire(cid){
   var el = document.getElementById('cp-sales'); if(!el) return;
-  var S0 = window._sp[cid];
+  var S0 = window._sp[cid]; if(!S0) return;
   el.onclick = function(e){
     var b = e.target.closest('[data-sp]'); if(!b) { var box = e.target.closest('.sp-tagbox'); if(box){ var i = box.querySelector('input'); if(i) i.focus(); } return; }
     var a = b.getAttribute('data-sp');
-    if(a === 'edit'){ S0.draft = JSON.parse(JSON.stringify(S0.data)); S0.edit = true; _spPaint(cid); _spLoadSugg(cid); return; }
-    if(a === 'cancel'){ S0.edit = false; S0.draft = null; _spPaint(cid); return; }
+    if(a === 'pick'){ var sel = document.getElementById('pg-pick-' + cid); if(!sel || !sel.value){ toast('ERR', 'Choose a group first'); return; } S0.orig = {gid: S0.gid, vals: S0.vals}; return _pgStartEdit(cid, sel.value); }
+    if(a === 'edit'){ S0.orig = {gid: S0.gid, vals: S0.vals}; return _pgStartEdit(cid, S0.gid); }
+    if(a === 'cancel'){ if(S0.orig){ S0.gid = S0.orig.gid; S0.vals = S0.orig.vals; } S0.edit = false; S0.draft = null; _spPaint(cid); return; }
     if(a === 'save') return _spSave(cid, b);
-    if(a === 'gender'){ S0.draft.gender = b.getAttribute('data-v'); el.querySelectorAll('.sp-seg button').forEach(function(x){ x.classList.toggle('on', x === b); }); _spCount(cid); return; }
+    if(a === 'choice'){ S0.draft[b.getAttribute('data-k')] = b.getAttribute('data-v');
+      b.parentNode.querySelectorAll('button').forEach(function(x){ x.classList.toggle('on', x === b); }); _spCount(cid); return; }
     if(a === 'rm'){ S0.draft[b.getAttribute('data-k')].splice(+b.getAttribute('data-i'), 1); _spPaint(cid); return; }
     if(a === 'add') return _spAddTag(cid, b.getAttribute('data-k'), b.getAttribute('data-v'));
   };
+  el.onchange = function(e){
+    if(e.target.id === 'pg-switch-' + cid){ var keep = S0.draft; _pgStartEdit(cid, e.target.value);
+      // keep what was typed into the built-in fields the two groups share
+      Object.keys(keep || {}).forEach(function(k){ if(k.indexOf('sys_') === 0 && k in S0.draft) S0.draft[k] = keep[k]; }); _spPaint(cid); return; }
+    var f = e.target.getAttribute('data-pgf'); if(f && S0.draft && e.target.tagName === 'SELECT'){ S0.draft[f] = e.target.value; _spCount(cid); }
+  };
   el.oninput = function(e){
-    var f = e.target.getAttribute('data-spf'); if(!f || !S0.draft) return;
-    var v = e.target.value.trim(); S0.draft[f] = v === '' ? null : Number(v); _spCount(cid);
+    var f = e.target.getAttribute('data-pgf'); if(!f || !S0.draft || e.target.tagName === 'SELECT') return;
+    var v = e.target.value; S0.draft[f] = e.target.type === 'number' ? (v.trim() === '' ? null : Number(v)) : v; _spCount(cid);
   };
   el.onkeydown = function(e){
     var k = e.target.getAttribute('data-sptag'); if(!k) return;
     if(e.key === 'Enter' || e.key === ','){ e.preventDefault(); var v = e.target.value; e.target.value = ''; _spAddTag(cid, k, v); }
-    else if(e.key === 'Backspace' && !e.target.value && S0.draft[k].length){ S0.draft[k].pop(); _spPaint(cid); }
+    else if(e.key === 'Backspace' && !e.target.value && (S0.draft[k] || []).length){ S0.draft[k].pop(); _spPaint(cid); }
   };
 }
 async function _spLoadSugg(cid){
-  var need = _SP_TAGS.filter(function(t){ return !_spSuggCache[t[1]]; });
-  await Promise.all(need.map(function(t){ return req('GET', '/tags/' + t[1]).then(function(r){ _spSuggCache[t[1]] = (r && r.tags) || []; }); }));
-  var S0 = window._sp[cid]; if(!S0 || !S0.edit) return;
-  _SP_TAGS.forEach(function(t){ var s = document.getElementById('sp-sugg-' + t[0]); if(s) s.innerHTML = _spSugg(S0, t); });
+  var S0 = window._sp[cid]; var g = _pgGroup(S0.gid); if(!g) return;
+  var tags = g.fields.map(_pgField).filter(function(f){ return f.kind === 'tags'; });
+  await Promise.all(tags.filter(function(f){ return !_spSuggCache[_pgSuggKey(S0, f)]; }).map(function(f){
+    var url = f.sys ? '/tags/' + f.tag_type : '/profile-groups/' + S0.gid + '/suggest?key=' + encodeURIComponent(f.key);
+    return req('GET', url).then(function(r){ _spSuggCache[_pgSuggKey(S0, f)] = (r && (r.tags || r.values)) || []; });
+  }));
+  if(!S0.edit) return;
+  tags.forEach(function(f){ var s1 = document.getElementById('sp-sugg-' + f.key); if(s1) s1.innerHTML = _spSugg(S0, f); });
 }
 async function _spSave(cid, btn){
-  var S0 = window._sp[cid], d = S0.draft;
+  var S0 = window._sp[cid], d = S0.draft, g = _pgGroup(S0.gid);
+  if(!g) return;
   // a tag typed but not yet entered still counts
-  document.querySelectorAll('#cp-sales [data-sptag]').forEach(function(i){ if(i.value.trim()){ var k = i.getAttribute('data-sptag'); if(d[k].indexOf(i.value.trim()) < 0) d[k].push(i.value.trim()); } });
+  document.querySelectorAll('#cp-sales [data-sptag]').forEach(function(i){ var t = i.value.trim(); if(t){ var k = i.getAttribute('data-sptag'); d[k] = d[k] || []; if(d[k].indexOf(t) < 0) d[k].push(t); } });
+  var fields = g.fields.map(_pgField), sys = {}, own = {}, hasSys = false;
+  fields.forEach(function(f){ var v = d[f.key];
+    if(f.sys){ hasSys = true; sys[f.sys] = (v === null || v === undefined) ? '' : v; }
+    else own[f.key] = v; });
   btn.disabled = true; btn.textContent = 'Saving…';
-  var r = await req('PUT', '/candidates/' + cid, {gender: d.gender, yearly_target: d.target === null ? '' : d.target,
-    team_direct: d.direct === null ? '' : d.direct, team_indirect: d.indirect === null ? '' : d.indirect,
-    product_handles: d.product_handles, function_tags: d.function_tags, geography_tags: d.geography_tags});
-  if(!r || r.error){ btn.disabled = false; btn.textContent = 'Save profile'; toast('ERR', (r && r.error) || 'Save failed'); return; }
+  if(hasSys){
+    var r1 = await req('PUT', '/candidates/' + cid, sys);
+    if(!r1 || r1.error){ btn.disabled = false; btn.textContent = 'Save profile'; toast('ERR', (r1 && r1.error) || 'Save failed'); return; }
+  }
+  var r2 = await req('PUT', '/candidates/' + cid + '/profile', {group_id: S0.gid, values: own});
+  if(!r2 || !r2.ok){ btn.disabled = false; btn.textContent = 'Save profile'; toast('ERR', (r2 && r2.error) || 'Save failed'); return; }
   var fresh = await req('GET', '/candidates/' + cid);
-  S0.data = (fresh && fresh.id) ? _spFrom(fresh) : JSON.parse(JSON.stringify(d));
-  S0.edit = false; S0.draft = null; _spPaint(cid);
+  if(fresh && fresh.id) S0.c = fresh;
+  S0.vals = r2.values || {}; S0.edit = false; S0.draft = null; S0.orig = null; _spPaint(cid);
   _spSuggCache = {};
-  toast('OK', 'Sales profile saved');
+  toast('OK', g.name + ' profile saved');
+}
+function openProfileGroupsSettings(){
+  if(!S.settingsOpen){ try{ toggleSettings(); }catch(e){} }
+  setTimeout(function(){ try{ setTab('account'); }catch(e){}
+    var el = document.getElementById('sec-pgroups'); if(el) el.scrollIntoView({behavior: 'smooth', block: 'start'}); }, 400);
+}
+
+// ── Settings → Profile groups: build the groups and their fields ──────────
+var _PG_TYPES = [['text', 'Text'], ['number', 'Number'], ['tags', 'Tags (several values)'], ['choice', 'Choice (one of a list)']];
+async function loadProfileGroupsSettings(){
+  var box = document.getElementById('pg-settings'); if(!box) return;
+  var r = await _pgLoad(true);
+  var gs = r.groups || [];
+  box.innerHTML = '<div class="card" style="margin-bottom:14px;border-top:2px solid #0F6E56"><div class="card-head"><span style="font-weight:500">&#129513; Profile groups</span>'
+    + '<button class="btn btn-g" style="margin-left:auto;font-size:12px" onclick="pgEdit(0)">+ New group</button></div><div class="card-body">'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.55">Build the profile sections your team fills on a candidate &mdash; e.g. <b>Sales</b> (target, team, products), <b>Production</b> (plant, capacity, processes). On a candidate you pick the group and fill only its fields. Every field is searchable in Talent. Groups are shared with your whole team.</div>'
+    + (gs.length ? gs.map(function(g){
+        return '<div class="pg-srow"><div style="min-width:0;flex:1"><div style="font-weight:700;color:var(--navy)">' + esc(g.name) + ' <span style="font-weight:400;font-size:11.5px;color:var(--muted)">&middot; ' + g.fields.length + ' field' + (g.fields.length === 1 ? '' : 's') + (g.candidates ? ' &middot; ' + g.candidates + ' candidate' + (g.candidates === 1 ? '' : 's') : '') + '</span></div>'
+          + '<div class="pg-fchips">' + g.fields.map(function(f0){ var f = _pgField(f0); return '<span>' + esc(f.label) + (f.sys ? ' <i>built-in</i>' : '') + '</span>'; }).join('') + '</div></div>'
+          + '<button class="btn btn-o" style="font-size:11px" onclick="pgEdit(' + g.id + ')">Edit</button>'
+          + (g.can_delete ? '<button class="btn btn-o" style="font-size:11px;color:#A32D2D" onclick="pgDelete(' + g.id + ')">Remove</button>' : '') + '</div>';
+      }).join('') : '<div class="sp-none">No groups yet.</div>')
+    + '</div></div>';
+}
+function _pgTypeOptions(cur){
+  var h = _PG_TYPES.map(function(t){ return '<option value="' + t[0] + '"' + (cur === t[0] ? ' selected' : '') + '>' + t[1] + '</option>'; }).join('');
+  h += '<optgroup label="Built-in (also used by the Talent filters &amp; Talent Map)">' + ((_PG && _PG.system) || []).map(function(x){
+    return '<option value="sys:' + x.sys + '"' + (cur === 'sys:' + x.sys ? ' selected' : '') + '>' + esc(x.label) + '</option>'; }).join('') + '</optgroup>';
+  return h;
+}
+function _pgRowHTML(f){
+  var t = f.type === 'system' ? 'sys:' + f.sys : (f.type || 'text'), sysf = t.indexOf('sys:') === 0;
+  var extra = t === 'number' ? '<input class="inp pg-x" placeholder="Unit, e.g. MW, LPA, \u20b9 Cr" value="' + esc(f.unit || '') + '">'
+    : t === 'choice' ? '<input class="inp pg-x" placeholder="Options, comma-separated" value="' + esc((f.options || []).join(', ')) + '">'
+    : '<span class="pg-x"></span>';
+  return '<div class="pg-erow" data-key="' + esc(f.key || '') + '">'
+    + '<input class="inp pg-l" placeholder="Field name, e.g. Plant" value="' + esc(sysf ? (_pgSys(f.sys).label || f.label || '') : (f.label || '')) + '"' + (sysf ? ' disabled' : '') + '>'
+    + '<select class="inp pg-t" onchange="pgTypeChanged(this)">' + _pgTypeOptions(t) + '</select>' + extra
+    + '<span class="pg-mv"><button type="button" title="Move up" onclick="pgMove(this,-1)">&#8593;</button><button type="button" title="Move down" onclick="pgMove(this,1)">&#8595;</button><button type="button" title="Remove field" onclick="this.closest(\'.pg-erow\').remove()">&times;</button></span></div>';
+}
+function pgTypeChanged(sel){
+  var row = sel.closest('.pg-erow'), t = sel.value, lab = row.querySelector('.pg-l');
+  var f = {key: row.getAttribute('data-key'), label: lab.value};
+  if(t.indexOf('sys:') === 0){ f.type = 'system'; f.sys = t.slice(4); } else f.type = t;
+  var tmp = document.createElement('div'); tmp.innerHTML = _pgRowHTML(f); row.replaceWith(tmp.firstChild);
+}
+function pgMove(btn, d){
+  var row = btn.closest('.pg-erow'), sib = d < 0 ? row.previousElementSibling : row.nextElementSibling;
+  if(!sib) return; if(d < 0) row.parentNode.insertBefore(row, sib); else row.parentNode.insertBefore(sib, row);
+}
+function pgEdit(gid){
+  var g = gid ? _pgGroup(gid) : {name: '', fields: [{type: 'text', label: ''}]};
+  var x = document.getElementById('pg-modal'); if(x) x.remove();
+  var d = document.createElement('div'); d.id = 'pg-modal';
+  d.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(13,27,42,.5);display:flex;align-items:center;justify-content:center;padding:16px';
+  d.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:720px;width:100%;max-height:92vh;overflow:auto;padding:20px 20px 16px;box-shadow:0 20px 50px rgba(0,0,0,.25)">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><div style="font-size:17px;font-weight:800;color:#0d1b2a">' + (gid ? 'Edit group' : 'New profile group') + '</div>'
+    + '<button onclick="document.getElementById(\'pg-modal\').remove()" aria-label="Close" style="margin-left:auto;border:none;background:none;font-size:22px;cursor:pointer;color:#8a93a3">&times;</button></div>'
+    + '<label style="font-size:12.5px;font-weight:600;color:#344054">Group name<input class="inp" id="pg-name" style="width:100%;margin-top:4px" placeholder="e.g. Production, IT, Finance" value="' + esc(g.name) + '"></label>'
+    + '<div style="font-size:12.5px;font-weight:600;color:#344054;margin:14px 0 6px">Fields (sub-groups) <span style="font-weight:400;color:#8a93a3">&mdash; filled on the candidate, searchable in Talent</span></div>'
+    + '<div id="pg-rows">' + g.fields.map(_pgRowHTML).join('') + '</div>'
+    + '<button class="btn btn-o" style="font-size:12px;margin-top:6px" onclick="var t=document.createElement(\'div\');t.innerHTML=_pgRowHTML({type:\'text\',label:\'\'});document.getElementById(\'pg-rows\').appendChild(t.firstChild)">+ Add field</button>'
+    + '<div id="pg-err" style="color:#A32D2D;font-size:12.5px;margin-top:10px"></div>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="btn btn-o" onclick="document.getElementById(\'pg-modal\').remove()">Cancel</button>'
+    + '<button class="btn btn-g" onclick="pgSave(' + (gid || 0) + ', this)">Save group</button></div></div>';
+  document.body.appendChild(d);
+  setTimeout(function(){ var n = document.getElementById('pg-name'); if(n && !gid) n.focus(); }, 50);
+}
+async function pgSave(gid, btn){
+  var fields = Array.prototype.map.call(document.querySelectorAll('#pg-rows .pg-erow'), function(row){
+    var t = row.querySelector('.pg-t').value, x = row.querySelector('input.pg-x'), f = {key: row.getAttribute('data-key') || undefined};
+    if(t.indexOf('sys:') === 0){ f.type = 'system'; f.sys = t.slice(4); return f; }
+    f.type = t; f.label = row.querySelector('.pg-l').value.trim();
+    if(t === 'number') f.unit = x ? x.value.trim() : '';
+    if(t === 'choice') f.options = (x ? x.value : '').split(',').map(function(o){ return o.trim(); }).filter(Boolean);
+    return f;
+  });
+  var body = {name: document.getElementById('pg-name').value.trim(), fields: fields};
+  btn.disabled = true;
+  var r = await req(gid ? 'PUT' : 'POST', '/profile-groups' + (gid ? '/' + gid : ''), body);
+  btn.disabled = false;
+  if(!r || !r.ok){ document.getElementById('pg-err').textContent = (r && r.error) || 'Could not save'; return; }
+  document.getElementById('pg-modal').remove();
+  toast('OK', 'Group "' + r.group.name + '" saved');
+  _spSuggCache = {}; await loadProfileGroupsSettings();
+}
+async function pgDelete(gid){
+  var g = _pgGroup(gid); if(!g) return;
+  if(!confirm('Remove the group "' + g.name + '"? Candidates keep what was filled, but the group is no longer offered.')) return;
+  var r = await req('DELETE', '/profile-groups/' + gid);
+  if(r && r.ok){ toast('OK', 'Group removed'); loadProfileGroupsSettings(); } else toast('ERR', (r && r.error) || 'Failed');
 }
 function sNum(id,lbl,val){return '<div><div class="lbl">'+lbl+'</div><input class="inp" id="'+id+'" type="number" step="0.5" value="'+esc(val)+'" style="width:100%"></div>';}
 function scoreBar(lbl,pct,color){return '<div style="text-align:center"><div style="font-size:24px;font-weight:500;color:'+color+'">'+pct+'<span style="font-size:13px">%</span></div><div style="font-size:10px;color:#888">'+lbl+'</div><div style="height:5px;background:#eee;border-radius:3px;margin-top:5px;overflow:hidden"><div style="height:100%;background:'+color+';border-radius:3px;width:'+pct+'%"></div></div></div>';}
@@ -16733,7 +16903,7 @@ async function runReindex(force) {
 // whole database. Keyword box = boolean search; "AI match" ranks by meaning and
 // the same filters still apply. Tick rows to add them to a job, tag or export.
 var _talentF = null, _talentSel = {}, _talentFacets = null, _talentMode = 'keyword', _talentAI = null, _talentPer = 30;
-var _TF_IDS = ['tf-skills','tf-company','tf-loc','tf-phone','tf-product','tf-geo','tf-tmin','tf-tmax','tf-team','tf-emin','tf-emax','tf-cmin','tf-cmax','tf-notice','tf-job','tf-stage','tf-source','tf-cv','tf-gender','tf-added'];
+var _TF_IDS = ['tf-pgroup','tf-skills','tf-company','tf-loc','tf-phone','tf-product','tf-geo','tf-tmin','tf-tmax','tf-team','tf-emin','tf-emax','tf-cmin','tf-cmax','tf-notice','tf-job','tf-stage','tf-source','tf-cv','tf-gender','tf-added'];
 function _tfSel(id,label,opts){ return '<label>'+label+'<select class="inp" id="'+id+'">'+opts+'</select></label>'; }
 function _talentSearchHTML(){
   var rec=_isRecruiterScoped();
@@ -16759,6 +16929,10 @@ function _talentSearchHTML(){
     +   '<label>Geography handling<input class="inp" id="tf-geo" list="tf-geo-l" placeholder="e.g. North India, UP" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()"><datalist id="tf-geo-l"></datalist></label>'
     +   '<label>Team handled &#8805;<input class="inp" id="tf-team" type="number" min="0" placeholder="Direct + indirect" onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()"></label>'
     +   '<label>Yearly target (&#8377; Cr)<span class="w2-rng"><input class="inp" id="tf-tmin" type="number" step="0.5" placeholder="Min" aria-label="Target min"><i>–</i><input class="inp" id="tf-tmax" type="number" step="0.5" placeholder="Max" aria-label="Target max"></span></label>'
+    + '</div>'
+    + '<div class="w2-ts-f" id="tf-pg-row">'
+    +   '<label>Profile group<select class="inp" id="tf-pgroup" onchange="talentPgFields()"><option value="">Any</option></select></label>'
+    +   '<span id="tf-pg-fields" style="display:contents"></span>'
     + '</div>'
     + '<div class="w2-ts-f tc-more" id="tc-more">'
     +   '<label>Experience (yrs)<span class="w2-rng"><input class="inp" id="tf-emin" type="number" placeholder="Min" aria-label="Experience min"><i>–</i><input class="inp" id="tf-emax" type="number" placeholder="Max" aria-label="Experience max"></span></label>'
@@ -16795,7 +16969,30 @@ async function _talentLoadFacets(force){
   try{ var r=await req('GET','/central-db/facets'); if(r&&r.ok) _talentFacets=r; }catch(e){}
   return _talentFacets||{stages:[],jobs:[],sources:[],pool:0};
 }
+// Profile group filter: pick a group, then filter by its own fields
+function talentPgFields(vals){
+  var box = document.getElementById('tf-pg-fields'), sel = document.getElementById('tf-pgroup'); if(!box || !sel) return;
+  var g = sel.value ? _pgGroup(sel.value) : null; vals = vals || {};
+  if(!g){ box.innerHTML = ''; return; }
+  var enter = ' onkeydown="if(event.key===&#39;Enter&#39;)runTalentSearch()"';
+  box.innerHTML = g.fields.filter(function(f){ return f.type !== 'system'; }).map(function(f){
+    var k = f.key, v = function(x){ return esc(vals[x] != null ? vals[x] : ''); };
+    if(f.type === 'number') return '<label>' + esc(f.label) + (f.unit ? ' (' + esc(f.unit) + ')' : '') + '<span class="w2-rng"><input class="inp tf-pgf" data-pf="min_' + k + '" type="number" step="any" placeholder="Min" value="' + v('min_' + k) + '"' + enter + '><i>–</i><input class="inp tf-pgf" data-pf="max_' + k + '" type="number" step="any" placeholder="Max" value="' + v('max_' + k) + '"' + enter + '></span></label>';
+    if(f.type === 'choice') return '<label>' + esc(f.label) + '<select class="inp tf-pgf" data-pf="' + k + '"><option value="">Any</option>' + f.options.map(function(o){ return '<option' + (vals[k] === o ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select></label>';
+    return '<label>' + esc(f.label) + '<input class="inp tf-pgf" data-pf="' + k + '" placeholder="' + (f.type === 'tags' ? 'Any of, comma-separated' : 'Contains') + '" value="' + v(k) + '"' + enter + '></label>';
+  }).join('');
+}
+function _talentPgRead(){
+  var out = {}; document.querySelectorAll('#tf-pg-fields .tf-pgf').forEach(function(e){ var x = String(e.value || '').trim(); if(x) out[e.getAttribute('data-pf')] = x; });
+  return out;
+}
 async function _talentFillMenus(){
+  _pgLoad(true).then(function(){
+    var sel = document.getElementById('tf-pgroup'); if(!sel) return;
+    var cur = sel.value || (_talentF && _talentF.pgroup) || '';
+    sel.innerHTML = '<option value="">Any</option>' + ((_PG && _PG.groups) || []).map(function(g){ return '<option value="' + g.id + '">' + esc(g.name) + '</option>'; }).join('');
+    sel.value = cur; talentPgFields((_talentF && _talentF.pf) || {});
+  });
   ['product','geography'].forEach(function(t){ req('GET','/tags/'+t).then(function(r){ var dl=document.getElementById(t==='product'?'tf-product-l':'tf-geo-l'); if(dl&&r&&r.tags) dl.innerHTML=r.tags.slice(0,80).map(function(x){ return '<option value="'+esc(x)+'">'; }).join(''); }); });
   var f=await _talentLoadFacets(true);
   var job=document.getElementById('tf-job'), st=document.getElementById('tf-stage'), so=document.getElementById('tf-source');
@@ -16809,7 +17006,8 @@ function readTalentFilters() {
   var v = function(id){ var e=document.getElementById(id); return e?String(e.value||'').trim():''; };
   return {company:v('tf-company'), loc:v('tf-loc'), emin:v('tf-emin'), emax:v('tf-emax'), cmin:v('tf-cmin'), cmax:v('tf-cmax'), notice:v('tf-notice'),
     skills:v('tf-skills'), skmode:v('tf-skmode'), phone:v('tf-phone'), job:v('tf-job'), stage:v('tf-stage'), source:v('tf-source'), cv:v('tf-cv'), gender:v('tf-gender'), added:v('tf-added'),
-    product:v('tf-product'), geo:v('tf-geo'), tmin:v('tf-tmin'), tmax:v('tf-tmax'), team:v('tf-team')};
+    product:v('tf-product'), geo:v('tf-geo'), tmin:v('tf-tmin'), tmax:v('tf-tmax'), team:v('tf-team'),
+    pgroup:v('tf-pgroup'), pf:(v('tf-pgroup') ? _talentPgRead() : {})};
 }
 function _talentRestore(){
   var f=_talentF; if(!f) return;
@@ -16819,10 +17017,11 @@ function _talentRestore(){
 }
 function clearTalentFilters(run) {
   _TF_IDS.concat(['tf-skmode','ai-search-q']).forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+  talentPgFields();
   _talentF=null; _talentSel={};
   if(run) runTalentSearch();
 }
-var _TF_LABEL={q:'Search',skills:'Skills',company:'Company',loc:'Location',phone:'Phone',emin:'Exp ≥',emax:'Exp ≤',cmin:'CTC ≥',cmax:'CTC ≤',notice:'Notice ≤',job:'Job',stage:'Stage',source:'Source',cv:'CV',gender:'Gender',added:'Added',product:'Product',geo:'Geography',tmin:'Target ≥ ₹Cr',tmax:'Target ≤ ₹Cr',team:'Team ≥'};
+var _TF_LABEL={pgroup:'Group',q:'Search',skills:'Skills',company:'Company',loc:'Location',phone:'Phone',emin:'Exp ≥',emax:'Exp ≤',cmin:'CTC ≥',cmax:'CTC ≤',notice:'Notice ≤',job:'Job',stage:'Stage',source:'Source',cv:'CV',gender:'Gender',added:'Added',product:'Product',geo:'Geography',tmin:'Target ≥ ₹Cr',tmax:'Target ≤ ₹Cr',team:'Team ≥'};
 function _talentChips(f){
   var box=document.getElementById('tc-chips'); if(!box) return;
   var fac=_talentFacets||{};
@@ -16834,14 +17033,27 @@ function _talentChips(f){
     if(k==='added') return 'last '+v+' days';
     if(k==='stage') return stageLabel(v);
     if(k==='skills' && f.skmode==='any') return v+' (any)';
+    if(k==='pgroup'){ var g=_pgGroup(v); return g?g.name:v; }
     return v;
   };
   var keys=Object.keys(_TF_LABEL).filter(function(k){ return f[k]; });
-  box.innerHTML=keys.length?keys.map(function(k){
+  var pg=f.pgroup?_pgGroup(f.pgroup):null, pfl={};
+  if(pg) pg.fields.forEach(function(x){ pfl[x.key]=x.label; });
+  var pfk=Object.keys(f.pf||{});
+  box.innerHTML=(keys.length||pfk.length)?keys.map(function(k){
     return '<span class="tc-chip">'+esc(_TF_LABEL[k])+': <b>'+esc(show(k,f[k]))+'</b><button type="button" aria-label="Remove '+esc(_TF_LABEL[k])+' filter" onclick="talentDropFilter(\''+k+'\')">&#10005;</button></span>';
+  }).join('')+pfk.map(function(k){
+    var key=k.replace(/^(min|max)_/,''), lbl=(pfl[key]||key)+(k.indexOf('min_')===0?' ≥':k.indexOf('max_')===0?' ≤':'');
+    return '<span class="tc-chip">'+esc(lbl)+': <b>'+esc(f.pf[k])+'</b><button type="button" aria-label="Remove '+esc(lbl)+' filter" onclick="talentDropPf(\''+k+'\')">&#10005;</button></span>';
   }).join(''):'';
 }
+function talentDropPf(k){
+  var e=document.querySelector('#tf-pg-fields [data-pf="'+k+'"]'); if(e) e.value='';
+  if(_talentF && _talentF.pf) delete _talentF.pf[k];
+  runTalentSearch();
+}
 function talentDropFilter(k){
+  if(k==='pgroup'){ var s0=document.getElementById('tf-pgroup'); if(s0) s0.value=''; talentPgFields(); if(_talentF){ delete _talentF.pgroup; _talentF.pf={}; } return runTalentSearch(); }
   var ids={q:'ai-search-q',skills:'tf-skills',company:'tf-company',loc:'tf-loc',phone:'tf-phone',emin:'tf-emin',emax:'tf-emax',cmin:'tf-cmin',cmax:'tf-cmax',notice:'tf-notice',job:'tf-job',stage:'tf-stage',source:'tf-source',cv:'tf-cv',gender:'tf-gender',added:'tf-added',product:'tf-product',geo:'tf-geo',tmin:'tf-tmin',tmax:'tf-tmax',team:'tf-team'};
   var e=document.getElementById(ids[k]); if(e) e.value='';
   if(_talentF) delete _talentF[k];
@@ -16862,6 +17074,8 @@ function _talentQS(f){
   if(f.skills && f.skmode==='any') add('skills_mode','any');
   add('phone',f.phone); add('job',f.job); add('stage',f.stage); add('source',f.source); add('has_cv',f.cv); add('gender',f.gender); add('added_days',f.added);
   add('product',f.product); add('geography',f.geo); add('target_min',f.tmin); add('target_max',f.tmax); add('team_min',f.team);
+  if(f.pgroup){ add('pgroup',f.pgroup);
+    Object.keys(f.pf||{}).forEach(function(k){ var m=k.match(/^(min|max)_(.+)$/); add(m?('pf'+m[1]+'_'+m[2]):('pf_'+k), f.pf[k]); }); }
   return qs;
 }
 // Results table (Oct 2026): every row shows enough to decide without opening —
@@ -16920,6 +17134,8 @@ function talentRow(c) {
   var prodH=_jl(c.product_handles), geoH=_jl(c.geography_tags);
   if(prodH.length) rows.push(['Product handling', prodH.slice(0,8).map(hl).join(' <i>|</i> ')]);
   if(geoH.length) rows.push(['Geography', geoH.slice(0,8).map(hl).join(' <i>|</i> ')]);
+  if(c.profile && c.profile.items && c.profile.items.length)
+    rows.push([c.profile.group, c.profile.items.map(function(it){ return '<span class="mu">'+esc(it[0])+':</span> '+hl(it[1]); }).join(' <i>|</i> ')]);
   var n=full?14:8, sk=(c.key_skills||[]).slice();
   if(T.length) sk.sort(function(a,b){ var f=function(x){ return T.some(function(t){ return String(x).toLowerCase().indexOf(t.toLowerCase())>=0; }); }; return f(b)-f(a); });
   if(sk.length) rows.push(['Key skills', sk.slice(0,n).map(hl).join(' <i>|</i> ')+(sk.length>n?' <span class="mu">+'+(sk.length-n)+' more</span>':'')]);
@@ -26583,6 +26799,23 @@ button.tk-btn{cursor:pointer;font-family:inherit}
 .sp-sugg button{border:1px dashed #b9c0cc;background:#fff;color:#344054;border-radius:999px;padding:3px 10px;font:inherit;font-size:12px;cursor:pointer}
 .sp-sugg button:hover{border-color:#0f6e56;color:#0f6e56}
 @media(max-width:900px){.sp-stats{grid-template-columns:1fr 1fr}.sp-stat:nth-child(2){border-right:0}.sp-two,.sp-three{grid-template-columns:1fr}.sp-two .sp-sec:first-child{border-right:0;border-bottom:1px solid #eef0f2}.sp-rows{grid-template-columns:1fr}}
+.pg-srow{display:flex;gap:10px;align-items:center;padding:10px 0;border-top:1px solid #f0efe9}
+.pg-srow:first-of-type{border-top:0}
+.pg-fchips{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.pg-fchips span{font-size:11.5px;background:#F2F0EA;border-radius:7px;padding:2px 8px;color:#475467}
+.pg-fchips i{font-style:normal;color:#0f6e56;font-size:10.5px}
+.pg-erow{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1.1fr) minmax(0,1.3fr) auto;gap:8px;align-items:center;margin-bottom:8px}
+.pg-erow .inp{width:100%;box-sizing:border-box;font-size:13px}
+.pg-mv{display:flex;gap:2px}
+.pg-mv button{border:1px solid #e4e7ec;background:#fff;border-radius:6px;width:28px;height:30px;cursor:pointer;color:#475467}
+@media(max-width:640px){.pg-erow{grid-template-columns:1fr 1fr}.pg-erow .pg-x{grid-column:1/2}}
+.pg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px 20px}
+.pg-grid .pg-wide{grid-column:1/-1}
+.pg-grid .pg-text{width:100%;box-sizing:border-box}
+.pg-pick{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pg-pick .pg-gsel{max-width:260px}
+.pg-manage{font-size:12.5px;color:#0f6e56;margin-left:auto}
+.sp-title .pg-gsel{font-size:15px;font-weight:700;padding:5px 10px;max-width:220px}
 .tk-ver{font-size:11.5px;color:#667085;word-break:break-all}
 .tk-foot{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:#475467;padding:8px 6px 0}
 .tk-foot .tk-cv{font-weight:600;color:#1d4ed8;text-decoration:none}
