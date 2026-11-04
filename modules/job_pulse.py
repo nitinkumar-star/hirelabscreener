@@ -568,10 +568,111 @@ def _addr_list(v):
     return [a for _n, a in eu.getaddresses([str(v or '')]) if a]
 
 
-def _share_thread(conn, oid, m, pend_ids, spoc_email):
-    """The e-mail(s) the waiting profiles were shared in: (latest, all_matching).
-    Recorded shares first (client_submissions); for shares made before that
-    existed, the newest Sent mail about this job to the SPOC from the synced mailbox."""
+_PUBLIC_DOMAINS = {'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.in', 'outlook.com', 'hotmail.com', 'live.com',
+                   'rediffmail.com', 'icloud.com', 'proton.me', 'protonmail.com'}
+LOOKBACK_DAYS = 240
+
+
+def _words(s):
+    return [w for w in re.findall(r'[a-z0-9]+', str(s or '').lower()) if len(w) > 2]
+
+
+def _client_addresses(conn, oid, m, spoc_email):
+    """Known client e-mail addresses and their company domains (public webmail excluded)."""
+    emails = {spoc_email.lower()} if spoc_email else set()
+    try:
+        if m['crm_client_id']:
+            for r in conn.execute('SELECT email FROM crm_contacts WHERE company_id=? AND client_id=? AND COALESCE(email,"")!=""',
+                                  (oid, m['crm_client_id'])):
+                emails.add(r['email'].strip().lower())
+    except Exception:
+        pass
+    domains = {e.split('@')[-1] for e in emails if '@' in e} - _PUBLIC_DOMAINS
+    return emails, domains
+
+
+def _mailbox_shares(conn, oid, m, pend, spoc_email, limit=5):
+    """Sent e-mails (from the synced Gmail) that look like the share of these
+    profiles, best first. Scored on: candidate names in the body / subject /
+    attachment names, the client's people or domain in To/CC, and the job title
+    in the subject. Works for shares made before they were recorded and for CVs
+    sent straight from Gmail."""
+    names = [(p['name'] or '').strip() for p in pend if len((p['name'] or '').strip()) >= 4]
+    emails, domains = _client_addresses(conn, oid, m, spoc_email)
+    role_words = set(_words(m['role']))
+    since = time.time() - LOOKBACK_DAYS * 86400
+    ors, args = [], []
+    for n in names[:20]:
+        ors.append('LOWER(e.body) LIKE ? OR LOWER(e.subject) LIKE ?')
+        args += ['%' + n.lower() + '%'] * 2
+    for d in sorted(domains)[:10]:
+        ors.append('LOWER(e.to_addr) LIKE ? OR LOWER(COALESCE(e.cc,"")) LIKE ?')
+        args += ['%@' + d + '%'] * 2
+    for em in sorted(emails)[:10]:
+        ors.append('LOWER(e.to_addr) LIKE ? OR LOWER(COALESCE(e.cc,"")) LIKE ?')
+        args += ['%' + em + '%'] * 2
+    if role_words:
+        ors.append('(' + ' AND '.join(['LOWER(e.subject) LIKE ?'] * len(role_words)) + ')')
+        args += ['%' + w + '%' for w in sorted(role_words)]
+    att_hits = {}
+    if names:
+        try:
+            q = ('SELECT email_id, LOWER(filename) f FROM email_attachments WHERE owner_id=? AND email_id IS NOT NULL AND (' +
+                 ' OR '.join(['LOWER(filename) LIKE ?'] * len(names[:20])) + ')')
+            for r in conn.execute(q, [oid] + ['%' + '%'.join(_words(n)) + '%' for n in names[:20]]):
+                att_hits.setdefault(r['email_id'], set()).add(r['f'])
+        except Exception:
+            att_hits = {}
+    if not ors and not att_hits:
+        return []
+    where = '(' + ' OR '.join('(' + o + ')' for o in ors) + ')' if ors else '0'
+    if att_hits:
+        where = '(' + where + ' OR e.id IN (%s))' % ','.join(str(int(i)) for i in att_hits)
+    try:
+        rows = conn.execute("SELECT e.id, e.msg_id, e.subject, e.to_addr, e.cc, e.body, e.date_ts, e.created_at, e.date_str, "
+                            "e.thread_id FROM emails e WHERE e.owner_id=? AND e.folder='Sent' AND COALESCE(e.msg_id,'')!='' "
+                            "AND COALESCE(e.date_ts,0)>=? AND " + where + " ORDER BY e.date_ts DESC LIMIT 300",
+                            [oid, since] + args).fetchall()
+    except Exception as e:
+        print('[chase] mailbox search failed: %s' % e)
+        return []
+    out = []
+    for r in rows:
+        body = (r['body'] or '').lower() + ' ' + (r['subject'] or '').lower()
+        atts = ' '.join(att_hits.get(r['id'], ()))
+        hit = [n for n in names if n.lower() in body or (atts and '_'.join(_words(n)) in atts.replace(' ', '_').replace('-', '_'))
+               or (atts and all(w in atts for w in _words(n)))]
+        rcpt = ((r['to_addr'] or '') + ' ' + (r['cc'] or '')).lower()
+        to_client = any(em in rcpt for em in emails) or any('@' + d in rcpt for d in domains)
+        sw = set(_words(r['subject']))
+        role_hit = bool(role_words) and len(role_words & sw) >= max(1, int(len(role_words) * 0.6 + 0.5))
+        score = 3 * len(hit) + (2 if to_client else 0) + (2 if role_hit else 0)
+        if not hit and not (to_client and role_hit):
+            continue                       # names, or the client + the job title: anything less is a guess
+        out.append({'message_id': r['msg_id'], 'subject': r['subject'] or '', 'thread_id': r['thread_id'] or '',
+                    'sent_at': r['created_at'] or r['date_str'] or '', 'date_ts': r['date_ts'] or 0,
+                    'to': _addr_list(r['to_addr']), 'cc': _addr_list(r['cc']), 'candidate_ids': [],
+                    'matched': hit, 'score': score, 'from_mailbox': True})
+    out.sort(key=lambda x: (-x['score'], -x['date_ts']))
+    # Reply to the newest message of that conversation (e.g. the client's own
+    # reply), so the quoted chain carries everything said so far.
+    for o in out[:limit]:
+        if o['thread_id']:
+            try:
+                last = conn.execute("SELECT msg_id, created_at FROM emails WHERE owner_id=? AND thread_id=? "
+                                    "AND COALESCE(msg_id,'')!='' ORDER BY date_ts DESC LIMIT 1", (oid, o['thread_id'])).fetchone()
+                if last and last['msg_id'] and last['msg_id'] != o['message_id']:
+                    o['reply_id'] = last['msg_id']
+            except Exception:
+                pass
+    return out[:limit]
+
+
+def _share_thread(conn, oid, m, pend, spoc_email):
+    """The e-mail(s) the waiting profiles were shared in: (latest, all_matching, options).
+    Recorded shares first (client_submissions); otherwise a search of the synced
+    Sent mail (_mailbox_shares)."""
+    pend_ids = {int(p['id']) for p in pend}
     subs = []
     try:
         for r in conn.execute('SELECT * FROM client_submissions WHERE company_id=? AND mandate_id=? '
@@ -583,25 +684,11 @@ def _share_thread(conn, oid, m, pend_ids, spoc_email):
     except Exception:
         subs = []
     if subs:
-        return subs[0], subs
-    role = (m['role'] or '').strip()
-    if not role:
-        return None, []
-    args = [oid, '%' + role.lower() + '%']
-    q = ("SELECT msg_id, subject, to_addr, cc, date_str, created_at FROM emails WHERE owner_id=? AND folder='Sent' "
-         "AND LOWER(subject) LIKE ? AND COALESCE(msg_id,'')!=''")
-    if spoc_email:
-        q += ' AND LOWER(to_addr) LIKE ?'
-        args.append('%' + spoc_email.lower() + '%')
-    try:
-        r = conn.execute(q + ' ORDER BY date_ts DESC LIMIT 1', args).fetchone()
-    except Exception:
-        r = None
-    if not r:
-        return None, []
-    t = {'message_id': r['msg_id'], 'subject': r['subject'] or '', 'sent_at': r['created_at'] or r['date_str'] or '',
-         'to': _addr_list(r['to_addr']), 'cc': _addr_list(r['cc']), 'candidate_ids': [], 'from_mailbox': True}
-    return t, [t]
+        return subs[0], subs, []
+    found = _mailbox_shares(conn, oid, m, pend, spoc_email)
+    if not found:
+        return None, [], []
+    return found[0], [found[0]], found
 
 
 def _chase_draft(conn, oid, mid):
@@ -617,7 +704,7 @@ def _chase_draft(conn, oid, mid):
     spoc_email = (sp['email'] if sp else '') or ''
     lst = j['chase_ready'] or j['pending_feedback']
     pend_ids = {int(p['id']) for p in lst}
-    latest, shares = _share_thread(conn, oid, m, pend_ids, spoc_email)
+    latest, shares, options = _share_thread(conn, oid, m, lst, spoc_email)
 
     # Recipients: everyone the profiles went to (To + CC of those e-mails), so the
     # whole client team sees the reminder; else the SPOC + the job's CC list.
@@ -650,11 +737,18 @@ def _chase_draft(conn, oid, mid):
     if latest and latest.get('subject'):
         subject = latest['subject'] if re.match(r'(?i)^re:', latest['subject']) else 'Re: ' + latest['subject']
 
-    return {'to': to, 'cc': cc, 'spoc_name': sp['name'] if sp else '', 'subject': subject, 'body': body,
+    return {'to': to, 'cc': cc, 'spoc_name': sp['name'] if sp else '', 'subject': subject, 'body': body, 'role': j['role'],
             'candidates': cands, 'has_spoc': bool(spoc_email),
-            'reply_to': ({'message_id': latest['message_id'], 'subject': latest['subject'], 'sent_at': latest['sent_at'],
-                          'from_mailbox': bool(latest.get('from_mailbox'))} if latest and latest.get('message_id') else None),
+            'reply_to': (_reply_info(latest) if latest and latest.get('message_id') else None),
+            'options': [dict(_reply_info(o), to=_uniq(o['to']), cc=_uniq(o['cc'], skip=o['to']),
+                             reply_subject=(o['subject'] if re.match(r'(?i)^re:', o['subject']) else 'Re: ' + o['subject']))
+                        for o in options],
             'shares': len(shares)}, None
+
+
+def _reply_info(t):
+    return {'message_id': t.get('reply_id') or t['message_id'], 'share_id': t['message_id'], 'subject': t['subject'],
+            'sent_at': t['sent_at'], 'from_mailbox': bool(t.get('from_mailbox')), 'matched': t.get('matched') or []}
 
 
 @bp.route('/chase', methods=['GET'])
@@ -715,12 +809,12 @@ def chase_send():
                 f = core.cv_attachment(c)
                 if f:
                     files.append(f)
-        # Reply inside the share thread only if that e-mail really belongs to this job.
+        # Reply inside the share thread only if that e-mail is one of this agency's.
         in_reply_to = str(d.get('in_reply_to') or '').strip()
         if in_reply_to:
             ok_thread = conn.execute('SELECT 1 FROM client_submissions WHERE company_id=? AND mandate_id=? AND message_id=?',
                                      (oid, mid, in_reply_to)).fetchone() or \
-                conn.execute("SELECT 1 FROM emails WHERE owner_id=? AND msg_id=? AND folder='Sent'", (oid, in_reply_to)).fetchone()
+                conn.execute("SELECT 1 FROM emails WHERE owner_id=? AND msg_id=?", (oid, in_reply_to)).fetchone()
             if not ok_thread:
                 in_reply_to = ''
     finally:

@@ -8,6 +8,7 @@ Run:   pytest test_client_chase.py -q
 import os
 import sys
 import email
+import time
 import tempfile
 import datetime
 
@@ -165,9 +166,45 @@ def test_old_share_found_in_synced_sent_mail(srv, smtp):
     conn.execute("INSERT INTO emails (owner_id, msg_id, folder, from_addr, to_addr, cc, subject, body, body_html, date_ts, "
                  "created_at, user_id) VALUES (?, '<old-share@gmail.com>', 'Sent', 'agency@gmail.com', "
                  "'Anita Rao <anita@polycab.com>', 'ceo@polycab.com', 'Profiles: Area Sales Manager', 'old body', "
-                 "'<p>old body</p>', 1, '2026-10-20T10:00:00', 0)", (ids['co'],))
+                 "'<p>old body</p>', ?, '2026-10-20T10:00:00', 0)", (ids['co'], time.time() - 5 * 86400))
     conn.commit(); conn.close()
     d = client(server, ids['uid']).get('/api/job-pulse/chase?mandate_id=%d' % ids['mid']).get_json()
     assert d['reply_to']['message_id'] == '<old-share@gmail.com>' and d['reply_to']['from_mailbox']
     assert d['to'] == ['anita@polycab.com'] and d['cc'] == ['ceo@polycab.com']
     assert d['subject'] == 'Re: Profiles: Area Sales Manager'
+
+
+def test_gmail_share_found_by_candidate_names_and_reply_goes_to_latest_in_thread(srv, smtp):
+    """CVs sent straight from Gmail with a free-text subject, and the client already replied in that thread."""
+    server, ids = srv
+    now = time.time()
+    conn = server.get_db()
+    conn.execute("DELETE FROM emails WHERE owner_id=?", (ids['co'],))
+    conn.execute("INSERT INTO emails (owner_id, msg_id, folder, from_addr, to_addr, cc, subject, body, body_html, date_ts, "
+                 "created_at, user_id, thread_id) VALUES (?, '<gm-share@gmail.com>', 'Sent', 'agency@gmail.com', "
+                 "'hr@polycab.com', 'Deepak <deepak@polycab.com>', 'CVs for your review', "
+                 "'Hi, sharing Ravi Kumar and Sana Shaikh for your opening.', '<p>sharing Ravi Kumar and Sana Shaikh</p>', ?, "
+                 "'2026-10-28T10:00:00', 0, 'conv-x')", (ids['co'], now - 6 * 86400))
+    conn.execute("INSERT INTO emails (owner_id, msg_id, folder, from_addr, to_addr, subject, body, body_html, date_ts, "
+                 "created_at, user_id, thread_id) VALUES (?, '<client-reply@polycab.com>', 'Inbox', 'hr@polycab.com', "
+                 "'agency@gmail.com', 'Re: CVs for your review', 'Thanks, will revert by Friday.', "
+                 "'<p>Thanks, will revert by Friday.</p>', ?, '2026-10-29T10:00:00', 0, 'conv-x')", (ids['co'], now - 5 * 86400))
+    # unrelated mail to someone else, same job title, must not be picked
+    conn.execute("INSERT INTO emails (owner_id, msg_id, folder, from_addr, to_addr, subject, body, date_ts, created_at, user_id) "
+                 "VALUES (?, '<other@gmail.com>', 'Sent', 'agency@gmail.com', 'someone@other.com', 'Area Sales Manager JD', "
+                 "'jd', ?, '2026-10-30T10:00:00', 0)", (ids['co'], now - 4 * 86400))
+    conn.commit(); conn.close()
+    c = client(server, ids['uid'])
+    d = c.get('/api/job-pulse/chase?mandate_id=%d' % ids['mid']).get_json()
+    assert [o['share_id'] for o in d['options']] == ['<gm-share@gmail.com>']
+    o = d['options'][0]
+    assert o['message_id'] == '<client-reply@polycab.com>' and set(o['matched']) == {'Ravi Kumar', 'Sana Shaikh'}
+    assert d['to'] == ['hr@polycab.com'] and d['cc'] == ['deepak@polycab.com'] and d['subject'] == 'Re: CVs for your review'
+    smtp.clear()
+    r = c.post('/api/job-pulse/chase', json={'mandate_id': ids['mid'], 'to': 'hr@polycab.com', 'cc': 'deepak@polycab.com',
+                                             'subject': d['subject'], 'body': 'Gentle reminder', 'in_reply_to': o['message_id'],
+                                             'attach_ids': [x['id'] for x in d['candidates']]}).get_json()
+    assert r['ok'] and r['threaded'] and r['attached'] == 2
+    m = smtp[-1]['msg']
+    html = next(p for p in m.walk() if p.get_content_type() == 'text/html').get_payload(decode=True).decode()
+    assert m['In-Reply-To'] == '<client-reply@polycab.com>' and 'will revert by Friday' in html
