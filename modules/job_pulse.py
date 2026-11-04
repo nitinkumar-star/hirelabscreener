@@ -706,16 +706,21 @@ def _chase_draft(conn, oid, mid):
     pend_ids = {int(p['id']) for p in lst}
     latest, shares, options = _share_thread(conn, oid, m, lst, spoc_email)
 
-    # Recipients: everyone the profiles went to (To + CC of those e-mails), so the
-    # whole client team sees the reminder; else the SPOC + the job's CC list.
-    if shares:
-        to = _uniq([e for s_ in shares for e in s_['to']] + ([spoc_email] if spoc_email and not latest.get('to') else []))
-        cc = _uniq([e for s_ in shares for e in s_['cc']], skip=to)
-    else:
-        to = _uniq([spoc_email])
-        cc = _uniq(core.mandate_cc_emails(conn, m, oid), skip=to)
-    if not to and cc:
-        to, cc = cc[:1], cc[1:]
+    # Recipients: everyone the profiles went to (To + CC of those e-mails), plus
+    # always the job's SPOC (To) and the job's CC list from Mandate Setup
+    # (client contacts + internal team), so nobody set up on the job is missed.
+    job_cc = core.mandate_cc_emails(conn, m, oid)
+
+    def people(to_list, cc_list):
+        to_ = _uniq(to_list)
+        if spoc_email and spoc_email.lower() not in {e.lower() for e in to_list + cc_list}:
+            to_ = _uniq([spoc_email] + to_)
+        cc_ = _uniq(list(cc_list) + list(job_cc), skip=to_)
+        if not to_ and cc_:
+            to_, cc_ = cc_[:1], cc_[1:]
+        return to_, cc_
+
+    to, cc = people([e for s_ in shares for e in s_['to']], [e for s_ in shares for e in s_['cc']])
 
     rows = {}
     if pend_ids:
@@ -740,10 +745,10 @@ def _chase_draft(conn, oid, mid):
     return {'to': to, 'cc': cc, 'spoc_name': sp['name'] if sp else '', 'subject': subject, 'body': body, 'role': j['role'],
             'candidates': cands, 'has_spoc': bool(spoc_email),
             'reply_to': (_reply_info(latest) if latest and latest.get('message_id') else None),
-            'options': [dict(_reply_info(o), to=_uniq(o['to']), cc=_uniq(o['cc'], skip=o['to']),
+            'options': [dict(_reply_info(o), to=people(o['to'], o['cc'])[0], cc=people(o['to'], o['cc'])[1],
                              reply_subject=(o['subject'] if re.match(r'(?i)^re:', o['subject']) else 'Re: ' + o['subject']))
                         for o in options],
-            'shares': len(shares)}, None
+            'shares': len(shares), 'new_to': people([], [])[0], 'new_cc': people([], [])[1]}, None
 
 
 def _reply_info(t):
