@@ -170,7 +170,7 @@ def test_old_share_found_in_synced_sent_mail(srv, smtp):
     conn.commit(); conn.close()
     d = client(server, ids['uid']).get('/api/job-pulse/chase?mandate_id=%d' % ids['mid']).get_json()
     assert d['reply_to']['message_id'] == '<old-share@gmail.com>' and d['reply_to']['from_mailbox']
-    assert d['to'] == ['anita@polycab.com'] and d['cc'] == ['ceo@polycab.com']
+    assert d['to'] == ['anita@polycab.com'] and d['cc'] == ['ceo@polycab.com', 'lead@agency.in']   # + the job's CC list
     assert d['subject'] == 'Re: Profiles: Area Sales Manager'
 
 
@@ -193,13 +193,23 @@ def test_gmail_share_found_by_candidate_names_and_reply_goes_to_latest_in_thread
     conn.execute("INSERT INTO emails (owner_id, msg_id, folder, from_addr, to_addr, subject, body, date_ts, created_at, user_id) "
                  "VALUES (?, '<other@gmail.com>', 'Sent', 'agency@gmail.com', 'someone@other.com', 'Area Sales Manager JD', "
                  "'jd', ?, '2026-10-30T10:00:00', 0)", (ids['co'], now - 4 * 86400))
+    # Mandate Setup: a client-side CC contact (from CRM) + an internal one
+    cl = conn.execute('SELECT client_id FROM crm_contacts WHERE email=?', ('anita@polycab.com',)).fetchone()['client_id']
+    cur = conn.execute("INSERT INTO crm_contacts (company_id, client_id, name, email, is_active) VALUES (?,?,?,?,1)",
+                       (ids['co'], cl, 'Vikas (Head HR)', 'vikas@polycab.com'))
+    conn.execute("UPDATE mandates SET cc_external_ids=?, cc_internal_emails='[\"lead@agency.in\"]' WHERE id=?",
+                 ('[%d]' % cur.lastrowid, ids['mid']))
     conn.commit(); conn.close()
     c = client(server, ids['uid'])
     d = c.get('/api/job-pulse/chase?mandate_id=%d' % ids['mid']).get_json()
     assert [o['share_id'] for o in d['options']] == ['<gm-share@gmail.com>']
     o = d['options'][0]
     assert o['message_id'] == '<client-reply@polycab.com>' and set(o['matched']) == {'Ravi Kumar', 'Sana Shaikh'}
-    assert d['to'] == ['hr@polycab.com'] and d['cc'] == ['deepak@polycab.com'] and d['subject'] == 'Re: CVs for your review'
+    # the SPOC was not on that e-mail -> added to To; the job's CC contacts join the e-mail's CC
+    assert d['to'] == ['anita@polycab.com', 'hr@polycab.com']
+    assert d['cc'] == ['deepak@polycab.com', 'vikas@polycab.com', 'lead@agency.in'] and d['subject'] == 'Re: CVs for your review'
+    assert o['to'] == d['to'] and o['cc'] == d['cc']
+    assert d['new_to'] == ['anita@polycab.com'] and d['new_cc'] == ['vikas@polycab.com', 'lead@agency.in']
     smtp.clear()
     r = c.post('/api/job-pulse/chase', json={'mandate_id': ids['mid'], 'to': 'hr@polycab.com', 'cc': 'deepak@polycab.com',
                                              'subject': d['subject'], 'body': 'Gentle reminder', 'in_reply_to': o['message_id'],

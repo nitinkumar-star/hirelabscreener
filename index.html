@@ -27523,7 +27523,7 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
               + (rt.sent_at ? ' (shared ' + esc(String(rt.sent_at).slice(0, 10)) + ')' : '') + ' &mdash; that e-mail is quoted below your message, so the client sees the full chain.</div>'
             : '<div style="margin-top:8px;font-size:12px;color:#8a93a3;line-height:1.5">The share e-mail was not found in your synced mail of the last 8 months (searched by candidate names, CV file names, client e-mails and job title), so this goes as a new e-mail. Sent from another Gmail? Connect it in Settings &rarr; Email and sync, then open this again.</div>')
         + '<label>To' + (r.spoc_name ? ' (SPOC: ' + esc(r.spoc_name) + ')' : '') + '<input id="jp-to" value="' + esc(r.to.join(', ')) + '" placeholder="spoc@client.com"></label>'
-        + '<label>CC<input id="jp-cc2" value="' + esc(r.cc.join(', ')) + '" placeholder="other client contacts, your team"></label>'
+        + '<label>CC <span style="font-weight:400;color:#8a93a3">(includes the job\'s CC list from Mandate Setup)</span><input id="jp-cc2" value="' + esc(r.cc.join(', ')) + '" placeholder="other client contacts, your team"></label>'
         + '<label>Subject<input id="jp-su" value="' + esc(r.subject) + '"></label><label>Message<textarea id="jp-bo">' + esc(r.body) + '</textarea></label>'
         + (att.length ? '<div style="font-size:12.5px;font-weight:600;color:#344054;margin-top:10px">Attach CVs</div><div style="display:flex;flex-direction:column;gap:4px;margin-top:4px">'
               + att.map(function(c){ return '<div style="display:flex;gap:8px;align-items:center;font-size:13px;color:#344054"><input type="checkbox" class="jp-att" id="jp-att-' + c.id + '" value="' + c.id + '" checked style="width:16px;height:16px;flex:none;display:inline-block;margin:0;padding:0"><span onclick="var x=document.getElementById(\'jp-att-' + c.id + '\');x.checked=!x.checked" style="cursor:pointer">&#128206; ' + esc(c.cv_name || c.name) + '</span></div>'; }).join('') + '</div>'
@@ -27532,7 +27532,9 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
       document.getElementById('jp-cc').onclick = closeAll;
       var th = document.getElementById('jp-th');
       if (th) th.onchange = function(){
-        if (this.value === 'new') { rt = null; document.getElementById('jp-su').value = 'Feedback on profiles — ' + (r.role || ''); document.getElementById('jp-thn').textContent = 'Goes as a new e-mail.'; return; }
+        if (this.value === 'new') { rt = null; document.getElementById('jp-su').value = 'Feedback on profiles — ' + (r.role || '');
+          document.getElementById('jp-to').value = (r.new_to || []).join(', '); document.getElementById('jp-cc2').value = (r.new_cc || []).join(', ');
+          document.getElementById('jp-thn').textContent = 'Goes as a new e-mail to the SPOC and the job\'s CC list.'; return; }
         var o = r.options[+this.value]; rt = o;
         document.getElementById('jp-to').value = o.to.join(', '); document.getElementById('jp-cc2').value = o.cc.join(', ');
         document.getElementById('jp-su').value = o.reply_subject;
