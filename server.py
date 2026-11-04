@@ -23067,7 +23067,10 @@ _TALENT_TEXT = ("LOWER(COALESCE(c.name,'')||' '||COALESCE(c.company,'')||' '||CO
                 "COALESCE(c.career_summary,'')||' '||COALESCE(c.location,'')||' '||COALESCE(c.industry_background,'')||' '||"
                 "COALESCE(c.qualification,'')||' '||COALESCE(c.email,'')||' '||COALESCE(c.phone,'')||' '||"
                 "COALESCE(c.status_tags,'')||' '||COALESCE(c.product_handles,'')||' '||COALESCE(c.function_tags,'')||' '||"
-                "COALESCE(c.geography_tags,''))")
+                "COALESCE(c.geography_tags,'')||' '||"
+                # custom profile-group values (modules/profile_groups.py)
+                "COALESCE((SELECT GROUP_CONCAT(v.value_text, ' ') FROM candidate_profile_values v "
+                "WHERE v.candidate_id=c.id AND v.group_id=COALESCE(c.profile_group_id,0)),''))")
 _TALENT_SKILLS = ("LOWER(COALESCE(c.key_skills,'')||' '||COALESCE(c.key_skill_tags,'')||' '||"
                   "COALESCE(c.secondary_skills,'')||' '||COALESCE(c.product_handles,'')||' '||COALESCE(c.designation,''))")
 
@@ -23271,6 +23274,12 @@ def _talent_where():
     ids = [int(x) for x in (request.args.get('ids') or '').split(',') if x.strip().isdigit()][:2000]
     if ids:
         where.append('c.id IN (%s)' % ','.join('?' * len(ids))); params += ids
+    try:                                   # profile group + its own fields (modules/profile_groups.py)
+        from modules.profile_groups import talent_filter
+        _pw, _pp = talent_filter(request.args, oid)
+        where += _pw; params += _pp
+    except Exception as _pe:
+        print('[talent] profile filter: %s' % _pe)
     return ' AND '.join(where) + (sc or ''), params + (sp or [])
 
 
@@ -23336,6 +23345,11 @@ def central_search():
             rows = [_full[i] for i in page_ids if i in _full]
         others = _talent_other_jobs(conn, [r['person_key'] for r in rows])
         prev = _talent_previous_roles(conn, [r['id'] for r in rows])
+        try:
+            from modules.profile_groups import summaries as _pg_sum
+            pgs = _pg_sum(conn, effective_company_id(), rows)
+        except Exception:
+            pgs = {}
     finally:
         conn.close()
     out = []
@@ -23351,6 +23365,7 @@ def central_search():
             d['mandate_role'] = None; d['mandate_client'] = None
         d.pop('_rn', None)
         d['other_jobs'] = [o for o in others.get(d['person_key'], []) if o['id'] != d['id']]
+        d['profile'] = pgs.get(d['id'])
         out.append(d)
     return jsonify({'ok': True, 'total': total, 'page': page, 'per_page': per_page, 'candidates': out,
                     'sort': skey if col else 'created_at', 'dir': 'desc' if sort_desc else 'asc'})
