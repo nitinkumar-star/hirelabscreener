@@ -27509,19 +27509,31 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
     modal('Preparing the e-mail…');
     api('GET', '/chase?mandate_id=' + id).then(function(r){
       if (!r.ok) { modal('<div>' + esc(r.error || 'Could not prepare') + '</div><div style="text-align:right;margin-top:12px"><button class="jp-sec" id="jp-c0">Close</button></div>'); document.getElementById('jp-c0').onclick = closeAll; return; }
+      var att = r.candidates.filter(function(c){ return c.has_cv; });
+      var rt = r.reply_to;
       modal('<div style="font-size:16px;font-weight:700;color:#101828">Chase client for feedback</div>'
-        + '<div style="font-size:12.5px;color:#667085;margin-top:2px">' + r.candidates.length + ' profile' + (r.candidates.length === 1 ? '' : 's') + ' waiting. Edit anything, then send from the company mailbox.'
-        + (r.has_spoc ? '' : ' <b style="color:#B42318">No SPOC e-mail on this job — type it, or set the SPOC in Mandate Setup.</b>') + '</div>'
-        + '<label>To' + (r.spoc_name ? ' (' + esc(r.spoc_name) + ')' : '') + '<input id="jp-to" value="' + esc(r.to) + '" placeholder="spoc@client.com"></label>'
+        + '<div style="font-size:12.5px;color:#667085;margin-top:2px">' + r.candidates.length + ' profile' + (r.candidates.length === 1 ? '' : 's') + ' waiting. Edit anything, then send.'
+        + (r.has_spoc || r.to.length ? '' : ' <b style="color:#B42318">No SPOC e-mail on this job — type it, or set the SPOC in Mandate Setup.</b>') + '</div>'
+        + (rt ? '<div style="margin-top:8px;font-size:12.5px;background:#EEF4FB;color:#185FA5;border-radius:8px;padding:8px 10px">&#8617; Goes as a reply in the thread <b>' + esc(rt.subject) + '</b>'
+              + (rt.sent_at ? ' (shared ' + esc(String(rt.sent_at).slice(0, 10)) + ')' : '') + ' &mdash; that e-mail is quoted below your message, so the client sees the full chain.</div>'
+            : '<div style="margin-top:8px;font-size:12px;color:#8a93a3">The original share e-mail was not found (shared before this feature, or from outside HireLab), so this goes as a new e-mail.</div>')
+        + '<label>To' + (r.spoc_name ? ' (SPOC: ' + esc(r.spoc_name) + ')' : '') + '<input id="jp-to" value="' + esc(r.to.join(', ')) + '" placeholder="spoc@client.com"></label>'
+        + '<label>CC<input id="jp-cc2" value="' + esc(r.cc.join(', ')) + '" placeholder="other client contacts, your team"></label>'
         + '<label>Subject<input id="jp-su" value="' + esc(r.subject) + '"></label><label>Message<textarea id="jp-bo">' + esc(r.body) + '</textarea></label>'
+        + (att.length ? '<div style="font-size:12.5px;font-weight:600;color:#344054;margin-top:10px">Attach CVs</div><div style="display:flex;flex-direction:column;gap:4px;margin-top:4px">'
+              + att.map(function(c){ return '<div style="display:flex;gap:8px;align-items:center;font-size:13px;color:#344054"><input type="checkbox" class="jp-att" id="jp-att-' + c.id + '" value="' + c.id + '" checked style="width:16px;height:16px;flex:none;display:inline-block;margin:0;padding:0"><span onclick="var x=document.getElementById(\'jp-att-' + c.id + '\');x.checked=!x.checked" style="cursor:pointer">&#128206; ' + esc(c.cv_name || c.name) + '</span></div>'; }).join('') + '</div>'
+            : '<div style="font-size:12px;color:#8a93a3;margin-top:8px">No CV file is saved for these profiles, so nothing is attached.</div>')
         + '<div id="jp-cm" style="font-size:12.5px;margin-top:8px"></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="jp-sec" id="jp-cc">Cancel</button><button class="jp-pri" id="jp-cs">Send</button></div>');
       document.getElementById('jp-cc').onclick = closeAll;
       document.getElementById('jp-cs').onclick = function(){
         var b = this; b.disabled = true; b.textContent = 'Sending…';
-        api('POST', '/chase', {mandate_id: id, to: document.getElementById('jp-to').value, subject: document.getElementById('jp-su').value,
-                               body: document.getElementById('jp-bo').value, candidate_ids: r.candidates.map(function(c){ return c.id; })}).then(function(x){
+        var ids = Array.prototype.map.call(document.querySelectorAll('.jp-att:checked'), function(x){ return +x.value; });
+        api('POST', '/chase', {mandate_id: id, to: document.getElementById('jp-to').value, cc: document.getElementById('jp-cc2').value,
+                               subject: document.getElementById('jp-su').value, body: document.getElementById('jp-bo').value,
+                               candidate_ids: r.candidates.map(function(c){ return c.id; }), attach_ids: ids,
+                               in_reply_to: rt ? rt.message_id : ''}).then(function(x){
           if (!x.ok) { b.disabled = false; b.textContent = 'Send'; document.getElementById('jp-cm').innerHTML = '<span style="color:#B42318">' + esc(x.error || 'Failed') + '</span>'; return; }
-          closeAll(); if (typeof toast === 'function') toast('OK', 'Chaser sent — noted on the job'); load(true);
+          closeAll(); if (typeof toast === 'function') toast('OK', 'Chaser sent to ' + (x.to.length + x.cc.length) + ' people' + (x.attached ? ' with ' + x.attached + ' CV' + (x.attached === 1 ? '' : 's') : '') + ' — noted on the job'); load(true);
         });
       };
     });

@@ -78,6 +78,21 @@ def _migrate(conn):
         updated_at TEXT DEFAULT ''
     )''')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_jp_chase ON job_pulse_chase(company_id, mandate_id, sent_at)')
+    # Every profile-share e-mail to a client (server.submit_to_client): the chaser
+    # replies in that thread, to the same To + CC, with the CVs attached.
+    conn.execute('''CREATE TABLE IF NOT EXISTS client_submissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        mandate_id INTEGER NOT NULL,
+        to_emails TEXT DEFAULT '[]',
+        cc_emails TEXT DEFAULT '[]',
+        subject TEXT DEFAULT '',
+        message_id TEXT DEFAULT '',
+        candidate_ids TEXT DEFAULT '[]',
+        sent_by INTEGER DEFAULT 0,
+        sent_at TEXT DEFAULT ''
+    )''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_client_sub ON client_submissions(company_id, mandate_id, sent_at)')
     conn.commit()
 
 
@@ -523,23 +538,123 @@ def set_fee():
         conn.close()
 
 
+_EMAIL_RX = re.compile(r'^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$')
+
+
+def _jl(v):
+    try:
+        x = json.loads(v or '[]')
+        return x if isinstance(x, list) else []
+    except Exception:
+        return []
+
+
+def _uniq(emails, skip=()):
+    seen = {e.lower() for e in skip}
+    out = []
+    for e in emails:
+        e = (e or '').strip()
+        if e and _EMAIL_RX.match(e) and e.lower() not in seen:
+            seen.add(e.lower())
+            out.append(e)
+    return out
+
+
+def _addr_list(v):
+    """'A <a@x.com>, b@y.com' or a list -> ['a@x.com', 'b@y.com']."""
+    import email.utils as eu
+    if isinstance(v, (list, tuple)):
+        v = ', '.join(str(x) for x in v)
+    return [a for _n, a in eu.getaddresses([str(v or '')]) if a]
+
+
+def _share_thread(conn, oid, m, pend_ids, spoc_email):
+    """The e-mail(s) the waiting profiles were shared in: (latest, all_matching).
+    Recorded shares first (client_submissions); for shares made before that
+    existed, the newest Sent mail about this job to the SPOC from the synced mailbox."""
+    subs = []
+    try:
+        for r in conn.execute('SELECT * FROM client_submissions WHERE company_id=? AND mandate_id=? '
+                              'ORDER BY sent_at DESC, id DESC LIMIT 30', (oid, m['id'])):
+            cids = set(int(x) for x in _jl(r['candidate_ids']) if str(x).isdigit())
+            if not pend_ids or cids & pend_ids:
+                subs.append({'message_id': r['message_id'] or '', 'subject': r['subject'] or '', 'sent_at': r['sent_at'] or '',
+                             'to': _jl(r['to_emails']), 'cc': _jl(r['cc_emails']), 'candidate_ids': sorted(cids)})
+    except Exception:
+        subs = []
+    if subs:
+        return subs[0], subs
+    role = (m['role'] or '').strip()
+    if not role:
+        return None, []
+    args = [oid, '%' + role.lower() + '%']
+    q = ("SELECT msg_id, subject, to_addr, cc, date_str, created_at FROM emails WHERE owner_id=? AND folder='Sent' "
+         "AND LOWER(subject) LIKE ? AND COALESCE(msg_id,'')!=''")
+    if spoc_email:
+        q += ' AND LOWER(to_addr) LIKE ?'
+        args.append('%' + spoc_email.lower() + '%')
+    try:
+        r = conn.execute(q + ' ORDER BY date_ts DESC LIMIT 1', args).fetchone()
+    except Exception:
+        r = None
+    if not r:
+        return None, []
+    t = {'message_id': r['msg_id'], 'subject': r['subject'] or '', 'sent_at': r['created_at'] or r['date_str'] or '',
+         'to': _addr_list(r['to_addr']), 'cc': _addr_list(r['cc']), 'candidate_ids': [], 'from_mailbox': True}
+    return t, [t]
+
+
 def _chase_draft(conn, oid, mid):
+    core = _core()
     jobs, _f = build(conn, oid, [mid])
     j = jobs.get(mid)
     if not j:
         return None, 'Not found'
     if not j['pending_feedback']:
         return None, 'No profiles are waiting for client feedback on this job.'
+    m = conn.execute('SELECT * FROM mandates WHERE id=? AND owner_id=?', (mid, oid)).fetchone()
     sp = j['spoc']
-    who = (sp['name'].split()[0] if sp and sp['name'] else 'there')
+    spoc_email = (sp['email'] if sp else '') or ''
     lst = j['chase_ready'] or j['pending_feedback']
+    pend_ids = {int(p['id']) for p in lst}
+    latest, shares = _share_thread(conn, oid, m, pend_ids, spoc_email)
+
+    # Recipients: everyone the profiles went to (To + CC of those e-mails), so the
+    # whole client team sees the reminder; else the SPOC + the job's CC list.
+    if shares:
+        to = _uniq([e for s_ in shares for e in s_['to']] + ([spoc_email] if spoc_email and not latest.get('to') else []))
+        cc = _uniq([e for s_ in shares for e in s_['cc']], skip=to)
+    else:
+        to = _uniq([spoc_email])
+        cc = _uniq(core.mandate_cc_emails(conn, m, oid), skip=to)
+    if not to and cc:
+        to, cc = cc[:1], cc[1:]
+
+    rows = {}
+    if pend_ids:
+        for c in conn.execute('SELECT id, name, cv_path, cv_original_name FROM candidates WHERE owner_id=? AND id IN (%s)'
+                              % ','.join('?' * len(pend_ids)), [oid] + sorted(pend_ids)):
+            rows[c['id']] = c
+    cands = []
+    for p in lst:
+        c = rows.get(p['id'])
+        att = core.cv_attachment(c) if c else None
+        cands.append(dict(p, has_cv=bool(att), cv_name=(att or {}).get('filename', '')))
+    who = (sp['name'].split()[0] if sp and sp['name'] else 'Team')
     lines = '\n'.join('• %s — shared %d day%s ago' % (p['name'], p['days'], '' if p['days'] == 1 else 's') for p in lst)
     body = ('Hi %s,\n\nHope you are doing well. Following up on the profiles we shared for the %s position:\n\n%s\n\n'
             'Could you please share your feedback, or let us know the interview slots for the shortlisted ones? '
-            'If anything about the requirement has changed, do tell us and we will align the search.\n\nThank you.'
-            % (who, j['role'], lines))
-    return {'to': sp['email'] if sp else '', 'spoc_name': sp['name'] if sp else '', 'subject': 'Feedback on profiles — %s' % j['role'],
-            'body': body, 'candidates': lst, 'has_spoc': bool(sp and sp['email'])}, None
+            'If anything about the requirement has changed, do tell us and we will align the search.%s\n\nThank you.'
+            % (who, j['role'], lines, '\n\nThe CVs are attached again for easy reference.' if any(c['has_cv'] for c in cands) else ''))
+    subject = 'Feedback on profiles — %s' % j['role']
+    if latest and latest.get('subject'):
+        subject = latest['subject'] if re.match(r'(?i)^re:', latest['subject']) else 'Re: ' + latest['subject']
+
+    return {'to': to, 'cc': cc, 'spoc_name': sp['name'] if sp else '', 'subject': subject, 'body': body,
+            'candidates': cands, 'has_spoc': bool(spoc_email),
+            'reply_to': ({'message_id': latest['message_id'], 'subject': latest['subject'], 'sent_at': latest['sent_at'],
+                          'from_mailbox': bool(latest.get('from_mailbox'))} if latest and latest.get('message_id') else None),
+            'shares': len(shares)}, None
 
 
 @bp.route('/chase', methods=['GET'])
@@ -573,10 +688,16 @@ def chase_send():
         mid = int(d.get('mandate_id') or 0)
     except (TypeError, ValueError):
         mid = 0
-    to = str(d.get('to') or '').strip()
+    to_raw = _addr_list(d.get('to'))
+    cc_raw = _addr_list(d.get('cc'))
+    bad = [e for e in to_raw + cc_raw if not _EMAIL_RX.match(e)]
+    if bad:
+        return _err('This e-mail address does not look right: %s' % bad[0])
+    to = _uniq(to_raw)
+    cc = _uniq(cc_raw, skip=to)
     subject = str(d.get('subject') or '').strip()[:200]
     body = str(d.get('body') or '').strip()[:6000]
-    if not re.match(r'^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$', to):
+    if not to:
         return _err('Enter the SPOC\'s e-mail address.')
     if not subject or not body:
         return _err('Subject and message are needed.')
@@ -585,29 +706,51 @@ def chase_send():
         m = conn.execute('SELECT id, role FROM mandates WHERE id=? AND owner_id=?', (mid, oid)).fetchone()
         if not m or not _can_see(conn, mid, write=True):
             return _err('Not found', 404)
-        e = html.escape
-        body_html = ''.join('<p>%s</p>' % e(p).replace('\n', '<br>') for p in re.split(r'\n\s*\n', body) if p.strip())
-        ok, err, _mid, _tid = core.email_service_send(to, subject, body, body_html=body_html)
-        if not ok:
-            return _err('Could not send: %s' % (err or 'mail error'))
         cids = [int(x) for x in (d.get('candidate_ids') or []) if str(x).isdigit()][:50]
+        attach = [int(x) for x in (d.get('attach_ids') or []) if str(x).isdigit()][:20]
+        files = []
+        if attach:
+            for c in conn.execute('SELECT id, name, cv_path, cv_original_name FROM candidates WHERE owner_id=? AND mandate_id=? '
+                                  'AND id IN (%s)' % ','.join('?' * len(attach)), [oid, mid] + attach):
+                f = core.cv_attachment(c)
+                if f:
+                    files.append(f)
+        # Reply inside the share thread only if that e-mail really belongs to this job.
+        in_reply_to = str(d.get('in_reply_to') or '').strip()
+        if in_reply_to:
+            ok_thread = conn.execute('SELECT 1 FROM client_submissions WHERE company_id=? AND mandate_id=? AND message_id=?',
+                                     (oid, mid, in_reply_to)).fetchone() or \
+                conn.execute("SELECT 1 FROM emails WHERE owner_id=? AND msg_id=? AND folder='Sent'", (oid, in_reply_to)).fetchone()
+            if not ok_thread:
+                in_reply_to = ''
+    finally:
+        conn.close()
+    e = html.escape
+    body_html = ''.join('<p>%s</p>' % e(p).replace('\n', '<br>') for p in re.split(r'\n\s*\n', body) if p.strip())
+    ok, err, _msgid, _tid = core.email_service_send(', '.join(to), subject, body, body_html=body_html, cc=', '.join(cc),
+                                                    in_reply_to=in_reply_to, extra_files=files)
+    if not ok:
+        return _err('Could not send: %s' % (err or 'mail error'))
+    conn = get_db()
+    try:
         conn.execute('INSERT INTO job_pulse_chase (company_id, mandate_id, to_email, subject, candidate_ids, sent_by, sent_at) '
-                     'VALUES (?,?,?,?,?,?,?)', (oid, mid, to, subject, json.dumps(cids), int(real_user_id() or 0), ts()))
+                     'VALUES (?,?,?,?,?,?,?)', (oid, mid, ', '.join(to + cc), subject, json.dumps(cids), int(real_user_id() or 0), ts()))
         try:
             conn.execute('INSERT INTO mandate_client_notes (mandate_id, owner_id, note, created_by, created_at, is_active) '
-                         'VALUES (?,?,?,?,?,1)', (mid, oid, 'Feedback chaser sent to %s: %s' % (to, subject), int(real_user_id() or 0), ts()))
+                         'VALUES (?,?,?,?,?,1)', (mid, oid, 'Feedback chaser sent to %s%s: %s' % (
+                             ', '.join(to), (' (cc ' + ', '.join(cc) + ')') if cc else '', subject), int(real_user_id() or 0), ts()))
         except Exception:
             pass
         for cid in cids:
             try:
                 conn.execute('INSERT INTO candidate_events (candidate_id,event_type,detail,created_at) VALUES (?,?,?,?)',
-                             (cid, 'note', 'Client chased for feedback (%s)' % to, ts()))
+                             (cid, 'note', 'Client chased for feedback (%s)' % ', '.join(to), ts()))
             except Exception:
                 pass
         conn.commit()
-        return jsonify({'ok': True})
     finally:
         conn.close()
+    return jsonify({'ok': True, 'to': to, 'cc': cc, 'attached': len(files), 'threaded': bool(in_reply_to)})
 
 
 @bp.route('/settings', methods=['PUT', 'POST'])
