@@ -15040,33 +15040,8 @@ def submission_prefill(mid):
 
     # CC: per-mandate External (CRM contact ids) + Internal (emails); if none
     # configured, fall back to the global submission_cc_emails setting.
-    cc_list = []
-    try:
-        ext_ids = json.loads(m['cc_external_ids'] or '[]')
-    except Exception:
-        ext_ids = []
-    try:
-        int_emails = json.loads(m['cc_internal_emails'] or '[]')
-    except Exception:
-        int_emails = []
-    if ext_ids:
-        try:
-            q = 'SELECT email FROM crm_contacts WHERE company_id=? AND id IN (%s)' % ','.join('?' * len(ext_ids))
-            for r in conn.execute(q, tuple([company_id] + ext_ids)).fetchall():
-                if (r['email'] or '').strip():
-                    cc_list.append(r['email'].strip())
-        except Exception:
-            pass
-    for e in int_emails:
-        if e and e.strip():
-            cc_list.append(e.strip())
+    cc_list = mandate_cc_emails(conn, m, company_id)
     conn.close()
-    if not cc_list:
-        cc_raw = get_setting('submission_cc_emails', '') or ''
-        cc_list = [e.strip() for e in re.split(r'[,\n;]+', cc_raw) if e.strip()]
-    # de-dup, drop any that equal a To recipient
-    _seen = set()
-    cc_list = [e for e in cc_list if not (e in _seen or _seen.add(e))]
 
     cands = []
     for c in rows:
@@ -15135,7 +15110,55 @@ def submission_preview(mid):
     return jsonify({'ok': True, 'html': html_body, 'count': len(rows)})
 
 
-def _send_submission_email(to_list, cc_list, subject, html_body, attach_cids, conn, company_id):
+def cv_attachment(c):
+    """{filename, path, mime} for a candidate row's CV file (named after the candidate), or None."""
+    try:
+        if not c or not c['cv_path']:
+            return None
+        fp = os.path.join(CV_DIR, str(c['cv_path']))
+        if not os.path.exists(fp):
+            return None
+        ext = os.path.splitext(c['cv_original_name'] or c['cv_path'] or '')[1] or '.pdf'
+        safe = re.sub(r'[^A-Za-z0-9 _.-]+', '', (c['name'] or 'Candidate')).strip() or 'Candidate'
+        mime = {'.pdf': 'application/pdf', '.doc': 'application/msword',
+                '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}.get(ext.lower(),
+                                                                                                         'application/octet-stream')
+        return {'filename': safe + ext, 'path': fp, 'mime': mime}
+    except Exception:
+        return None
+
+
+def mandate_cc_emails(conn, m, company_id):
+    """The job's CC list for client e-mails: its External (CRM contacts) + Internal
+    CC, else the agency's submission_cc_emails setting."""
+    cc_list = []
+    try:
+        ext_ids = json.loads(m['cc_external_ids'] or '[]')
+    except Exception:
+        ext_ids = []
+    try:
+        int_emails = json.loads(m['cc_internal_emails'] or '[]')
+    except Exception:
+        int_emails = []
+    if ext_ids:
+        try:
+            q = 'SELECT email FROM crm_contacts WHERE company_id=? AND id IN (%s)' % ','.join('?' * len(ext_ids))
+            for r in conn.execute(q, tuple([company_id] + ext_ids)).fetchall():
+                if (r['email'] or '').strip():
+                    cc_list.append(r['email'].strip())
+        except Exception:
+            pass
+    for e in int_emails:
+        if e and e.strip():
+            cc_list.append(e.strip())
+    if not cc_list:
+        cc_raw = get_setting('submission_cc_emails', '') or ''
+        cc_list = [e.strip() for e in re.split(r'[,\n;]+', cc_raw) if e.strip()]
+    _seen = set()
+    return [e for e in cc_list if not (e.lower() in _seen or _seen.add(e.lower()))]
+
+
+def _send_submission_email(to_list, cc_list, subject, html_body, attach_cids, conn, company_id, meta=None):
     """Build a MIME email (HTML body + resume PDF attachments) and SMTP-send it
     to To + CC. Returns (ok, error)."""
     from email.mime.application import MIMEApplication
@@ -15155,6 +15178,11 @@ def _send_submission_email(to_list, cc_list, subject, html_body, attach_cids, co
     domain = smtp_email.split('@')[-1] if '@' in smtp_email else 'hirelab.local'
     msg['Message-ID'] = _eut.make_msgid(domain=domain)
     msg['Date'] = _eut.formatdate(localtime=True)
+    if meta is not None:
+        meta.update({'message_id': msg['Message-ID'], 'from_addr': smtp_email, 'from_name': smtp_name,
+                     'date_str': msg['Date'],
+                     'html': '<div style="font-family:Calibri,Arial,sans-serif;font-size:14px">' + html_body + '</div>',
+                     'text': re.sub('<[^<]+?>', '', html_body)})
 
     alt = MIMEMultipart('alternative')
     alt.attach(MIMEText(re.sub('<[^<]+?>', '', html_body), 'plain', 'utf-8'))
@@ -15205,6 +15233,37 @@ def _send_submission_email(to_list, cc_list, subject, html_body, attach_cids, co
         return False, 'Email authentication failed. Check email + app password in Settings.'
     except Exception as e:
         return False, f'Failed to send: {e}'
+
+
+def _record_client_submission(conn, company_id, mid, to_list, cc_list, subject, meta, cand_ids):
+    """Keep the profile-share e-mail: who it went to (To + CC), its Message-ID and
+    body, and which candidates. The client feedback chaser (modules/job_pulse.py)
+    replies inside this thread, to the same people, with the mail quoted below."""
+    try:
+        mid_hdr = (meta or {}).get('message_id') or ''
+        conn.execute('INSERT INTO client_submissions (company_id, mandate_id, to_emails, cc_emails, subject, message_id, '
+                     'candidate_ids, sent_by, sent_at) VALUES (?,?,?,?,?,?,?,?,?)',
+                     (company_id, mid, json.dumps(to_list), json.dumps(cc_list), subject, mid_hdr, json.dumps(cand_ids),
+                      int(session.get('user_id') or 0), ts()))
+        if mid_hdr:
+            # The Sent copy, so the chaser can quote it at once (the Gmail sync
+            # files the same Message-ID later without making a second copy).
+            _suid = _mail_sender_uid()
+            _sid = _mail_identity(_suid) if _suid else None
+            _box = _suid if (_sid and _sid.get('mailbox')) else 0
+            if not conn.execute('SELECT 1 FROM emails WHERE owner_id=? AND msg_id=? AND COALESCE(user_id,0)=?',
+                                (company_id, mid_hdr, _box)).fetchone():
+                text = (meta.get('text') or '')
+                conn.execute("INSERT INTO emails (owner_id,msg_id,folder,from_addr,from_name,to_addr,cc,subject,date_str,"
+                             "date_ts,snippet,body,body_html,thread_id,is_read,created_at,user_id) "
+                             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)",
+                             (company_id, mid_hdr, 'Sent', meta.get('from_addr') or '', meta.get('from_name') or '',
+                              ', '.join(to_list), ', '.join(cc_list), subject, meta.get('date_str') or ts(), time.time(),
+                              re.sub(r'\s+', ' ', text)[:200], text[:20000], (meta.get('html') or '')[:400000],
+                              _conv_thread_id(meta.get('from_addr') or '', (to_list or [''])[0], subject), ts(), _box))
+        conn.commit()
+    except Exception as e:
+        print('[submission] record failed (non-fatal): %s' % e)
 
 
 @app.route('/api/mandates/<int:mid>/submit-to-client', methods=['POST'])
@@ -15279,10 +15338,12 @@ def submit_to_client(mid):
                 + '<p style="font-family:Calibri,Arial,sans-serif;font-size:14px">' + _sub_esc(intro) + '</p>'
                 + table + '<br>' + sig)
 
+        meta = {}
         ok, err = _send_submission_email(to_list, cc_list, subject, final_html,
-                                         [c['id'] for c in rows], conn, company_id)
+                                         [c['id'] for c in rows], conn, company_id, meta=meta)
         if not ok:
             return jsonify({'error': err}), 502
+        _record_client_submission(conn, company_id, mid, to_list, cc_list, subject, meta, [c['id'] for c in rows])
 
         # Log to each candidate's journey.
         for c in rows:
@@ -18749,7 +18810,7 @@ def _wrap_email_html(html):
 def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
                        in_reply_to='', references='', thread_id='', candidate_id=None,
                        append_signature=True, attachment_ids=None, forward_from_email_id=None,
-                       extra_headers=None, smtp_override=None, reply_to=None):
+                       extra_headers=None, smtp_override=None, reply_to=None, extra_files=None):
     """THE single outgoing-email pipeline. Builds multipart plain+HTML, sets
     Message-ID / In-Reply-To / References, appends the official signature, sends
     via SMTP, and stores the sent copy in `emails` (+ `email_messages` if linked
@@ -18801,6 +18862,16 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
         _ca.close()
     except Exception as _ae:
         print('[email-service] attach resolve error:', _ae)
+    # Files on disk the caller attaches directly (e.g. candidate CVs on a client chaser);
+    # a copy is kept with the sent e-mail, like a forwarded attachment.
+    for _f in (extra_files or []):
+        try:
+            if _f.get('path') and os.path.exists(_f['path']):
+                _att_files.append({'id': None, 'filename': _f.get('filename') or os.path.basename(_f['path']),
+                                   'mime': _f.get('mime') or 'application/octet-stream', 'path': _f['path'],
+                                   'forward': True})
+        except Exception:
+            pass
 
     mid = make_msgid(domain=email_addr.split('@')[-1] if '@' in email_addr else 'hirelab.com')
 

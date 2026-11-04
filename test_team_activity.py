@@ -90,7 +90,8 @@ def test_overview_is_admin_only_and_adds_up(srv):
     assert j['ok']
     riya = next(u for u in j['users'] if u['id'] == RIYA)
     day = riya['days'][today]
-    assert day['first'] == '10:00' and riya['active_min'] >= 90
+    # first activity: 10:00, or earlier when a live ping from an earlier test landed before 10am IST
+    assert day['first'] <= '10:00' and riya['active_min'] >= 90
     # the break after 11:00 (a live ping from an earlier test can split it when run between 11am and 3pm IST)
     assert any(b[0] == 660 and b[1] <= 900 for b in day['breaks'])
     assert riya['submissions'] >= 1 and riya['actions'].get('whatsapp') == 1 and riya['actions'].get('note') == 1
