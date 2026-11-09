@@ -1490,9 +1490,6 @@ def respond(tok):
 
 @pages.route('/jobmail')
 def jobmail_page():
-    core = _core()
-    if not core.current_user():
-        return redirect('/')
-    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'jobmail.html')
-    with open(p, encoding='utf-8') as f:
-        return Response(f.read(), mimetype='text/html')
+    # Job Mail is removed from the app menu (Nov 2026). The page now goes Home;
+    # the background sender, the /api/jobmail data and the candidates' /jm/ links keep working.
+    return redirect('/')
