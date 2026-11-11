@@ -24,6 +24,12 @@ Now:
   POST /api/mail/sync-now   {box}   start a sync in the background
 
 Switch off the background part without a redeploy: env MAIL_AUTOSYNC=off.
+
+Nov 2026 — all mailboxes at the same time: every due mailbox syncs in parallel
+(up to MAIL_SYNC_WORKERS, default 6) instead of one after another, the default
+interval is 2 minutes, and pressing Sync (or POST /sync-now {box:'all'}) starts
+every mailbox the user has at once. Before each pass, deletes made in the Email
+Box are sent to Gmail's Trash (modules/mail_power).
 """
 
 import os
@@ -31,6 +37,7 @@ import sys
 import time
 import datetime
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Blueprint, request, jsonify, session
 
@@ -207,9 +214,9 @@ def reset(oid, uid):
 
 def _minutes():
     try:
-        return max(2, min(int(_core().get_setting('mail_autosync_minutes', '5') or 5), 120))
+        return max(1, min(int(_core().get_setting('mail_autosync_minutes', '2') or 2), 120))
     except Exception:
-        return 5
+        return 2
 
 
 def due(st, now=None, every=None):
@@ -258,9 +265,74 @@ def mailboxes():
 
 def run_box(oid, uid):
     core = _core()
+    try:   # deletes / restores made in the Email Box -> Gmail first
+        from modules.mail_power import process
+        process(oid, uid)
+    except Exception as e:
+        print('[mail-sync] gmail ops %s/%s: %s' % (oid, uid, e))
     if uid:
         return core._sync_user_mailbox(oid, uid)
     return core._sync_mailbox(oid)
+
+
+def _workers():
+    try:
+        return max(1, min(int(os.environ.get('MAIL_SYNC_WORKERS', '6') or 6), 16))
+    except ValueError:
+        return 6
+
+
+def _safe_run(box):
+    oid, uid = box
+    try:
+        run_box(oid, uid)
+        return 1
+    except Exception as e:
+        print('[mail-sync] %s/%s: %s' % (oid, uid, e))
+        return 0
+
+
+def run_parallel(boxes):
+    """Sync these mailboxes at the same time. Returns how many passes ran."""
+    boxes = list(dict.fromkeys(boxes))
+    if not boxes:
+        return 0
+    if len(boxes) == 1:
+        return _safe_run(boxes[0])
+    with ThreadPoolExecutor(max_workers=min(_workers(), len(boxes))) as ex:
+        return sum(ex.map(_safe_run, boxes))
+
+
+def user_boxes(oid, uid, admin):
+    """The mailboxes this user owns: their own Gmail (if connected) + the company box (admins)."""
+    core = _core()
+    out = []
+    try:
+        st = core.mail_identity_status(uid) if uid else {}
+        if st.get('own_mailbox'):
+            out.append((int(oid), int(uid)))
+    except Exception:
+        pass
+    if admin:
+        try:
+            with core.tenant_pin(oid), core.mail_sender(0):
+                if core.get_setting('smtp_email', '') and core.get_setting('smtp_app_password', ''):
+                    out.append((int(oid), 0))
+        except Exception:
+            pass
+    return out
+
+
+def start_others(oid, current_uid):
+    """Pressing Sync in one mailbox also starts the user's other mailboxes, in parallel."""
+    if _core().app.config.get('TESTING'):
+        return []
+    uid = int(session.get('user_id') or 0)
+    others = [b for b in user_boxes(oid, uid, is_company_admin() and not session.get('view_as_company'))
+              if b != (int(oid or 0), int(current_uid or 0)) and b not in _RUNNING]
+    for b in others:
+        _start_bg(*b)
+    return others
 
 
 def tick():
@@ -270,16 +342,8 @@ def tick():
     if (os.environ.get('EMAIL_AGENT_BG', '') or '').strip().lower() in ('off', '0', 'false', 'no'):
         return 0
     every = _minutes()
-    n = 0
-    for oid, uid in mailboxes():
-        if not due(status_row(oid, uid), every=every):
-            continue
-        try:
-            run_box(oid, uid)
-            n += 1
-        except Exception as e:
-            print('[mail-sync] %s/%s: %s' % (oid, uid, e))
-    return n
+    todo = [(oid, uid) for oid, uid in mailboxes() if due(status_row(oid, uid), every=every)]
+    return run_parallel(todo)
 
 
 def _loop():
@@ -312,7 +376,7 @@ start_worker()
 # ══════════════════════════════════════════════════════════════════════════
 def _box(d=None):
     b = str((d or {}).get('box') or request.args.get('box') or 'me')
-    return 'company' if b == 'company' else 'me'
+    return b if b in ('company', 'all') else 'me'
 
 
 def _imap_try(email_addr, pw):
@@ -354,6 +418,8 @@ def connect():
     core = _core()
     d = request.get_json(silent=True) or {}
     box = _box(d)
+    if box == 'all':
+        box = 'me'
     uid = int(session.get('user_id') or 0)
     oid = int(effective_company_id() or 0)
     if session.get('view_as_company'):
@@ -450,6 +516,12 @@ def sync_now():
     box = _box(d)
     uid = int(session.get('user_id') or 0)
     oid = int(effective_company_id() or 0)
+    if box == 'all':
+        boxes = [b for b in user_boxes(oid, uid, is_company_admin() and not session.get('view_as_company'))
+                 if b not in _RUNNING]
+        for b in boxes:
+            _start_bg(*b)
+        return jsonify({'ok': True, 'started': bool(boxes), 'boxes': len(boxes), 'running': not boxes})
     if box == 'company' and not is_company_admin():
         return jsonify({'error': 'Only the agency admin can sync the company mailbox.'}), 403
     key_uid = uid if box == 'me' else 0

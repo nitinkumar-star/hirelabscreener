@@ -16009,7 +16009,10 @@ def _sync_mailbox_impl(oid, box_uid=0):
         email_to_cid[(r['email'] or '').strip().lower()] = r['id']
     folders = [('INBOX', 'Inbox'), ('"' + _find_sent_folder(M) + '"', 'Sent')]
     added = 0
-    _budget = [60]    # at most 60 full mail downloads per run; the rest next run
+    try:   # full mail downloads per run (the rest next run); mail_sync_batch, default 150
+        _budget = [max(20, min(int(get_setting('mail_sync_batch', '150') or 150), 1000))]
+    except (TypeError, ValueError):
+        _budget = [150]
     _since_commit = 0  # commit in small batches so the write lock is released
                        # frequently during the slow IMAP fetch loop (otherwise the
                        # whole DB stays locked for the entire sync)
@@ -16020,7 +16023,7 @@ def _sync_mailbox_impl(oid, box_uid=0):
                 if typ != 'OK': continue
                 typ, data = M.search(None, f'(SINCE {since})')
                 if typ != 'OK' or not data or not data[0]: continue
-                ids = data[0].split()[-400:]
+                ids = data[0].split()[-1500:]
                 # ONE round trip for all Message-IDs, ONE query for which we
                 # already have — then only NEW mails are downloaded. Before,
                 # every 2-minute cycle re-downloaded all of them (and re-wrote
@@ -16115,6 +16118,12 @@ def _sync_mailbox_impl(oid, box_uid=0):
             except Exception:
                 continue
         conn.commit()
+        # Mail put in Gmail's Trash (in Gmail itself) -> deleted here as well.
+        try:
+            from modules.mail_power import mirror_gmail_trash
+            mirror_gmail_trash(M, conn, oid, box_uid, since)
+        except Exception as _te:
+            print('[email-sync] trash mirror:', _te)
     finally:
         conn.close()
         try: M.logout()
@@ -16196,6 +16205,16 @@ _SYNC_MORE = {}   # (company, box) -> True while older mail is still waiting to 
 @login_required
 def emailbox_sync():
     oid = effective_company_id(); uid = _box_uid()
+    try:   # every other mailbox of this user syncs at the same time, in the background
+        from modules.mail_sync import start_others
+        start_others(oid, uid)
+    except Exception as e:
+        print('[emailbox] parallel sync: %s' % e)
+    try:
+        from modules.mail_power import process as _gmail_ops
+        _gmail_ops(oid, uid)
+    except Exception as e:
+        print('[emailbox] gmail ops: %s' % e)
     if uid:
         ident = _mail_identity(uid)
         if not (ident and ident.get('mailbox')):
@@ -16398,14 +16417,18 @@ def _eb_counts(conn, where, params):
             'starred': conn.execute('SELECT COUNT(*) n FROM emails e WHERE ' + where +
                                     " AND COALESCE(e.is_deleted,0)=0 AND COALESCE(e.is_starred,0)=1",
                                     params).fetchone()['n'],
-            'drafts': one(" AND e.folder='Drafts'")}
+            'drafts': one(" AND e.folder='Drafts'"),
+            'trash': conn.execute('SELECT COUNT(*) n FROM emails e WHERE ' + where +
+                                  " AND COALESCE(e.is_deleted,0)=1", params).fetchone()['n']}
 
 
 @app.route('/api/emailbox/list', methods=['GET'])
 @login_required
 def emailbox_list():
-    """One page of the mailbox. Server-side search (all of it, not just the newest
-    500), folders incl. starred / archived, unread counts, and the linked candidate."""
+    """One page of the mailbox. Server-side Gmail-style search (from:, to:, subject:,
+    "phrase", -word, a OR b, has:attachment, is:unread, in:sent, after:, newer_than: …)
+    over all of it; folders incl. starred / archived / trash, counts, linked candidate.
+    A search from the Inbox (or All mail) looks through ALL mail, like Gmail."""
     conn = get_db()
     folder = request.args.get('folder', '')
     try:
@@ -16414,31 +16437,51 @@ def emailbox_list():
     except ValueError:
         limit, offset = 100, 0
     where, params = _box_where('e')
+    raw_q = (request.args.get('q', '') or '').strip()
+    try:
+        from modules.mail_power import parse_search
+        sf, sp, scope, terms = parse_search(raw_q)
+    except Exception:
+        sf, sp = _eb_search_sql(raw_q); scope, terms = None, raw_q.split()
+    if folder == 'Trash' or scope == 'trash':
+        scope = 'trash'
+    elif raw_q and folder in ('', 'Inbox'):
+        scope = 'anywhere'
     q = ('SELECT ' + _EB_LIST_COLS + ' FROM emails e LEFT JOIN candidates k ON k.id=e.candidate_id '
-         'AND k.owner_id=e.owner_id WHERE ' + where + ' AND COALESCE(e.is_deleted,0)=0')
+         'AND k.owner_id=e.owner_id WHERE ' + where)
     p = list(params)
-    if folder == 'Archived':
-        q += ' AND COALESCE(e.is_archived,0)=1'
-    elif folder == 'Starred':
-        q += ' AND COALESCE(e.is_starred,0)=1'
+    if scope == 'trash':
+        q += ' AND COALESCE(e.is_deleted,0)=1'
     else:
-        q += ' AND COALESCE(e.is_archived,0)=0'
-        if folder in ('Inbox', 'Sent', 'Drafts'):
-            q += ' AND e.folder=?'; p.append(folder)
-        elif folder == 'Unread':
-            q += " AND e.is_read=0 AND e.folder='Inbox'"
-        elif folder in ('Candidate', 'Candidates'):
-            q += ' AND e.candidate_id IS NOT NULL'
-    sf, sp = _eb_search_sql(request.args.get('q', ''))
+        q += ' AND COALESCE(e.is_deleted,0)=0'
+        if scope == 'anywhere':
+            pass
+        elif folder == 'Archived':
+            q += ' AND COALESCE(e.is_archived,0)=1'
+        elif folder == 'Starred':
+            q += ' AND COALESCE(e.is_starred,0)=1'
+        else:
+            q += ' AND COALESCE(e.is_archived,0)=0'
+            if folder in ('Inbox', 'Sent', 'Drafts'):
+                q += ' AND e.folder=?'; p.append(folder)
+            elif folder == 'Unread':
+                q += " AND e.is_read=0 AND e.folder='Inbox'"
+            elif folder in ('Candidate', 'Candidates'):
+                q += ' AND e.candidate_id IS NOT NULL'
     q += sf; p += sp
     q += ' ORDER BY e.date_ts DESC LIMIT ? OFFSET ?'
-    rows = conn.execute(q, p + [limit + 1, offset]).fetchall()
+    try:
+        rows = conn.execute(q, p + [limit + 1, offset]).fetchall()
+    except sqlite3.OperationalError as e:
+        conn.close()
+        return jsonify({'error': 'Search could not run: %s' % e}), 400
     counts = _eb_counts(conn, where, params)
     conn.close()
     more = len(rows) > limit
     return jsonify({'ok': True, 'emails': [dict(r) for r in rows[:limit]], 'unread': counts['unread'],
                     'counts': counts, 'has_more': more, 'offset': offset, 'limit': limit,
-                    'box': 'me' if params[1] else 'company'})
+                    'box': 'me' if params[1] else 'company', 'terms': terms[:12] if raw_q else [],
+                    'scope': scope or ''})
 
 
 @app.route('/api/emailbox/counts', methods=['GET'])
@@ -16468,8 +16511,9 @@ _EB_BULK = {'read': 'is_read=1', 'unread': 'is_read=0', 'archive': 'is_archived=
 @app.route('/api/emailbox/bulk', methods=['POST'])
 @login_required
 def emailbox_bulk():
-    """Mark read/unread, star, archive or delete mails in the ATS. Gmail itself is
-    never changed (the mailbox is opened read-only). Deleting a draft removes it."""
+    """Mark read/unread, star, archive or delete mails. Delete also moves the mail to
+    Gmail's Trash (restore brings it back) through modules/mail_power. Deleting a
+    draft removes it."""
     d = request.json or {}
     act = d.get('action', '')
     if act not in _EB_BULK:
@@ -16482,6 +16526,13 @@ def emailbox_bulk():
         return jsonify({'error': 'Nothing selected'}), 400
     conn = get_db(); where, params = _box_where()
     n = 0
+    gmail_q = 0
+    if act in ('delete', 'restore'):
+        try:
+            from modules.mail_power import on_bulk
+            gmail_q = on_bulk(conn, params[0], params[1], ids, act)
+        except Exception as e:
+            print('[emailbox] gmail queue: %s' % e)
     for i in range(0, len(ids), 400):
         chunk = ids[i:i + 400]
         inn = ','.join('?' * len(chunk))
@@ -16493,7 +16544,13 @@ def emailbox_bulk():
     conn.commit()
     counts = _eb_counts(conn, *_box_where('e'))
     conn.close()
-    return jsonify({'ok': True, 'changed': n, 'counts': counts, 'unread': counts['unread']})
+    if gmail_q:
+        try:
+            from modules.mail_power import kick
+            kick(params[0], params[1])
+        except Exception:
+            pass
+    return jsonify({'ok': True, 'changed': n, 'counts': counts, 'unread': counts['unread'], 'gmail': gmail_q})
 
 
 def _eb_ids(v):
@@ -17061,22 +17118,23 @@ def emailbox_thread():
     marks it read (?mark=0 to just look). Carries the linked candidate."""
     eid = request.args.get('eid')
     conn = get_db(); oid = effective_company_id(); where, params = _box_where()
-    base = conn.execute("SELECT subject, thread_id, msg_id, candidate_id FROM emails WHERE id=? AND " + where,
-                        [eid] + params).fetchone()
+    base = conn.execute("SELECT subject, thread_id, msg_id, candidate_id, COALESCE(is_deleted,0) AS is_deleted "
+                        "FROM emails WHERE id=? AND " + where, [eid] + params).fetchone()
     if not base:
         conn.close(); return jsonify({'error': 'not found'}), 404
+    dele = 1 if base['is_deleted'] else 0     # opened from Trash: show the deleted messages
     tid = (base['thread_id'] or '').strip()
     cols = ("id,folder,from_addr,from_name,to_addr,cc,bcc,subject,date_ts,date_str,body,body_html,snippet,"
             "thread_id,msg_id,in_reply_to,refs,is_read,is_draft,candidate_id,COALESCE(is_starred,0) AS is_starred,"
             "COALESCE(is_archived,0) AS is_archived")
     if tid:
-        rows = conn.execute("SELECT " + cols + " FROM emails WHERE " + where + " AND COALESCE(is_deleted,0)=0 "
-                            "AND (thread_id=? OR id=?) ORDER BY date_ts ASC", params + [tid, eid]).fetchall()
+        rows = conn.execute("SELECT " + cols + " FROM emails WHERE " + where + " AND COALESCE(is_deleted,0)=? "
+                            "AND (thread_id=? OR id=?) ORDER BY date_ts ASC", params + [dele, tid, eid]).fetchall()
         thread = [dict(r) for r in rows]
     else:
         key = _norm_subject(base['subject'])
-        rows = conn.execute("SELECT " + cols + " FROM emails WHERE " + where + " AND COALESCE(is_deleted,0)=0 "
-                            "AND COALESCE(thread_id,'')='' ORDER BY date_ts ASC LIMIT 2000", params).fetchall()
+        rows = conn.execute("SELECT " + cols + " FROM emails WHERE " + where + " AND COALESCE(is_deleted,0)=? "
+                            "AND COALESCE(thread_id,'')='' ORDER BY date_ts ASC LIMIT 2000", params + [dele]).fetchall()
         thread = [dict(r) for r in rows if _norm_subject(r['subject']) == key or str(r['id']) == str(eid)]
     for m in thread:
         m['attachments'] = [dict(a) for a in _attachments_for_email(conn, oid, m['id'])]

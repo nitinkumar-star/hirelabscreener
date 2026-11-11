@@ -69,6 +69,7 @@ _MODULE_NAMES = [
     'payments_online', # Razorpay: pay online after the trial / each month -> agency opens again automatically
     'profile_groups',  # your own profile groups (Sales, Production …) with sub-fields, searchable in Talent
     'mail_sync',       # Gmail: guided connect, auto-sync of every mailbox, status + plain errors
+    'mail_power',      # Email Box: delete reaches Gmail Trash, Gmail-style search, DeepSeek compose
     'intro_tour',      # first sign-in: a guided walk through every tab
     'ai_meter',        # AI cost meter in ₹: per agency and per recruiter
     'perf',            # Speed: indexes on the core tables (candidates, stage_history, events …)
