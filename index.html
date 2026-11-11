@@ -6183,18 +6183,66 @@ async function renderEmailBox(){
     +(needMail?'<div class="eb2-banner" role="status"><b>Connect your Gmail to get your own inbox.</b> Mail you send and receive there will show up here &mdash; only you can see it. '
       +'<button class="w1-btn pri" onclick="openGmailWizard(\'me\')">Connect Gmail (1 minute)</button></div>':'')
     +'<div class="w2-ebbar">'
-    +'<div class="eb2-chips" id="eb2-chips">'+tab('Inbox','Inbox',c.unread)+tab('Unread','Unread')+tab('Starred','Starred')+tab('Sent','Sent')+tab('Drafts','Drafts',c.drafts)+tab('Candidates','Candidates')+tab('Archived','Archived')+tab('','All mail')+'</div>'
-    +'<input class="inp" id="eb-search" type="search" placeholder="Search all mail" aria-label="Search mail" value="'+esc(window._eb.q||'')+'" style="margin-left:auto;font-size:13px;width:240px;padding:7px 11px" oninput="ebSearchDebounced()">'
+    +'<div class="eb2-chips" id="eb2-chips">'+tab('Inbox','Inbox',c.unread)+tab('Unread','Unread')+tab('Starred','Starred')+tab('Sent','Sent')+tab('Drafts','Drafts',c.drafts)+tab('Candidates','Candidates')+tab('Archived','Archived')+tab('','All mail')+tab('Trash','Trash')+'</div>'
+    +'<div class="eb2-sbox"><input class="inp" id="eb-search" type="search" placeholder="Search mail  (from:  subject:  has:attachment …)" aria-label="Search mail" value="'+esc(window._eb.q||'')+'" oninput="ebSearchDebounced()" onkeydown="if(event.key===\'Enter\'){clearTimeout(_ebSearchT);window._eb.q=this.value.trim();window._eb.sel={};ebLoadList(false);}">'
+    +'<button class="w1-btn ic" title="Advanced search" aria-label="Advanced search" aria-haspopup="dialog" onclick="ebAdvSearch()">&#9881;</button></div>'
     +'<button class="w1-btn pri" onclick="openCompose()">Compose</button></div>'
     +'<div class="eb2-wrap'+(_ebSplit()?' split':'')+'" id="eb2-wrap">'
     +'<div class="eb2-listcol"><div class="eb2-bulk" id="eb2-bulk"></div><div class="w2-eblist" id="eb-list"><div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div></div><div id="eb2-more"></div></div>'
     +(_ebSplit()?'<div class="eb2-pane" id="eb2-pane" aria-live="polite"><div class="eb2-pane-empty">Select a conversation to read it here.</div></div>':'')
     +'</div>';
   loadMailSyncStrips();
+  _ebAutoSync();
   await ebLoadList(false);
   if(window._eb.openId && _ebSplit()) openEmail(window._eb.openId, true);
 }
 function ebFolder(id){ window._emailFolder=id; window._eb.sel={}; window._eb.openId=null; renderEmailBox(); }
+function ebClearSearch(){ window._eb.q=''; var i=document.getElementById('eb-search'); if(i) i.value=''; window._eb.sel={}; ebLoadList(false); }
+// Gmail-style advanced search: fills the search box with operators.
+function ebAdvSearch(){
+  var ex=document.getElementById('eb2-adv'); if(ex){ ex.remove(); return; }
+  var host=document.querySelector('.eb2-sbox'); if(!host) return;
+  var d=document.createElement('div'); d.className='eb2-adv'; d.id='eb2-adv'; d.setAttribute('role','dialog'); d.setAttribute('aria-label','Advanced search');
+  var f=function(id,l,ph){ return '<label><span>'+l+'</span><input class="inp" id="ebs-'+id+'" placeholder="'+(ph||'')+'"></label>'; };
+  d.innerHTML=f('from','From','name or email')+f('to','To','name or email')+f('subject','Subject')+f('has','Has the words')+f('not',"Doesn't have")
+    +'<label><span>Date within</span><select class="inp" id="ebs-when"><option value="">Any time</option><option value="1d">1 day</option><option value="7d">1 week</option><option value="1m">1 month</option><option value="3m">3 months</option><option value="1y">1 year</option></select></label>'
+    +'<label><span>Search in</span><select class="inp" id="ebs-in"><option value="">All mail</option><option value="inbox">Inbox</option><option value="sent">Sent</option><option value="archived">Archived</option><option value="trash">Trash</option></select></label>'
+    +'<label style="gap:14px"><span></span><span style="flex:none"><input type="checkbox" id="ebs-att"> Has attachment</span><span style="flex:none"><input type="checkbox" id="ebs-unread"> Unread</span></label>'
+    +'<div class="hint">You can also type these in the search box: <code>from:priya</code> <code>subject:"offer letter"</code> <code>-newsletter</code> <code>cv OR resume</code> <code>has:attachment</code> <code>filename:pdf</code> <code>is:unread</code> <code>after:2026/10/01</code> <code>newer_than:7d</code> <code>candidate:rahul</code></div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end"><button class="w1-btn" onclick="document.getElementById(\'eb2-adv\').remove()">Cancel</button><button class="w1-btn pri" onclick="ebAdvGo()">Search</button></div>';
+  host.appendChild(d);
+  var q=document.getElementById('ebs-from'); if(q) q.focus();
+  d.addEventListener('keydown',function(ev){ if(ev.key==='Enter'){ ev.preventDefault(); ebAdvGo(); } else if(ev.key==='Escape') d.remove(); });
+}
+function ebAdvGo(){
+  var g=function(id){ var e=document.getElementById('ebs-'+id); return e?(e.type==='checkbox'?e.checked:e.value.trim()):''; };
+  var qv=function(v){ return /\s/.test(v)?('"'+v.replace(/"/g,'')+'"'):v; };
+  var parts=[];
+  if(g('from')) parts.push('from:'+qv(g('from')));
+  if(g('to')) parts.push('to:'+qv(g('to')));
+  if(g('subject')) parts.push('subject:'+qv(g('subject')));
+  if(g('has')) parts.push(g('has'));
+  if(g('not')) g('not').split(/\s+/).forEach(function(w){ if(w) parts.push('-'+w); });
+  if(g('when')) parts.push('newer_than:'+g('when'));
+  if(g('in')) parts.push('in:'+g('in'));
+  if(g('att')) parts.push('has:attachment');
+  if(g('unread')) parts.push('is:unread');
+  var q=parts.join(' '); var a=document.getElementById('eb2-adv'); if(a) a.remove();
+  var i=document.getElementById('eb-search'); if(i) i.value=q;
+  window._eb.q=q; window._eb.sel={}; ebLoadList(false);
+}
+// Fresh mail without pressing Sync: every mailbox syncs in the background when
+// the Email Box opens, and the list refreshes itself while you look at it.
+function _ebAutoSync(){
+  var now=Date.now(); if(window._ebLastAuto && now-window._ebLastAuto<60000) return; window._ebLastAuto=now;
+  req('POST','/mail/sync-now',{box:'all'}).then(function(r){ if(r&&r.ok&&(r.started||r.running)) setTimeout(_ebSoftRefresh, 25000); }).catch(function(){});
+}
+function _ebSoftRefresh(){
+  if(document.visibilityState!=='visible' || !document.getElementById('eb-list')) return;
+  if(Object.keys(window._eb.sel||{}).length || document.getElementById('eb2-adv') || (window._eb.offset||0)>0) return;
+  ebLoadList(false);
+}
+setInterval(function(){ if(document.getElementById('eb-list')) _ebSoftRefresh(); }, 60000);
 var _ebSearchT=null;
 function ebSearchDebounced(){
   clearTimeout(_ebSearchT);
@@ -6208,7 +6256,7 @@ async function ebLoadList(append){
   if(r&&r.error){ var b=document.getElementById('eb-list'); if(b) b.innerHTML='<div class="w3-empty" style="padding:30px">'+esc(r.error)+'</div>'; return; }
   var rows=(r&&r.emails)||[];
   E.emails=append?(E.emails||[]).concat(rows):rows; E.offset=off; E.more=!!(r&&r.has_more);
-  window._ebEmails=E.emails;
+  window._ebEmails=E.emails; E.terms=(r&&r.terms)||[]; E.scope=(r&&r.scope)||'';
   if(r&&r.counts){ E.counts=r.counts; _ebPaintCounts(); }
   renderEmailList();
 }
@@ -6235,11 +6283,17 @@ function _ebWhen(ts){
   if(d.toDateString()===now.toDateString()) return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
   return d.toLocaleDateString('en-GB',(d.getFullYear()===now.getFullYear())?{day:'2-digit',month:'short'}:{day:'2-digit',month:'short',year:'2-digit'});
 }
+function _ebHl(text){
+  var h=esc(text||''), terms=(window._eb.terms||[]).filter(function(t){ return t && t.length>1; });
+  if(!terms.length) return h;
+  var rx=new RegExp('('+terms.map(function(t){ return esc(t).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }).join('|')+')','gi');
+  return h.split(/(<[^>]*>|&[a-z#0-9]+;)/i).map(function(part){ return /^(<|&)/.test(part)?part:part.replace(rx,'<mark class="eb2-hl">$1</mark>'); }).join('');
+}
 function _ebRow(e, g){
   g=g||{count:1,unread:0,ids:[e.id],starred:e.is_starred,attach:e.n_attach,cand:e.candidate_name};
   var isDraft=e.is_draft||e.folder==='Drafts';
   var anyUnread=(g.unread||0)>0;
-  var who=isDraft?('<span class="eb2-draft">Draft</span> '+esc(e.to_addr||'(no recipient)')):(e.folder==='Sent'?('To: '+esc((e.to_addr||'').replace(/<[^>]*>/g,'').trim())):esc(e.from_name||e.from_addr||''));
+  var who=isDraft?('<span class="eb2-draft">Draft</span> '+esc(e.to_addr||'(no recipient)')):(e.folder==='Sent'?('To: '+_ebHl((e.to_addr||'').replace(/<[^>]*>/g,'').trim())):_ebHl(e.from_name||e.from_addr||''));
   var n=Math.max(g.count||1, g.thread_n||0);
   var cnt=(n>1)?(' <span class="eb2-cnt">'+n+'</span>'):'';
   var key=g.key||('t'+e.id);
@@ -6252,7 +6306,7 @@ function _ebRow(e, g){
     +'<label class="eb2-cb" onclick="event.stopPropagation()"><input type="checkbox" aria-label="Select"'+(sel?' checked':'')+' onchange="ebSel(\''+key+'\',this.checked)"></label>'
     +'<button class="eb2-star'+(g.starred?' on':'')+'" aria-label="'+(g.starred?'Unstar':'Star')+'" aria-pressed="'+(!!g.starred)+'" onclick="event.stopPropagation();ebStarKey(\''+key+'\')">'+(g.starred?'&#9733;':'&#9734;')+'</button>'
     +'<div class="eb2-main"><div class="eb2-l1"><span class="eb2-who">'+who+cnt+'</span>'+cand+'<span class="eb2-date">'+att+_ebWhen(e.date_ts)+'</span></div>'
-    +'<div class="eb2-l2"><span class="eb2-sub">'+esc(e.subject||'(no subject)')+'</span><span class="eb2-snip"> &ndash; '+esc(e.snippet||'')+'</span></div></div></div>';
+    +'<div class="eb2-l2"><span class="eb2-sub">'+_ebHl(e.subject||'(no subject)')+'</span><span class="eb2-snip"> &ndash; '+_ebHl(e.snippet||'')+'</span></div></div></div>';
 }
 function _ebGroups(){
   var groups={}, order=[];
@@ -6273,8 +6327,11 @@ function _ebGroups(){
 function renderEmailList(){
   var box=document.getElementById('eb-list'); if(!box) return;
   var list=_ebGroups(), E=window._eb;
-  box.innerHTML=list.map(function(g){ return _ebRow(g.latest,g); }).join('')
-    || '<div class="w3-empty" style="padding:30px;text-align:center">'+(E.q?'No mail matches <b>'+esc(E.q)+'</b>.':'No emails here yet. Click <b>Sync</b> to pull your inbox and sent mail.')+'</div>';
+  var scope=E.q?('<div class="eb2-scope">'+(E.scope==='trash'?'Searching Trash':(E.scope==='anywhere'?'Searching all mail':'Searching '+esc(window._emailFolder||'all mail')))
+      +' for <b>'+esc(E.q)+'</b> &middot; '+list.length+(E.more?'+':'')+' conversation'+(list.length===1?'':'s')+' &middot; <a href="#" onclick="event.preventDefault();ebClearSearch()">Clear</a></div>'):'';
+  var trashNote=(window._emailFolder==='Trash'&&!E.q&&list.length)?'<div class="eb2-scope">Mail you delete here is also moved to Gmail&rsquo;s Trash. Select mail and press <b>Restore</b> to bring it back (in Gmail too).</div>':'';
+  box.innerHTML=scope+trashNote+(list.map(function(g){ return _ebRow(g.latest,g); }).join('')
+    || '<div class="w3-empty" style="padding:30px;text-align:center">'+(E.q?'No mail matches <b>'+esc(E.q)+'</b>. Try fewer words, or <code>in:anywhere</code>.':(window._emailFolder==='Trash'?'Trash is empty.':'No emails here yet. Click <b>Sync</b> to pull your inbox and sent mail.'))+'</div>');
   var more=document.getElementById('eb2-more');
   if(more) more.innerHTML=E.more?'<div style="text-align:center;margin:-12px 0 20px"><button class="w1-btn" onclick="this.disabled=true;ebLoadList(true)">Load older mail</button></div>':'';
   _ebPaintBulk();
@@ -6290,9 +6347,11 @@ function _ebPaintBulk(){
   var bar=document.getElementById('eb2-bulk'); if(!bar) return;
   var n=Object.keys(window._eb.sel||{}).length;
   var allKeys=Object.keys(window._eb.groups||{});
-  var arch=(window._emailFolder==='Archived');
+  var arch=(window._emailFolder==='Archived'), trash=(window._emailFolder==='Trash');
   if(!n){ bar.innerHTML=allKeys.length?'<label class="eb2-all"><input type="checkbox" aria-label="Select all" onchange="ebSelAll(this.checked)"> Select all</label>':''; bar.classList.remove('on'); return; }
   bar.classList.add('on');
+  if(trash){ bar.innerHTML='<label class="eb2-all"><input type="checkbox" checked aria-label="Clear selection" onchange="ebSelAll(this.checked)"> '+n+' selected</label>'
+    +'<button class="w1-btn pri" onclick="ebBulk(\'restore\')">&#8630; Restore</button>'; return; }
   bar.innerHTML='<label class="eb2-all"><input type="checkbox" checked aria-label="Clear selection" onchange="ebSelAll(this.checked)"> '+n+' selected</label>'
     +'<button class="w1-btn" onclick="ebBulk(\'read\')">Mark read</button>'
     +'<button class="w1-btn" onclick="ebBulk(\'unread\')">Mark unread</button>'
@@ -6307,15 +6366,15 @@ function ebSelAll(on){
 }
 async function ebBulk(action, ids){
   ids=ids||_ebSelIds(); if(!ids.length) return;
-  if(action==='delete' && !confirm('Delete '+ids.length+' email(s) from the ATS? Your Gmail is not changed.')) return;
+  if(action==='delete' && !confirm('Delete '+ids.length+' email(s)? They are moved to Trash here and in Gmail (you can restore them from Trash).')) return;
   var r=await req('POST','/emailbox/bulk',{ids:ids,action:action,box:window._eb.box||''});
   if(!r||!r.ok){ toast('Error',esc((r&&r.error)||'Could not update')); return; }
   if(r.counts){ window._eb.counts=r.counts; _ebPaintCounts(); }
   window._eb.sel={};
-  var gone=/^(archive|unarchive|delete)$/.test(action);
+  var gone=/^(archive|unarchive|delete|restore)$/.test(action);
   if(gone && ids.some(function(i){return String(i)===String(window._eb.openId);})){ window._eb.openId=null; _ebPaneEmpty(); }
-  var labels={read:'Marked read',unread:'Marked unread',star:'Starred',unstar:'Star removed',archive:'Archived',unarchive:'Moved to inbox',delete:'Deleted'};
-  toast('OK',(labels[action]||'Done')+(gone?' &middot; <a href="#" onclick="event.preventDefault();ebBulk(\''+({archive:'unarchive',unarchive:'archive',delete:'restore'}[action])+'\','+JSON.stringify(ids).replace(/"/g,'')+')">Undo</a>':''));
+  var labels={read:'Marked read',unread:'Marked unread',star:'Starred',unstar:'Star removed',archive:'Archived',unarchive:'Moved to inbox',delete:'Deleted here and in Gmail',restore:'Restored here and in Gmail'};
+  toast('OK',(labels[action]||'Done')+(gone?' &middot; <a href="#" onclick="event.preventDefault();ebBulk(\''+({archive:'unarchive',unarchive:'archive',delete:'restore',restore:'delete'}[action])+'\','+JSON.stringify(ids).replace(/"/g,'')+')">Undo</a>':''));
   await ebLoadList(false);
 }
 function ebStarKey(key){ var g=(window._eb.groups||{})[key]; if(g) ebBulk(g.starred?'unstar':'star', g.ids); }
@@ -6327,7 +6386,7 @@ function ebRowClick(ev,id,isDraft){
 async function syncEmail(btn){
   if(btn){ btn.disabled=true; btn.innerHTML='&#8987; Syncing…'; }
   var total=0, r;
-  for(var i=0;i<5;i++){   // a new mailbox downloads in batches of 60
+  for(var i=0;i<10;i++){   // a new mailbox downloads in batches (150 a pass); your other mailboxes sync at the same time
     try{ r=await req('POST','/emailbox/sync'+_ebBoxQ('?'),{box:window._eb.box||''}); }catch(e){ r={error:'Sync failed'}; }
     if(!r||r.error) break;
     total+=(r.added||0);
@@ -6339,8 +6398,8 @@ async function syncEmail(btn){
     if(r.code==='no_personal_mailbox'){ toast('EMAIL','Connect your Gmail first: Settings &rarr; My Account'); return; }
     toast('Error', esc(String(r.error))); return;
   }
-  toast('OK',total+' new email(s) synced'+((r&&r.more)?' &middot; more older mail comes with the next sync':''));
-  ebLoadList(false);
+  toast('OK',total+' new email(s) synced'+((r&&r.more)?' &middot; more older mail comes with the next sync':'')+' &middot; deletes sent to Gmail');
+  ebLoadList(false); setTimeout(_ebSoftRefresh, 20000);
 }
 // HTML mail: rendered without scripts; height follows the content.
 function _emailContent(m){
@@ -6401,7 +6460,8 @@ function _ebThreadHtml(tr, inPane){
     +'<button class="w1-btn ic" title="'+(starred?'Unstar':'Star')+'" aria-label="'+(starred?'Unstar':'Star')+'" onclick="ebThreadAct(\''+(starred?'unstar':'star')+'\')">'+(starred?'&#9733;':'&#9734;')+'</button>'
     +'<button class="w1-btn ic" title="Mark unread" aria-label="Mark unread" onclick="ebThreadAct(\'unread\')">&#9993;</button>'
     +'<button class="w1-btn ic" title="'+(archived?'Move to inbox':'Archive')+'" aria-label="'+(archived?'Move to inbox':'Archive')+'" onclick="ebThreadAct(\''+(archived?'unarchive':'archive')+'\')">&#128229;</button>'
-    +'<button class="w1-btn ic dang" title="Delete" aria-label="Delete" onclick="ebThreadAct(\'delete\')">&#128465;</button>'
+    +(window._emailFolder==='Trash'?'<button class="w1-btn" title="Restore (here and in Gmail)" onclick="ebThreadAct(\'restore\')">&#8630; Restore</button>'
+      :'<button class="w1-btn ic dang" title="Delete (moves to Trash here and in Gmail)" aria-label="Delete" onclick="ebThreadAct(\'delete\')">&#128465;</button>')
     +(inPane?'':'<button class="w1-btn ic" aria-label="Close" onclick="var m=document.getElementById(\'modal-email\');if(m)m.remove()">&#10005;</button>')+'</div>';
   var body=msgs.map(function(m,i){
     var d=m.date_ts?new Date(m.date_ts*1000).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
@@ -6459,7 +6519,7 @@ function ebReply(id, all){
   var quoted='\n\n--- On '+qd+', '+(e.from_name||e.from_addr||'')+' wrote ---\n'+((e.body||e.snippet||'').split('\n').map(function(l){return '> '+l;}).join('\n'));
   var cand=window._eb.thread&&window._eb.thread.candidate;
   _ebClosePane();
-  openCompose(to,rSub,quoted,{in_reply_to:(e.msg_id||''),references:((e.refs||'')+' '+(e.msg_id||'')).trim(),thread_id:(e.thread_id||''),cc:cc,candidate_id:cand?cand.id:null});
+  openCompose(to,rSub,quoted,{in_reply_to:(e.msg_id||''),references:((e.refs||'')+' '+(e.msg_id||'')).trim(),thread_id:(e.thread_id||''),cc:cc,candidate_id:cand?cand.id:null,reply_eid:e.id});
 }
 function ebForward(id){
   var e=_ebMsg(id), subject=e.subject||'';
@@ -6477,7 +6537,7 @@ async function ebThreadAct(action){
   await ebBulk(action, ids);
   if(/^(star|unstar)$/.test(action)){ t.forEach(function(m){ m.is_starred=(action==='star')?1:0; }); _ebRepaintThread(); }
   if(action==='unread'){ window._eb.openId=null; _ebClosePane(); _ebPaneEmpty(); }
-  if(/^(archive|unarchive|delete)$/.test(action)) _ebClosePane();
+  if(/^(archive|unarchive|delete|restore)$/.test(action)) _ebClosePane();
 }
 function _ebRepaintThread(){
   var tr=window._eb.thread; if(!tr) return;
@@ -6615,55 +6675,126 @@ async function saveSignature(btn){
   var r=await req('POST','/email/signature',{sig_name:g('name'),sig_designation:g('designation'),sig_company:g('company'),sig_phone:g('phone'),sig_email:g('email'),sig_website:g('website')});
   if(st) st.textContent=(r&&r.ok)?'Saved \u2713':'Failed'; if(btn) btn.disabled=false;
 }
+// ═══ Compose — Gmail-style floating window + "Help me write" (DeepSeek) ═══
+function _cmpFmtBtn(cmd,label,title){ return '<button type="button" class="gc-tb" title="'+title+'" aria-label="'+title+'" onmousedown="event.preventDefault()" onclick="document.execCommand(\''+cmd+'\',false,null);document.getElementById(\'cmp-editor\').focus()">'+label+'</button>'; }
 function openCompose(to, subject, body, meta){
   meta = meta || {};
+  var ex=document.getElementById('modal-compose');
+  if(ex){ if(_cmpDirty() && !confirm('You already have a message open. Replace it? (It will be saved as a draft.)')){ ex.classList.remove('min'); return; }
+    if(_cmpDirty()) saveDraft(null); ex.remove(); }
   window._composeMeta = meta;
   window._composeDraftId = meta.draft_id || null;
   window._composeAttach = meta.attach ? meta.attach.slice() : [];
   window._composeFwdFrom = meta.forward_from_email_id || null;
-  var ex=document.getElementById('modal-compose'); if(ex) ex.remove();
+  window._cmpAiUndo = null;
   var initHtml=(meta.html!=null)?meta.html:(body||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
   var showCc=!!(meta.cc||meta.bcc);
   var me=(window._eb&&window._eb.me)||{};
   var from=(_isRecruiterScoped()||(window._eb&&window._eb.box==='me'))?(me.own_email||''):(me.company_email||'');
-  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-compose';
-  bg.innerHTML='<div class="modal eb2-compose" style="max-width:680px;width:96%" role="dialog" aria-modal="true" aria-label="New message"><div class="modal-head"><span class="modal-title" style="font-size:15px">'+(meta.in_reply_to?'Reply':(meta.forward_from_email_id?'Forward':(meta.draft_id?'Draft':'New message')))+'</span><button class="modal-x" aria-label="Close" onclick="cmpClose()">&#10005;</button></div>'
-    +'<div class="modal-body">'
-    +(from?'<div class="eb2-from">From <b>'+esc(from)+'</b></div>':'')
-    +'<div class="eb2-frow"><label for="cmp-to">To</label><div class="eb2-ac"><input class="inp" id="cmp-to" autocomplete="off" placeholder="name@example.com, …" value="'+esc(to||'')+'" oninput="cmpAc(this)" onkeydown="cmpAcKey(event,this)" onblur="setTimeout(cmpAcHide,150)"></div>'
-    +'<button type="button" class="eb2-cclink" id="cmp-cctog" onclick="cmpShowCc()"'+(showCc?' style="display:none"':'')+'>Cc / Bcc</button></div>'
+  var title=meta.in_reply_to?'Reply':(meta.forward_from_email_id?'Forward':(meta.draft_id?'Draft':'New Message'));
+  var isReply=!!meta.in_reply_to;
+  var tones=['professional','friendly','formal','persuasive','concise','warm'];
+  var w=document.createElement('div'); w.id='modal-compose'; w.className='gc-win'; w.setAttribute('role','dialog'); w.setAttribute('aria-label',title);
+  w.innerHTML='<div class="gc-head" onclick="cmpToggleMin(event)"><span class="gc-title" id="cmp-title">'+esc(title)+'</span>'
+    +'<button type="button" class="gc-hb" title="Minimise" aria-label="Minimise" onclick="event.stopPropagation();cmpToggleMin()">&#8212;</button>'
+    +'<button type="button" class="gc-hb" title="Full screen" aria-label="Full screen" onclick="event.stopPropagation();cmpToggleMax()">&#10530;</button>'
+    +'<button type="button" class="gc-hb" title="Save &amp; close" aria-label="Close" onclick="event.stopPropagation();cmpClose()">&#10005;</button></div>'
+    +'<div class="gc-body">'
+    +(from?'<div class="gc-row gc-fromrow"><span class="gc-lbl">From</span><span class="gc-from">'+esc(from)+'</span></div>':'')
+    +'<div class="gc-row"><label class="gc-lbl" for="cmp-to">To</label><div class="eb2-ac gc-fld"><input class="gc-inp" id="cmp-to" autocomplete="off" placeholder="Recipients" value="'+esc(to||'')+'" oninput="cmpAc(this)" onkeydown="cmpAcKey(event,this)" onblur="setTimeout(cmpAcHide,150)"></div>'
+    +'<button type="button" class="gc-cclink" id="cmp-cctog" onclick="cmpShowCc()"'+(showCc?' style="display:none"':'')+'>Cc Bcc</button></div>'
     +'<div id="cmp-ccrows" style="'+(showCc?'':'display:none')+'">'
-    +'<div class="eb2-frow"><label for="cmp-cc">Cc</label><div class="eb2-ac"><input class="inp" id="cmp-cc" autocomplete="off" value="'+esc(meta.cc||'')+'" oninput="cmpAc(this)" onkeydown="cmpAcKey(event,this)" onblur="setTimeout(cmpAcHide,150)"></div></div>'
-    +'<div class="eb2-frow"><label for="cmp-bcc">Bcc</label><div class="eb2-ac"><input class="inp" id="cmp-bcc" autocomplete="off" value="'+esc(meta.bcc||'')+'" oninput="cmpAc(this)" onkeydown="cmpAcKey(event,this)" onblur="setTimeout(cmpAcHide,150)"></div></div></div>'
-    +'<div class="eb2-frow"><label for="cmp-sub">Subject</label><input class="inp" id="cmp-sub" value="'+esc(subject||'')+'"></div>'
-    +'<div style="margin-bottom:8px"><select class="inp" id="cmp-tpl" aria-label="Insert a saved template" onchange="cmpApplyTemplate()" style="font-size:12px;width:100%"><option value="-1">&#128196; Insert a saved template…</option></select></div>'
-    +'<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;align-items:center">'+eBtn('bold','<b>B</b>')+eBtn('italic','<i>I</i>')+eBtn('underline','<u>U</u>')+eBtn('insertUnorderedList','&#8226; List')+eBtn('insertOrderedList','1. List')+'<button type="button" class="btn btn-o" style="font-size:12px;padding:3px 9px" onmousedown="event.preventDefault()" onclick="eLink()">&#128279; Link</button><select onchange="cmpInsertVar(this.value);this.selectedIndex=0" class="inp" style="font-size:11px;padding:3px 6px;width:auto" title="Focus and type to jump to the closest variable">'+etVarOptions()+'</select></div>'
-    +'<div id="cmp-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message" style="width:100%;min-height:200px;border:1px solid #ddd;border-radius:8px;padding:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;outline:none;overflow:auto" onkeyup="cmpSaveRange()" onmouseup="cmpSaveRange()">'+initHtml+'</div>'
+    +'<div class="gc-row"><label class="gc-lbl" for="cmp-cc">Cc</label><div class="eb2-ac gc-fld"><input class="gc-inp" id="cmp-cc" autocomplete="off" value="'+esc(meta.cc||'')+'" oninput="cmpAc(this)" onkeydown="cmpAcKey(event,this)" onblur="setTimeout(cmpAcHide,150)"></div></div>'
+    +'<div class="gc-row"><label class="gc-lbl" for="cmp-bcc">Bcc</label><div class="eb2-ac gc-fld"><input class="gc-inp" id="cmp-bcc" autocomplete="off" value="'+esc(meta.bcc||'')+'" oninput="cmpAc(this)" onkeydown="cmpAcKey(event,this)" onblur="setTimeout(cmpAcHide,150)"></div></div></div>'
+    +'<div class="gc-row"><input class="gc-inp" id="cmp-sub" placeholder="Subject" aria-label="Subject" value="'+esc(subject||'')+'"></div>'
+    // Help me write (DeepSeek)
+    +'<div class="gc-ai" id="cmp-ai" style="display:none">'
+    +'<div class="gc-ai-h"><span>&#10024; Help me write <em>DeepSeek</em></span><button type="button" class="gc-hb dark" aria-label="Close AI" onclick="cmpAiToggle(false)">&#10005;</button></div>'
+    +'<textarea id="cmp-ai-prompt" rows="2" placeholder="'+(isReply?'How should I reply? e.g. Thank them, confirm Friday 3 pm for the interview':'e.g. Invite Rahul for a second-round interview with the client on Friday 3 pm, ask him to confirm')+'" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key===\'Enter\'){event.preventDefault();cmpAi(\''+(isReply?'reply':'write')+'\');}"></textarea>'
+    +'<div class="gc-ai-row"><select id="cmp-ai-tone" class="gc-sel" aria-label="Tone">'+tones.map(function(t){ return '<option value="'+t+'">'+t.charAt(0).toUpperCase()+t.slice(1)+'</option>'; }).join('')+'</select>'
+    +'<select id="cmp-ai-len" class="gc-sel" aria-label="Length"><option value="short">Short</option><option value="medium" selected>Medium</option><option value="long">Detailed</option></select>'
+    +'<button type="button" class="gc-aigo" id="cmp-ai-go" onclick="cmpAi(\''+(isReply?'reply':'write')+'\')">&#10024; '+(isReply?'Write reply':'Create')+'</button></div>'
+    +'<div class="gc-ai-row gc-ai-refine"><span>Refine:</span>'
+    +[['improve','Improve'],['shorten','Shorten'],['elaborate','Elaborate'],['formal','Formal'],['friendly','Friendly'],['grammar','Fix grammar']].map(function(x){ return '<button type="button" class="gc-chip" onclick="cmpAi(\''+x[0]+'\')">'+x[1]+'</button>'; }).join('')
+    +'<button type="button" class="gc-chip" id="cmp-ai-undo" style="display:none" onclick="cmpAiUndo()">&#8630; Undo</button></div>'
+    +'<div id="cmp-ai-st" class="gc-ai-st" role="status"></div></div>'
+    +'<div id="cmp-editor" class="gc-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message body" onkeyup="cmpSaveRange()" onmouseup="cmpSaveRange()">'+initHtml+'</div>'
+    +'<div id="cmp-attach-list" class="gc-atts"></div>'
     +'<input type="file" id="cmp-file" multiple style="display:none" onchange="ebUploadAttach(this)">'
-    +'<div id="cmp-attach-list" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"></div>'
-    +'<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" style="background:#0F6E56;color:#fff;border:none" onclick="sendCompose(this)">&#9993; Send</button><button class="btn btn-o" onclick="document.getElementById(\'cmp-file\').click()">&#128206; Attach</button><button class="btn btn-o" onclick="saveDraft(this)">Save draft</button>'
-    +(meta.draft_id?'<button class="btn btn-o" style="color:#B42318" onclick="cmpDiscard()">Discard</button>':'')
-    +'<span id="cmp-status" style="font-size:11px;color:#0F6E56"></span></div>'
-    +'</div></div>';
-  bg.onclick=function(ev){ if(ev.target===bg) cmpClose(); };
-  document.body.appendChild(bg);
+    +'</div>'
+    +'<div class="gc-fmt" id="cmp-fmt" style="display:none">'+_cmpFmtBtn('bold','<b>B</b>','Bold')+_cmpFmtBtn('italic','<i>I</i>','Italic')+_cmpFmtBtn('underline','<u>U</u>','Underline')
+    +_cmpFmtBtn('insertUnorderedList','&#8226;&#8801;','Bulleted list')+_cmpFmtBtn('insertOrderedList','1&#8801;','Numbered list')+_cmpFmtBtn('removeFormat','T&#824;','Remove formatting')
+    +'<select onchange="cmpInsertVar(this.value);this.selectedIndex=0" class="gc-sel" title="Insert a variable">'+etVarOptions()+'</select>'
+    +'<select class="gc-sel" id="cmp-tpl" aria-label="Insert a saved template" onchange="cmpApplyTemplate()"><option value="-1">Templates…</option></select></div>'
+    +'<div class="gc-foot"><div class="gc-send"><button type="button" class="gc-sendb" onclick="sendCompose(this)" title="Send (Ctrl+Enter)">Send</button></div>'
+    +'<button type="button" class="gc-tb" title="Formatting options" aria-label="Formatting options" onclick="cmpFmtToggle()"><span style="text-decoration:underline;font-weight:700">A</span></button>'
+    +'<button type="button" class="gc-tb" title="Attach files" aria-label="Attach files" onclick="document.getElementById(\'cmp-file\').click()">&#128206;</button>'
+    +'<button type="button" class="gc-tb" title="Insert link" aria-label="Insert link" onmousedown="event.preventDefault()" onclick="eLink()">&#128279;</button>'
+    +'<button type="button" class="gc-tb gc-aibtn" title="Help me write with DeepSeek AI" onclick="cmpAiToggle()">&#10024;<span class="gc-aitxt"> Help me write</span></button>'
+    +'<span id="cmp-status" class="gc-st" role="status"></span>'
+    +'<button type="button" class="gc-tb gc-trash" title="Discard draft" aria-label="Discard draft" onclick="cmpDiscard()">&#128465;</button></div>';
+  document.body.appendChild(w);
+  w.addEventListener('keydown',function(ev){
+    if((ev.ctrlKey||ev.metaKey) && ev.key==='Enter' && ev.target.id!=='cmp-ai-prompt'){ ev.preventDefault(); sendCompose(w.querySelector('.gc-sendb')); }
+    else if(ev.key==='Escape' && !document.getElementById('cmp-acl')){ cmpToggleMin(); }
+  });
   window._cmpCtxKey=null; window._cmpCtxVal=null;
   ebRenderAttachList();
   cmpLoadTemplates();
   installTagAutocomplete('cmp-editor');
-  setTimeout(function(){ window._cmpSnap=_cmpSnapshot(); var f=document.getElementById(to?'cmp-editor':'cmp-to'); if(f) f.focus(); },0);
+  clearInterval(window._cmpAutoT);
+  window._cmpAutoT=setInterval(function(){ if(!document.getElementById('modal-compose')){ clearInterval(window._cmpAutoT); return; }
+    var v=_cmpVals(); if(_cmpDirty() && (v.text||v.sub||v.to) && !window._cmpSending) saveDraft(null, true); }, 15000);
+  setTimeout(function(){ window._cmpSnap=_cmpSnapshot(); var f=document.getElementById(to?(subject?'cmp-editor':'cmp-sub'):'cmp-to'); if(f){ f.focus();
+    if(f.id==='cmp-editor'){ try{ var r=document.createRange(); r.setStart(f,0); r.collapse(true); var s=window.getSelection(); s.removeAllRanges(); s.addRange(r); }catch(e){} } } },0);
 }
+function cmpToggleMin(ev){ var w=document.getElementById('modal-compose'); if(!w) return; if(ev && ev.target.closest && ev.target.closest('button')) return;
+  w.classList.toggle('min'); if(w.classList.contains('min')) w.classList.remove('max'); }
+function cmpToggleMax(){ var w=document.getElementById('modal-compose'); if(!w) return; w.classList.remove('min'); w.classList.toggle('max'); }
+function cmpFmtToggle(){ var f=document.getElementById('cmp-fmt'); if(f) f.style.display=f.style.display==='none'?'':'none'; }
+function cmpAiToggle(on){ var a=document.getElementById('cmp-ai'); if(!a) return; var w=document.getElementById('modal-compose'); if(w) w.classList.remove('min');
+  if(on===undefined) on=a.style.display==='none'; a.style.display=on?'':'none';
+  if(on){ var p=document.getElementById('cmp-ai-prompt'); if(p) p.focus(); } }
+async function cmpAi(mode){
+  var v=_cmpVals(), meta=window._composeMeta||{};
+  var p=document.getElementById('cmp-ai-prompt'), st=document.getElementById('cmp-ai-st'), go=document.getElementById('cmp-ai-go');
+  var prompt=p?p.value.trim():'';
+  if(mode==='write' && !prompt){ if(st){ st.className='gc-ai-st err'; st.textContent='Describe the email you want, e.g. who it is for and what it should say.'; } if(p) p.focus(); return; }
+  if(mode!=='write' && mode!=='reply' && !v.text){ if(st){ st.className='gc-ai-st err'; st.textContent='Write something first (or use Create), then refine it.'; } return; }
+  var chips=document.querySelectorAll('#cmp-ai button'); chips.forEach(function(b){ b.disabled=true; });
+  if(st){ st.className='gc-ai-st'; st.innerHTML='<span class="spinner" style="width:12px;height:12px;display:inline-block;vertical-align:-2px"></span> DeepSeek is writing…'; }
+  var r=null;
+  try{ r=await req('POST','/mail/ai-write',{mode:mode,prompt:prompt,tone:(document.getElementById('cmp-ai-tone')||{}).value||'professional',
+    length:(document.getElementById('cmp-ai-len')||{}).value||'medium',subject:v.sub,current_html:v.html,to:v.to,
+    reply_to_email_id:meta.reply_eid||null}); }catch(e){ r={error:'Could not reach the server'}; }
+  chips.forEach(function(b){ b.disabled=false; });
+  if(!r||!r.ok){ if(st){ st.className='gc-ai-st err'; st.textContent=(r&&r.error)||'AI could not write this time. Try again.'; } return; }
+  var ed=document.getElementById('cmp-editor'), sub=document.getElementById('cmp-sub');
+  window._cmpAiUndo={html:ed?ed.innerHTML:'',sub:sub?sub.value:''};
+  if(ed){
+    var keepQuote='';
+    if(mode==='reply'||mode==='write'){ var bq=ed.innerHTML.search(/<br>\s*On [^<]{5,160} wrote:|<blockquote|-{5,} Forwarded message/i); if(bq>=0) keepQuote=ed.innerHTML.slice(bq); }
+    ed.innerHTML=r.body_html+(keepQuote?('<br>'+keepQuote):'');
+  }
+  if(sub && r.subject && (!sub.value.trim() || (!meta.in_reply_to && mode==='write'))) sub.value=r.subject;
+  var u=document.getElementById('cmp-ai-undo'); if(u) u.style.display='';
+  if(st){ st.className='gc-ai-st ok'; st.textContent='Done — review it, edit anything, then Send. Your signature is added automatically.'; }
+}
+function cmpAiUndo(){ var u=window._cmpAiUndo; if(!u) return; var ed=document.getElementById('cmp-editor'), sub=document.getElementById('cmp-sub');
+  if(ed) ed.innerHTML=u.html; if(sub) sub.value=u.sub; window._cmpAiUndo=null; var b=document.getElementById('cmp-ai-undo'); if(b) b.style.display='none';
+  var st=document.getElementById('cmp-ai-st'); if(st){ st.className='gc-ai-st'; st.textContent='Restored your previous text.'; } }
 function _cmpSnapshot(){ var v=_cmpVals(); return JSON.stringify([v.to,v.cc,v.bcc,v.sub,v.html,(window._composeAttach||[]).length]); }
 function _cmpDirty(){ return !!document.getElementById('modal-compose') && window._cmpSnap!=null && _cmpSnapshot()!==window._cmpSnap; }
 function cmpClose(force){
-  if(!force && _cmpDirty()){
-    if(confirm('Save this message as a draft before closing?')){ saveDraft(null).then(function(){ cmpClose(true); }); return; }
-    if(!confirm('Discard this message?')) return;
-  }
+  // Like Gmail: closing keeps your work as a draft (Discard deletes it).
+  if(!force && _cmpDirty()){ var v=_cmpVals();
+    if(v.text||v.sub||v.to){ saveDraft(null, true).then(function(r){ if(r&&r.id) toast('&#9993;','Saved to Drafts'); cmpClose(true); }); return; } }
+  clearInterval(window._cmpAutoT);
   var m=document.getElementById('modal-compose'); if(m) m.remove(); window._cmpSnap=null;
 }
 async function cmpDiscard(){
-  if(!confirm('Delete this draft?')) return;
+  var v=_cmpVals();
+  if((v.text||v.sub||window._composeDraftId) && !confirm('Discard this message?')) return;
   if(window._composeDraftId) await req('POST','/emailbox/draft/'+window._composeDraftId+'/delete',{box:(window._eb&&window._eb.box)||''});
   cmpClose(true); if(document.getElementById('emailbox-body')) ebLoadList(false);
 }
@@ -6716,25 +6847,26 @@ async function sendCompose(btn){
   if(!v.to||!v.sub||!v.text){ toast('EMAIL','To, subject and message are required'); return; }
   var bad=_cmpBadAddr(v.to).concat(_cmpBadAddr(v.cc),_cmpBadAddr(v.bcc));
   if(bad.length){ toast('EMAIL','Check this address: '+esc(bad[0])); return; }
-  var st=document.getElementById('cmp-status'); if(st){ st.style.color='#0F6E56'; st.textContent='Sending...'; } if(btn) btn.disabled=true;
+  var st=document.getElementById('cmp-status'); if(st){ st.style.color='#0F6E56'; st.textContent='Sending...'; } if(btn) btn.disabled=true; window._cmpSending=true;
   var meta=window._composeMeta||{};
   var attachIds=(window._composeAttach||[]).map(function(a){return a.id;});
   var r=await req('POST','/emailbox/send',{to:v.to,cc:v.cc,bcc:v.bcc,subject:v.sub,body:v.text,body_html:v.html,
     in_reply_to:meta.in_reply_to||'',references:meta.references||'',thread_id:meta.thread_id||'',candidate_id:meta.candidate_id||null,
     attachment_ids:attachIds,forward_from_email_id:(window._composeFwdFrom||null),draft_id:window._composeDraftId||null,box:(window._eb&&window._eb.box)||''});
+  window._cmpSending=false;
   if(r&&r.ok){ window._composeAttach=[]; window._composeFwdFrom=null; window._cmpSnap=null; if(st) st.textContent='Sent ✓';
     setTimeout(function(){ cmpClose(true); if(document.getElementById('emailbox-body')){ ebLoadList(false); if(window._eb.openId&&_ebSplit()) openEmail(window._eb.openId,true); } },600); }
   else { if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Send failed'; } if(btn) btn.disabled=false; }
 }
-async function saveDraft(btn){
+async function saveDraft(btn, silent){
   var v=_cmpVals(); var meta=window._composeMeta||{};
   var payload={to:v.to,cc:v.cc,bcc:v.bcc,subject:v.sub,body:v.text,body_html:v.html,in_reply_to:meta.in_reply_to||'',thread_id:meta.thread_id||'',
     attachment_ids:(window._composeAttach||[]).map(function(a){return a.id;}),candidate_id:meta.candidate_id||null,box:(window._eb&&window._eb.box)||''};
   if(window._composeDraftId) payload.id=window._composeDraftId;
   var r=await req('POST','/emailbox/draft',payload);
   var st=document.getElementById('cmp-status');
-  if(r&&r.id){ window._composeDraftId=r.id; window._cmpSnap=_cmpSnapshot(); if(st){ st.style.color='#0F6E56'; st.textContent='Draft saved'; }
-    if(document.getElementById('emailbox-body')) ebLoadList(false); }
+  if(r&&r.id){ window._composeDraftId=r.id; window._cmpSnap=_cmpSnapshot(); if(st){ st.style.color='#667085'; st.textContent='Draft saved'; }
+    if(!silent && document.getElementById('emailbox-body')) ebLoadList(false); }
   else if(st){ st.style.color='#C0392B'; st.textContent=(r&&r.error)||'Could not save draft'; }
   return r;
 }
@@ -26931,6 +27063,65 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
 .eb2-aci{display:block;width:100%;text-align:left;border:0;background:#fff;padding:7px 10px;font-size:13px;cursor:pointer;border-bottom:1px solid #f2f4f7}
 .eb2-aci span{color:#475063;font-size:12px}.eb2-aci em{display:block;font-style:normal;font-size:11px;color:#98a2b3}
 .eb2-aci:hover,.eb2-aci.on{background:#f0fdfa}
+/* compose — Gmail-style floating window */
+.gc-win{position:fixed;right:24px;bottom:0;z-index:9000;width:560px;max-width:calc(100vw - 32px);height:min(620px,calc(100vh - 60px));display:flex;flex-direction:column;background:#fff;border-radius:10px 10px 0 0;box-shadow:0 8px 10px 1px rgba(0,0,0,.14),0 3px 14px 2px rgba(0,0,0,.12),0 5px 5px -3px rgba(0,0,0,.2);font-family:Arial,Helvetica,sans-serif;overflow:hidden}
+.gc-win.min{height:auto;width:300px}.gc-win.min>:not(.gc-head){display:none !important}
+.gc-win.max{right:50%;bottom:50%;transform:translate(50%,50%);width:min(1100px,calc(100vw - 80px));height:calc(100vh - 80px);border-radius:10px;box-shadow:0 0 0 100vmax rgba(0,0,0,.45),0 12px 40px rgba(0,0,0,.3)}
+.gc-head{display:flex;align-items:center;gap:2px;background:#f2f6fc;padding:8px 8px 8px 16px;cursor:pointer;user-select:none;flex:0 0 auto}
+.gc-title{flex:1;font-size:14px;font-weight:600;color:#041e49;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gc-hb{border:0;background:none;width:28px;height:28px;border-radius:50%;cursor:pointer;color:#444746;font-size:14px;line-height:1;display:inline-flex;align-items:center;justify-content:center}
+.gc-hb:hover{background:rgba(68,71,70,.1)}
+.gc-body{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;padding:0 16px}
+.gc-row{display:flex;align-items:center;gap:8px;border-bottom:1px solid #e9eaed;min-height:40px}
+.gc-lbl{font-size:14px;color:#5f6368;flex:0 0 auto;min-width:22px}
+.gc-from{font-size:14px;color:#1f1f1f}
+.gc-fld{flex:1;min-width:0;position:relative}
+.gc-inp{border:0;outline:none;width:100%;font-size:14px;padding:9px 0;background:transparent;color:#1f1f1f;font-family:inherit}
+.gc-cclink{border:0;background:none;color:#444746;font-size:13px;cursor:pointer;padding:4px 2px;white-space:nowrap}
+.gc-cclink:hover{text-decoration:underline}
+.gc-editor{flex:1;min-height:180px;outline:none;font-size:14px;line-height:1.55;color:#1f1f1f;padding:12px 0;overflow-wrap:anywhere}
+.gc-editor p{margin:0 0 12px}.gc-editor ul,.gc-editor ol{margin:0 0 12px;padding-left:24px}.gc-editor a{color:#0b57d0}
+.gc-atts{display:flex;gap:6px;flex-wrap:wrap;padding-bottom:8px}
+.gc-fmt{display:flex;align-items:center;gap:2px;flex-wrap:wrap;margin:0 12px;padding:4px 6px;border-radius:8px;box-shadow:0 1px 3px rgba(60,64,67,.3);background:#fff}
+.gc-foot{display:flex;align-items:center;gap:4px;padding:10px 14px 12px;flex:0 0 auto;flex-wrap:wrap}
+.gc-sendb{background:#0b57d0;color:#fff;border:0;border-radius:18px;padding:0 24px;height:36px;font-size:14px;font-weight:600;cursor:pointer;margin-right:6px}
+.gc-sendb:hover{background:#0a4ab3;box-shadow:0 1px 3px rgba(0,0,0,.25)}.gc-sendb:disabled{opacity:.6;cursor:default}
+.gc-tb{border:0;background:none;min-width:32px;height:32px;border-radius:16px;cursor:pointer;color:#444746;font-size:15px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;gap:4px}
+.gc-tb:hover{background:rgba(68,71,70,.09)}
+.gc-aibtn{font-size:13px;font-weight:600;color:#0b57d0;background:#e8f0fe}.gc-aibtn:hover{background:#d3e3fd}
+.gc-trash{margin-left:auto}
+.gc-st{font-size:12px;color:#667085;margin-left:6px}
+.gc-sel{border:1px solid #dadce0;border-radius:6px;background:#fff;font-size:12px;padding:4px 6px;max-width:170px;color:#1f1f1f}
+.gc-ai{margin:10px 0 2px;border:1px solid #c2d7fb;background:linear-gradient(180deg,#f3f7ff,#fff);border-radius:12px;padding:10px 12px}
+.gc-ai-h{display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;color:#0b57d0;margin-bottom:6px}
+.gc-ai-h em{font-style:normal;font-weight:600;font-size:10.5px;color:#5f6368;background:#eef1f6;border-radius:6px;padding:1px 6px;margin-left:6px}
+.gc-hb.dark{width:24px;height:24px;font-size:12px}
+#cmp-ai-prompt{width:100%;box-sizing:border-box;border:1px solid #dadce0;border-radius:8px;padding:8px 10px;font-size:13.5px;font-family:inherit;resize:vertical;outline:none;background:#fff}
+#cmp-ai-prompt:focus{border-color:#0b57d0;box-shadow:0 0 0 1px #0b57d0}
+.gc-ai-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.gc-ai-refine>span{font-size:12px;color:#5f6368}
+.gc-aigo{margin-left:auto;background:#0b57d0;color:#fff;border:0;border-radius:16px;padding:0 16px;height:32px;font-size:13px;font-weight:600;cursor:pointer}
+.gc-aigo:disabled,.gc-chip:disabled{opacity:.55;cursor:default}
+.gc-chip{border:1px solid #c4c7c5;background:#fff;color:#1f1f1f;border-radius:14px;padding:3px 11px;font-size:12px;cursor:pointer}
+.gc-chip:hover{background:#f1f4f9}
+.gc-ai-st{font-size:12px;color:#5f6368;margin-top:6px;min-height:0}.gc-ai-st:empty{display:none}
+.gc-ai-st.err{color:#b3261e}.gc-ai-st.ok{color:#146c2e}
+@media(max-width:760px){
+  .gc-win,.gc-win.max{right:0;left:0;top:0;bottom:0;transform:none;width:100%;max-width:100%;height:100%;border-radius:0;box-shadow:none}
+  .gc-win.min{top:auto;height:auto;width:100%}
+  .gc-foot{flex-wrap:nowrap}
+}
+@media(max-width:420px){ .gc-aitxt{display:none} }
+/* search */
+.eb2-sbox{position:relative;margin-left:auto;display:flex;align-items:center;gap:4px}
+.eb2-sbox .inp{width:300px;font-size:13px;padding:7px 11px}
+.eb2-adv{position:absolute;right:0;top:calc(100% + 6px);z-index:60;width:min(420px,calc(100vw - 32px));background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(15,23,42,.18);padding:14px}
+.eb2-adv label{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#475063;margin-bottom:8px}
+.eb2-adv label>span{flex:0 0 92px}.eb2-adv .inp{flex:1;min-width:0;font-size:13px;padding:6px 9px}
+.eb2-adv .hint{font-size:11.5px;color:#667085;line-height:1.5;margin:4px 0 10px}
+.eb2-adv code{background:#f2f4f7;border-radius:4px;padding:0 4px;font-size:11px}
+mark.eb2-hl{background:#fde68a;color:inherit;border-radius:2px;padding:0 1px}
+.eb2-scope{font-size:12px;color:#475063;padding:6px 2px 8px}
 @media(max-width:760px){
   .eb2-banner,.eb2-wrap{margin-left:12px;margin-right:12px}
   .eb2-thread{padding:14px 12px 20px}.eb2-mb{padding:4px 12px 12px}
