@@ -10875,7 +10875,12 @@ function toggleSettings(){
   var cv=document.getElementById('cdb-view'); if(cv) cv.style.display='none';
   var cv2=document.getElementById('central-view'); if(cv2) cv2.style.display='none';
   var scdb=document.getElementById('sb-central'); if(scdb) scdb.className='sb-gear';
-  S.settingsOpen=!S.settingsOpen;
+  // Open when Settings is not what is on screen (the flag goes stale when another page was opened meanwhile).
+  var _sv=document.getElementById('settings-view');
+  S.settingsOpen=!(_sv && _sv.style.display!=='none' && S.settingsOpen);
+  // Only one page on screen: Settings used to open on top of Jobs / CRM / Email /
+  // Invoicing … (they were never hidden), so two pages showed half-and-half.
+  _hideAllViews();
   document.getElementById('sb-gear').className='sb-gear'+(S.settingsOpen?' active':'');
   document.getElementById('settings-view').style.display=S.settingsOpen?'flex':'none';
   document.getElementById('mandate-view').style.display=S.settingsOpen?'none':'flex';
