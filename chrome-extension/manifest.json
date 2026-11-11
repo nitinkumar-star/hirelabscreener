@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "HireLab Assistant",
+  "version": "2.5.0",
+  "description": "Push CVs to a job or the Central Database, 1-click Naukri profile read + CV download, find the right open job, task alerts, and LinkedIn capture.",
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "alarms",
+    "notifications",
+    "scripting",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://hirelabscreener.onrender.com/*",
+    "https://www.linkedin.com/*",
+    "https://*.naukri.com/*",
+    "file:///*"
+  ],
+  "background": {
+    "service_worker": "bg.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open HireLab Assistant",
+    "default_icon": {
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

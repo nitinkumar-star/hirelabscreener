@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HireLab Assistant</title>
+<link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+<header class="hd">
+  <div class="brand"><i>H</i><div><b>HireLab Assistant</b><span id="who">Connecting…</span></div></div>
+  <label class="mand">
+    <span>Job</span>
+    <select id="mandate"><option value="">Loading jobs…</option></select>
+  </label>
+  <label class="alerts"><input type="checkbox" id="alerts" checked> 🔔 Alert me 10 min before my tasks &amp; meetings</label>
+  <nav class="tabs">
+    <button class="tab on" data-tab="cand">Candidate</button>
+    <button class="tab" data-tab="search">Search page</button>
+    <button class="tab" data-tab="jobs">Find job</button>
+    <button class="tab" data-tab="li">LinkedIn <span id="lidot" class="lidot" hidden></span></button>
+  </nav>
+</header>
+
+<main>
+  <!-- ═══ Candidate ═══ -->
+  <section id="tab-cand" class="pane">
+    <div class="card in nk" id="nkcard">
+      <div class="lbl">Naukri profile <em>open a candidate on Naukri (Responses or Resdex) in this window</em></div>
+      <div id="nktab" class="litab">Checking the open tab…</div>
+      <label class="nkopt"><input type="checkbox" id="nkdl" checked> Also press Naukri's <b>Download</b> button and attach the CV</label>
+      <div class="row">
+        <button id="nkgo" class="btn pri" disabled>⤓ Read this Naukri profile</button>
+      </div>
+      <div id="nkmsg" class="msg"></div>
+    </div>
+    <div class="card in">
+      <div class="lbl">1 · Naukri profile text <em>filled in by “Read this Naukri profile”, or paste it</em></div>
+      <textarea id="page" rows="4" placeholder="On the Naukri profile page press Ctrl+A, then Ctrl+C, and paste here (Ctrl+V)."></textarea>
+      <div class="lbl" style="margin-top:12px">2 · Downloaded CV <em>needed to push</em></div>
+      <div id="drop" class="drop" tabindex="0">
+        <b>Drop CV here</b> or click to choose<br><span>PDF, Word (.docx/.doc) or RTF · several at once is fine</span>
+        <input type="file" id="file" accept=".pdf,.docx,.doc,.rtf" multiple hidden>
+      </div>
+      <div id="queue" class="queue"></div>
+      <div class="row">
+        <button id="go" class="btn pri">Analyse</button>
+        <button id="clear" class="btn ghost">Clear</button>
+      </div>
+      <div id="cmsg" class="msg"></div>
+    </div>
+
+    <div id="result" class="result"></div>
+  </section>
+
+  <!-- ═══ Search page ═══ -->
+  <section id="tab-search" class="pane" hidden>
+    <div class="card in">
+      <div class="lbl">Naukri search results text</div>
+      <textarea id="spage" rows="5" placeholder="On the Naukri search results page press Ctrl+A, then Ctrl+C, and paste here."></textarea>
+      <div class="row">
+        <button id="sgo" class="btn pri">Screen these profiles</button>
+        <button id="sclear" class="btn ghost">Clear</button>
+      </div>
+      <div id="smsg" class="msg"></div>
+      <div id="rules" class="rules"></div>
+    </div>
+    <div id="sfilters" class="chips" hidden></div>
+    <div id="slist" class="slist"></div>
+    <div id="schat" class="card" hidden>
+      <div class="lbl">Tell the screener a rule for this job</div>
+      <div id="slog" class="log"></div>
+      <div class="row">
+        <input id="sin" placeholder='e.g. "Skip EPC contractors", "8+ years only"'>
+        <button id="ssend" class="btn">Send</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ Find job ═══ -->
+  <section id="tab-jobs" class="pane" hidden>
+    <div class="card in">
+      <div class="lbl">Find the right job <em>type to filter · or let AI rank them for this candidate</em></div>
+      <input id="jq" placeholder="Role, client, city or skill — e.g. SCADA Pune, L&amp;T, 8 yrs">
+      <div class="row">
+        <button id="jmatch" class="btn pri">Best jobs for this candidate</button>
+        <button id="jreset" class="btn ghost" title="Show all open jobs, newest first">Show all</button>
+      </div>
+      <div id="jmsg" class="msg"></div>
+    </div>
+    <div id="jlist" class="slist"></div>
+  </section>
+
+  <!-- ═══ LinkedIn (1-click capture of the open profile) ═══ -->
+  <section id="tab-li" class="pane" hidden>
+    <div class="card in">
+      <div class="lbl">LinkedIn profile <em>open a profile (linkedin.com/in/…) in this window</em></div>
+      <div id="litab" class="litab">Checking the open tab…</div>
+      <div class="row">
+        <button id="ligo" class="btn pri" disabled>⤓ Extract this LinkedIn profile</button>
+      </div>
+      <div id="limsg" class="msg"></div>
+      <div class="linote">Reads the page only when you press the button. Never reads Naukri or any other site.</div>
+    </div>
+    <div id="liresult"></div>
+  </section>
+</main>
+
+<button id="quote" class="quote" hidden>💬 Quote in chat</button>
+<script src="sidepanel.js"></script>
+</body>
+</html>

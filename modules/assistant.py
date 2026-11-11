@@ -1,11 +1,18 @@
 """
 HireLab Assistant — the Chrome side-panel helper that never touches Naukri.
 
-The old extension read Naukri pages directly, and Naukri now blocks browsers
-with such plugins. The Assistant only works on what the recruiter hands it:
+The old extension read Naukri pages directly through content scripts, and
+Naukri now blocks browsers with such plugins. The Assistant works on:
 
-  * text the recruiter copied from a Naukri page (Ctrl+A, Ctrl+C) and pasted, and
-  * CV files the recruiter downloaded with Naukri's own Download button.
+  * the Naukri profile text — pasted by the recruiter (Ctrl+A, Ctrl+C), or,
+    since extension v2.5, read once from the open tab when the recruiter
+    presses "Read this Naukri profile" (no content script, nothing stays on
+    the page), and
+  * CV files downloaded with Naukri's own Download button (v2.5 can press it
+    and attach the finished download).
+
+Both arrive here as the same page_text / cv fields, so the routes below did
+not change. Source of the extension: chrome-extension/ in this repo.
 
 Routes (JSON unless noted, all under /api/assistant, logged-in session)
   POST /parse   multipart: page_text?, cv?  ->  fields, resume_text, candidate_text
