@@ -1,21 +1,23 @@
 """
-App menu on every page.
+App menu on every page — the SAME menu as the main app's sidebar.
 
-The main app (index.html) has the sidebar. The separate pages (Job Mail, Talent
-Pool, Market Pulse, Hot List, My Calls, Re-engage, Scheduler, Org Map, Backup,
-Storage) had only a "← App" link. This module puts the SAME menu on all of them:
+The main app (index.html) has the sidebar. The separate pages (Talent Pool,
+Market Pulse, Hot List, Team Activity, Re-engage, Scheduler, Org Map, Talent
+Map, Profit & Cash, Backup, Storage, Job Mail, My Calls) get this menu.
 
-  * a "☰ Menu" button at the top-left of the page, which opens a side drawer
-    with every menu item (role-aware: recruiters do not see admin-only items,
-    freelance callers see Home + My Calls), the current page highlighted;
-  * items that live inside the main app (Jobs, Tasks, CRM, …) open the app
-    straight on that view through /?go=<item> (index.html clicks the same
-    sidebar item, so behaviour is identical).
+Nov 2026: the menu here is no longer a second hand-written list (it had drifted:
+other order, other names, other items). The items are READ FROM index.html's
+#sidebar — ids, links, names, icons, order — so a change to the main sidebar
+shows up here by itself. Who sees what follows the same rules as the main app
+(recruiter sub-accounts, platform admin, workspace wording / hidden modules,
+Org Map add-on). Desktop: the same fixed sidebar, 248 px; phones: a drawer
+behind a "Menu" button. Items that live inside the main app open it on that
+view through /?go=<item>.
 
 It works by adding one <script src="/app-nav.js"> tag to the HTML of the pages
-listed in NAV_PAGES (after the response is built) — no page file needs editing,
-and new pages only need adding to the list. Public candidate pages
-(update-profile, careers, apply, the e-mail landing pages) never get it.
+listed in NAV_PAGES (after the response is built) — no page file needs editing.
+Public candidate pages (update-profile, careers, apply, e-mail landing pages)
+never get it.
 """
 
 import re
@@ -47,106 +49,184 @@ def _inject(resp):
     return resp
 
 
+# ── The main sidebar, read from index.html ─────────────────────────────────
+# Never in the menu on any page (index.html force-hides these too: BD is a tab
+# of Clients, Freelancers a tab of Admin, Mandates lives under Jobs).
+ALWAYS_HIDDEN = {'sb-bd', 'sb-freelancers', 'sb-mandates', 'sb-command', 'sb-analytics', 'sb-responses', 'sb-ai', 'sb-waai'}
+BOTTOM = ('sb-admin', 'sb-gear')          # pinned to the bottom, as in the app
+_A_RX = re.compile(r'<a\b([^>]*\bid="(sb-[a-z0-9-]+)"[^>]*)>(.*?)</a>', re.S)
+_CACHE = {'mtime': None, 'menu': None}
+
+
+def _attr(attrs, name):
+    m = re.search(r'\b%s="([^"]*)"' % name, attrs)
+    return m.group(1) if m else ''
+
+
+def _text(html_):
+    import html as _h
+    return _h.unescape(re.sub(r'<[^>]+>', '', html_ or '')).strip()
+
+
+def parse_sidebar(page):
+    """[{id, href, title, svg, rs_hide, bottom}] from the main app's #sidebar, in order."""
+    i = page.find('<div id="sidebar">')
+    if i < 0:
+        return {'items': [], 'build': ''}
+    j = page.find('<div id="main"', i)
+    side = page[i:j if j > 0 else i + 60000]
+    items = []
+    for m in _A_RX.finditer(side):
+        attrs, sid, inner = m.group(1), m.group(2), m.group(3)
+        if sid in ALWAYS_HIDDEN or 'sb-gear' not in _attr(attrs, 'class').split():
+            continue
+        t = re.search(r'<span class="sb-nav-title">(.*?)</span>', inner, re.S)
+        if t:
+            title = _text(t.group(1))
+        else:   # e.g. Admin Panel / Settings: the first plain <span> with words in it
+            title = next((_text(x) for x in re.findall(r'<span>(.*?)</span>', inner, re.S) if _text(x)), '')
+        svg = re.search(r'<svg\b[^>]*class="sb-nav-ic[^"]*"[^>]*>(.*?)</svg>', inner, re.S)
+        href = _attr(attrs, 'href') or '#'
+        items.append({'id': sid, 'title': title, 'svg': svg.group(1).strip() if svg else '',
+                      'href': ('/?go=' + sid[3:]) if href.startswith('#') else href,
+                      'rs_hide': 'rs-hide' in _attr(attrs, 'class').split(),
+                      'bottom': sid in BOTTOM})
+    b = re.search(r'class="sb-logo-s">(.*?)</div>', side, re.S)
+    return {'items': items, 'build': _text(b.group(1)) if b else ''}
+
+
+def menu():
+    import os
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'index.html')
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return {'items': [], 'build': ''}
+    if _CACHE['mtime'] != mt:
+        with open(path, encoding='utf-8') as f:
+            _CACHE['menu'] = parse_sidebar(f.read())
+        _CACHE['mtime'] = mt
+    return _CACHE['menu']
+
+
 _JS = r"""(function(){
   if (window.__hlNav) return; window.__hlNav = true;
-  var I = {
-    home:'<path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/>',
-    jobs:'<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
-    tasks:'<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>',
-    chat:'<path d="M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12z"/>',
-    crm:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/>',
-    inv:'<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>',
-    mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
-    team:'<circle cx="9" cy="8" r="3"/><path d="M3 20c.7-3 3-5 6-5s5.3 2 6 5"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14c2.5 0 4.3 1.6 5 4"/>',
-    bd:'<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
-    search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/>',
-    cal:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>',
-    re:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/><path d="M17 3v4M15 5h4"/>',
-    jm:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/><path d="M15 17l2 2 4-4"/>',
-    pool:'<circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><circle cx="12" cy="15" r="3"/>',
-    news:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/>',
-    hot:'<path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.2 1-3.6 2-4.6.3 1.6 1 2.6 2 3.1C11 8.5 11 6 12 3z"/>',
-    phone:'<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
-    org:'<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/><path d="M12 7v4M5 16v-2h14v2"/>',
-    disk:'<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>'
-  };
-  // a: admin only · r: everyone except freelance · f: freelance callers too
-  var ITEMS = [
-    ['Main', null],
-    ['Home', '/?go=home', 'home', 'f'],
-    ['Jobs', '/?go=jobs', 'jobs', 'r'],
-    ['Tasks', '/?go=tasks', 'tasks', 'r'],
-    ['Talent', '/?go=central', 'search', 'r'],
-    ['Company Talent Map', '/talent-map', 'pool', 'r'],
-    ['Email Box', '/?go=email', 'mail', 'r'],
-    ['Scheduler', '/schedule', 'cal', 'r'],
-    ['Org Map', '/orgmap', 'org', 'r'],
-    ['Business', null],
-    ['Clients (CRM)', '/?go=crm', 'crm', 'a'],
-    ['BD Command Center', '/?go=bd', 'bd', 'a'],
-    ['Invoicing', '/?go=invoicing', 'inv', 'a'],
-    ['Profit & Cash', '/finance', 'inv', 'a'],
-    ['Freelancers', '/?go=freelancers', 'team', 'a'],
-    ['Team Activity', '/team-activity', 'bd', 'a'],
-    ['Candidate engagement', null],
-    ['Hot List', '/hotlist', 'hot', 'a'],
-    ['My Calls', '/my-calls', 'phone', 'f'],
-    ['Talent Pool', '/talent-pool', 'pool', 'a'],
-    ['Market Pulse', '/newsletter', 'news', 'a'],
-    ['Re-engage', '/reengage', 're', 'a'],
-    ['Admin', null],
-    ['Backup', '/backup', 'disk', 'o'],
-    ['Storage', '/admin/storage', 'disk', 'o']
-  ];
-  var css = '#hln-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #E3E1DA;background:#fff;color:#0E2A47;border-radius:9px;padding:6px 11px;font:600 13px/1.2 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;cursor:pointer;flex-shrink:0}'
-    + '#hln-btn:hover{background:#F7F6F2}#hln-btn.fx{position:fixed;top:10px;left:10px;z-index:99990;box-shadow:0 2px 8px rgba(0,0,0,.12)}'
-    + '#hln-ov{position:fixed;inset:0;background:rgba(14,42,71,.32);z-index:99998;display:none}'
-    + '#hln-dr{position:fixed;top:0;left:0;bottom:0;width:280px;max-width:86vw;background:#fff;z-index:99999;transform:translateX(-102%);transition:transform .18s ease;box-shadow:4px 0 24px rgba(0,0,0,.15);display:flex;flex-direction:column;font:14px/1.4 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#1F2328}'
-    + '#hln-dr.on{transform:none}#hln-ov.on{display:block}'
-    + '#hln-dr .hd{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #E3E1DA}'
-    + '#hln-dr .lg{width:30px;height:30px;border-radius:8px;background:#0F6E56;color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}'
-    + '#hln-dr .x{margin-left:auto;border:none;background:none;font-size:22px;line-height:1;cursor:pointer;color:#6B6F76}'
-    + '#hln-dr nav{overflow-y:auto;padding:6px 8px 20px;flex:1}'
-    + '#hln-dr .gp{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8A8F96;margin:14px 10px 4px}'
-    + '#hln-dr a{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:9px;color:#1F2328;text-decoration:none;font-weight:500}'
-    + '#hln-dr a:hover{background:#F2F0EA}#hln-dr a.cur{background:#E6F4EE;color:#0F6E56;font-weight:700}'
-    + '#hln-dr svg{width:18px;height:18px;flex-shrink:0}#hln-dr .ft{border-top:1px solid #E3E1DA;padding:10px 16px;font-size:12px;color:#6B6F76}';
+  var MENU = __MENU__;
+  // Same rules as the main app: recruiter sub-accounts do not get these (index.html: body.rs-scoped …)
+  var RS_IDS = ['sb-crm','sb-bd','sb-invoicing','sb-command','sb-analytics','sb-orgmap','sb-freelancers','sb-admin'];
+  var W = 248, BP = 1000;
+  var ALIAS = {'/finance': 'sb-invoicing', '/my-calls': 'sb-hotlist'};   // pages opened from inside another menu item
+  var F = '"DM Sans","Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+  var css = ''
+    + '#hln-sb{position:fixed;top:0;left:0;bottom:0;width:' + W + 'px;background:#fff;border-right:1px solid #E4E7EC;z-index:99990;display:flex;flex-direction:column;font:13px/1.3 ' + F + ';color:#334155;box-sizing:border-box;padding:10px 10px 0}'
+    + '#hln-sb *{box-sizing:border-box;font-family:' + F + ' !important;letter-spacing:normal !important;text-transform:none !important}'
+    + '#hln-sb div,#hln-sb span,#hln-sb a{line-height:1.3 !important}'
+    + '#hln-sb .lt,#hln-sb .ls,#hln-sb .un,#hln-sb .ur,#hln-sb a.it span{white-space:nowrap !important;overflow:hidden;text-overflow:ellipsis}'
+    + '#hln-sb .lg{display:flex;align-items:center;gap:11px;padding:4px 6px 12px}'
+    + '#hln-sb .lb{width:34px;height:34px;border-radius:9px;background:#0F766E;color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none}'
+    + '#hln-sb .lt{font-size:14px !important;font-weight:700 !important;color:#0F172A !important;line-height:1.5 !important;margin:0 !important}#hln-sb .ls{font-size:11px !important;color:#5B6475 !important;margin:0 !important}'
+    + '#hln-sb .cl{margin-left:auto;border:1px solid #E4E7EC;background:#fff;border-radius:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#475569}'
+    + '#hln-sb nav{flex:1;overflow-y:auto;padding:6px 0 2px;margin:0 -2px}'
+    + '#hln-sb a.it{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:#334155;text-decoration:none !important;font-size:13.5px !important;font-weight:500 !important;margin:0 0 1px !important}'
+    + '#hln-sb a.it:hover{background:#F4F2EC}'
+    + '#hln-sb a.it.cur{background:#ECFDF5;color:#127A57;font-weight:600}#hln-sb a.it.cur svg{color:#127A57}'
+    + '#hln-sb a.it svg{width:17px;height:17px;flex-shrink:0;color:#475569}'
+    + '#hln-sb .n{margin-left:auto;font-size:11px;font-weight:600;padding:1px 7px;border-radius:9px;background:#EEF0F3;color:#334155}'
+    + '#hln-sb .ad{margin-left:auto;font-size:9.5px;font-weight:700;background:#F8EFDD;color:#9A6512;border-radius:6px;padding:2px 6px}'
+    + '#hln-sb .bt{padding:8px 0 4px;border-top:1px solid #EEF0F3}'
+    + '#hln-sb .us{display:flex;align-items:center;gap:10px;padding:10px 4px 12px;border-top:1px solid #EEF0F3}'
+    + '#hln-sb .av{width:32px;height:32px;border-radius:50%;background:#C2410C;color:#fff;font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}'
+    + '#hln-sb .un{font-size:13px !important;font-weight:700 !important;color:#0F172A !important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#hln-sb .ur{font-size:11.5px !important;color:#5B6475 !important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + 'html.hln-pin body{margin-left:' + W + 'px !important}'
+    + '#hln-btn{display:none;align-items:center;gap:6px;border:1px solid #E4E7EC;background:#fff;color:#0F172A;border-radius:9px;padding:6px 11px;font:600 13px/1.2 ' + F + ';cursor:pointer;position:fixed;top:10px;left:10px;z-index:99989;box-shadow:0 2px 8px rgba(0,0,0,.12)}'
+    + 'html.hln-drawer #hln-btn{display:inline-flex}'
+    + '#hln-btn.inbar{position:static;box-shadow:none;margin-right:8px;flex-shrink:0}'
+    + 'html.hln-drawer body.hln-float{padding-top:52px !important}'
+    + 'html.hln-drawer #hln-sb{transform:translateX(-102%);transition:transform .18s ease;box-shadow:4px 0 24px rgba(0,0,0,.15);width:min(300px,86vw)}'
+    + 'html.hln-drawer #hln-sb.on{transform:none}'
+    + '#hln-ov{position:fixed;inset:0;background:rgba(14,42,71,.32);z-index:99988;display:none}#hln-ov.on{display:block}'
+    + '@media print{#hln-sb,#hln-btn,#hln-ov{display:none !important}html.hln-pin body{margin-left:0 !important}}';
   function el(tag, attrs, html){ var e = document.createElement(tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (html != null) e.innerHTML = html; return e; }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
-  function build(user){
-    var role = user ? user.role : '', fl = role === 'freelancer_sourcer', adm = !!(user && user.is_company_admin), owner = role === 'admin';
+  function get(u){ return fetch(u, {credentials: 'same-origin'}).then(function(r){ return r.ok ? r.json() : {__status: r.status}; }).catch(function(){ return {}; }); }
+  var collapsed = false; try { collapsed = localStorage.getItem('hln_collapsed') === '1'; } catch(e) {}
+  function layout(){
+    var small = window.innerWidth < BP, drawer = small || collapsed;
+    document.documentElement.classList.toggle('hln-drawer', drawer);
+    document.documentElement.classList.toggle('hln-pin', !drawer);
+    var sb = document.getElementById('hln-sb'); if (sb && !drawer) sb.classList.remove('on');
+    var ov = document.getElementById('hln-ov'); if (ov && !drawer) ov.classList.remove('on');
+  }
+  function freelancerItems(){   // freelance callers have their own small app: Home + My Calls
+    return [{id:'sb-home', title:'Home', href:'/?go=home', svg:'<path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/>'},
+            {id:'sb-mycalls', title:'My Calls', href:'/my-calls', svg:'<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>'}];
+  }
+  function build(st, ws){
+    var user = st && st.user, role = user ? user.role : '', viewingAs = !!(st && st.viewing_as);
+    var fl = role === 'freelancer_sourcer';
+    var scoped = !!user && !(role === 'admin' || user.is_company_admin) && !fl && !viewingAs;
+    var hidden = (ws && ws.hidden_modules) || [], vocab = (ws && ws.vocab) || {};
+    var T = function(k, d){ return vocab[k] || d; };
     var path = location.pathname.replace(/\/$/, '') || '/';
-    var html = '', group = '', pend = '';
-    ITEMS.forEach(function(it){
-      if (!it[1]) { pend = it[0]; return; }
-      var lvl = it[3];
-      var ok = fl ? lvl === 'f' : (lvl === 'o' ? owner : lvl === 'a' ? adm : true);
-      if (!ok) return;
-      if (pend) { html += '<div class="gp">' + esc(pend) + '</div>'; pend = ''; }
-      var cur = it[1].charAt(1) !== '?' && path === it[1];
-      html += '<a href="' + it[1] + '"' + (cur ? ' class="cur"' : '') + '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + I[it[2]] + '</svg>' + esc(it[0]) + '</a>';
+    var items = fl ? freelancerItems() : MENU.items.filter(function(it){
+      if (scoped && (it.rs_hide || RS_IDS.indexOf(it.id) >= 0)) return false;
+      if (it.id === 'sb-admin' && !(role === 'admin' && !viewingAs)) return false;
+      if (hidden.indexOf(it.id.slice(3)) >= 0) return false;
+      return true;
     });
-    var dr = el('div', {id: 'hln-dr', role: 'dialog', 'aria-label': 'Menu'},
-      '<div class="hd"><div class="lg">H</div><b>HireLab</b><button class="x" aria-label="Close menu">&times;</button></div><nav>' + html + '</nav>'
-      + '<div class="ft">' + esc(user ? (user.display_name || user.username) : '') + '</div>');
+    function row(it){
+      var title = it.id === 'sb-jobs' ? T('mandate_plural', 'Mandates') : it.id === 'sb-crm' ? T('crm', it.title) : it.title;
+      var cur = (it.href.charAt(1) !== '?' && path === it.href) || (ALIAS[path] === it.id);
+      return '<a class="it' + (cur ? ' cur' : '') + '" id="hln-' + it.id + '" href="' + esc(it.href) + '"' + (cur ? ' aria-current="page"' : '') + '>'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + it.svg + '</svg>'
+        + '<span>' + esc(title) + '</span>' + (it.id === 'sb-admin' ? '<span class="ad">ADMIN</span>' : '<span class="n" style="display:none"></span>') + '</a>';
+    }
+    var top = items.filter(function(x){ return !x.bottom; }).map(row).join('');
+    var bot = items.filter(function(x){ return x.bottom; }).map(row).join('');
+    var name = user ? (user.display_name || user.username || '') : '';
+    var ini = name.split(/\s+/).filter(Boolean).slice(0, 2).map(function(w){ return w.charAt(0).toUpperCase(); }).join('') || 'H';
+    var roleLine = role === 'admin' ? 'Admin' : (user && user.is_company_admin) ? 'Agency admin' : fl ? 'Freelance caller' : 'Recruiter';
+    var sb = el('aside', {id: 'hln-sb', 'aria-label': 'Main menu'},
+      '<div class="lg"><a class="lb" href="/?go=home" aria-label="Home">HL</a><div style="min-width:0"><div class="lt">HireLab Screener</div><div class="ls">' + esc(MENU.build || 'SCREENER') + '</div></div>'
+      + '<button class="cl" type="button" title="Hide the menu" aria-label="Hide the menu"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4h16v16H4zM9 4v16"/></svg></button></div>'
+      + '<nav>' + top + '</nav>' + (bot ? '<div class="bt">' + bot + '</div>' : '')
+      + '<div class="us"><div class="av">' + esc(ini) + '</div><div style="min-width:0"><div class="un">' + esc(name) + '</div><div class="ur">' + esc(roleLine) + '</div></div></div>');
     var ov = el('div', {id: 'hln-ov'});
-    document.body.appendChild(ov); document.body.appendChild(dr);
-    function open(){ dr.classList.add('on'); ov.classList.add('on'); }
-    function close(){ dr.classList.remove('on'); ov.classList.remove('on'); }
-    ov.onclick = close; dr.querySelector('.x').onclick = close;
-    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') close(); });
     var btn = el('button', {id: 'hln-btn', type: 'button', 'aria-label': 'Open menu', title: 'Menu'},
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Menu');
-    btn.onclick = open;
-    // put it at the start of the page's own top bar when there is one, else float it
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Menu');
+    document.body.appendChild(ov); document.body.appendChild(sb);
+    // the Menu button sits at the start of the page's own top bar (so it never covers the title); else it floats
     var bar = document.querySelector('.top') || document.querySelector('header') || document.querySelector('.topbar');
-    if (bar && bar.getBoundingClientRect().top < 80) { bar.insertBefore(btn, bar.firstChild); }
-    else { btn.className = 'fx'; document.body.appendChild(btn); }
+    if (bar && bar.getBoundingClientRect().top < 80) { btn.classList.add('inbar'); bar.insertBefore(btn, bar.firstChild); }
+    else { document.body.appendChild(btn); document.body.classList.add('hln-float'); }
+    function open(){ sb.classList.add('on'); ov.classList.add('on'); }
+    function close(){ sb.classList.remove('on'); ov.classList.remove('on'); }
+    btn.onclick = function(){
+      if (collapsed && window.innerWidth >= BP) { collapsed = false; try { localStorage.setItem('hln_collapsed', '0'); } catch(e) {} layout(); return; }
+      open();
+    };
+    ov.onclick = close;
+    sb.querySelector('.cl').onclick = function(){
+      if (window.innerWidth < BP) { close(); return; }
+      collapsed = true; try { localStorage.setItem('hln_collapsed', '1'); } catch(e) {} layout();
+    };
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') close(); });
+    window.addEventListener('resize', layout);
+    layout();
+    if (fl) return;
+    // Org Map is an add-on: hidden when this workspace does not have it (same check as the app)
+    if (document.getElementById('hln-sb-orgmap')) get('/api/org/stats').then(function(r){ if (r && r.__status === 403) { var o = document.getElementById('hln-sb-orgmap'); if (o) o.remove(); } });
+    // The same counts as the app's sidebar
+    function badge(id, n){ var b = document.querySelector('#hln-' + id + ' .n'); if (b && n) { b.textContent = n > 99 ? '99+' : String(n); b.style.display = ''; } }
+    if (document.getElementById('hln-sb-jobs')) get('/api/mandates').then(function(r){ var l = Array.isArray(r) ? r : (r && (r.mandates || r.items)) || [];
+      badge('sb-jobs', l.filter(function(m){ return (m.status || 'active') === 'active'; }).length); });
+    get('/api/tasks?stale_limit=0').then(function(r){ if (r && r.counts) badge('sb-tasks', (r.counts.overdue || 0) + (r.counts.today || 0)); });
+    get('/api/emailbox/counts').then(function(r){ if (r && r.ok) badge('sb-email', r.unread); });
   }
   function start(){
     document.head.appendChild(el('style', {}, css));
-    fetch('/api/auth/status', {credentials: 'same-origin'}).then(function(r){ return r.json(); })
-      .then(function(j){ build(j && j.user); }).catch(function(){ build(null); });
+    layout();
+    Promise.all([get('/api/auth/status'), get('/api/workspace')]).then(function(a){ build(a[0], a[1]); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
@@ -155,4 +235,6 @@ _JS = r"""(function(){
 
 @bp.route('/app-nav.js', methods=['GET'])
 def nav_js():
-    return Response(_JS, mimetype='application/javascript', headers={'Cache-Control': 'no-cache'})
+    import json
+    js = _JS.replace('__MENU__', json.dumps(menu()).replace('</', '<\\/'))
+    return Response(js, mimetype='application/javascript', headers={'Cache-Control': 'no-cache'})
