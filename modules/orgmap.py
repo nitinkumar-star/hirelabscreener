@@ -171,7 +171,15 @@ def orgmap_required(fn):
         if not _orgmap_allowed():
             if request.path.startswith('/api/'):
                 return jsonify({'error': 'orgmap_not_enabled'}), 403
-            return ('Org Map is not enabled for this workspace.', 403)
+            return ('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+                    '<title>Org Map · HireLab</title><body style="font-family:system-ui,Arial,sans-serif;background:#f6f7f9;'
+                    'margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px">'
+                    '<div style="background:#fff;border:1px solid #e4e7ec;border-radius:14px;padding:28px;max-width:420px;'
+                    'text-align:center"><h1 style="font-size:20px;margin:0 0 8px">Org Map is not switched on</h1>'
+                    '<p style="color:#475467;line-height:1.5;margin:0 0 18px">Org Map is an add-on. Ask your HireLab '
+                    'account manager to switch it on for your workspace.</p><a href="/" style="display:inline-block;'
+                    'background:#0F6E56;color:#fff;text-decoration:none;padding:9px 18px;border-radius:8px;'
+                    'font-weight:600">Back to HireLab</a></div></body>', 403)
         return fn(*a, **kw)
     return wrapper
 

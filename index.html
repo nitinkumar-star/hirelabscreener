@@ -476,6 +476,10 @@ button,input,textarea,select{font-family:inherit}
 .cdb-subtab.active{border-bottom-color:#534AB7;color:#534AB7;font-weight:600}
 /* BD Command Center → sub-tab of Clients (CRM); Freelancers → sub-tab of Admin Panel. Home → logo click. My Mandates → Jobs tab. Force-hidden from the main sidebar. Uses #sidebar #id to beat #sidebar .sb-gear{display:flex!important}. */
 #sidebar #sb-bd,#sidebar #sb-freelancers{display:none !important}
+/* A menu item the code hides (el.style.display='none': Admin Panel for non-admins, Org Map
+   without the add-on …) must really disappear — '#sidebar .sb-gear{display:flex!important}'
+   used to override it, so hidden items stayed in the menu. */
+#sidebar .sb-gear[style*="display: none"],#sidebar .sb-gear[style*="display:none"]{display:none !important}
 /* Home is visible again (Oct 2026): it now holds the merged Analytics insights. */
 #sidebar .sb-mand-head,#sidebar #sb-mandates{display:none !important}
 /* Two-line sidebar nav items (title + subtitle), matching the requested design */
@@ -920,7 +924,7 @@ body{font-size:14px !important; line-height:1.5}
 
   <div class="sb-bottom">
     <a href="#admin" class="sb-gear" id="sb-admin" onclick="return navClick(event,openAdmin)" style="display:none"><span class="sb-nav-ic w1-hide">&#9672;</span><svg class="sb-nav-ic w1-only" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg><span>Admin Panel</span><span style="margin-left:auto;font-size:9.5px;font-weight:700;background:#F8EFDD;color:#9A6512;border-radius:6px;padding:2px 6px">ADMIN</span></a>
-    <a href="#settings" class="sb-gear" id="sb-gear" onclick="return navClick(event,toggleSettings)"><span class="sb-nav-ic w1-hide">&#9881;</span><svg class="sb-nav-ic w1-only" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg><span>Settings</span></a>
+    <a href="#settings" class="sb-gear" id="sb-gear" onclick="return navClick(event,openSettings)"><span class="sb-nav-ic w1-hide">&#9881;</span><svg class="sb-nav-ic w1-only" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg><span>Settings</span></a>
   </div>
   <div class="sb-user" id="sb-user">
     <div class="sb-user-av" id="sb-user-av">NK</div>
@@ -952,7 +956,7 @@ body{font-size:14px !important; line-height:1.5}
   <div id="settings-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
       <div><div style="font-size:14px;font-weight:600">Settings</div><div style="font-size:11px;color:#888;margin-top:1px">Your account, workspace setup, messages and automation</div></div>
-      <button class="btn btn-o" onclick="toggleSettings()">&#10005; Close</button>
+      <button class="btn btn-o" onclick="closeSettings()">&#10005; Close</button>
     </div>
     <div class="settings-body" id="settings-body"></div>
   </div>
@@ -2189,26 +2193,45 @@ async function goHome() {
   S.settingsOpen = false;
   // De-highlight any selected mandate in the sidebar
   document.querySelectorAll('.mandate-item.active, .m-item.active').forEach(function(x){ x.classList.remove('active'); });
-  try { history.replaceState(null, '', '#'); } catch(e) { location.hash = ''; }
+  if (!__restoringHash) _setHash('');
   updateTopbar();
   var _tb=document.getElementById('tabs'); if(_tb) _tb.style.display='none';
   await renderContent();
 }
 
 var __restoringHash = false;
+// Page -> URL hash. Every page is listed (before, Jobs / Clients / Invoicing /
+// Email / Settings … were missing, so the URL kept the previous page and a
+// refresh or Back opened the wrong one). Pages with deeper links keep them.
+var _VIEW_HASH = [['central-view','central'],['ai-view','ai'],['admin-view','admin'],['tasks-view','tasks'],
+  ['responses-view','responses'],['settings-view','settings'],['jobs-view','jobs'],['crm-view','crm'],
+  ['client-detail-view','crm/client'],['invoicing-view','invoicing'],['email-view','email'],
+  ['analytics-view','analytics'],['freelancers-view','freelancers'],['bd-view','bd']];
+function _hashKey(h) { var p = (h || '').split('/'); return p[0] === 'mandate' ? 'mandate/' + (p[1] || '') : p[0]; }
+// One history entry per page, so the browser Back button walks back through
+// the pages you opened; switching tabs inside a page just updates the entry.
+function _setHash(h) {
+  var cur = (location.hash || '').replace(/^#/, '');
+  if (cur === h) return;
+  var url = h ? ('#' + h) : (location.pathname + location.search);
+  try {
+    if (_hashKey(cur) !== _hashKey(h)) history.pushState(null, '', url);
+    else history.replaceState(null, '', url);
+  } catch (e) { location.hash = h; }
+}
 function writeHash() {
   if (__restoringHash) return;  // don't rewrite while restoring
   var h = '';
-  // Overlay views take priority
-  var overlays = [['central-view','central'],['ai-view','ai'],['admin-view','admin'],
-                  ['tasks-view','tasks'],['responses-view','responses'],['settings-view','settings']];
+  var cur = (location.hash || '').replace(/^#/, '');
   var onOverlay = null;
-  overlays.forEach(function(o){
+  _VIEW_HASH.forEach(function(o){
     var el = document.getElementById(o[0]);
-    if (el && el.style.display !== 'none') onOverlay = o[1];
+    if (!onOverlay && el && el.style.display !== 'none') onOverlay = o[1];
   });
   if (onOverlay) {
-    h = onOverlay;
+    // client detail (crm/client/5/…), BD sub-pages and analytics lists keep their deep link
+    var deep = (onOverlay === 'crm/client' || onOverlay === 'bd' || onOverlay === 'analytics');
+    h = (deep && cur.indexOf(onOverlay + '/') === 0) ? cur : (onOverlay === 'crm/client' ? 'crm' : onOverlay);
   } else if (S.activeMandate) {
     h = 'mandate/' + S.activeMandate.id;
     var tab = S.activeTab || '';
@@ -2222,15 +2245,17 @@ function writeHash() {
       h += '/' + S.selectedCandidateId;
     }
   }
-  if (h) {
-    try { history.replaceState(null, '', '#' + h); } catch(e) { location.hash = h; }
-  }
+  _setHash(h);
 }
 
 // Restore app state from the URL hash on load/refresh
 async function readHash() {
   var raw = (location.hash || '').replace(/^#/, '');
-  if (!raw) { await renderContent(); return; }
+  if (!raw) {
+    __restoringHash = true;
+    try { await goHome(); } finally { __restoringHash = false; }
+    return;
+  }
   __restoringHash = true;
   try {
     var parts = raw.split('/');
@@ -2275,7 +2300,7 @@ async function readHash() {
                        bd: openBd, crm: openCrm,
                        freelancers: openFreelancerAdmin, jobs: openJobs,
                        // #invoicing and #email were written by their pages but never read back, so a refresh landed on Home.
-                       invoicing: openInvoicing, email: openEmailBox };
+                       invoicing: openInvoicing, email: openEmailBox, settings: openSettings };
     // Modules this workspace hides (e.g. Invoicing for Corporate) go Home, same as the sidebar.
     if (overlayMap[head] && ((S.ws && S.ws.hidden_modules) || []).indexOf(head) >= 0) { await renderContent(); return; }
     if (overlayMap[head]) {
@@ -2347,7 +2372,7 @@ async function restoreFromHash() {
     if (head === 'admin') { if (S.currentUser && S.currentUser.role==='admin') openAdmin(); return true; }
     if (head === 'tasks') { openTasks(); return true; }
     if (head === 'responses') { openResponses(); return true; }
-    if (head === 'settings') { toggleSettings(); return true; }
+    if (head === 'settings') { openSettings(); return true; }
     if (head === 'mandate' && parts[1]) {
       var mid = parseInt(parts[1]);
       var m = (S.mandates||[]).find(function(x){ return x.id === mid; });
@@ -2434,6 +2459,7 @@ async function init(){
   if (S.settings.error) { showConnError(S.settings.error); return; }
 
   document.getElementById('app').style.display = 'flex';
+  try { _orgmapGate(); } catch (e) {}
   initSidebarResize();
   renderUserBar();
   ntfStart();
@@ -6051,14 +6077,14 @@ function openInvoicing(){
   closeSidebarOnMobile(); _hideAllViews();
   var v=document.getElementById('invoicing-view'); if(v) v.style.display='flex';
   var sb=document.getElementById('sb-invoicing'); if(sb) sb.classList.add('active');
-  try{ location.hash='#invoicing'; }catch(e){}
+  try{ writeHash(); }catch(e){}
   renderInvoicing();
 }
 function openEmailBox(){
   closeSidebarOnMobile(); _hideAllViews();
   var v=document.getElementById('email-view'); if(v) v.style.display='flex';
   var sb=document.getElementById('sb-email'); if(sb) sb.classList.add('active');
-  try{ location.hash='#email'; }catch(e){}
+  try{ writeHash(); }catch(e){}
   renderEmailBox();
 }
 // Knowledge Base (AI memory) — moved here from the retired Command Center.
@@ -10885,6 +10911,18 @@ function toggleSettings(){
   document.getElementById('settings-view').style.display=S.settingsOpen?'flex':'none';
   document.getElementById('mandate-view').style.display=S.settingsOpen?'none':'flex';
   if(S.settingsOpen)renderSettings();
+  if(!S.settingsOpen && !S.activeMandate){ goHome(); return; }   // closed: back to Home (or the job you were in)
+  writeHash();
+}
+// Menu "Settings": always opens (a second click used to close it and land on Home).
+function openSettings(){
+  var sv=document.getElementById('settings-view');
+  if(sv && sv.style.display!=='none' && S.settingsOpen){ closeSidebarOnMobile(); return; }
+  S.settingsOpen=false; toggleSettings();
+}
+function closeSettings(){
+  var sv=document.getElementById('settings-view');
+  if(sv && sv.style.display!=='none'){ S.settingsOpen=true; toggleSettings(); }
 }
 
 // The secondary line under a requisition name. Agency shows the client it
@@ -21050,7 +21088,14 @@ async function cpOrgResolve(cid, field, keep){
   cpLoadOrg(cid);
 }
 
-/* hide the sidebar tab for workspaces without the add-on */
+/* hide the sidebar tab for workspaces without the add-on (re-checked after sign-in: init calls _orgmapGate) */
+function _orgmapGate(){
+    fetch(API+'/org/stats',{credentials:'include'}).then(function(r){
+      var el=document.getElementById('sb-orgmap'); if(!el) return;
+      if(r.status===403) el.style.display='none';
+      else if(r.ok && !document.body.classList.contains('rs-scoped')) el.style.display='';
+    }).catch(function(){});
+}
 (function(){
   function gate(){
     fetch(API+'/org/stats',{credentials:'include'}).then(function(r){
