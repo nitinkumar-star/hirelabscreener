@@ -476,6 +476,10 @@ button,input,textarea,select{font-family:inherit}
 .cdb-subtab.active{border-bottom-color:#534AB7;color:#534AB7;font-weight:600}
 /* BD Command Center → sub-tab of Clients (CRM); Freelancers → sub-tab of Admin Panel. Home → logo click. My Mandates → Jobs tab. Force-hidden from the main sidebar. Uses #sidebar #id to beat #sidebar .sb-gear{display:flex!important}. */
 #sidebar #sb-bd,#sidebar #sb-freelancers{display:none !important}
+/* A menu item the code hides (el.style.display='none': Admin Panel for non-admins, Org Map
+   without the add-on …) must really disappear — '#sidebar .sb-gear{display:flex!important}'
+   used to override it, so hidden items stayed in the menu. */
+#sidebar .sb-gear[style*="display: none"],#sidebar .sb-gear[style*="display:none"]{display:none !important}
 /* Home is visible again (Oct 2026): it now holds the merged Analytics insights. */
 #sidebar .sb-mand-head,#sidebar #sb-mandates{display:none !important}
 /* Two-line sidebar nav items (title + subtitle), matching the requested design */
