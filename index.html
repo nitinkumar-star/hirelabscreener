@@ -933,7 +933,7 @@ body{font-size:14px !important; line-height:1.5}
     <div class="w1-acct w1-only">
       <button type="button" class="w1-ic-btn" onclick="w1ToggleAcct(event)" aria-label="Account menu: Export JSON, Import JSON, Log out" aria-haspopup="menu" title="Account">&#8943;</button>
       <div class="w1-acct-menu" id="w1-acct-menu" role="menu">
-        <button type="button" role="menuitem" class="rs-hide" onclick="w1CloseAcct();location.href='/backup'">&#8595; Full backup (database + CVs)</button><button type="button" role="menuitem" class="rs-hide" onclick="w1CloseAcct();exportAll()">&#8595; Export JSON</button>
+        <button type="button" role="menuitem" class="rs-hide" onclick="w1CloseAcct();location.href='/backup'">&#8595; Full backup (database + CVs)</button><button type="button" role="menuitem" id="w1-storage" style="display:none" onclick="w1CloseAcct();location.href='/admin/storage'">&#128451; Storage health</button><button type="button" role="menuitem" class="rs-hide" onclick="w1CloseAcct();exportAll()">&#8595; Export JSON</button>
         <label role="menuitem" class="rs-hide">&#8593; Import JSON<input type="file" accept=".json" style="display:none" onchange="w1CloseAcct();importAll(this)"></label>
         <button type="button" role="menuitem" onclick="doLogout()">Log out</button>
       </div>
@@ -3389,6 +3389,8 @@ function renderUserBar() {
   if (flBtn) flBtn.style.display = 'none';  // Freelancers is now a sub-tab of Admin Panel
   if (adminBtn) {
     adminBtn.style.display = (S.currentUser && S.currentUser.role==='admin' && !S.viewingAs) ? 'flex' : 'none';
+    var stBtn = document.getElementById('w1-storage');   // Storage health: platform admin only (was only in the separate pages' menu)
+    if (stBtn) stBtn.style.display = (S.currentUser && S.currentUser.role==='admin' && !S.viewingAs) ? '' : 'none';
     var existingBadge = adminBtn.querySelector('.pending-badge');
     if (existingBadge) existingBadge.remove();
     if (S.pendingCount > 0) {
