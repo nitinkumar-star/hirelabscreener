@@ -11,7 +11,8 @@ How it stays safe
   and calls the SAME owner-scoped API endpoints your app uses. So every tenant
   isolation rule already in the ATS automatically applies here — Claude only ever
   sees the data that service account's company can see.
-* The tools are READ-ONLY. Claude can search and read; it cannot edit or delete.
+* The tools are READ-ONLY by default. Write tools (add/update candidates, send
+  e-mail ...) appear only when MCP_ALLOW_WRITES=true is set in the environment.
 * The MCP endpoint sits behind a secret path segment (MCP_SECRET), so only a URL
   that includes your secret can reach it.
 
@@ -34,6 +35,7 @@ import os
 import json
 import time
 import hmac
+import html as _html
 import base64
 import hashlib
 import secrets
@@ -51,9 +53,23 @@ ATS_USERNAME = os.environ.get("ATS_USERNAME") or ""
 ATS_PASSWORD = os.environ.get("ATS_PASSWORD") or ""
 MCP_SECRET   = os.environ.get("MCP_SECRET") or ""
 PORT         = int(os.environ.get("PORT") or "8000")
-# Safety switch: set MCP_ALLOW_WRITES=false to instantly drop back to read-only
-# (write tools disappear from tools/list and are refused if called).
-ALLOW_WRITES = (os.environ.get("MCP_ALLOW_WRITES") or "true").strip().lower() in ("1", "true", "yes", "on")
+# Safety switch (audit 8.2): READ-ONLY unless MCP_ALLOW_WRITES=true is set.
+# Write tools (send e-mail, change stages, edit candidates) read untrusted CV and
+# e-mail text, so a hidden instruction in a CV could steer them. When off, write
+# tools disappear from tools/list and are refused if called.
+ALLOW_WRITES = (os.environ.get("MCP_ALLOW_WRITES") or "false").strip().lower() in ("1", "true", "yes", "on")
+
+# Audit 2.7: the authorize step only ever sends a code back to these callback
+# URLs (Claude's own). Extra ones can be added, comma-separated, with
+# MCP_REDIRECT_ALLOWLIST. Anything else is refused, so a phishing link cannot
+# collect a login code for an attacker's site.
+REDIRECT_ALLOWLIST = {u.strip().rstrip("/") for u in (
+    "https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback,"
+    + (os.environ.get("MCP_REDIRECT_ALLOWLIST") or "")).split(",") if u.strip()}
+
+
+def _redirect_ok(uri):
+    return bool(uri) and uri.split("?", 1)[0].rstrip("/") in REDIRECT_ALLOWLIST
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_INFO = {"name": "hirelab-screener", "version": "1.0.0"}
@@ -600,23 +616,31 @@ font-size:14px;font-weight:600;cursor:pointer}}.err{{color:#b3261e;font-size:12p
 def _authorize_params(source):
     keys = ("client_id", "redirect_uri", "state", "code_challenge",
             "code_challenge_method", "response_type", "scope")
-    return {k: source.get(k, "") for k in keys if source.get(k, "")}
+    return {k: str(source.get(k, ""))[:512] for k in keys if source.get(k, "")}
+
+
+def _hidden_inputs(params):
+    # Audit 2.7: values were written into the page unescaped (reflected XSS on
+    # the very page where the secret is typed). Escaped now.
+    return "".join(
+        f'<input type="hidden" name="{_html.escape(k, quote=True)}" value="{_html.escape(v, quote=True)}">'
+        for k, v in params.items())
 
 async def oauth_authorize(request):
     if request.method == "GET":
         params = _authorize_params(request.query_params)
-        hidden = "".join(
-            f'<input type="hidden" name="{k}" value="{v}">' for k, v in params.items())
-        return HTMLResponse(_AUTHORIZE_FORM.format(hidden=hidden, error=""))
+        if not _redirect_ok(params.get("redirect_uri", "")):
+            return PlainTextResponse("This connector only works from Claude (unknown redirect_uri).", status_code=400)
+        return HTMLResponse(_AUTHORIZE_FORM.format(hidden=_hidden_inputs(params), error=""))
 
     form = await _form_data(request)
     params = _authorize_params(form)
+    if not _redirect_ok(params.get("redirect_uri", "")):
+        return PlainTextResponse("This connector only works from Claude (unknown redirect_uri).", status_code=400)
     secret_ok = hmac.compare_digest((form.get("secret") or ""), MCP_SECRET) and bool(MCP_SECRET)
     if not secret_ok:
-        hidden = "".join(
-            f'<input type="hidden" name="{k}" value="{v}">' for k, v in params.items())
         return HTMLResponse(
-            _AUTHORIZE_FORM.format(hidden=hidden, error='<div class="err">Wrong secret. Try again.</div>'),
+            _AUTHORIZE_FORM.format(hidden=_hidden_inputs(params), error='<div class="err">Wrong secret. Try again.</div>'),
             status_code=401)
     redirect_uri = params.get("redirect_uri")
     if not redirect_uri:

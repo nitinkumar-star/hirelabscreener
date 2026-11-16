@@ -401,8 +401,9 @@ def _ext_route(fn):
         except Exception as exc:
             import traceback
             traceback.print_exc()
-            return jsonify({'ok': False, 'error': 'Screening failed on the server: %s: %s'
-                            % (type(exc).__name__, exc)}), 500
+            # audit 5.6: the details stay in the server log, not in the reply
+            return jsonify({'ok': False, 'error': 'Screening failed on the server (%s). Please try again; '
+                            'if it keeps happening, tell your admin.' % type(exc).__name__}), 500
     return inner
 
 

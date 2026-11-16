@@ -88,7 +88,7 @@ def test_extend_trial_then_payment_unlocks(srv):
 
 def test_public_auth_endpoints_are_rate_limited(srv):
     server, ids = srv
-    server._RL_BUCKETS.clear()
+    server._rl_reset()
     c = server.app.test_client()
     codes = [c.post('/api/auth/signup', json={'username': 'lr_new%d' % i, 'password': 'secret-pass-1',
                                              'email': 'n%d@x.com' % i, 'accept_terms': True}).status_code
@@ -96,7 +96,7 @@ def test_public_auth_endpoints_are_rate_limited(srv):
     assert codes[:5] == [200] * 5 and codes[5] == 429
     codes = [c.post('/api/auth/forgot', json={'identifier': 'nobody'}).status_code for _ in range(6)]
     assert codes[:5] == [200] * 5 and codes[5] == 429
-    server._RL_BUCKETS.clear()
+    server._rl_reset()
 
 
 def test_security_headers_and_health(srv):

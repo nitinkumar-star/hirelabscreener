@@ -94,7 +94,10 @@ def _smtp_host(addr):
 
 def _row(conn, uid):
     r = conn.execute('SELECT * FROM user_mail_identity WHERE user_id=?', (uid,)).fetchone()
-    return dict(r) if r else {}
+    d = dict(r) if r else {}
+    if d.get('smtp_app_password'):
+        d['smtp_app_password'] = _core().unseal_secret(d['smtp_app_password'])   # stored encrypted (audit 1.3)
+    return d
 
 
 def _public(conn, uid):
@@ -148,7 +151,7 @@ def _save_identity(conn, uid, company_id, d, actor):
                  'smtp_email=excluded.smtp_email, smtp_app_password=excluded.smtp_app_password, '
                  'smtp_display_name=excluded.smtp_display_name, verified_at=excluded.verified_at, '
                  'updated_at=excluded.updated_at, updated_by=excluded.updated_by',
-                 (uid, company_id or 0, em, pw, dn, verified or '', ts(), actor or 0))
+                 (uid, company_id or 0, em, _core().seal_secret(pw), dn, verified or '', ts(), actor or 0))
     return None
 
 

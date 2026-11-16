@@ -165,12 +165,25 @@ var CID = QP.get('c') || '', MID = QP.get('m') || '', SRC = QP.get('src') || '',
 // k = the job link from the job's own page (signed): the job is shown even when the careers page is off
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];}); }
 
+// Cloudflare Turnstile "I am human" check (audit 6.3) — only when the server has keys.
+var TS_TOKEN = '';
+function _mountTurnstile(key){
+  var btn = document.getElementById('sub-btn'); if (!btn) return;
+  var box = document.createElement('div'); box.id = 'ts-box'; box.style.margin = '10px 0';
+  btn.parentNode.insertBefore(box, btn);
+  var sc = document.createElement('script');
+  sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; sc.async = true;
+  sc.onload = function(){ try { window.turnstile.render(box, {sitekey: key, callback: function(t){ TS_TOKEN = t; }}); } catch(e){} };
+  document.head.appendChild(sc);
+}
+
 // Load form config
 async function loadConfig() {
   try {
     var r = await fetch('/api/form-config' + (CID ? ('?c=' + encodeURIComponent(CID)) : ''));
     var data = await r.json();
     var cfg = data.config || {};
+    if (data.turnstile_site_key) _mountTurnstile(data.turnstile_site_key);
     if (cfg.form_title) document.getElementById('form-title').textContent = cfg.form_title;
     if (cfg.form_desc)  document.getElementById('form-desc').textContent  = cfg.form_desc;
     if (cfg.primary_color) {
@@ -365,6 +378,7 @@ document.getElementById('sub-btn').addEventListener('click', async function() {
   document.querySelectorAll('[name^="cf_"]').forEach(function(el){ cf[el.name]=el.value; });
   fd.append('custom_fields', JSON.stringify(cf));
   if (uploadedResume) fd.append('resume', uploadedResume);
+  if (TS_TOKEN) fd.append('cf-turnstile-response', TS_TOKEN);
   var qs = [];
   if (MID) qs.push('m=' + encodeURIComponent(MID));
   if (CID) qs.push('c=' + encodeURIComponent(CID));

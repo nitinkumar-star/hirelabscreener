@@ -49,6 +49,13 @@ def migrate(conn):
         conn.execute("ALTER TABLE payments ADD COLUMN gateway_ref TEXT DEFAULT ''")
     except Exception:
         pass
+    # Audit 6.6: one Razorpay payment can be recorded once, even when /verify and
+    # the webhook arrive at the same moment (the check-then-insert could race).
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_gateway_ref "
+                     "ON payments(gateway_ref) WHERE COALESCE(gateway_ref,'')!=''")
+    except Exception as e:
+        print('[payments] unique gateway_ref index not created:', e)
     conn.execute('''CREATE TABLE IF NOT EXISTS online_orders (
         order_id TEXT PRIMARY KEY,
         company_id INTEGER NOT NULL,
@@ -93,10 +100,15 @@ def record_online_payment(conn, cid, amount, payment_id, order_id=''):
         return None                                    # already recorded (verify + webhook)
     invoice_no = core._next_invoice_no(conn)
     import datetime
-    conn.execute('INSERT INTO payments (company_id,invoice_no,amount_inr,period,method,note,created_at,gateway_ref) '
-                 'VALUES (?,?,?,?,?,?,?,?)',
-                 (cid, invoice_no, amount, datetime.date.today().strftime('%b %Y'), 'razorpay',
-                  'Online payment ' + (order_id or ''), ts(), payment_id))
+    import sqlite3
+    try:
+        conn.execute('INSERT INTO payments (company_id,invoice_no,amount_inr,period,method,note,created_at,gateway_ref) '
+                     'VALUES (?,?,?,?,?,?,?,?)',
+                     (cid, invoice_no, amount, datetime.date.today().strftime('%b %Y'), 'razorpay',
+                      'Online payment ' + (order_id or ''), ts(), payment_id))
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return None                                    # the other path recorded it a moment ago
     conn.execute("UPDATE companies SET billing_status='active', status='active' WHERE id=?", (cid,))
     until = core.extend_paid_until(conn, cid)
     if order_id:
@@ -141,7 +153,8 @@ def pay_order():
             'notes': {'company_id': str(cid), 'company': (b.get('company') or '')[:200]}})
         o = r.json()
     except Exception as e:
-        return jsonify({'error': 'Could not reach Razorpay: %s' % str(e)[:120]}), 502
+        print('[payments] Razorpay order failed:', type(e).__name__, e)
+        return jsonify({'error': 'Could not reach Razorpay right now. Please try again in a minute.'}), 502
     if r.status_code >= 300 or not o.get('id'):
         return jsonify({'error': 'Razorpay: ' + str(((o.get('error') or {}).get('description')) or r.status_code)}), 502
     conn = get_db()
@@ -179,6 +192,38 @@ def pay_verify():
     return jsonify(dict(res, ok=True))
 
 
+def _record_refund_or_dispute(ev):
+    """Audit 7.3: a refund or a chargeback is written onto the payment and the
+    owner is told (Admin Panel activity). Access is NOT cut automatically: the
+    owner decides (Billing -> status / suspend), because a partial refund or a
+    won dispute should not lock an agency out."""
+    kind = ev.get('event') or ''
+    ent = (((ev.get('payload') or {}).get('refund') or (ev.get('payload') or {}).get('dispute') or {})
+           .get('entity')) or {}
+    pid = ent.get('payment_id') or ''
+    if not pid:
+        return jsonify({'ok': True, 'ignored': True})
+    conn = get_db()
+    try:
+        row = conn.execute('SELECT id, company_id FROM payments WHERE gateway_ref=?', (pid,)).fetchone()
+        if not row:
+            return jsonify({'ok': True, 'ignored': True})
+        amt = round(float(ent.get('amount') or 0) / 100.0, 2)
+        tag = ('REFUND' if kind.startswith('refund') else 'DISPUTE') + ' %s ₹%s %s' % (kind, amt, ts())
+        conn.execute("UPDATE payments SET note=COALESCE(note,'') || ' | ' || ? WHERE id=?", (tag, row['id']))
+        conn.commit()
+        cname = (conn.execute('SELECT name FROM companies WHERE id=?', (row['company_id'],)).fetchone() or {'name': row['company_id']})['name']
+    finally:
+        conn.close()
+    try:
+        _core().log_activity('payment_' + ('refund' if kind.startswith('refund') else 'dispute'),
+                             f'{cname}: {kind} ₹{amt} on Razorpay {pid} — review this agency in Billing',
+                             actor_type='system', actor_name='razorpay')
+    except Exception:
+        pass
+    return jsonify({'ok': True})
+
+
 @bp.route('/razorpay/webhook', methods=['POST'])
 def razorpay_webhook():
     secret = (os.environ.get('RAZORPAY_WEBHOOK_SECRET', '') or '').strip()
@@ -189,6 +234,9 @@ def razorpay_webhook():
         ev = json.loads(raw.decode('utf-8'))
     except Exception:
         return jsonify({'error': 'bad body'}), 400
+    if ev.get('event') in ('refund.processed', 'refund.created', 'payment.dispute.created',
+                           'payment.dispute.lost'):
+        return _record_refund_or_dispute(ev)
     if ev.get('event') not in ('payment.captured', 'order.paid'):
         return jsonify({'ok': True, 'ignored': True})
     pay = (((ev.get('payload') or {}).get('payment') or {}).get('entity')) or {}

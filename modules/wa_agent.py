@@ -21,7 +21,11 @@ Architecture:
 import json
 import re
 import datetime
-from flask import Blueprint, request, jsonify
+import hmac
+from flask import Blueprint, request, jsonify, Response
+
+# The old public default verify token; never accepted (see wa_webhook_verify).
+_WA_DEFAULT_VERIFY_TOKEN = "hirelab_wa_verify"
 
 from modules.shared import (
     get_db, ts, current_user, effective_company_id, real_user_id,
@@ -167,7 +171,7 @@ def _wa_config():
     return {
         'token': os.environ.get('WA_ACCESS_TOKEN', '').strip(),
         'phone_id': os.environ.get('WA_PHONE_NUMBER_ID', '').strip(),
-        'verify_token': os.environ.get('WA_VERIFY_TOKEN', 'hirelab_wa_verify').strip(),
+        'verify_token': os.environ.get('WA_VERIFY_TOKEN', '').strip(),
     }
 
 
@@ -1299,9 +1303,15 @@ def wa_webhook_verify():
     mode = request.args.get('hub.mode')
     token = request.args.get('hub.verify_token')
     challenge = request.args.get('hub.challenge')
-    if mode == 'subscribe' and token == cfg['verify_token']:
-        return challenge, 200
-    return 'Forbidden', 403
+    # SECURITY (audit 5.2): the challenge was echoed as text/html and the verify
+    # token had a public default, so the URL was a reflected-XSS link. Now the
+    # token must be set in the environment (not the default), compared in
+    # constant time, and the challenge goes back as plain text only.
+    want = (cfg.get('verify_token') or '').strip()
+    if (mode == 'subscribe' and want and want != _WA_DEFAULT_VERIFY_TOKEN
+            and hmac.compare_digest(str(token or ''), want)):
+        return Response(str(challenge or '')[:200], status=200, mimetype='text/plain')
+    return Response('Forbidden', status=403, mimetype='text/plain')
 
 
 @bp.route('/webhook', methods=['POST'])
@@ -1314,6 +1324,12 @@ def wa_webhook_receive():
     X-Hub-Signature-256 header must match, else the call is refused."""
     import hmac as _hmac, hashlib as _hashlib, os as _os
     secret = (_os.environ.get('META_APP_SECRET', '') or '').strip()
+    # SECURITY (audit 6.6): fail CLOSED. Without the App Secret nothing can be
+    # verified, so forged "candidate replies" were accepted. Set META_APP_SECRET
+    # (Meta App Dashboard -> Settings -> Basic -> App secret) to receive messages.
+    if not secret:
+        print('[wa_agent] webhook refused: META_APP_SECRET is not set')
+        return 'Forbidden', 403
     if secret:
         sig = request.headers.get('X-Hub-Signature-256', '') or ''
         want = 'sha256=' + _hmac.new(secret.encode(), request.get_data() or b'', _hashlib.sha256).hexdigest()

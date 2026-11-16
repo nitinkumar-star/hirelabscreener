@@ -43,6 +43,23 @@ and know exactly what to switch on (and what it costs) when paying users arrive.
 5. **Make the GitHub repo private** and download `/backup` weekly to your laptop / Google Drive.
 6. Set an **AI token cap** for every new agency (Billing → Token cap) so one agency cannot run up your AI bill.
 
+## 2b. Security settings (Nov 2026 audit) — set these BEFORE deploying this version
+
+Render → Environment:
+
+| Variable | Why | If missing |
+|---|---|---|
+| `ALLOWED_EXTENSION_IDS` | Your Naukri / HireLab Chrome extension id(s), comma-separated (chrome://extensions → Developer mode). | **The extensions stop working** — no extension is trusted by default any more. |
+| `SECRETS_KEY` | Any long random string. Encrypts stored AI keys and Gmail app passwords. Never change it afterwards. | A key file `/data/.secrets_key` is created and used instead (fine, but keep it with your backups). |
+| `META_APP_SECRET` | Meta App Dashboard → Settings → Basic → App secret. | Incoming WhatsApp Cloud messages are refused. |
+| `WA_VERIFY_TOKEN` | Any random string; type the same in Meta's webhook setup. | Meta's webhook verification fails (the old built-in token is no longer accepted). |
+| `SETUP_TOKEN` | Only needed if the database ever has data but no users (bad restore). | First-run admin setup is refused in that case. |
+| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile (free) "I am human" check on sign-up and the apply form. | No bot check (honeypot + rate limits only). |
+| `TRUSTED_PROXY_HOPS` / `CLIENT_IP_HEADER` | Only if `/api/diag` → `client_ip_seen` does NOT show your own public IP. | — |
+| `MCP_ALLOW_WRITES=true` (MCP service) | Only if you want Claude to change data / send e-mail through the connector. | Connector is read-only. |
+
+Settings: `signup_verify_email` (default `1`: new agencies confirm their e-mail before the trial starts — needs platform e-mail sending), `public_parse_daily_cap` (default `200` anonymous CV parses per day).
+
 ## 3. Switch on when you have paying users (costs start here)
 
 | When | What | Approx. cost |
