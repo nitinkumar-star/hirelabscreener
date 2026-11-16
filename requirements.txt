@@ -15,12 +15,12 @@ gunicorn==26.1.0
 mammoth==1.12.1
 openpyxl==3.1.5
 cryptography==50.0.0
-PyJWT==2.13.0
+PyJWT==2.15.0
 numpy==2.5.2
 imageio-ffmpeg==0.6.0          # bundled ffmpeg: converts phone call recordings (.aac/.amr/.opus/.3gp) and shrinks long calls for transcription
 
 # ── Flask framework stack (pinned so a new Werkzeug/Jinja can't break Flask) ─
-Werkzeug==3.1.8
+Werkzeug==3.1.9
 Jinja2==3.1.6
 MarkupSafe==3.0.3
 itsdangerous==2.2.0
@@ -28,15 +28,15 @@ click==8.4.2
 blinker==1.9.0
 
 # ── requests stack ─────────────────────────────────────────────────────────
-certifi==2026.7.22
+certifi==2026.10.18
 charset-normalizer==3.5.1
 idna==3.19
-urllib3==2.7.0
+urllib3==2.8.0
 
 # ── PDF / DOCX / XLSX parsing stack ────────────────────────────────────────
 pdfminer.six==20260107
 pypdfium2==5.13.0
-pillow==12.3.0
+pillow==13.0.0
 lxml==6.1.2
 cobble==0.1.4
 et-xmlfile==2.0.0

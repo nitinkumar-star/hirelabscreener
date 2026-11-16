@@ -20,7 +20,12 @@ try:
 except ImportError:
     HAS_DOCX = False
 
-app = Flask(__name__, static_folder='.', static_url_path='')
+# SECURITY (audit 10.4): no catch-all static folder. static_folder='.' served
+# the whole app directory publicly — server.py, every module, tests, deploy
+# notes and .git. Every page and asset the app needs has its own explicit
+# route (/, /careers, /apply, /sw.js, /icon-*.png, /manifest.webmanifest,
+# /app-nav.js, /team-ping.js, module pages ...). Do NOT re-add a static folder.
+app = Flask(__name__, static_folder=None)
 # NOTE: flask-cors' CORS(app) allows ALL origins, which is unsafe with
 # credentialed requests. CORS is handled by add_cors_headers() below with a
 # strict allow-list (app origin + Naukri extension). Do NOT re-enable CORS(app).
@@ -150,7 +155,10 @@ def _cors_origin_allowed(origin):
         if allowed_ids:
             ext_id = origin[len('chrome-extension://'):].strip('/')
             return ext_id in allowed_ids
-        return True  # no allow-list configured yet → preserve current behaviour
+        # Audit 6.2: deny by default. Any installed extension could otherwise
+        # read the signed-in user's data. Local development can opt back in
+        # with ALLOW_ANY_EXTENSION=1 (never on the live site).
+        return (os.environ.get('ALLOW_ANY_EXTENSION', '') or '').strip() == '1'
     if origin in ('https://www.naukri.com', 'https://naukri.com'):
         return True
     try:
@@ -164,9 +172,9 @@ def _cors_origin_allowed(origin):
 
 
 if not (os.environ.get('ALLOWED_EXTENSION_IDS', '') or '').strip():
-    print('[cors] ALLOWED_EXTENSION_IDS not set — trusting ALL chrome-extension:// '
-          'origins (permissive). Set ALLOWED_EXTENSION_IDS to your extension id(s) '
-          'in the environment to lock this down.')
+    print('[cors] ALLOWED_EXTENSION_IDS not set — NO Chrome extension is trusted, so the '
+          'Naukri / HireLab extensions cannot reach the app. Set ALLOWED_EXTENSION_IDS to '
+          'your extension id(s) (chrome://extensions) in the environment.')
 
 
 @app.after_request
@@ -191,6 +199,51 @@ def add_cors_headers(resp):
     if session.get('user_id') or request.path in ('/', '/login'):
         resp.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
     return resp
+
+
+def _same_site_origin(origin):
+    """True if `origin` is this app itself (by host, so http/https behind the
+    proxy does not matter) or the configured PUBLIC_BASE_URL."""
+    from urllib.parse import urlsplit
+    try:
+        host = (urlsplit(origin).netloc or '').lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    if host == (request.host or '').lower():
+        return True
+    base = (os.environ.get('PUBLIC_BASE_URL', '') or '').strip()
+    return bool(base) and host == (urlsplit(base).netloc or '').lower()
+
+
+@app.before_request
+def _csrf_origin_guard():
+    """Audit 6.5: cross-site request forgery.
+
+    The session cookie must be SameSite=None (the Chrome extension needs it), so
+    a hostile website could make a signed-in recruiter's browser POST forms and
+    file uploads here. Browsers always send Origin on a cross-site POST, so
+    every state-changing request from a signed-in browser must come from this
+    app, a trusted extension, or Naukri (the extension's content script).
+    Requests with neither Origin nor Referer (the mobile app, scripts) and
+    webhooks (no session) are unaffected."""
+    if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return None
+    if not session.get('user_id'):
+        return None
+    origin = request.headers.get('Origin')
+    if origin is None:
+        ref = request.headers.get('Referer', '')
+        if not ref:
+            return None
+        from urllib.parse import urlsplit
+        _p = urlsplit(ref)
+        origin = '%s://%s' % (_p.scheme, _p.netloc)
+    if origin != 'null' and (_same_site_origin(origin) or _cors_origin_allowed(origin)):
+        return None
+    print('[csrf] refused %s %s from origin %r' % (request.method, request.path, origin))
+    return jsonify({'error': 'This request came from another website and was blocked.'}), 403
 
 
 # ── Login Protection ──────────────────────────────────────────────────────────
@@ -230,47 +283,128 @@ app.secret_key = _get_secret_key()
 # REQUIRES Secure=True. On Render everything is HTTPS; set COOKIE_SECURE=0 only
 # for local HTTP testing.
 app.config.update(
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(days=7),   # audit 2.5 (was Flask's 31 days)
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SECURE=(os.environ.get('COOKIE_SECURE', '1') != '0'),
     SESSION_COOKIE_SAMESITE='None',
 )
 
-# ── Login brute-force throttle (in-memory, per-IP) ──────────────────────────
-_LOGIN_FAILS = {}          # ip -> [failure_timestamps]
-_LOGIN_MAX_FAILS = 8       # allowed failures within the window
+# ── Rate limiting (audit 2.4 / 6.1) ─────────────────────────────────────────
+# Before: the IP was the FIRST X-Forwarded-For value, which the visitor writes
+# themselves, so every limit could be skipped by sending a new fake header; and
+# counters lived in memory, so every deploy reset them.
+# Now: the IP is the entry the platform's own proxy added (the LAST one, or the
+# Nth from the end with TRUSTED_PROXY_HOPS), or a header named in
+# CLIENT_IP_HEADER; counters live in SQLite and survive restarts; and a
+# username is locked after repeated failures no matter which IP they come from.
+_LOGIN_MAX_FAILS = 8       # allowed failures per IP within the window
+_LOGIN_USER_MAX_FAILS = 10 # allowed failures per username within the window
 _LOGIN_WINDOW = 900        # 15 minutes
+_RL_READY = False
+
 
 def _login_ip():
-    fwd = request.headers.get('X-Forwarded-For', '')
-    if fwd:
-        return fwd.split(',')[0].strip()
+    hdr = (os.environ.get('CLIENT_IP_HEADER', '') or '').strip()
+    if hdr:
+        v = (request.headers.get(hdr, '') or '').split(',')[0].strip()
+        if v:
+            return v[:64]
+    try:
+        hops = int(os.environ.get('TRUSTED_PROXY_HOPS', '1') or 1)
+    except ValueError:
+        hops = 1
+    fwd = [x.strip() for x in (request.headers.get('X-Forwarded-For', '') or '').split(',') if x.strip()]
+    if hops > 0 and len(fwd) >= hops:
+        return fwd[-hops][:64]
     return request.remote_addr or 'unknown'
 
-def _login_is_blocked(ip):
+
+def _rl_conn():
+    global _RL_READY
+    conn = get_db()
+    if not _RL_READY:
+        conn.execute('CREATE TABLE IF NOT EXISTS rate_events (bucket TEXT, k TEXT, t REAL)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_rate_events ON rate_events(bucket, k, t)')
+        conn.commit()
+        _RL_READY = True
+    return conn
+
+
+def _rl_count(bucket, key, window, add=False):
+    """Events for (bucket, key) in the last `window` seconds; optionally add one."""
     now = time.time()
-    arr = [t for t in _LOGIN_FAILS.get(ip, []) if now - t < _LOGIN_WINDOW]
-    _LOGIN_FAILS[ip] = arr
-    return len(arr) >= _LOGIN_MAX_FAILS
+    try:
+        conn = _rl_conn()
+        try:
+            conn.execute('DELETE FROM rate_events WHERE bucket=? AND k=? AND t<?', (bucket, key, now - window))
+            if add:
+                conn.execute('INSERT INTO rate_events (bucket, k, t) VALUES (?,?,?)', (bucket, key, now))
+            n = conn.execute('SELECT COUNT(*) FROM rate_events WHERE bucket=? AND k=? AND t>=?',
+                             (bucket, key, now - window)).fetchone()[0]
+            conn.commit()
+            return n
+        finally:
+            conn.close()
+    except Exception as e:
+        print('[rate-limit] store error:', e)
+        return 0
 
-def _login_note_fail(ip):
-    _LOGIN_FAILS.setdefault(ip, []).append(time.time())
 
-def _login_clear(ip):
-    _LOGIN_FAILS.pop(ip, None)
+def _rl_clear(bucket, key):
+    try:
+        conn = _rl_conn()
+        conn.execute('DELETE FROM rate_events WHERE bucket=? AND k=?', (bucket, key))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
 
-# ── Generic per-IP rate limiter (for public/unauthenticated endpoints) ──────
-_RL_BUCKETS = {}   # (bucket, ip) -> [timestamps]
+
+def _login_is_blocked(ip, username=''):
+    if _rl_count('login_fail', ip, _LOGIN_WINDOW) >= _LOGIN_MAX_FAILS:
+        return True
+    u = (username or '').strip().lower()
+    return bool(u) and _rl_count('login_fail_user', u[:120], _LOGIN_WINDOW) >= _LOGIN_USER_MAX_FAILS
+
+
+def _login_note_fail(ip, username=''):
+    _rl_count('login_fail', ip, _LOGIN_WINDOW, add=True)
+    u = (username or '').strip().lower()[:120]
+    if u:
+        _rl_count('login_fail_user', u, _LOGIN_WINDOW, add=True)
+    # audit 10.5: failed sign-ins are recorded (never the password)
+    try:
+        log_activity('login_failed', ('%s from %s' % (u or '?', ip))[:200],
+                     actor_type='system', actor_name='security')
+    except Exception:
+        pass
+
+
+def _login_clear(ip, username=''):
+    _rl_clear('login_fail', ip)
+    if username:
+        _rl_clear('login_fail_user', username.strip().lower()[:120])
+
 
 def _rate_ok(bucket, max_n, window):
-    """Return True if this IP is still under the limit for `bucket`, else False.
-    Sliding window of `window` seconds, `max_n` requests allowed."""
-    ip = _login_ip()
-    now = time.time()
-    key = (bucket, ip)
-    arr = [t for t in _RL_BUCKETS.get(key, []) if now - t < window]
-    arr.append(now)
-    _RL_BUCKETS[key] = arr
-    return len(arr) <= max_n
+    """True while this client IP is under `max_n` requests per `window` seconds
+    for `bucket` (each call counts one request)."""
+    return _rl_count(bucket, _login_ip(), window, add=True) <= max_n
+
+
+def _rl_reset():
+    """Forget every rate-limit counter (tests / owner maintenance)."""
+    try:
+        conn = _rl_conn()
+        conn.execute('DELETE FROM rate_events')
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+
+
+def _global_rate_ok(bucket, max_n, window):
+    """Same, but one shared counter for everybody (a hard ceiling)."""
+    return _rl_count(bucket, '*', window, add=True) <= max_n
+
 
 # ─────────────────────────────────────────────────────────────────────────
 #  AUTH HELPERS (multi-user)
@@ -630,7 +764,12 @@ def admin_required(f):
 def diag():
     """Diagnostic: shows whether the persistent disk and data are intact.
     Helps debug 'data disappeared / logged out / asked to create new account'."""
-    info = {'data_dir': DATA_DIR, 'db_path': DB_PATH}
+    info = {'data_dir': DATA_DIR, 'db_path': DB_PATH,
+            # audit 2.4: which address the rate limiter believes is yours. On
+            # the live site this must be YOUR public IP; if it is a proxy
+            # address, set TRUSTED_PROXY_HOPS or CLIENT_IP_HEADER.
+            'client_ip_seen': _login_ip(),
+            'x_forwarded_for': request.headers.get('X-Forwarded-For', '')}
     try:
         info['db_exists'] = os.path.exists(DB_PATH)
         info['data_dir_writable'] = os.access(DATA_DIR, os.W_OK)
@@ -690,7 +829,7 @@ def auth_status():
         except Exception:
             td = 30
         return jsonify({'state': 'login', 'signup_auto': (get_setting('signup_auto_approve', '1') or '1') == '1',
-                        'trial_days': td})
+                        'trial_days': td, 'turnstile_site_key': turnstile_site_key()})
     va = session.get('view_as_company')
     viewing = None
     conn = get_db()
@@ -729,6 +868,33 @@ def auth_setup():
     if any_users_exist():
         return jsonify({'error': 'Setup already complete'}), 400
     d = request.json or {}
+    # SECURITY (audit 2.2): this endpoint needs no login. On a brand-new, empty
+    # install that is fine. But if the database already holds data and only the
+    # users table is empty (a bad restore, the old "users vanished" bug), the
+    # first stranger to open the site would become owner of everything. Then a
+    # one-time SETUP_TOKEN from the environment is required.
+    _has_data = False
+    try:
+        _c0 = get_db()
+        for _t in ('companies', 'mandates', 'candidates'):
+            if _c0.execute(f'SELECT 1 FROM {_t} LIMIT 1').fetchone():
+                _has_data = True
+                break
+        _c0.close()
+    except Exception:
+        _has_data = True
+    _need = (os.environ.get('SETUP_TOKEN', '') or '').strip()
+    if _has_data or _need:
+        if not _need:
+            return jsonify({'error': 'This database already holds data but has no users. For safety, set a '
+                                     'SETUP_TOKEN in the server environment, restart, then enter it here. '
+                                     '(Or restore a backup that includes your users.)',
+                            'code': 'setup_token_required'}), 403
+        if not hmac.compare_digest(str(d.get('setup_token') or ''), _need):
+            if not _rate_ok('setup_token', 10, 3600):
+                return jsonify({'error': 'Too many attempts. Try again later.'}), 429
+            return jsonify({'error': 'Enter the SETUP_TOKEN from the server environment.',
+                            'code': 'setup_token_required'}), 403
     username = (d.get('username') or '').strip()
     password = d.get('password') or ''
     display = (d.get('display_name') or username).strip()
@@ -755,6 +921,90 @@ def auth_setup():
     return jsonify({'ok': True})
 
 
+def turnstile_site_key():
+    return (os.environ.get('TURNSTILE_SITE_KEY', '') or '').strip()
+
+
+def turnstile_ok(token):
+    """Audit 6.3: Cloudflare Turnstile bot check on public forms. Off (always
+    True) until TURNSTILE_SITE_KEY + TURNSTILE_SECRET_KEY are set."""
+    secret = (os.environ.get('TURNSTILE_SECRET_KEY', '') or '').strip()
+    if not secret or not turnstile_site_key():
+        return True
+    if not token:
+        return False
+    try:
+        r = requests.post('https://challenges.cloudflare.com/turnstile/v0/siteverify',
+                          data={'secret': secret, 'response': str(token)[:2048], 'remoteip': _login_ip()},
+                          timeout=10)
+        return bool(r.json().get('success'))
+    except Exception as e:
+        print('[turnstile] verify failed:', type(e).__name__)
+        return False
+
+
+def _signup_verify_on():
+    """Audit 6.3 / 7.5: a self sign-up must confirm its e-mail before the free
+    trial starts (setting signup_verify_email, default on). It needs platform
+    e-mail sending; if a link cannot be sent the old instant start is used, so
+    sign-ups never get stuck."""
+    return (get_setting('signup_verify_email', '1') or '1') == '1'
+
+
+def _send_verify_link(conn, uid, email, display):
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.datetime.now() + datetime.timedelta(hours=48)).strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute('CREATE TABLE IF NOT EXISTS email_verifications (token TEXT PRIMARY KEY, user_id INTEGER, '
+                 'expires_at TEXT, used INTEGER DEFAULT 0, created_at TEXT)')
+    conn.execute('INSERT INTO email_verifications (token,user_id,expires_at,used,created_at) VALUES (?,?,?,0,?)',
+                 (token, uid, expires, ts()))
+    conn.commit()
+    base = (os.environ.get('PUBLIC_BASE_URL', '') or request.host_url).rstrip('/')
+    link = f'{base}/api/auth/verify?token={token}'
+    plain = (f'Hi {display},\n\nPlease confirm your e-mail to start your HireLab free trial:\n\n{link}\n\n'
+             f'The link is valid for 48 hours. If you did not sign up, ignore this e-mail.')
+    ok, err = _platform_smtp_send(email, 'Confirm your e-mail to start your HireLab trial', plain, None)
+    if not ok:
+        print('[signup] verification mail failed:', err)
+    return ok
+
+
+@app.route('/api/auth/verify', methods=['GET'])
+def auth_verify_email():
+    """The link from the sign-up e-mail: activates the account, starts the trial
+    from today, signs the person in and opens the app."""
+    token = (request.args.get('token') or '').strip()
+    if not token or not _rate_ok('verify', 30, 3600):
+        return redirect('/?verified=0')
+    conn = get_db()
+    try:
+        row = conn.execute('SELECT user_id, expires_at, used FROM email_verifications WHERE token=?',
+                           (token,)).fetchone()
+    except Exception:
+        row = None
+    if not row or row['used'] or datetime.datetime.now() > datetime.datetime.strptime(row['expires_at'], '%Y-%m-%d %H:%M:%S'):
+        conn.close()
+        return redirect('/?verified=0')
+    u = conn.execute('SELECT id, company_id, status FROM users WHERE id=?', (row['user_id'],)).fetchone()
+    if not u:
+        conn.close(); return redirect('/?verified=0')
+    try:
+        trial_days = int(get_setting('billing_trial_days', '30') or 30)
+    except Exception:
+        trial_days = 30
+    if u['status'] == 'unverified':
+        conn.execute("UPDATE users SET status='approved' WHERE id=?", (u['id'],))
+        conn.execute("UPDATE companies SET status='active', billing_status='trial', trial_ends_at=? WHERE id=?",
+                     ((datetime.datetime.now() + datetime.timedelta(days=trial_days)).isoformat(), u['company_id']))
+    conn.execute('UPDATE email_verifications SET used=1 WHERE token=?', (token,))
+    conn.commit(); conn.close()
+    session.clear()
+    session['user_id'] = u['id']
+    session.permanent = True
+    log_activity('signup_verified', str(u['id']))
+    return redirect('/?verified=1')
+
+
 @app.route('/api/auth/signup', methods=['POST'])
 def auth_signup():
     """Public self-signup. Creates the account as 'pending' — it cannot log
@@ -779,6 +1029,10 @@ def auth_signup():
         return jsonify({'error': 'A valid email is required (used for password reset)'}), 400
     if not d.get('accept_terms'):
         return jsonify({'error': 'Please accept the Terms of Service and Privacy Policy to continue.'}), 400
+    if len(display) > 120 or len(company) > 200 or len(email) > 200 or len(password) > 200:
+        return jsonify({'error': 'One of the fields is too long.'}), 400
+    if not turnstile_ok(d.get('turnstile_token')):
+        return jsonify({'error': 'Please complete the "I am human" check and try again.'}), 400
     log_activity('signup_consent', username + ' accepted terms @ ' + ts())
     conn = get_db()
     exists = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
@@ -821,6 +1075,18 @@ def auth_signup():
     uid = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()['id']
     conn.commit(); conn.close()
     log_activity('signup_auto' if auto else 'signup_requested', username + (' (' + company + ')' if company else ''))
+    if auto and _signup_verify_on():
+        conn = get_db()
+        conn.execute("UPDATE users SET status='unverified' WHERE id=?", (uid,))
+        conn.commit()
+        sent = _send_verify_link(conn, uid, email, display)
+        if not sent:      # no platform e-mail configured: never leave the agency stuck
+            conn.execute("UPDATE users SET status='approved' WHERE id=?", (uid,))
+            conn.commit()
+        conn.close()
+        if sent:
+            _alert_owner_new_signup(username, display, company, email, auto)
+            return jsonify({'ok': True, 'pending': False, 'verify_email': True, 'email': email})
     _alert_owner_new_signup(username, display, company, email, auto)
     if not auto:
         return jsonify({'ok': True, 'pending': True})
@@ -1041,13 +1307,13 @@ def auth_login():
     username = (d.get('username') or '').strip()
     password = d.get('password') or ''
     ip = _login_ip()
-    if _login_is_blocked(ip):
+    if _login_is_blocked(ip, username):
         return jsonify({'error': 'Too many failed attempts. Please wait about 15 minutes and try again.'}), 429
     conn = get_db()
     u = conn.execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
     if not u or not verify_password(password, u['password_hash']):
         conn.close()
-        _login_note_fail(ip)
+        _login_note_fail(ip, username)
         return jsonify({'error': 'Invalid username or password'}), 401
     # Transparent upgrade: if this account still has the old SHA-256 hash,
     # re-hash to PBKDF2 now that we have the plaintext password.
@@ -1060,6 +1326,13 @@ def auth_login():
     if u['status'] == 'pending':
         conn.close()
         return jsonify({'error': 'Your account is awaiting admin approval. You will be able to sign in once approved.'}), 403
+    if u['status'] == 'unverified':
+        _em = (u['email'] if 'email' in u.keys() else '') or ''
+        if _em and _rate_ok('verify_resend', 3, 3600):
+            _send_verify_link(conn, u['id'], _em, u['display_name'] or u['username'])
+        conn.close()
+        return jsonify({'error': 'Please confirm your e-mail first: open the link we sent to ' + (_em or 'your e-mail')
+                                 + ' (check spam). A new link has been sent.'}), 403
     if u['status'] == 'rejected':
         conn.close()
         return jsonify({'error': 'This account request was declined. Contact your admin for access.'}), 403
@@ -1085,14 +1358,16 @@ def auth_login():
             # Sign in anyway, so the agency can pay online and carry on (every
             # other API answers 402 until it pays — modules/tenant_guard.py).
             session['user_id'] = u['id']
+            session['sv'] = int(u['session_version'] or 0) if 'session_version' in u.keys() else 0
             session.permanent = True
             return jsonify(dict(billing_contact(), code=why, error=BLOCK_MESSAGES[why])), 402
     conn.execute('UPDATE users SET last_login=? WHERE id=?', (ts(), u['id']))
     conn.commit(); conn.close()
     session['user_id'] = u['id']
+    session['sv'] = int(u['session_version'] or 0) if 'session_version' in u.keys() else 0
     session.pop('view_as_company', None)
     session.permanent = True
-    _login_clear(ip)
+    _login_clear(ip, username)
     log_activity('login', username)
     return jsonify({'ok': True})
 
@@ -1125,7 +1400,7 @@ def auth_forgot():
         target_email = u['username'].strip()
     if not target_email:
         conn.close()
-        print('[forgot] user "%s" has NO email on file — cannot send reset. (Old accounts created before the email field have no email.)' % ident)
+        print('[forgot] matching user has NO email on file — cannot send reset (old account).')
         return jsonify(generic)
     token = secrets.token_urlsafe(32)
     expires = (datetime.datetime.now() + datetime.timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
@@ -1147,9 +1422,9 @@ def auth_forgot():
             f'<p style="font-size:12px;color:#888">If you did not request this, you can ignore this email.</p></div>')
     ok_send, err_send = _platform_smtp_send(target_email, subject, plain, html)
     if ok_send:
-        print('[forgot] reset email SENT to %s' % target_email)
+        print('[forgot] reset email sent (user id %s)' % u['id'])
     else:
-        print('[forgot] FAILED to send reset to %s: %s' % (target_email, err_send))
+        print('[forgot] FAILED to send reset (user id %s): %s' % (u['id'], err_send))
     return jsonify(generic)
 
 
@@ -1171,7 +1446,8 @@ def auth_reset():
         exp = datetime.datetime.now() - datetime.timedelta(seconds=1)
     if datetime.datetime.now() > exp:
         conn.close(); return jsonify({'error': 'This reset link has expired. Please request a new one.'}), 400
-    conn.execute('UPDATE users SET password_hash=? WHERE id=?', (hash_password(password), row['user_id']))
+    conn.execute('UPDATE users SET password_hash=?, session_version=COALESCE(session_version,0)+1 WHERE id=?',
+                 (hash_password(password), row['user_id']))   # audit 2.5: sign out every old session
     conn.execute('UPDATE password_resets SET used=1 WHERE token=?', (token,))
     conn.commit(); conn.close()
     return jsonify({'ok': True})
@@ -1663,7 +1939,8 @@ def reset_user_password(uid):
     if not u:
         conn.close()
         return jsonify({'error': 'User not found'}), 404
-    conn.execute('UPDATE users SET password_hash=? WHERE id=?', (hash_password(password), uid))
+    conn.execute('UPDATE users SET password_hash=?, session_version=COALESCE(session_version,0)+1 WHERE id=?',
+                 (hash_password(password), uid))   # audit 2.5: sign out every old session
     conn.commit(); conn.close()
     log_activity('reset_password', u['username'])
     return jsonify({'ok': True})
@@ -3111,6 +3388,10 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
+    try:    # audit 2.5: bumped on password reset -> every older session ends
+        c.execute('ALTER TABLE users ADD COLUMN session_version INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
     c.execute('''CREATE TABLE IF NOT EXISTS password_resets (
         token TEXT PRIMARY KEY,
         user_id INTEGER,
@@ -4362,6 +4643,7 @@ def init_db():
         modules.run_migrations(conn)
     except Exception as e:
         print(f'[modules] migration hook skipped: {e}')
+    _seal_existing_secrets(conn)        # audit 1.3
 
     # Audit fix: core init adds crm_clients.is_internal BEFORE modules/crm.py
     # creates crm_clients, so on a FRESH database the ALTER silently failed and
@@ -4814,7 +5096,7 @@ def get_setting(key, default=''):
     conn = get_db()
     r = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
     conn.close()
-    return r['value'] if r else default
+    return unseal_secret(r['value']) if r else default
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  ROUTES
@@ -5028,6 +5310,21 @@ def pwa_sw():
         "});\n"
     )
     return app.response_class(sw, mimetype='application/javascript')
+
+# Third-party browser libraries, self-hosted (audit 9.4): only these exact
+# files are served, from ./vendor, never anything else in the app folder.
+_VENDOR_FILES = {'d3-7.9.0.min.js', 'html2canvas-1.4.1.min.js', 'jspdf-2.5.1.umd.min.js'}
+
+
+@app.route('/vendor/<name>')
+def vendor_js(name):
+    if name not in _VENDOR_FILES:
+        return ('', 404)
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vendor', name)
+    resp = send_file(p, mimetype='application/javascript', max_age=31536000)
+    resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    return resp
+
 
 @app.route('/icon-192.png')
 def pwa_icon_192():
@@ -5274,7 +5571,9 @@ def _reminder_action_ok(rid):
     the request carries this reminder's token (mobile app). Previously any
     session passed, so one agency could close/snooze another agency's reminders."""
     try:
-        if session.get('user_id'):
+        # Audit 6.5: a GET (an <img> tag on any website) must not act on the
+        # signed-in session; GET works only with the reminder's own token.
+        if session.get('user_id') and request.method != 'GET':
             _c = get_db()
             _r = _c.execute('SELECT owner_id FROM reminders WHERE id=?', (rid,)).fetchone()
             _c.close()
@@ -5283,7 +5582,7 @@ def _reminder_action_ok(rid):
     except Exception:
         pass
     tok = request.values.get('token', '')
-    return bool(tok) and tok == _reminder_token(rid)
+    return bool(tok) and hmac.compare_digest(str(tok), str(_reminder_token(rid)))
 
 
 @app.route('/api/reminders/<int:rid>/done', methods=['POST', 'GET'])
@@ -7306,7 +7605,7 @@ def _mail_identity(uid):
             except Exception:
                 row = {}          # table not migrated yet -> company behaviour
             em = (row.get('smtp_email') or '').strip()
-            pw = re.sub(r'[\s\u00a0\u2000-\u200f\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]+', '', row.get('smtp_app_password') or '')
+            pw = re.sub(r'[\s\u00a0\u2000-\u200f\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]+', '', unseal_secret(row.get('smtp_app_password') or ''))
             is_adminish = (u.get('role') == 'admin') or (u.get('is_company_admin') == 1)
             name = (u.get('display_name') or u.get('username') or '').strip()
             ident = {
@@ -7554,6 +7853,100 @@ def tpl_list_for(key, defaults):
     return merge(company, personal), uid
 
 
+# ── Secrets at rest (audit 1.3) ─────────────────────────────────────────────
+# AI keys, SMTP / Gmail app passwords and similar settings used to sit in the
+# database as plain text, so any copy of hirelab.db (the /backup download, an
+# auto-backup, a laptop) exposed every mailbox and AI key. They are now stored
+# encrypted ("enc1:..." Fernet). The key comes from env SECRETS_KEY (any long
+# random string) or, if unset, a key file DATA_DIR/.secrets_key that is NOT part
+# of the database download. Reading is transparent: old plain values still read
+# (and are encrypted at the next start), so nothing has to be re-entered.
+# Keys looked up BY VALUE (wa_inbound_token) are deliberately left plain.
+_SEAL_PREFIX = 'enc1:'
+_SEAL_EXEMPT = frozenset(('wa_inbound_token',))
+_SEALER = None
+
+
+def _sealer():
+    global _SEALER
+    if _SEALER is not None:
+        return _SEALER
+    import base64 as _b64
+    from cryptography.fernet import Fernet, MultiFernet
+    keys = []
+    env = (os.environ.get('SECRETS_KEY', '') or '').strip()
+    if env:
+        keys.append(Fernet(_b64.urlsafe_b64encode(hashlib.sha256(env.encode()).digest())))
+    kp = os.path.join(DATA_DIR, '.secrets_key')
+    try:
+        if not os.path.exists(kp):
+            with open(kp, 'w') as f:
+                f.write(Fernet.generate_key().decode())
+            try:
+                os.chmod(kp, 0o600)
+            except Exception:
+                pass
+        with open(kp) as f:
+            keys.append(Fernet(f.read().strip().encode()))
+    except Exception as e:
+        print('[secrets] key file unavailable:', e)
+    if not keys:
+        raise RuntimeError('no secrets key available')
+    _SEALER = MultiFernet(keys)       # encrypts with the first key, reads with any
+    return _SEALER
+
+
+def secret_key_is_sealed(key):
+    return bool(key) and key not in _SEAL_EXEMPT and _settings_key_is_secret(key)
+
+
+def seal_secret(v):
+    v = '' if v is None else str(v)
+    if not v or v.startswith(_SEAL_PREFIX) or v == '__set__':
+        return v
+    try:
+        return _SEAL_PREFIX + _sealer().encrypt(v.encode()).decode()
+    except Exception as e:
+        print('[secrets] could not encrypt, stored as given:', e)
+        return v
+
+
+def unseal_secret(v):
+    if not isinstance(v, str) or not v.startswith(_SEAL_PREFIX):
+        return v
+    try:
+        return _sealer().decrypt(v[len(_SEAL_PREFIX):].encode()).decode()
+    except Exception as e:
+        print('[secrets] a stored secret could not be decrypted (key changed?) - re-enter it in Settings:', type(e).__name__)
+        return ''
+
+
+def _seal_existing_secrets(conn):
+    """One pass at start-up: encrypt any secret still stored as plain text."""
+    n = 0
+    try:
+        for r in conn.execute('SELECT key, value FROM settings').fetchall():
+            if secret_key_is_sealed(r['key']) and r['value'] and not str(r['value']).startswith(_SEAL_PREFIX):
+                conn.execute('UPDATE settings SET value=? WHERE key=?', (seal_secret(r['value']), r['key'])); n += 1
+        for r in conn.execute('SELECT company_id, key, value FROM tenant_settings').fetchall():
+            if secret_key_is_sealed(r['key']) and r['value'] and not str(r['value']).startswith(_SEAL_PREFIX):
+                conn.execute('UPDATE tenant_settings SET value=? WHERE company_id=? AND key=?',
+                             (seal_secret(r['value']), r['company_id'], r['key'])); n += 1
+        try:
+            for r in conn.execute("SELECT user_id, smtp_app_password FROM user_mail_identity "
+                                  "WHERE COALESCE(smtp_app_password,'')!=''").fetchall():
+                if not str(r['smtp_app_password']).startswith(_SEAL_PREFIX):
+                    conn.execute('UPDATE user_mail_identity SET smtp_app_password=? WHERE user_id=?',
+                                 (seal_secret(r['smtp_app_password']), r['user_id'])); n += 1
+        except Exception:
+            pass        # table not created yet
+        conn.commit()
+        if n:
+            print('[secrets] encrypted %d stored secret(s)' % n)
+    except Exception as e:
+        print('[secrets] start-up encryption skipped:', e)
+
+
 def get_setting(key, default=''):
     # Env var takes priority for sensitive keys (see _ENV_KEY_MAP)
     env_name = _ENV_KEY_MAP.get(key)
@@ -7581,13 +7974,13 @@ def get_setting(key, default=''):
                               (cid, key)).fetchone()
             if tr is not None:
                 conn.close()
-                return (tr['value'] or '') or default
+                return unseal_secret(tr['value'] or '') or default
             if not _global_fallback_ok(key, cid):
                 conn.close()            # another agency: never the owner's global value
                 return default
     row = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
     conn.close()
-    return (row['value'] if row else '') or default
+    return unseal_secret(row['value'] if row else '') or default
 
 def set_setting(key, value):
     """Write a setting. Per-tenant keys go to this company's own row; global
@@ -7604,6 +7997,8 @@ def set_setting(key, value):
         in_request = _hrc()
     except Exception:
         in_request = False
+    if secret_key_is_sealed(key):
+        value = seal_secret(value)          # audit 1.3: never stored in plain text
     if key in TENANT_SETTINGS:
         cid = _safe_company_id()
         if cid:
@@ -20352,7 +20747,7 @@ def _platform_smtp_send(to_email, subject, plain_body, html_body=None):
             if row and row['company_id']:
                 def _tg(k):
                     r = conn.execute('SELECT value FROM tenant_settings WHERE company_id=? AND key=?', (row['company_id'], k)).fetchone()
-                    return r['value'] if r else ''
+                    return unseal_secret(r['value']) if r else ''
                 smtp_email = smtp_email or _tg('smtp_email')
                 smtp_pass = smtp_pass or _tg('smtp_app_password')
                 smtp_name = smtp_name or _tg('smtp_display_name') or smtp_email
@@ -21954,6 +22349,17 @@ def _resolve_tenant_cv(conn, filename):
     return fp if owns else None
 
 
+PUBLIC_CV_MAX_BYTES = 10 * 1024 * 1024
+_CV_MAGIC = {'.pdf': (b'%PDF',), '.docx': (b'PK\x03\x04',), '.doc': (b'\xd0\xcf\x11\xe0', b'PK\x03\x04', b'{\\rtf')}
+
+
+def cv_bytes_ok(data, ext):
+    """True only for a real PDF / Word file whose content matches its name."""
+    ext = (ext or '').lower()
+    head = (data or b'')[:1024].lstrip()
+    return ext in _CV_MAGIC and any(head.startswith(m) for m in _CV_MAGIC[ext])
+
+
 @app.route('/api/cv/<path:filename>')
 @login_required
 def serve_cv(filename):
@@ -21962,7 +22368,19 @@ def serve_cv(filename):
     conn.close()
     if not fp or not os.path.exists(fp):
         return jsonify({'error': 'Not found'}), 404
-    return send_file(fp)
+    # SECURITY (audit 5.3): never let the browser render a stored file as a web
+    # page. A real PDF opens inline (as PDF); everything else downloads.
+    try:
+        with open(fp, 'rb') as _fh:
+            _head = _fh.read(1024).lstrip()
+    except Exception:
+        _head = b''
+    if fp.lower().endswith('.pdf') and _head.startswith(b'%PDF'):
+        resp = send_file(fp, mimetype='application/pdf')
+    else:
+        resp = send_file(fp, mimetype='application/octet-stream', as_attachment=True,
+                         download_name=os.path.basename(fp))
+    return resp
 
 
 # ── .docx sanitiser ───────────────────────────────────────────────────────
@@ -23886,7 +24304,19 @@ def public_parse_resume():
     if 'resume' not in request.files:
         return jsonify({'error': 'No file'}), 400
     f = request.files['resume']
-    text, err = extract_text_from_file(f.read(), f.filename)
+    data = f.read(PUBLIC_CV_MAX_BYTES + 1)
+    if len(data) > PUBLIC_CV_MAX_BYTES or not cv_bytes_ok(data, Path(f.filename or '').suffix):
+        return jsonify({'error': 'Please upload a PDF or Word CV (max 10 MB).'}), 400
+    # audit 8.1: anonymous visitors spend the PLATFORM AI key, outside every
+    # agency's token cap. One shared daily ceiling bounds the worst case
+    # (setting public_parse_daily_cap, default 200 / day).
+    try:
+        _cap = int(get_setting('public_parse_daily_cap', '200') or 200)
+    except (TypeError, ValueError):
+        _cap = 200
+    if not _global_rate_ok('pub_parse_day', _cap, 86400):
+        return jsonify({'error': 'Automatic CV reading is busy right now. Please fill the form manually.'}), 429
+    text, err = extract_text_from_file(data, f.filename)
     if err or not text:
         return jsonify({'error': err or 'Cannot extract text'}), 400
     ds_key = get_setting('deepseek_api_key')
@@ -23904,7 +24334,8 @@ def public_parse_resume():
                   'response_format': {'type': 'json_object'}},
             timeout=45, endpoint='extract')
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print('[public-parse] AI call failed:', type(e).__name__, e)   # audit 5.6: details stay in the log
+        return jsonify({'error': 'Parse unavailable. Fill manually.'}), 500
     if resp.status_code != 200:
         return jsonify({'error': 'Parse unavailable. Fill manually.'}), 500
     parsed = parse_json(resp.json()['choices'][0]['message']['content'])
@@ -23919,20 +24350,34 @@ def submit_form():
     if (request.form.get('website') or '').strip():
         # Honeypot tripped — pretend success, save nothing.
         return jsonify({'ok': True})
+    if not turnstile_ok(request.form.get('cf-turnstile-response')):
+        return jsonify({'error': 'Please complete the "I am human" check and try again.'}), 400
     name    = request.form.get('name', '').strip()
     phone   = request.form.get('phone', '').strip()
     email   = request.form.get('email', '').strip()
     company = request.form.get('company', '').strip()
     if not name or not phone or not email or not company:
         return jsonify({'error': 'Required fields missing'}), 400
+    # Length caps (audit 5.1): this form is public.
+    if len(name) > 120 or len(phone) > 30 or len(email) > 200 or len(company) > 200:
+        return jsonify({'error': 'One of the fields is too long.'}), 400
     cv_path = ''; cv_name = ''
     if 'resume' in request.files:
         f = request.files['resume']
         if f.filename:
+            # SECURITY (audit 5.3): any file type used to be saved, and an
+            # .html "CV" later ran script in the recruiter's session. Only real
+            # PDF / Word files (checked by content, not just name), max 10 MB.
             ext  = Path(f.filename).suffix.lower()
-            safe = str(int(datetime.datetime.now().timestamp())) + '_sub' + ext
-            f.save(os.path.join(CV_DIR, safe))
-            cv_path = safe; cv_name = f.filename
+            data = f.read(PUBLIC_CV_MAX_BYTES + 1)
+            if len(data) > PUBLIC_CV_MAX_BYTES:
+                return jsonify({'error': 'The CV is larger than 10 MB.'}), 400
+            if not cv_bytes_ok(data, ext):
+                return jsonify({'error': 'Please upload your CV as a PDF or Word (.doc / .docx) file.'}), 400
+            safe = str(int(datetime.datetime.now().timestamp())) + '_' + secrets.token_hex(4) + '_sub' + ext
+            with open(os.path.join(CV_DIR, safe), 'wb') as _fh:
+                _fh.write(data)
+            cv_path = safe; cv_name = os.path.basename(f.filename)[:200]
     conn = get_db(); c = conn.cursor()
     _sub_owner = _resolve_submission_owner(conn,
         request.args.get('c') or request.form.get('company_id'))
@@ -24191,7 +24636,8 @@ def form_config():
     if not r:
         r = conn.execute("SELECT value FROM settings WHERE key='form_config'").fetchone()
     conn.close()
-    return jsonify({'ok': True, 'config': json.loads(r['value'] if r else '{}')})
+    return jsonify({'ok': True, 'config': json.loads(r['value'] if r else '{}'),
+                    'turnstile_site_key': turnstile_site_key()})
 
 
 @app.route('/api/public/openings', methods=['GET'])
@@ -24241,7 +24687,7 @@ def get_setting_for(conn, company_id, key, default=''):
     """Read a tenant setting without needing a request session."""
     r = conn.execute('SELECT value FROM tenant_settings WHERE company_id=? AND key=?',
                      (company_id, key)).fetchone()
-    return r['value'] if r and r['value'] is not None else default
+    return unseal_secret(r['value']) if r and r['value'] is not None else default
 
 
 def _exp_label(lo, hi):
@@ -24731,9 +25177,9 @@ def _tenant_setting_raw(conn, company_id, key, default=''):
     r = conn.execute('SELECT value FROM tenant_settings WHERE company_id=? AND key=?',
                      (company_id, key)).fetchone()
     if r and (r['value'] not in (None, '')):
-        return r['value']
+        return unseal_secret(r['value'])
     g = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
-    return (g['value'] if (g and g['value']) else default)
+    return (unseal_secret(g['value']) if (g and g['value']) else default)
 
 
 def _hours_since(ts_str):
@@ -25546,7 +25992,10 @@ def client_submission(mid):
     is_owner = bool(current_user()) and m['owner_id'] == effective_company_id()
     if not is_owner and not (tok and secrets.compare_digest(tok, _submission_token(mid))):
         conn.close(); return ('Not found', 404)
-    stage_filter = request.args.get('stage', 'Shared with Client')
+    # A client-link viewer (token, not the owner) only ever sees the stage that
+    # was shared with them; the owner may preview any stage of their own job.
+    stage_filter = request.args.get('stage', 'Shared with Client') if is_owner else 'Shared with Client'
+    stage_filter = str(stage_filter or 'Shared with Client')[:60]
     cands = conn.execute(
         'SELECT * FROM candidates WHERE mandate_id=? AND stage=? ORDER BY ai_score DESC',
         (mid, stage_filter)).fetchall()
@@ -25564,19 +26013,19 @@ def client_submission(mid):
         rows_html += (
             '<tr style="background:' + bg + ';border-bottom:0.5px solid #f0f0f0">'
             '<td style="text-align:center;padding:9px 8px;font-weight:500;color:#888">' + str(i+1) + '</td>'
-            '<td style="padding:9px 8px"><div style="font-weight:600;font-size:12px">' + (c['name'] or '--') + '</div>'
-            '<div style="font-size:10px;color:#666;margin-top:2px">' + (c['designation'] or '--') + '</div></td>'
-            '<td style="padding:9px 8px">' + (c['company'] or '--') + '</td>'
+            '<td style="padding:9px 8px"><div style="font-weight:600;font-size:12px">' + _sub_esc(c['name'] or '--') + '</div>'
+            '<div style="font-size:10px;color:#666;margin-top:2px">' + _sub_esc(c['designation'] or '--') + '</div></td>'
+            '<td style="padding:9px 8px">' + _sub_esc(c['company'] or '--') + '</td>'
             '<td style="padding:9px 8px;text-align:center;font-weight:500;white-space:nowrap">' + ctc_curr + '</td>'
             '<td style="padding:9px 8px;text-align:center;font-weight:500;white-space:nowrap;color:#1D9E75">' + ctc_exp + '</td>'
-            '<td style="padding:9px 8px;text-align:center;white-space:nowrap">' + notice + '</td>'
-            '<td style="padding:9px 8px">' + (c['location'] or '--') + '</td>'
-            '<td style="padding:9px 8px;font-size:10px;color:#555">' + skills_str + '</td>'
-            '<td style="padding:9px 8px;font-size:10px;color:#444;max-width:180px">' + (c['career_summary'] or c['ai_reasoning'] or '--') + '</td>'
+            '<td style="padding:9px 8px;text-align:center;white-space:nowrap">' + _sub_esc(notice) + '</td>'
+            '<td style="padding:9px 8px">' + _sub_esc(c['location'] or '--') + '</td>'
+            '<td style="padding:9px 8px;font-size:10px;color:#555">' + _sub_esc(skills_str) + '</td>'
+            '<td style="padding:9px 8px;font-size:10px;color:#444;max-width:180px">' + _sub_esc(c['career_summary'] or c['ai_reasoning'] or '--') + '</td>'
             '</tr>'
         )
 
-    no_cands = '<div style="padding:20px;text-align:center;color:#888;font-size:12px;border:1px dashed #ddd;border-radius:6px">No candidates in <strong>' + stage_filter + '</strong> stage yet.</div>' if not cands else ''
+    no_cands = '<div style="padding:20px;text-align:center;color:#888;font-size:12px;border:1px dashed #ddd;border-radius:6px">No candidates in <strong>' + _sub_esc(stage_filter) + '</strong> stage yet.</div>' if not cands else ''
 
     html = (
         '<!DOCTYPE html><html><head><meta charset="UTF-8">'
@@ -25605,15 +26054,15 @@ def client_submission(mid):
         '</div>'
         '<div style="text-align:right">'
         '<div style="font-size:20px;font-weight:700;color:#0a2540">Candidate Submission</div>'
-        '<div style="font-size:12px;color:#666;margin-top:3px">' + (m['role'] or '') + '  |  ' + (m['client'] or '') + '</div>'
+        '<div style="font-size:12px;color:#666;margin-top:3px">' + _sub_esc(m['role'] or '') + '  |  ' + _sub_esc(m['client'] or '') + '</div>'
         '<div style="font-size:10px;color:#aaa;margin-top:2px">Date: ' + date_str + '  |  CONFIDENTIAL</div>'
         '</div></div>'
 
         # Mandate info
         '<div style="background:#f9f9f9;border:0.5px solid #e8e8e8;border-left:3px solid #1D9E75;border-radius:6px;padding:12px 16px;margin-bottom:18px;display:grid;grid-template-columns:repeat(5,1fr);gap:12px">'
-        '<div><div style="font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Position</div><div style="font-size:12px;font-weight:500">' + (m['role'] or '') + '</div></div>'
-        '<div><div style="font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Client</div><div style="font-size:12px;font-weight:500">' + (m['client'] or '') + '</div></div>'
-        '<div><div style="font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Location</div><div style="font-size:12px;font-weight:500">' + (m['location'] or '--') + '</div></div>'
+        '<div><div style="font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Position</div><div style="font-size:12px;font-weight:500">' + _sub_esc(m['role'] or '') + '</div></div>'
+        '<div><div style="font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Client</div><div style="font-size:12px;font-weight:500">' + _sub_esc(m['client'] or '') + '</div></div>'
+        '<div><div style="font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Location</div><div style="font-size:12px;font-weight:500">' + _sub_esc(m['location'] or '--') + '</div></div>'
         '<div><div style="font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">CTC Range</div><div style="font-size:12px;font-weight:500">Rs ' + str(int(m['ctc_min'] or 0)) + '--' + str(int(m['ctc_max'] or 0)) + ' LPA</div></div>'
         '<div><div style="font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Profiles Shared</div><div style="font-size:22px;font-weight:700;color:#1D9E75">' + str(len(cands)) + '</div></div>'
         '</div>'

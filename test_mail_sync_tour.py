@@ -151,7 +151,8 @@ def test_guided_connect_tests_before_saving(srv, monkeypatch):
     conn = server.get_db()
     row = conn.execute('SELECT * FROM user_mail_identity WHERE user_id=?', (ids['rec'],)).fetchone()
     conn.close()
-    assert row['smtp_app_password'] == 'abcdefghijklmnop' and row['verified_at'] and row['smtp_display_name'] == 'Rec One'
+    assert row['smtp_app_password'].startswith('enc1:')  # stored encrypted (audit 1.3)
+    assert server.unseal_secret(row['smtp_app_password']) == 'abcdefghijklmnop' and row['verified_at'] and row['smtp_display_name'] == 'Rec One'
     # only the agency admin connects the company mailbox
     assert rec.post('/api/mail/connect', json={'box': 'company', 'email': 'co@gmail.com',
                                                'app_password': 'abcdefghijklmnop'}).status_code == 403

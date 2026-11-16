@@ -140,13 +140,22 @@ def _freelancer_api_guard():
         return None                       # not logged in: normal login_required handles it
     try:
         conn = get_db()
-        u = conn.execute('SELECT id, role, status, company_id FROM users WHERE id=?', (uid,)).fetchone()
+        try:
+            u = conn.execute('SELECT id, role, status, company_id, COALESCE(session_version,0) AS sv '
+                             'FROM users WHERE id=?', (uid,)).fetchone()
+        except Exception:     # session_version not migrated yet
+            u = conn.execute('SELECT id, role, status, company_id, 0 AS sv FROM users WHERE id=?', (uid,)).fetchone()
         conn.close()
     except Exception as e:
         print(f'[fl-guard] user lookup failed: {e}')
         return None
-    if not u:
-        return None
+    # 0) Audit 2.5: a deleted account, or a session from before a password
+    #    reset (session_version bumped), is signed out on its next request.
+    if not u or int(_session.get('sv', 0) or 0) != int(u['sv'] or 0):
+        _session.clear()
+        if _re.match(r'^/api/auth/(status|login|setup|signup|forgot|reset)/?$', path):
+            return None
+        return jsonify({'error': 'auth_required', 'message': 'Please sign in again.'}), 401
 
     # 1) Deactivated / rejected accounts lose their live session immediately.
     if (u['status'] or 'approved') in ('disabled', 'rejected'):

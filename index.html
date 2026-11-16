@@ -2423,7 +2423,11 @@ async function init(){
   if (status.error) { showConnError(status.error); return; }
 
   if (status.state === 'setup') { showAuthScreen('setup'); return; }
-  if (status.state === 'login') { window._authInfo = status; showAuthScreen('login'); return; }
+  if (status.state === 'login') {
+    window._authInfo = status;
+    if (/[?&]verified=0\b/.test(location.search)) { setTimeout(function(){ var e=document.getElementById('auth-err'); if(e) e.textContent='That confirmation link is invalid or expired. Sign in to get a new one.'; }, 150); }
+    showAuthScreen('login'); return;
+  }
 
   // state === 'app' — logged in
   S.currentUser = status.user || null;
@@ -2921,7 +2925,8 @@ function ntfStart(){
   _ntf.started = true;
   ntfRenderBell();
   ntfPoll();
-  _ntf.timer = setInterval(ntfPoll, 20000);
+  // audit 11.1: no polling while the tab is hidden; catch up when it is shown again
+  _ntf.timer = setInterval(function(){ if (document.visibilityState === 'visible') ntfPoll(); }, 20000);
   document.addEventListener('visibilitychange', function(){
     if (!document.hidden) { ntfStopFlash(); ntfPoll(); }
   });
@@ -3273,6 +3278,7 @@ function showAuthScreen(mode) {
       + F('auth-pass','Password','password', (isSetup||isSignup) ? 'new-password' : 'current-password', enter(mode))
       + ((isSetup||isSignup) ? '<div class="w4-ahint">At least 8 characters</div>' : '<div class="w4-afg"><a href="#" onclick="showAuthScreen(&#39;forgot&#39;);return false">Forgot password?</a></div>')
       + (isSignup ? '<label class="w4-aterms"><input type="checkbox" id="auth-terms"><span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a>.</span></label>' : '')
+      + (isSignup && _authTsKey() ? '<div id="auth-ts" style="margin:8px 0"></div>' : '')
       + '<button class="w4-abtn" onclick="submitAuth(&#39;'+mode+'&#39;)">' + (isSetup ? 'Create admin &amp; continue' : (isSignup ? (_authAuto() ? 'Start free trial' : 'Request account') : 'Sign in')) + '</button>';
   }
 
@@ -3293,6 +3299,7 @@ function showAuthScreen(mode) {
   h += '</div></main>';
   ov.innerHTML = h;
   document.body.appendChild(ov);
+  if (isSignup) _authTsMount();
   setTimeout(function(){ var fid = isReset ? 'auth-pass' : ((isSetup||isSignup)?'auth-display':'auth-user'); var f=document.getElementById(fid); if(f) f.focus(); }, 100);
 }
 function _authEye(btn){
@@ -3303,6 +3310,17 @@ function _authEye(btn){
   btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
 }
 function _authAuto(){ return !!(window._authInfo && window._authInfo.signup_auto); }
+// Cloudflare Turnstile on sign-up (audit 6.3) — only when the server has a site key.
+function _authTsKey(){ return (window._authInfo && window._authInfo.turnstile_site_key) || ''; }
+function _authTsMount(){
+  var el = document.getElementById('auth-ts'); if (!el || !_authTsKey()) return;
+  window._tsToken = '';
+  function go(){ try { window.turnstile.render(el, {sitekey: _authTsKey(), callback: function(t){ window._tsToken = t; }}); } catch(e){} }
+  if (window.turnstile) { go(); return; }
+  var sc = document.createElement('script');
+  sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; sc.async = true; sc.onload = go;
+  document.head.appendChild(sc);
+}
 function _authTrialDays(){ return (window._authInfo && window._authInfo.trial_days) || 30; }
 // Replaces the auth card with a short result message (sent / updated / requested).
 function _authDone(kind, title, text, btn){
@@ -3358,11 +3376,26 @@ async function submitAuth(mode) {
     var termsEl = document.getElementById('auth-terms');
     if (!termsEl || !termsEl.checked) { err.textContent = 'Please accept the Terms of Service and Privacy Policy'; return; }
     payload.accept_terms = true;
+    if (_authTsKey()) {
+      if (!window._tsToken) { err.textContent = 'Please complete the "I am human" check'; return; }
+      payload.turnstile_token = window._tsToken;
+    }
     endpoint = '/auth/signup';
   }
   err.textContent = 'Please wait...';
   var r = await req('POST', endpoint, payload);
+  if (!r.ok && mode === 'setup' && r.code === 'setup_token_required') {
+    // Existing data without users: the server asks for its one-time SETUP_TOKEN.
+    var stok = prompt((r.error || 'Setup token required') + '\n\nSETUP_TOKEN:');
+    if (!stok) { err.textContent = r.error || 'Setup token required'; return; }
+    payload.setup_token = stok;
+    r = await req('POST', endpoint, payload);
+  }
   if (r.ok) {
+    if (mode === 'signup' && r.verify_email) {
+      _authDone('ok', 'Check your e-mail', 'We sent a confirmation link to ' + (r.email || 'your e-mail') + '. Open it to start your free trial (check spam too).', 'Back to sign in');
+      return;
+    }
     if (mode === 'signup' && !r.pending) {
       // Automatic sign-up: the trial has started and the session is open
       var o3 = document.getElementById('auth-overlay'); if (o3) o3.remove();
@@ -6270,7 +6303,7 @@ function _ebSoftRefresh(){
   if(Object.keys(window._eb.sel||{}).length || document.getElementById('eb2-adv') || (window._eb.offset||0)>0) return;
   ebLoadList(false);
 }
-setInterval(function(){ if(document.getElementById('eb-list')) _ebSoftRefresh(); }, 60000);
+setInterval(function(){ if(document.visibilityState==='visible' && document.getElementById('eb-list')) _ebSoftRefresh(); }, 60000);
 var _ebSearchT=null;
 function ebSearchDebounced(){
   clearTimeout(_ebSearchT);
@@ -18692,7 +18725,7 @@ async function updateBdBadge(){
     }
   }catch(e){}
 }
-setInterval(updateBdBadge, 5*60*1000);
+setInterval(function(){ if (document.visibilityState === 'visible') updateBdBadge(); }, 5*60*1000);
 
 // ═══════════════════════════════════════════════════════════════════════
 //  CRM CLIENTS PAGE — UI
@@ -20782,7 +20815,7 @@ async function enableTaskNotifications(){
   }
 }
 
-setInterval(updateTasksBadge, 5 * 60 * 1000);  // poll every 5 min while app is open
+setInterval(function(){ if (document.visibilityState === 'visible') updateTasksBadge(); }, 5 * 60 * 1000);  // every 5 min while the tab is visible
 
 // ═══════════════════════════════════════════════════════════
 //  REMINDERS — candidate-level + dashboard widget

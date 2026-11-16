@@ -21,7 +21,7 @@ if errorlevel 1 (
 )
 
 echo  Python found. Installing packages...
-python -m pip install flask flask-cors requests pdfplumber python-docx --quiet --no-warn-script-location
+python -m pip install -r "%~dp0requirements.txt" --quiet --no-warn-script-location
 
 echo.
 echo  ====================================================

@@ -82,7 +82,7 @@ def test_ai_meter_per_recruiter_in_rupees(srv):
 # ── 2. automatic sign-up ───────────────────────────────────────────────────
 def test_signup_starts_30_day_trial_and_signs_in(srv):
     server, ids = srv
-    server._RL_BUCKETS.clear()
+    server._rl_reset()
     st = server.app.test_client().get('/api/auth/status').get_json()
     assert st['state'] == 'login' and st['signup_auto'] is True and st['trial_days'] == 30
     c = server.app.test_client()
@@ -106,7 +106,7 @@ def test_signup_starts_30_day_trial_and_signs_in(srv):
                                                                  'email': 'wait@agency.in', 'accept_terms': True})
     assert r.get_json()['pending'] is True
     server.set_setting('signup_auto_approve', '1')
-    server._RL_BUCKETS.clear()
+    server._rl_reset()
 
 
 # ── 3. online payment ──────────────────────────────────────────────────────
