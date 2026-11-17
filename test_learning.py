@@ -55,7 +55,7 @@ def test_bad_state_refused(srv):
 def test_everything_is_editable(srv):
     html = cl(srv, RIYA).get('/learning').get_data(as_text=True)
     assert 'Edit content' in html and 'function saveDraft' in html
-    for part in ('"TEXT"', '"COS"', '"SEGS"', '"POOLS"', '"PAY0"', '"GLOSS"', '"QS"', '"CITY"'):
+    for part in ('"TEXT"', '"COS"', '"MGROUPS"', '"SEGS"', '"POOLS"', '"PAY0"', '"GLOSS"', '"QS"', '"CITY"'):
         assert part in html
 
 
