@@ -50,3 +50,22 @@ def test_bad_state_refused(srv):
     c = cl(srv, RIYA)
     assert c.put('/api/learning/state', json={'log': 'x'}).status_code == 400
     assert c.put('/api/learning/state', data='nope', content_type='application/json').status_code == 400
+
+
+def test_everything_is_editable(srv):
+    html = cl(srv, RIYA).get('/learning').get_data(as_text=True)
+    assert 'Edit content' in html and 'function saveDraft' in html
+    for part in ('"TEXT"', '"COS"', '"SEGS"', '"POOLS"', '"PAY0"', '"GLOSS"', '"QS"', '"CITY"'):
+        assert part in html
+
+
+def test_edited_content_is_kept_per_agency(srv):
+    co = {'id': 'hagerx', 'name': 'Hager Electro India', 'short': 'Hager', 'big': True, 'facts': [{'k': 'Rs 500 cr', 't': 'Revenue', 's': ''}]}
+    st = {'v': 1, 'log': [], 'matrix': {}, 'pay': None,
+          'data': {'COS': [co], 'TEXT': {'ov_h1': 'Industry ko jaano'}, 'MCOLS': ['hagerx'], 'SEGS': [{'id': 'mcb', 'n': 'MCB', 'r': [2]}]}}
+    assert cl(srv, ADMIN).put('/api/learning/state', json=st).get_json()['ok']
+    got = _state(cl(srv, RIYA).get('/learning').get_data(as_text=True))
+    assert got['data']['COS'][0]['name'] == 'Hager Electro India'
+    assert got['data']['TEXT']['ov_h1'] == 'Industry ko jaano'
+    assert 'data' not in _state(cl(srv, OADMIN).get('/learning').get_data(as_text=True))
+    assert cl(srv, RIYA).put('/api/learning/state', json={'log': [], 'data': ['x']}).status_code == 400
