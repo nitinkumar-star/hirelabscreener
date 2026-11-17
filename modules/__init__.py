@@ -73,6 +73,7 @@ _MODULE_NAMES = [
     'intro_tour',      # first sign-in: a guided walk through every tab
     'ai_meter',        # AI cost meter in ₹: per agency and per recruiter
     'perf',            # Speed: indexes on the core tables (candidates, stage_history, events …)
+    'learning',        # Learning: Electrical Industry Explorer, edits saved per agency (/learning)
 ]
 
 _MIGRATIONS = []

@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Electrical Industry Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style id="app-css">
+/* Layout idea: a field guide with a fixed left rail of views; each view opens on a picture (map, tree, heatmap) and puts detail below it. */
+:root{
+  --bg:#F3F5F8; --surface:#FFFFFF; --ink:#141A23; --muted:#5A6476; --line:#DCE1E8;
+  --accent:#1F57D1; --accent-soft:#E5ECFB; --amber:#B7740A; --amber-soft:#FBF0DC;
+  --good:#1D7F52; --crit:#B4361C;
+  --co-schneider:#1D7F52; --co-siemens:#0B7C86; --co-lk:#2E52A8; --co-legrand:#B4361C; --co-peer:#6A7385;
+  --font-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --shadow:0 1px 2px rgba(20,26,35,.06),0 4px 14px rgba(20,26,35,.05);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1116; --surface:#161B23; --ink:#E7EBF1; --muted:#9AA4B5; --line:#2A313C;
+    --accent:#7AA2F7; --accent-soft:#1B2944; --amber:#E2A64A; --amber-soft:#3A2C14;
+    --good:#4CC28C; --crit:#F08A6B;
+    --co-schneider:#4CC28C; --co-siemens:#3FC1C9; --co-lk:#7FA0F0; --co-legrand:#F08A6B; --co-peer:#9AA4B5;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1116; --surface:#161B23; --ink:#E7EBF1; --muted:#9AA4B5; --line:#2A313C;
+  --accent:#7AA2F7; --accent-soft:#1B2944; --amber:#E2A64A; --amber-soft:#3A2C14;
+  --good:#4CC28C; --crit:#F08A6B;
+  --co-schneider:#4CC28C; --co-siemens:#3FC1C9; --co-lk:#7FA0F0; --co-legrand:#F08A6B; --co-peer:#9AA4B5;
+  --shadow:0 1px 2px rgba(0,0,0,.4);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.5}
+a{color:var(--accent)}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.app{display:grid;grid-template-columns:236px 1fr;min-height:100%}
+.rail{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line);background:var(--surface);padding:20px 14px;display:flex;flex-direction:column;gap:18px}
+.brand{font-family:var(--font-display);font-weight:700;font-size:19px;line-height:1.15;letter-spacing:.2px}
+.brand small{display:block;font-family:var(--font-body);font-weight:400;font-size:12px;color:var(--muted);margin-top:4px;letter-spacing:0}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:10px 8px 4px}
+.nav a{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;color:var(--ink);text-decoration:none;font-size:14px}
+.nav a:hover{background:var(--bg)}
+.nav a.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--co-peer)}
+.save{margin-top:auto;font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:12px}
+.save b{color:var(--ink);font-weight:600}
+main{padding:28px 32px 64px;max-width:1200px;width:100%}
+h1,h2,h3{font-family:var(--font-display);font-weight:700;text-wrap:balance;margin:0}
+h1{font-size:32px;line-height:1.1}
+h2{font-size:22px;margin-bottom:6px}
+h3{font-size:17px}
+.lead{color:var(--muted);max-width:68ch;margin:8px 0 0}
+.sec{margin-top:32px}
+.sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px}
+.sec-head p{margin:2px 0 0;color:var(--muted);font-size:14px;max-width:70ch}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow)}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12.5px;background:var(--surface);color:var(--ink);white-space:nowrap}
+button.chip{cursor:pointer}
+button.chip:hover{border-color:var(--accent);color:var(--accent)}
+.chip.on,button.chip.on:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.pill{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:6px;background:var(--bg);color:var(--muted)}
+.pill.strong{background:var(--accent);color:#fff}
+.pill.present{background:var(--accent-soft);color:var(--accent)}
+.pill.verify{background:var(--amber-soft);color:var(--amber)}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:7px 14px;font-weight:600;font-size:14px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--accent)}
+.btn:disabled{opacity:.5;cursor:default}
+.switch{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer}
+.switch input{width:16px;height:16px;accent-color:var(--accent)}
+table{border-collapse:collapse;width:100%}
+.scroll{overflow-x:auto}
+/* overview */
+.hero{display:grid;grid-template-columns:1.2fr 1fr;gap:20px;align-items:stretch}
+.callout{border-left:4px solid var(--amber);background:var(--amber-soft);border-radius:8px;padding:12px 14px;font-size:14px}
+.callout b{color:var(--ink)}
+.cocard{display:flex;flex-direction:column;gap:10px;cursor:pointer;text-align:left;border-top:4px solid var(--co-peer)}
+.cocard:hover{border-color:var(--accent);border-top-color:inherit}
+.cocard .tag{font-size:13px;color:var(--muted)}
+.cocard ul{margin:0;padding-left:18px;font-size:13.5px}
+.peer{display:flex;flex-direction:column;gap:4px;cursor:pointer;text-align:left;padding:12px 14px}
+.peer:hover{border-color:var(--accent)}
+.cluster h3{font-size:14px;color:var(--muted);font-family:var(--font-body);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin:0 0 8px}
+.map3{display:grid;grid-template-columns:1fr 28px 1fr 28px 1fr;align-items:stretch;gap:0}
+.map3 .col{display:flex;flex-direction:column;gap:8px}
+.map3 .colh{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:center;margin-bottom:2px}
+.node{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:9px 12px;text-align:left;cursor:pointer;width:100%}
+.node b{display:block;font-size:14px}
+.node span{display:block;font-size:12.5px;color:var(--muted)}
+.node:hover{border-color:var(--accent)}
+.node.on{border-color:var(--accent);background:var(--accent-soft);box-shadow:0 0 0 1px var(--accent) inset}
+.node.dim{opacity:.45}
+.arrowcol{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:18px}
+.influ{grid-column:3 / 6;margin-top:10px;border:1.5px dashed var(--amber);background:var(--amber-soft);border-radius:10px;padding:9px 12px;font-size:13.5px}
+.result{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+/* company */
+.cohead{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;border-left:6px solid var(--co-peer);padding-left:16px}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:13.5px;display:flex;flex-direction:column;gap:6px}
+.fact .k{font-family:var(--font-display);font-weight:700;font-size:20px;line-height:1.1}
+.fact a{font-size:12px}
+.tree{display:flex;flex-direction:column;align-items:center;gap:0}
+.tree .root{border:2px solid var(--ink);border-radius:10px;padding:8px 14px;font-weight:600;background:var(--surface);text-align:center;max-width:420px}
+.tree .stem{width:2px;height:18px;background:var(--line)}
+.tree .kids{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;position:relative;padding-top:18px;border-top:2px solid var(--line);width:100%}
+.tree .kid{flex:1 1 200px;max-width:280px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--surface);font-size:13px;position:relative}
+.tree .kid::before{content:"";position:absolute;top:-19px;left:50%;width:2px;height:18px;background:var(--line)}
+.tree .kid b{display:block;font-size:14px;margin-bottom:2px}
+.tree .kid .sub{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:4px}
+.tree .kid .sub div{font-size:12.5px}
+.tree .kid.hl{border-color:var(--accent);background:var(--accent-soft)}
+.bu{display:flex;flex-direction:column;gap:8px}
+.bu .who{font-size:12.5px;color:var(--muted)}
+.foot{display:grid;grid-template-columns:minmax(0,360px) 1fr;gap:16px;align-items:start}
+.sites{display:flex;flex-direction:column;gap:6px}
+.site{display:flex;align-items:center;gap:10px;font-size:13.5px;padding:6px 8px;border-radius:8px;cursor:default}
+.site:hover,.site.on{background:var(--accent-soft)}
+.sym{width:12px;height:12px;flex:none;border-radius:50%;background:var(--accent)}
+.sym.rd{border-radius:3px;background:var(--amber)}
+.sym.hq{background:var(--ink)}
+.sym.tc{background:transparent;border:2px solid var(--muted)}
+.sym.new{background:var(--good)}
+.tl{display:flex;gap:0;overflow-x:auto;padding:8px 2px 4px}
+.tl .step{flex:1 0 150px;position:relative;padding:22px 12px 0 0}
+.tl .step::before{content:"";position:absolute;top:7px;left:0;right:0;height:2px;background:var(--line)}
+.tl .step::after{content:"";position:absolute;top:2px;left:0;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--accent)}
+.tl .yr{font-family:var(--font-mono);font-size:13px;color:var(--accent);font-weight:500}
+.tl .tx{font-size:13px;margin-top:2px}
+.learn{display:flex;flex-direction:column;gap:8px}
+.lrow{display:grid;grid-template-columns:96px 1fr auto;gap:10px;align-items:start;font-size:13.5px;padding:8px 0;border-bottom:1px solid var(--line)}
+/* matrix */
+.hm th,.hm td{border-bottom:1px solid var(--line);padding:0}
+.hm th{font-size:12.5px;font-weight:600;text-align:center;padding:8px 6px;color:var(--muted);white-space:nowrap}
+.hm th.rowh{text-align:left;padding:6px 10px 6px 0;color:var(--ink);font-weight:500;white-space:normal;min-width:190px}
+.hm th.rowh button{all:unset;cursor:pointer;display:block;width:100%}
+.hm th.rowh button:hover{color:var(--accent)}
+.hm th.rowh.on{color:var(--accent)}
+.hm th.colh button{all:unset;cursor:pointer}
+.hm th.colh button:hover{color:var(--accent)}
+.cell{display:flex;align-items:center;justify-content:center;height:40px;margin:3px;border-radius:7px;font-size:12px;font-weight:600}
+.cell.s2{background:var(--accent);color:#fff}
+.cell.s1{background:var(--accent-soft);color:var(--accent)}
+.cell.s0{color:var(--line)}
+.cell.edited{box-shadow:0 0 0 2px var(--amber) inset}
+.hm.editing .cell{cursor:pointer}
+.hm.editing .cell:hover{outline:2px dashed var(--amber)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);align-items:center}
+.legend i{display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:-2px;margin-right:5px}
+/* talent */
+.tm{display:grid;grid-template-columns:1fr;gap:16px;align-items:start}
+.pool{cursor:pointer}
+.pool rect{transition:fill .15s}
+.pool:hover rect{stroke:var(--accent)}
+/* roles */
+.role{display:flex;flex-direction:column;gap:8px;cursor:pointer;text-align:left}
+.role.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.role .m{font-size:13px}
+.ladder input{width:56px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);font-family:var(--font-mono);font-size:13px}
+/* trends */
+.trend{display:flex;flex-direction:column;gap:10px}
+.trend .num{font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+/* glossary */
+.search{width:100%;max-width:420px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.term{display:flex;flex-direction:column;gap:4px}
+.term b{font-family:var(--font-display);font-size:18px}
+/* call kit */
+.q{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+.q input{margin-top:3px;width:16px;height:16px;accent-color:var(--accent);flex:none}
+/* log */
+.form{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.form label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--muted);font-weight:500}
+.form input,.form select,.form textarea{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-size:14px}
+.form .wide{grid-column:1 / -1}
+.form textarea{min-height:70px;resize:vertical}
+.entry{display:grid;grid-template-columns:100px 150px 1fr auto;gap:12px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line);font-size:14px}
+.entry .acts{display:flex;gap:6px}
+.icon-btn{border:1px solid var(--line);background:var(--surface);border-radius:7px;padding:3px 9px;font-size:12.5px;cursor:pointer}
+.icon-btn:hover{border-color:var(--accent);color:var(--accent)}
+.banner{border:1px solid var(--amber);background:var(--amber-soft);border-radius:10px;padding:10px 14px;font-size:13.5px;margin-top:12px}
+.src{font-size:12px;color:var(--muted)}
+.src a{color:var(--muted)}
+@media (max-width:960px){
+  .app{grid-template-columns:1fr}
+  .rail{position:static;height:auto;flex-direction:column;gap:10px;border-right:0;border-bottom:1px solid var(--line)}
+  .nav{flex-direction:row;overflow-x:auto;gap:4px;padding-bottom:4px}
+  .nav-label{display:none}
+  .nav a{white-space:nowrap}
+  .save{margin-top:0;border-top:0;padding-top:0}
+  main{padding:20px 16px 48px}
+  .hero,.foot,.tm{grid-template-columns:1fr}
+  .g3,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .form{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .entry{grid-template-columns:90px 1fr;}
+  .entry .acts{grid-column:1 / -1}
+}
+@media (max-width:600px){
+  .g2,.g3,.g4{grid-template-columns:1fr}
+  .map3{grid-template-columns:1fr}
+  .arrowcol{transform:rotate(90deg);height:24px}
+  .influ{grid-column:1}
+  .form{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script id="state" type="application/json">{"v":1,"log":[{"id":"ex1","date":"2026-11-17","co":"siemens","bu":"Siemens Ltd","from":"Example entry","text":"LV motors team moved to Innomotics India (Dec 2025 deal). Always check the entity name on a Siemens CV.","conf":2,"moved":true}],"matrix":{},"pay":null}</script>
+<script id="app-js">
+(function(){
+"use strict";
+var TITLE = "Electrical Industry Explorer";
+var FONT_LINKS = '<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">';
+
+var STATE;
+try { STATE = JSON.parse(document.getElementById("state").textContent); } catch(e) { STATE = {v:1,log:[],matrix:{},pay:null}; }
+if (!STATE.log) STATE.log = [];
+if (!STATE.matrix) STATE.matrix = {};
+
+/* ---------- data ---------- */
+var S = {
+  quartr:"https://quartr.com/events/schneider-electric-infrastructure-limited-schneider-cmd-2024-day2_FLvEHvQt",
+  iconnect:"https://iconnect007.com/article/146348/schneider-electric-reinforces-india-strategy-with-acquisition-of-remaining-stake/146345/ein",
+  machinist:"https://machinist.in/2025/02/schneider-electric-to-open-three-new-manufacturing-plants-in-india/",
+  tnw:"https://thenextweb.com/news/schneider-electric-india-data-centre-growth",
+  senews:"https://www.se.com/in/en/about-us/newsroom/news/press-releases/biggest-ever-showcase-of-technology-innovation-by-schneider-electric-group-at-elecrama-2025-world%E2%80%99s-largest-electrical-show-67b5de3e1f4635336d07d673",
+  siliconindia:"https://www.siliconindia.com/news/business/schneider-electric-plans-rs-3200crore-investment-to-boost-india-expansion-nid-234621-cid-3.html",
+  iai2b2s:"https://www.industrialautomationindia.in/news/schneider-electric-acquires-remaining-35-percent-seipl-india",
+  barchartlk:"https://www.barchart.com/story/news/26575889/schneider-groupowned-lauritz-knudsen-to-invest-rs-850-crore-in-3-years",
+  sietrans:"https://financialfilings.com/filings/siemens-ltd/call-transcript/2025/45823697/",
+  siepress:"https://assets.new.siemens.com/siemens/assets/api/uuid:a7726e50-b441-4bf0-92f8-5a8f8b71cf45/HQCOPR202506117182EN.pdf",
+  angel:"https://www.angelone.in/news/market-updates/siemens-board-approves-sale-of-low-voltage-motors-business-to-innomotics-india-for-2-200-crore",
+  energetica:"https://www.energetica-india.net/news/siemens-completes-rs2100-cr-acquisition-of-cs-electric-in-india-basson-appointed-as-director",
+  msfactories:"https://uk.marketscreener.com/quote/stock/SIEMENS-LIMITED-9058964/news/Siemens-Limited-Announces-the-Expansion-of-Two-of-Its-32-Factories-in-India-46778563",
+  tndcs:"https://www.tndindia.com/siemens-completes-acquisition-cs-electric-india/amp/",
+  lkweb:"https://lk-ea.com/",
+  lkabout:"https://lk-ea.com/about/about-us",
+  lkfac:"https://smartshop.lk-ea.com/facilities-structure",
+  lkpr:"https://www.lk-ea.com/about/who-we-are/newsroom/press-release/fuels-india-next-energy-chapter-with-its-most",
+  eqmag:"https://www.eqmagpro.com/lauritz-knudsen-expands-into-renewable-energy-sector-eq/",
+  realty:"https://www.rprealtyplus.com/allied/legrand-india-completes-25-years-in-india-108602.html",
+  oem:"https://www.oemupdate.com/news/legrand-acquired-numeric-ups-11-february-2012",
+  lgcorp:"https://corporate.legrand.co.in/",
+  lggroup:"https://corporate.legrand.co.in/group-india",
+  lgabout:"https://legrand.co.in/about-us",
+  lgsite:"https://cgstaging.legrand.co.in/",
+  bw:"https://www.businesswire.com/news/home/20250730579669/en/Legrand-2025-first-half-results",
+  barandbench:"https://www.barandbench.com/dealstreet/legrand-buys-numeric-powers-ups-business-amarchand-and-universal-legal-advise",
+  abb:"https://www.plantautomation-technology.com/technology-exclusives/press-releases/abb-invests-75-million-in-india",
+  abbq4:"https://new.abb.com/news/detail/133592/order-growth-accelerates-supported-by-broad-based-sector-demand-in-q4",
+  abbq1:"https://new.abb.com/news/detail/135616/abb-india-posts-solid-start-to-cy2026-with-strong-order-momentum-in-first-jan-mar-quarter",
+  hitachi:"https://www.jmfinancialservices.in/market-news-and-insights/1705213",
+  hitachi2:"https://powerpeakdigest.com/?p=71500",
+  hitachi3:"https://quartr.com/events/hitachi-energy-india-limited-powerindia-investor-day-25-26_3YOWcTXS",
+  plindia:"https://plindia.com/ResReport/POWERIND-27-5-26-PL.pdf",
+  eaton:"https://www.tndindia.com/?p=32265",
+  hager:"https://hager.com/in",
+  datam:"https://www.datamintelligence.com/research-report/india-switchgear-market",
+  epr:"https://eprmagazine.com/tag/electricals",
+  ken:"https://www.kenresearch.com/india-electric-switchgear-market"
+};
+
+var COS = [
+ {id:"schneider", name:"Schneider Electric India", short:"Schneider", big:true, color:"--co-schneider",
+  tag:"The biggest name in Indian LV. Two brands, two sales forces.",
+  overview:["3rd-largest market for the group","Owns L&K since 2020","Data centres growing fastest"],
+  facts:[
+   {k:"38,000+", t:"employees in India, its 3rd-largest market, with 31 manufacturing sites", s:S.quartr},
+   {k:"100%", t:"ownership after agreeing in Jul 2025 to buy Temasek's remaining 35% of SEIPL", s:S.iconnect},
+   {k:"3 new plants", t:"Kolkata, Hyderabad, Ahmednagar, part of a Rs 3,200 cr expansion (Feb 2025)", s:S.machinist},
+   {k:"~2/3", t:"of what it makes in India is exported, so plant roles often have global scope", s:S.machinist},
+   {k:"Fastest", t:"India data-centre business expected to outgrow the rest of the company", s:S.tnw}
+  ],
+  tree:{root:"Schneider Electric SE (France)", kids:[
+   {n:"Schneider Electric India Pvt Ltd (SEIPL)", d:"Main operating company: LV products, automation, buildings, services", sub:["Schneider Electric brand: premium, projects, key accounts","Lauritz Knudsen brand: mass market, rural, MSME (own sales force)"], hl:true},
+   {n:"Schneider Electric Infrastructure Ltd", d:"Listed. MV switchgear, distribution transformers, grid automation. Utility and tender roles."},
+   {n:"Schneider Electric IT Business India", d:"Secure Power (APC): UPS, racks, cooling, prefabricated data centres."},
+   {n:"AVEVA and ETAP", d:"Software: industrial operations (AVEVA) and power-system design (ETAP)."}
+  ]},
+  bus:[
+   {n:"Power Products / Home & Distribution", p:"MCB, RCCB, MCCB, ACB, DBs (Acti9, ComPacT, MasterPacT)", w:"Panel builders, contractors, distributors"},
+   {n:"Power Systems / MV", p:"RM6 RMU, VCB, MV panels, substations, transformers", w:"Utilities, EPCs, industries"},
+   {n:"Secure Power", p:"APC UPS, PDUs, racks, cooling, prefab data centres", w:"Data centres, IT, BFSI"},
+   {n:"Digital Energy", p:"EcoStruxure Power, power monitoring, microgrids", w:"Large buildings, industry, DCs"},
+   {n:"Industrial Automation", p:"Modicon PLC, Altivar drives, HMI, Foxboro DCS, safety", w:"OEMs, process plants, system integrators"},
+   {n:"Buildings", p:"EcoStruxure Building (BMS), wiring devices, smart home", w:"Real estate, hospitals, airports"},
+   {n:"Field Services", p:"AMC, retrofit, EcoCare, modernisation", w:"Installed-base customers"}
+  ],
+  sites:[
+   {c:"Gurugram", t:"hq", n:"India HQ", v:true},
+   {c:"Bengaluru", t:"plant", n:"Factories; recently inaugurated", s:S.siliconindia},
+   {c:"Hyderabad", t:"new", n:"New plant announced 2025", s:S.machinist},
+   {c:"Kolkata", t:"new", n:"New plant; MV vacuum breaker expansion", s:S.machinist},
+   {c:"Ahmednagar", t:"new", n:"New plant announced 2025", s:S.machinist},
+   {c:"Vadodara", t:"plant", n:"Schneider Electric Infrastructure (MV, transformers)", v:true}
+  ],
+  tl:[
+   {y:"2018", t:"Agrees with Temasek to buy L&T's Electrical & Automation business"},
+   {y:"2020", t:"Deal closes (about Rs 14,000 cr); L&T Switchgear joins the group"},
+   {y:"May 2024", t:"L&T Switchgear renamed Lauritz Knudsen"},
+   {y:"Feb 2025", t:"3 new plants and Rs 3,200 cr expansion announced"},
+   {y:"Jul 2025", t:"Agrees to buy Temasek's 35%, taking full ownership of SEIPL"}
+  ],
+  talent:"Process-driven and segment-led (data centre, infra, pharma, F&B). Strong preference for candidates who already sell through panel builders or into the same segment. Structured interviews.",
+  ladder:["Sales Engineer","Area / Key Account Manager","Segment / Regional Manager","Zone / Vertical Head"],
+  from:["siemens","abb","lk","eaton","legrand","hager"],
+  watch:"Which business a candidate's team reports into after the 2025 full-ownership change, and whether Schneider and L&K sales teams are still separate in their region."
+ },
+ {id:"siemens", name:"Siemens in India", short:"Siemens", big:true, color:"--co-siemens",
+  tag:"Now three separate employers. Always check the entity on the CV.",
+  overview:["Energy demerged (listed Jun 2025)","LV motors sold to Innomotics","Owns C&S Electric"],
+  facts:[
+   {k:"3 segments", t:"Siemens Limited now = Digital Industries, Smart Infrastructure, Mobility", s:S.sietrans},
+   {k:"19 Jun 2025", t:"Siemens Energy India Ltd listed as a separate company", s:S.siepress},
+   {k:"Rs 2,200 cr", t:"LV motors and geared motors business sold to Innomotics India (Dec 2025)", s:S.angel},
+   {k:"Rs 2,100 cr", t:"C&S Electric bought; closed 1 Mar 2021 (LV switchgear, busbar)", s:S.energetica},
+   {k:"Goa + Aurangabad", t:"SI factory expansion in Goa; metro train facility in Aurangabad", s:S.msfactories}
+  ],
+  tree:{root:"The Siemens family in India", kids:[
+   {n:"Siemens Limited (listed)", d:"Industry, infrastructure, mobility", sub:["Smart Infrastructure: LV/MV, buildings, EV charging","Digital Industries: PLC, drives, PLM software","Mobility: rail signalling, metro, locomotives","C&S Electric (subsidiary): LV switchgear, busbar"], hl:true},
+   {n:"Siemens Energy India Ltd (listed)", d:"Separate since Jun 2025. Turbines, HV substations, GIS, HVDC, power transformers. Separate HR."},
+   {n:"Innomotics India", d:"Motors and large drives. Was Siemens; now owned by KPS Capital. Ex-Siemens motor people sit here."}
+  ]},
+  bus:[
+   {n:"Smart Infrastructure (SI)", p:"SENTRON breakers, SIVACON panels, busbar, MV, Desigo BMS, fire safety, EV charging", w:"Panel builders, consultants, buildings, utilities"},
+   {n:"Digital Industries (DI)", p:"SIMATIC PLC, SINAMICS drives, HMI, motion, Xcelerator, Teamcenter, NX", w:"OEMs, process and discrete plants, SIs"},
+   {n:"Mobility", p:"Signalling, rail electrification, locomotives, metro trains, bogies", w:"Indian Railways, metro corporations"},
+   {n:"C&S Electric", p:"Breakers, LV panels, busbar trunking, protection and metering", w:"Panel builders, industry, Delhi-NCR heavy"},
+   {n:"Siemens Energy India", p:"Gas/steam turbines, HV substations, GIS, HVDC, power transformers", w:"Utilities, transmission, power plants"},
+   {n:"Innomotics India", p:"LV/HV motors, geared motors, large drives", w:"Process industry, OEMs"}
+  ],
+  sites:[
+   {c:"Mumbai", t:"hq", n:"Siemens Ltd HQ (Worli)", s:S.sietrans},
+   {c:"Kalwa", t:"plant", n:"Kalwa works, Thane", s:S.msfactories},
+   {c:"Goa", t:"plant", n:"Smart Infrastructure factory expansion", s:S.msfactories},
+   {c:"Aurangabad", t:"plant", n:"Bogie factory; metro train facility", s:S.msfactories},
+   {c:"Nashik", t:"plant", n:"Plant", v:true},
+   {c:"Vadodara", t:"plant", n:"Plant", v:true},
+   {c:"Bengaluru", t:"plant", n:"Plant and R&D", v:true},
+   {c:"Noida", t:"plant", n:"C&S Electric busduct factory", s:S.tndcs},
+   {c:"Gurugram", t:"office", n:"Sales office", s:S.sietrans}
+  ],
+  tl:[
+   {y:"Mar 2021", t:"C&S Electric acquisition closes"},
+   {y:"Mar 2025", t:"Energy business demerger takes effect"},
+   {y:"Jun 2025", t:"Siemens Energy India listed"},
+   {y:"Dec 2025", t:"LV motors sale to Innomotics India signed"}
+  ],
+  talent:"Engineering-heavy, German-process culture, long tenures. DI people are strong on automation application and software; SI people sell through panel builders and to consultants. Expect lower attrition and higher notice-period cost.",
+  ladder:["Sales / Application Engineer","Key Account Manager","Regional / Segment Head","BU Head"],
+  from:["schneider","abb","lk","rockwell","mitsubishi","cg"],
+  watch:"Which of the Siemens employers the candidate is on, and whether their role moved in the 2025 demerger or the motors sale. A Siemens Energy CV is a power/HV profile, not an LV switchgear profile."
+ },
+ {id:"lk", name:"Lauritz Knudsen (L&K)", short:"L&K", big:true, color:"--co-lk",
+  tag:"The old L&T Switchgear. India's mass-market LV workhorse, now Schneider's second brand.",
+  overview:["Formerly L&T Switchgear","Strong in MSME, agri, Tier 2-4","5 factories, 500+ cities"],
+  facts:[
+   {k:"Rs 14,000 cr", t:"L&T sold its Electrical & Automation business; joined Schneider group in 2020", s:S.barchartlk},
+   {k:"Rs 850 cr", t:"3-year investment plan announced with the May 2024 rebrand", s:S.barchartlk},
+   {k:"2.1M sq ft", t:"across 5 factories, 33+ offices, presence in 500+ cities", s:S.lkfac},
+   {k:"Since 1984", t:"Ahmednagar Switchgear Works, described by L&K as India's largest electrical facility", s:S.lkfac},
+   {k:"10+ launches", t:"May 2026: biggest portfolio showcase, 300+ products incl. solar, EV, smart home", s:S.lkpr}
+  ],
+  tree:{root:"Schneider Electric India (SEIPL)", kids:[
+   {n:"Lauritz Knudsen Electrical & Automation", d:"Separate brand and separate sales force ('2 brands, 2 sales')", sub:["Products: LV/MV switchgear, controls, meters","Systems: PCC, MCC, APFC panels, busbar","Automation and software: PLC, drives, SCADA","New energy: solar, EV charging, BESS, agri","Training: 6 Switchgear Training Centres"], hl:true}
+  ]},
+  bus:[
+   {n:"LV switchgear", p:"U-Power / C-Power ACB, DN MCCB, MCB, RCCB, MNX contactors, relays, starters", w:"Distributors, panel builders, MSMEs"},
+   {n:"MV switchgear", p:"VCB, RMU, MV panels", w:"Industry, utilities, EPCs"},
+   {n:"Electrical systems", p:"PCC, MCC, APFC panels, busbar", w:"Industry, infra"},
+   {n:"Automation", p:"PLCs, drives, HMI, SCADA software, digital platforms", w:"OEMs, plants, SIs"},
+   {n:"New energy", p:"Solar DC protection, EV charging components, BESS, agri pump starters", w:"Solar EPCs, EV OEMs, agri"},
+   {n:"Homes", p:"Wiring devices, smart home, DBs", w:"Dealers, electricians"}
+  ],
+  sites:[
+   {c:"Mumbai", t:"hq", n:"Head office", v:true},
+   {c:"Navi Mumbai", t:"rd", n:"R&D centre, Mahape", s:S.eqmag},
+   {c:"Ahmednagar", t:"plant", n:"Ahmednagar Switchgear Works", s:S.lkfac},
+   {c:"Vadodara", t:"plant", n:"Vadodara Switchgear Works; also a training centre", s:S.lkfac},
+   {c:"Coimbatore", t:"plant", n:"LV systems factory", s:S.lkfac},
+   {c:"Pune", t:"tc", n:"Switchgear Training Centre", s:S.lkabout},
+   {c:"Lucknow", t:"tc", n:"Switchgear Training Centre", s:S.lkabout},
+   {c:"Coonoor", t:"tc", n:"Switchgear Training Centre", s:S.lkabout},
+   {c:"Delhi", t:"tc", n:"Switchgear Training Centre", s:S.lkabout},
+   {c:"Kolkata", t:"tc", n:"Switchgear Training Centre", s:S.lkabout}
+  ],
+  tl:[
+   {y:"1950s", t:"L&T switchgear business begins (70+ year legacy)"},
+   {y:"1984", t:"Ahmednagar Switchgear Works set up"},
+   {y:"2018", t:"Schneider and Temasek agree to buy L&T E&A"},
+   {y:"2020", t:"Joins Schneider group"},
+   {y:"May 2024", t:"Renamed Lauritz Knudsen"},
+   {y:"May 2026", t:"Largest-ever product showcase and 10+ launches"}
+  ],
+  talent:"L&T-trained engineers with strong product knowledge and a dealer-led sales style. Many seniors are 15-25 year L&T lifers who value stability, brand and process. Among the deepest channel-sales benches in the country (ASM, Channel Manager).",
+  ladder:["Sales Engineer","Area Sales Manager","Branch / Regional Manager","Zonal Head"],
+  from:["havells","polycab","siemens","abb","panasonic","legrand"],
+  watch:"Standing L&K hiring constraints live in your L&K client notes. Check them before sourcing."
+ },
+ {id:"legrand", name:"Legrand India", short:"Legrand", big:true, color:"--co-legrand",
+  tag:"Buildings and data centres, built by acquisitions. Not a heavy switchgear company.",
+  overview:["Wiring devices + final distribution","Numeric UPS, racks, DC power","Acquisition-led growth"],
+  facts:[
+   {k:"1996", t:"Entered India; grew through IndoAsian, Numeric, Valrack, Adlec acquisitions", s:S.realty},
+   {k:"2010 / 2012", t:"Bought Indo Asian Switchgear (2010) and Numeric UPS (2012)", s:S.oem},
+   {k:"+15%", t:"group sales growth in H1 2025, driven by data centres", s:S.bw},
+   {k:"Sinnar", t:"Global R&D centre at Sinnar, Nashik; Innoval experience centre in Ahmedabad", s:S.lgabout},
+   {k:"7 plants", t:"and 35+ offices, per Legrand India's site", s:S.lgsite}
+  ],
+  tree:{root:"Group Legrand India (parent: Legrand, France)", kids:[
+   {n:"Legrand", d:"Premium wiring devices (Arteor, Myrius, Lyncus), Ekinox MCB/DB, cable management, structured cabling", hl:true},
+   {n:"IndoAsian", d:"Mass-market switchgear, MCB, DB. Bought 2010."},
+   {n:"Numeric", d:"UPS, power conditioning, solar inverters. Chennai origin, bought 2012."},
+   {n:"Valrack / NetRack", d:"Server racks and enclosures."},
+   {n:"Raritan, Server Technology, Starline", d:"Rack PDUs, busway, data-centre power (global brands)."}
+  ]},
+  bus:[
+   {n:"Wiring devices", p:"Switches, sockets, home automation", w:"Dealers, electricians, architects, developers"},
+   {n:"Final distribution", p:"Ekinox MCB, RCCB, DBs; IndoAsian range", w:"Contractors, dealers"},
+   {n:"UPS and power", p:"Numeric UPS, power conditioning, solar", w:"BFSI, healthcare, IT, retail"},
+   {n:"Data-centre infrastructure", p:"Racks, PDUs, busway, cooling accessories", w:"Colocation, cloud, enterprise DCs"},
+   {n:"Cable management and structured cabling", p:"Trunking, cable trays, copper/fibre cabling", w:"Commercial buildings, IT parks"}
+  ],
+  sites:[
+   {c:"Mumbai", t:"hq", n:"India head office", v:true},
+   {c:"Sinnar", t:"rd", n:"Global R&D centre (Nashik)", s:S.lgabout},
+   {c:"Ahmedabad", t:"office", n:"Innoval experience centre", s:S.lgabout},
+   {c:"Chennai", t:"office", n:"Numeric origin", s:S.barandbench}
+  ],
+  tl:[
+   {y:"1996", t:"Legrand enters India"},
+   {y:"2010", t:"Acquires Indo Asian Switchgear"},
+   {y:"2012", t:"Acquires Numeric UPS"},
+   {y:"2022", t:"25 years in India"},
+   {y:"2025", t:"Group growth led by data centres"}
+  ],
+  talent:"Strong in channel and influencer sales: contractors, architects, interior designers, developers. Wiring-device people move easily to Schneider H&D, Havells, Panasonic Anchor, Hager and Polycab. Few suit heavy industrial switchgear roles.",
+  ladder:["Sales Executive / Engineer","Area Sales Manager","Regional Manager","Zonal / Business Head"],
+  from:["havells","panasonic","hager","schneider","polycab","vertiv"],
+  watch:"Exact plant locations and how the data-centre business is organised in India (separate team or within Legrand)."
+ },
+ {id:"abb", name:"ABB India", short:"ABB", cluster:"mnc", core:"Electrification (LV/MV breakers, panels, EV charging), Motion (motors, drives), Automation (DCS, measurement)", sig:"About $75M India investment in 2026 across Bengaluru, Hyderabad, Nashik and more; ~300 new jobs; ~85% of India sales made locally", s:S.abb, from:["siemens","schneider","eaton","cg"]},
+ {id:"eaton", name:"Eaton India", short:"Eaton", cluster:"mnc", core:"LV/MV switchgear, UPS, busway, data-centre power, solar and wind switchgear", sig:"Pushing data centres and renewables", s:S.eaton, from:["schneider","abb","vertiv","legrand"]},
+ {id:"hager", name:"Hager India", short:"Hager", cluster:"mnc", core:"MCB, DBs, enclosures, modular devices, building management", sig:"Premium final-distribution niche", s:S.hager, from:["legrand","schneider","havells"]},
+ {id:"mitsubishi", name:"Mitsubishi Electric India", short:"Mitsubishi", cluster:"auto", core:"Factory automation: PLC, servo, drives, HMI; also MV switchgear", sig:"Strong with auto and machine OEMs", from:["siemens","rockwell","schneider"]},
+ {id:"rockwell", name:"Rockwell Automation India", short:"Rockwell", cluster:"auto", core:"Allen-Bradley PLC, drives, MES software. Automation only, no switchgear", sig:"Pure automation talent pool", from:["siemens","mitsubishi","schneider"]},
+ {id:"hitachi", name:"Hitachi Energy India", short:"Hitachi Energy", cluster:"grid", core:"HVDC, power transformers, GIS, grid automation, STATCOM", sig:"Rs 2,000 cr large power transformer plant at Karjan, Vadodara, due FY28, 1,000+ jobs", s:S.hitachi, from:["siemens","abb","cg","gevernova"]},
+ {id:"gevernova", name:"GE Vernova T&D India", short:"GE Vernova", cluster:"grid", core:"HV switchgear, transformers, grid software", sig:"Grid capex beneficiary", from:["hitachi","siemens","cg"]},
+ {id:"cg", name:"CG Power & Industrial Solutions", short:"CG Power", cluster:"grid", core:"Motors, transformers, switchgear, railway equipment", sig:"Murugappa group; Indian engineering culture", from:["siemens","abb","hitachi"]},
+ {id:"havells", name:"Havells India", short:"Havells", cluster:"indian", core:"MCB, DBs, switches, cables, consumer appliances", sig:"Huge dealer network; volume LV leader", s:S.datam, from:["lk","legrand","polycab","panasonic"]},
+ {id:"panasonic", name:"Panasonic Life Solutions (Anchor)", short:"Panasonic Anchor", cluster:"indian", core:"Wiring devices, switchgear, fans, lighting", sig:"Mass-market channel; Sri City plant investment", s:S.epr, from:["havells","legrand","polycab"]},
+ {id:"polycab", name:"Polycab India", short:"Polycab", cluster:"indian", core:"Cables, MCB, switches, FMEG", sig:"Channel and project sales", from:["havells","lk","panasonic"]},
+ {id:"vertiv", name:"Vertiv India", short:"Vertiv", cluster:"dc", core:"UPS, thermal management, DC power infrastructure", sig:"Core data-centre power competitor", from:["schneider","eaton","legrand"]}
+];
+var CO = {}; COS.forEach(function(c){ CO[c.id]=c; });
+var CLUSTERS = [
+ {id:"mnc", n:"Multinational electrification"},
+ {id:"auto", n:"Automation specialists"},
+ {id:"grid", n:"Grid and HV"},
+ {id:"indian", n:"Indian and consumer electrical"},
+ {id:"dc", n:"Data-centre power"}
+];
+
+var MCOLS = ["schneider","lk","siemens","legrand","abb","eaton","havells","hitachi"];
+var SEGS = [
+ {id:"wiring", n:"Wiring devices (switches, sockets)", r:[2,1,0,2,1,0,2,0]},
+ {id:"final", n:"Final distribution (MCB, RCCB, DB)", r:[2,2,1,2,2,1,2,0]},
+ {id:"power", n:"Power distribution (ACB, MCCB, panels)", r:[2,2,2,1,2,2,1,0]},
+ {id:"busbar", n:"Busbar / busway", r:[2,1,2,2,1,2,0,0]},
+ {id:"mv", n:"MV switchgear (VCB, RMU)", r:[2,1,2,0,2,1,0,1]},
+ {id:"hv", n:"HV and transmission (GIS, HVDC, power transformers)", r:[0,0,1,0,0,0,0,2]},
+ {id:"ia", n:"Industrial automation (PLC, drives, HMI)", r:[2,1,2,0,2,0,0,0]},
+ {id:"dcs", n:"Process automation (DCS)", r:[1,0,1,0,2,0,0,0]},
+ {id:"motors", n:"Motors", r:[0,0,0,0,2,0,1,0]},
+ {id:"bms", n:"Building automation (BMS, fire)", r:[2,0,2,1,1,0,0,0]},
+ {id:"ups", n:"UPS and data-centre power", r:[2,0,1,2,1,2,0,1]},
+ {id:"newen", n:"Solar, EV and BESS components", r:[2,2,1,1,2,1,1,1]},
+ {id:"soft", n:"Software (power design, SCADA, PLM)", r:[2,1,2,0,1,1,0,1]}
+];
+var SEGNOTE = {hv:"Siemens here means Siemens Energy India (separate company since Jun 2025).", motors:"Siemens motors moved to Innomotics India (Dec 2025 deal).", ups:"Schneider = APC Secure Power; Legrand = Numeric.", busbar:"Siemens strength comes largely from C&S Electric; Legrand from Starline."};
+
+var LAYERS = [
+ {id:"fd", n:"Final distribution", d:"Switches, MCB, RCCB, DB", segs:["wiring","final"], routes:["dist"], cust:["homes"]},
+ {id:"pd", n:"Power distribution", d:"ACB, MCCB, panels, busbar", segs:["power","busbar"], routes:["oem","epc","direct"], cust:["industry","dc","homes"]},
+ {id:"mvg", n:"MV and grid", d:"VCB, RMU, transformers", segs:["mv","hv"], routes:["epc","direct"], cust:["utility","industry"]},
+ {id:"aut", n:"Automation", d:"PLC, drives, HMI, SCADA", segs:["ia","dcs","motors"], routes:["oem","epc","direct"], cust:["industry"]},
+ {id:"sw", n:"Software and services", d:"EMS, BMS, UPS, AMC, retrofit", segs:["bms","ups","soft"], routes:["direct","epc"], cust:["dc","homes","utility"]}
+];
+var ROUTES = [
+ {id:"dist", n:"Distributors and dealers", d:"Channel sales"},
+ {id:"oem", n:"Panel builders, OEMs", d:"OEM sales"},
+ {id:"epc", n:"EPCs, integrators", d:"Project sales"},
+ {id:"direct", n:"Direct and tenders", d:"Key account, utility sales"}
+];
+var CUST = [
+ {id:"homes", n:"Homes and buildings", d:"Contractors, developers"},
+ {id:"industry", n:"Industry and MSME", d:"Factories, process plants"},
+ {id:"dc", n:"Data centres", d:"Colocation, cloud, BFSI"},
+ {id:"utility", n:"Utilities and infra", d:"Discoms, rail, metro, airports"}
+];
+
+var POOLS = [
+ {id:"channel", n:"Channel and wiring", x:24, y:70, cos:["havells","polycab","hager","panasonic","legrand","lk"], roles:"Channel / distribution sales, dealer development, retail and electrician programmes", tip:"Same-city ASMs move easily between these brands. Ideal for Schneider H&D and L&K channel roles."},
+ {id:"lvmv", n:"LV/MV projects and OEM", x:274, y:70, hub:true, cos:["schneider","lk","siemens","abb","eaton"], roles:"OEM / panel builder sales, key accounts, project sales, application engineering, specifier sales", tip:"The hub pool. Most moves start or end here."},
+ {id:"auto", n:"Automation", x:524, y:70, cos:["siemens","schneider","rockwell","mitsubishi","abb"], roles:"Automation sales, application engineers, SI channel, PLM / software sales", tip:"Rarely moves into switchgear. System integrators and OEM machine builders are an underused pool."},
+ {id:"dc", n:"Data-centre power", x:150, y:250, cos:["schneider","vertiv","eaton","legrand"], roles:"DC key accounts, solution architects, UPS and cooling service", tip:"LV key account managers who already sell to DC EPCs cross over well."},
+ {id:"grid", n:"Grid and HV", x:398, y:250, cos:["hitachi","siemens","gevernova","cg"], roles:"Utility sales, tendering, HV design, project managers, commissioning", tip:"Only MV-experienced people move in from the LV/MV pool."}
+];
+var POOLLINES = {"channel":"Havells, Polycab, Hager|Panasonic Anchor, Legrand|L&K channel teams","lvmv":"Schneider, L&K, Siemens SI|C&S Electric, ABB EL|Eaton, Schneider Infra","auto":"Siemens DI, Schneider IA|Rockwell, Mitsubishi|ABB Motion, Honeywell","dc":"Schneider Secure Power|Vertiv, Eaton, Delta|Legrand (Numeric, Raritan)","grid":"Hitachi Energy|Siemens Energy, GE Vernova|CG Power"};
+
+var ROLES = [
+ {id:"channel", n:"Channel / Distribution Sales", to:"Distributors, dealers, retailers", ok:"Secondary sales, dealer count, collections", pools:["channel","lvmv"], src:"L&K, Havells, Legrand, Panasonic Anchor, Polycab channel teams"},
+ {id:"oem", n:"OEM / Panel Builder Sales", to:"Panel builders, machine builders", ok:"Design wins, panel builder loyalty, volume", pools:["lvmv"], src:"Schneider, Siemens SI, L&K, ABB, C&S"},
+ {id:"ka", n:"End-User / Key Account Sales", to:"Factories, data centres, hospitals, infra owners", ok:"Spec-in, rate contracts, large orders", pools:["lvmv","dc"], src:"Same segment at any MNC"},
+ {id:"spec", n:"Specifier / Consultant Sales", to:"MEP consultants, architects, PMCs", ok:"Brand specified in the BOQ", pools:["lvmv","channel"], src:"Schneider, Legrand, Siemens SI, Hager"},
+ {id:"proj", n:"Project / EPC Sales", to:"EPC contractors, system integrators", ok:"Order closures, tender wins", pools:["lvmv","auto"], src:"MNC project sales, Indian panel companies"},
+ {id:"util", n:"Utility / Government Sales", to:"Discoms, transcos, PSUs, railways", ok:"Tender wins, approvals, vendor registration", pools:["grid","lvmv"], src:"Schneider Infrastructure, Siemens, ABB, Hitachi Energy, CG"},
+ {id:"seg", n:"Segment / Vertical Sales", to:"One vertical across all channels (DC, pharma, metro, solar)", ok:"Segment share, big-ticket wins", pools:["dc","lvmv","grid"], src:"Specialists from that vertical; hardest to find"}
+];
+var FUNCS = [
+ ["Application / Pre-sales","Application Engineer, Solution Architect, Proposal Engineer","BE Electrical/E&I; product, drawings and BOQ skills"],
+ ["Tendering / Bids","Tender Engineer, Bid Manager","Costing, technical compliance, government portals"],
+ ["Product / Offer management","Product Manager, Offer Manager","Ex-sales or ex-application with commercial sense"],
+ ["Service","Field Service Engineer, Service Sales, AMC Manager","Commissioning, retrofit, testing; travel-ready"],
+ ["Project execution","Project Engineer, Project Manager","Panel and site execution, billing milestones"],
+ ["Plant / operations","Production, Quality, SCM, Sourcing","Factory towns: Ahmednagar, Vadodara, Nashik, Kalwa, Bengaluru"],
+ ["R&D / Engineering","Design Engineer, Firmware, Testing & Certification","Bengaluru and Navi Mumbai R&D centres, TIC labs"],
+ ["Digital / Software","IoT, SCADA, EcoStruxure / Xcelerator specialist","Software plus domain; Bengaluru heavy"]
+];
+var PAY0 = [
+ {l:"L1", t:"GET, Sales / Application Engineer", e:"0-3 yrs", lo:4, hi:9},
+ {l:"L2", t:"Senior Engineer, Assistant Manager", e:"3-7 yrs", lo:9, hi:18},
+ {l:"L3", t:"Manager, KAM, Area Sales Manager", e:"7-12 yrs", lo:16, hi:30},
+ {l:"L4", t:"Senior / Regional / Segment Manager", e:"12-16 yrs", lo:28, hi:45},
+ {l:"L5", t:"AGM / DGM, Zonal or Segment Head", e:"15-20 yrs", lo:40, hi:70},
+ {l:"L6", t:"GM, Director, VP, Country BU Head", e:"20+ yrs", lo:70, hi:150}
+];
+
+var TRENDS = [
+ {n:"Data centres", w:"Schneider expects India DC to outgrow its other businesses; Legrand's group growth is DC-led; ABB booked LV switchgear for a DC major.", roles:["DC key account","Solution architect","UPS / cooling service","Busway sales"], cos:["schneider","legrand","eaton","vertiv","abb","siemens"], s:S.abbq4},
+ {n:"Grid and transmission", w:"HVDC corridors, power transformers, STATCOM. Hitachi Energy order book Rs 295.6 bn.", roles:["Utility sales","Tendering","HV design","Project manager","Commissioning"], cos:["hitachi","siemens","gevernova","cg"], s:S.plindia},
+ {n:"Renewables, BESS, EV", w:"L&K investing in solar, BESS, agri and EV; every major has DC protection and EV charging ranges.", roles:["Solar segment sales","DC protection application","EV charger OEM sales"], cos:["lk","schneider","abb","eaton","siemens"], s:S.eqmag},
+ {n:"Metro and rail", w:"ABB and Siemens targeting metro and high-speed rail; Siemens building metro trains in Aurangabad.", roles:["Rail project manager","Signalling","Traction"], cos:["siemens","abb","hitachi"], s:S.msfactories},
+ {n:"New factories", w:"Schneider: Kolkata, Hyderabad, Ahmednagar. ABB: Bengaluru, Hyderabad, Nashik. Hitachi: Karjan.", roles:["Plant head","Production","Quality","SCM","Maintenance"], cos:["schneider","abb","hitachi","lk"], s:S.machinist},
+ {n:"Services and retrofit", w:"Hitachi targets a Rs 2,000 cr services business; Schneider pushing EcoCare and MV retrofit.", roles:["Service sales","AMC manager","Field service","Remote monitoring"], cos:["schneider","hitachi","abb","siemens"], s:S.hitachi3}
+];
+
+var GLOSS = [
+ ["LV","MCB","Miniature circuit breaker; small breaker in a home or office DB","Final distribution, channel sales"],
+ ["LV","RCCB / RCBO","Breaker that trips on earth leakage (shock protection)","Final distribution"],
+ ["LV","DB","Distribution board; the box holding MCBs","Homes, offices"],
+ ["LV","MCCB","Moulded case circuit breaker; mid-size, up to about 1,600 A","Panels, industry"],
+ ["LV","ACB","Air circuit breaker; large main breaker up to about 6,300 A","Main LV panels, DCs"],
+ ["LV","Contactor / relay / starter","Switching and protection for motors","Motor control, OEMs"],
+ ["LV","PCC / MCC","Power control centre / motor control centre panels","Panel builders, EPCs"],
+ ["LV","APFC","Automatic power factor correction panel","Industry, energy saving"],
+ ["LV","Busbar / busway","Copper or aluminium bars that carry power instead of cables","High-rises, DCs, factories"],
+ ["LV","Type-tested panel","Panel certified to the IEC 61439 design standard","Quality talk with panel builders"],
+ ["MV/HV","VCB","Vacuum circuit breaker (MV)","Substations, plants"],
+ ["MV/HV","RMU","Ring main unit; compact MV switchgear on city networks","Discoms, infra, solar"],
+ ["MV/HV","GIS / AIS","Gas-insulated vs air-insulated switchgear","MV / HV substations"],
+ ["MV/HV","SF6-free","MV switchgear without SF6 greenhouse gas","New tech, premium"],
+ ["MV/HV","HVDC","High-voltage direct current transmission","Grid mega-projects"],
+ ["MV/HV","STATCOM","Grid voltage stabiliser using power electronics","Transmission"],
+ ["MV/HV","Transformer","Steps voltage up or down (distribution or power)","Utilities, plants"],
+ ["Automation","PLC","Programmable logic controller; the brain of a machine","Automation"],
+ ["Automation","VFD / drive","Variable frequency drive; controls motor speed","HVAC, pumps, machines"],
+ ["Automation","HMI / SCADA","Operator screen / plant-wide monitoring software","Automation"],
+ ["Automation","DCS","Distributed control system for process plants","Oil & gas, chemicals, power"],
+ ["Automation","BMS","Building management system","Commercial buildings"],
+ ["Data centre","UPS","Uninterruptible power supply","DCs, hospitals, BFSI"],
+ ["Data centre","PDU / rack","Power distribution unit and server cabinet","DCs"],
+ ["Data centre","EMS / power monitoring","Energy metering and analytics software","Buildings, DCs, industry"],
+ ["Trade terms","Panel builder","Assembles switchgear into panels using branded breakers","Key customer for LV sales"],
+ ["Trade terms","Specifier","Consultant or architect who names brands in the BOQ","Spec-in selling"],
+ ["Trade terms","BOQ","Bill of quantities in a tender","Pre-sales, tendering"],
+ ["Trade terms","Retrofit","Upgrading old switchgear with new breakers","Services"],
+ ["Trade terms","IEEMA / Elecrama","Industry association / its trade show","Networking, market news"],
+ ["Trade terms","LV / MV / HV","LV up to 1 kV; MV about 1-33 kV; HV above that","Every JD"]
+];
+
+var QS = {
+ "Every candidate":["Which legal entity and which business unit are you in? Who does your boss report to?","What exactly do you sell, and to whom: distributor, panel builder, end user, consultant, EPC or utility?","What is your annual target and what did you achieve last year (Rs crore)?","Name your top 5 accounts or partners and the share of your number they give.","Which competitors do you meet most often, and why do you lose to them?"],
+ "Channel sales":["How many distributors and dealers do you manage? What is primary vs secondary sales?","How do you handle collections and credit limits?","Which schemes or electrician loyalty programmes do you run?"],
+ "OEM / panel builder":["How many panel builders are on your brand, and how did you convert the last one?","Do they build type-tested panels? Which breakers do they prefer, and why?"],
+ "Key account / segment":["Walk me through your largest order: value, cycle length, who decided, which competitor you beat.","Have you got your brand specified by a consultant? Which one?"],
+ "Application / pre-sales":["Which software do you use for drawings, BOQ and selection (EcoStruxure, ETAP, SIMARIS, AutoCAD)?","How many offers a month, and what is your hit rate?"],
+ "Service":["Which products can you commission and test on your own?","What share of your work is breakdown vs AMC vs retrofit?"]
+};
+var REDFLAGS = ["Cannot name their legal entity or BU","Target in units with no rupee value","All accounts are 'team accounts'","Vague on competitors"];
+
+/* city coordinates (lon, lat) */
+var CITY = {"Mumbai":[72.88,19.08],"Navi Mumbai":[73.03,19.03],"Kalwa":[73.0,19.2],"Pune":[73.86,18.52],"Ahmednagar":[74.74,19.09],"Nashik":[73.79,20.0],"Sinnar":[74.0,19.85],"Aurangabad":[75.34,19.88],"Vadodara":[73.18,22.31],"Ahmedabad":[72.57,23.02],"Goa":[73.83,15.49],"Bengaluru":[77.59,12.97],"Chennai":[80.27,13.08],"Coimbatore":[76.96,11.0],"Coonoor":[76.79,11.35],"Hyderabad":[78.49,17.39],"Kolkata":[88.36,22.57],"Delhi":[77.21,28.61],"Gurugram":[77.03,28.46],"Noida":[77.39,28.54],"Lucknow":[80.95,26.85],"Nagpur":[79.09,21.15],"Puducherry":[79.81,11.94],"Faridabad":[77.32,28.41]};
+var OUTLINE = [[68.2,23.6],[70.0,20.8],[72.6,21.0],[72.8,19.0],[73.5,16.0],[74.6,12.9],[76.2,9.9],[77.5,8.1],[78.2,8.9],[79.8,10.3],[80.3,13.1],[80.2,15.5],[82.3,16.6],[84.8,19.3],[86.9,20.8],[87.5,21.6],[88.8,21.6],[89.0,22.6],[88.6,24.3],[88.1,26.4],[89.8,26.2],[92.0,26.9],[95.5,27.9],[97.0,27.5],[95.0,25.5],[94.2,23.5],[93.2,22.2],[92.3,23.7],[91.2,23.9],[91.9,24.9],[90.0,25.2],[89.8,26.0],[88.2,26.7],[84.0,27.4],[81.0,28.9],[80.1,28.8],[78.9,30.3],[78.4,31.3],[79.0,32.5],[78.0,35.5],[76.5,35.8],[74.5,34.8],[73.8,34.0],[74.6,32.7],[74.5,31.1],[73.9,30.0],[72.3,28.1],[70.4,27.9],[69.5,26.8],[70.3,25.6],[68.8,24.3]];
+
+/* ---------- helpers ---------- */
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];}); }
+function $(sel){ return document.querySelector(sel); }
+function rating(seg, ci){ var k = seg.id+"|"+MCOLS[ci]; if (Object.prototype.hasOwnProperty.call(STATE.matrix,k)) return STATE.matrix[k]; return seg.r[ci]; }
+function edited(seg, ci){ return Object.prototype.hasOwnProperty.call(STATE.matrix, seg.id+"|"+MCOLS[ci]); }
+function coName(id){ return CO[id] ? CO[id].short : id; }
+function coLink(id){ return CO[id] ? '<button class="chip" data-go="company-'+id+'"><span class="dot" style="background:var('+(CO[id].color||"--co-peer")+')"></span>'+esc(CO[id].short)+'</button>' : '<span class="chip">'+esc(id)+'</span>'; }
+function srcLink(u, label){ return u ? '<a href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(label||"source")+'</a>' : ''; }
+function today(){ var d=new Date(); var m=String(d.getMonth()+1).padStart(2,"0"), dd=String(d.getDate()).padStart(2,"0"); return d.getFullYear()+"-"+m+"-"+dd; }
+function pay(){ return STATE.pay && STATE.pay.length===PAY0.length ? STATE.pay : PAY0; }
+
+/* ---------- persistence ---------- */
+var artifactApi = null, saveState = "checking", saveTimer = null;
+function buildDoc(){
+  var css = document.getElementById("app-css").textContent;
+  var js = document.getElementById("app-js").textContent;
+  var st = JSON.stringify(STATE).replace(/</g,"\\u003c");
+  return "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>"+TITLE+"</title>\n"+FONT_LINKS+"\n<style id=\"app-css\">"+css+"</style>\n</head>\n<body>\n<div id=\"app\"></div>\n<script id=\"state\" type=\"application/json\">"+st+"<\/script>\n<script id=\"app-js\">"+js+"<\/script>\n</body>\n</html>\n";
+}
+function setSave(s){ saveState = s; var el = $("#savebox"); if (el) el.innerHTML = saveLabel(); }
+function saveLabel(){
+  if (saveState==="ok") return "<b>Edits save to HireLab.</b><br>Everyone in your agency sees them.";
+  if (saveState==="saving") return "<b>Saving…</b>";
+  if (saveState==="pending") return "<b>Unsaved change</b>, saving in a moment.";
+  if (saveState==="readonly") return "<b>View only.</b> You can browse, but edits made here are not kept.";
+  if (saveState==="error") return "<b>Save failed.</b> Your last change was not kept; try again.";
+  return "Checking whether edits can be saved…";
+}
+function persist(){
+  try { localStorage.setItem("eie-view", location.hash || "#overview"); } catch(e){}
+  if (!artifactApi){ setSave("readonly"); render(); return; }
+  setSave("pending");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(function(){
+    setSave("saving");
+    artifactApi.publish(buildDoc()).then(function(){ setSave("ok"); }).catch(function(e){
+      var code = e && (e.code || e.name || e.message) || "";
+      if (/not_granted|not_writer/.test(String(code))) setSave("readonly");
+      else if (/conflict/.test(String(code))) setSave("ok");
+      else setSave("error");
+    });
+  }, 900);
+  render();
+}
+try {
+  if (window.claude && typeof window.claude.use === "function") {
+    window.claude.use("artifact").then(function(a){ artifactApi = a; setSave(a ? "ok" : "readonly"); }).catch(function(){ setSave("readonly"); });
+  } else { setTimeout(function(){ setSave("readonly"); }, 0); }
+} catch(e){ setSave("readonly"); }
+
+/* ---------- shell ---------- */
+var VIEWS = [
+ ["overview","Overview"],["matrix","Competitor heatmap"],["talent","Talent map"],["roles","Roles and pay"],["trends","Where hiring grows"],["glossary","Glossary"],["callkit","Call kit"],["log","Learning log"]
+];
+var ui = {layer:null, seg:null, pool:"lvmv", role:null, editM:false, editP:false, gq:"", gg:"All", qtab:"Every candidate", logco:"all", editId:null, prefillCo:null};
+
+function shell(inner, view){
+  var nav = '<div class="nav-label">Explore</div>' + VIEWS.map(function(v){ return '<a href="#'+v[0]+'" class="'+(view===v[0]?"on":"")+'">'+esc(v[1])+'</a>'; }).join("");
+  nav += '<div class="nav-label">Big four</div>' + COS.filter(function(c){return c.big;}).map(function(c){ return '<a href="#company-'+c.id+'" class="'+(view==="company-"+c.id?"on":"")+'"><span class="dot" style="background:var('+c.color+')"></span>'+esc(c.short)+'</a>'; }).join("");
+  return '<div class="app"><aside class="rail"><div class="brand">Electrical Industry Explorer<small>Schneider, Siemens, L&amp;K, Legrand and peers · for HireLab sourcing</small></div><nav class="nav">'+nav+'</nav><div class="save" id="savebox">'+saveLabel()+'</div></aside><main id="main">'+inner+'</main></div>';
+}
+
+/* ---------- views ---------- */
+function vOverview(){
+  var h = '<h1>Know the industry before you dial</h1><p class="lead">Every company here makes some of the same five product layers and sells them through the same four routes. Pick a product layer to see who is strong in it, then open a company for its structure, sites and talent profile.</p>';
+  h += '<div class="sec"><div class="sec-head"><div><h2>Industry map</h2><p>Click a product layer. The routes, customers and strongest companies light up.</p></div>'+(ui.layer?'<button class="btn ghost" data-act="clearlayer">Clear selection</button>':'')+'</div><div class="card">';
+  var L = ui.layer ? LAYERS.filter(function(l){return l.id===ui.layer;})[0] : null;
+  h += '<div class="map3"><div class="col"><div class="colh">What they make</div>' + LAYERS.map(function(l){ return '<button class="node '+(L? (L.id===l.id?"on":"dim") : "")+'" data-layer="'+l.id+'"><b>'+esc(l.n)+'</b><span>'+esc(l.d)+'</span></button>'; }).join("") + '</div>';
+  h += '<div class="arrowcol" aria-hidden="true">→</div><div class="col"><div class="colh">How it is sold</div>' + ROUTES.map(function(r){ var on = L && L.routes.indexOf(r.id)>=0; return '<div class="node '+(L?(on?"on":"dim"):"")+'"><b>'+esc(r.n)+'</b><span>'+esc(r.d)+'</span></div>'; }).join("") + '</div>';
+  h += '<div class="arrowcol" aria-hidden="true">→</div><div class="col"><div class="colh">Who uses it</div>' + CUST.map(function(c){ var on = L && L.cust.indexOf(c.id)>=0; return '<div class="node '+(L?(on?"on":"dim"):"")+'"><b>'+esc(c.n)+'</b><span>'+esc(c.d)+'</span></div>'; }).join("") + '</div>';
+  h += '<div class="influ"><b>Influencers:</b> consultants, architects and PMCs name the brand in the BOQ. That is why specifier sales exists.</div></div>';
+  if (L){
+    var scores = MCOLS.map(function(id, ci){ var s=0; L.segs.forEach(function(sid){ var seg = SEGS.filter(function(x){return x.id===sid;})[0]; s += rating(seg, ci); }); return {id:id, s:s}; }).filter(function(x){return x.s>0;}).sort(function(a,b){return b.s-a.s;});
+    var max = L.segs.length*2;
+    h += '<div class="result"><h3>Who is strong in '+esc(L.n.toLowerCase())+'</h3><p class="small muted" style="margin:4px 0 10px">Score across '+L.segs.length+' heatmap rows (Strong = 2, Present = 1). Your sourcing pool, best first.</p><div class="grid g4">' + scores.map(function(x){ var pct = Math.round(x.s/max*100); return '<button class="card peer" data-go="company-'+x.id+'"><b>'+esc(coName(x.id))+'</b><div style="height:8px;border-radius:4px;background:var(--bg);overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--accent)"></div></div><span class="small muted mono">'+x.s+' / '+max+'</span></button>'; }).join("") + '</div></div>';
+  }
+  h += '</div></div>';
+  h += '<div class="sec"><div class="sec-head"><div><h2>The big four</h2><p>Open any card for its entity tree, business lines, location map, timeline and talent profile.</p></div></div><div class="grid g4">';
+  h += COS.filter(function(c){return c.big;}).map(function(c){ return '<button class="card cocard" style="border-top-color:var('+c.color+')" data-go="company-'+c.id+'"><h3>'+esc(c.short)+'</h3><div class="tag">'+esc(c.tag)+'</div><ul>'+c.overview.map(function(o){return '<li>'+esc(o)+'</li>';}).join("")+'</ul><span class="small" style="color:var(--accent);font-weight:600">Open profile →</span></button>'; }).join("");
+  h += '</div></div>';
+  h += '<div class="sec"><div class="sec-head"><div><h2>Peers, grouped by what they really sell</h2><p>Same customers, same talent pool. Click for a quick profile.</p></div></div><div class="grid g3">';
+  h += CLUSTERS.map(function(cl){ var list = COS.filter(function(c){return c.cluster===cl.id;}); return '<div class="cluster"><h3>'+esc(cl.n)+'</h3><div class="grid" style="gap:8px">'+list.map(function(c){ return '<button class="card peer" data-go="company-'+c.id+'"><b>'+esc(c.name)+'</b><span class="small muted">'+esc(c.core)+'</span></button>'; }).join("")+'</div></div>'; }).join("");
+  h += '</div></div>';
+  h += '<div class="sec callout"><b>Siemens is now three employers.</b> Siemens Limited (DI, SI, Mobility, C&amp;S), Siemens Energy India (listed June 2025) and Innomotics India (LV motors, Dec 2025 deal). Check the entity on every Siemens CV.</div>';
+  return h;
+}
+
+function siteMap(c){
+  var W=340, H=380, x0=67, x1=98, y0=7, y1=37;
+  function px(lon){ return 16+(lon-x0)/(x1-x0)*(W-32); }
+  function py(lat){ return 16+(y1-lat)/(y1-y0)*(H-32); }
+  var d = OUTLINE.map(function(p,i){ return (i?"L":"M")+px(p[0]).toFixed(1)+" "+py(p[1]).toFixed(1); }).join("")+"Z";
+  var svg = '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Approximate map of '+esc(c.short)+' sites in India" style="width:100%;height:auto;max-width:380px">';
+  svg += '<path d="'+d+'" fill="var(--bg)" stroke="var(--line)" stroke-width="1.5"/>';
+  Object.keys(CITY).forEach(function(k){ svg += '<circle cx="'+px(CITY[k][0]).toFixed(1)+'" cy="'+py(CITY[k][1]).toFixed(1)+'" r="2" fill="var(--line)"/>'; });
+  var placed = [];
+  var sites = c.sites.slice().sort(function(a,b){ return CITY[b.c][1]-CITY[a.c][1]; });
+  sites.forEach(function(s, i){
+    var p = CITY[s.c]; if (!p) return;
+    var x = px(p[0]), y = py(p[1]);
+    var col = s.t==="rd"?"var(--amber)":s.t==="hq"?"var(--ink)":s.t==="new"?"var(--good)":s.t==="tc"?"var(--muted)":"var(--accent)";
+    var shape = s.t==="rd" ? '<rect x="'+(x-5)+'" y="'+(y-5)+'" width="10" height="10" rx="2" fill="'+col+'"/>' : s.t==="tc" ? '<circle cx="'+x+'" cy="'+y+'" r="4.5" fill="var(--surface)" stroke="'+col+'" stroke-width="2"/>' : '<circle cx="'+x+'" cy="'+y+'" r="5.5" fill="'+col+'" stroke="var(--surface)" stroke-width="1.5"/>';
+    var left = x > W*0.62;
+    var lx = left ? x-9 : x+9, ly = y+4;
+    placed.forEach(function(q){ if (Math.abs(q.x-lx)<80 && Math.abs(q.y-ly)<12 && q.left===left) ly = q.y+12; });
+    placed.push({x:lx,y:ly,left:left});
+    svg += '<g class="mk" data-site="'+i+'">'+shape+'<text x="'+lx.toFixed(1)+'" y="'+ly.toFixed(1)+'" font-size="11" fill="var(--ink)" text-anchor="'+(left?"end":"start")+'" style="paint-order:stroke;stroke:var(--surface);stroke-width:3px">'+esc(s.c)+'</text></g>';
+  });
+  svg += '</svg>';
+  return svg;
+}
+
+function vCompany(id){
+  var c = CO[id]; if (!c) return vOverview();
+  var mylog = STATE.log.filter(function(e){return e.co===id;});
+  var h = '<div class="cohead" style="border-left-color:var('+(c.color||"--co-peer")+')"><div><div class="small muted">'+(c.big?"Big four profile":"Peer profile")+'</div><h1>'+esc(c.name)+'</h1><p class="lead">'+esc(c.tag||c.core)+'</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-addlog="'+id+'">Add a learning</button><a class="btn ghost" href="#matrix">See in heatmap</a></div></div>';
+  if (!c.big){
+    h += '<div class="sec grid g2"><div class="card"><h3>What they sell</h3><p>'+esc(c.core)+'</p><h3 style="margin-top:12px">Recent signal</h3><p>'+esc(c.sig)+(c.s?' <span class="src">('+srcLink(c.s)+')</span>':'')+'</p></div>';
+    h += '<div class="card"><h3>Where their people come from and go to</h3><p class="small muted">Closest talent neighbours</p><div class="chips">'+c.from.map(coLink).join("")+'</div>';
+    var ci = MCOLS.indexOf(id);
+    if (ci>=0){ h += '<h3 style="margin-top:14px">Heatmap strengths</h3><div class="chips" style="margin-top:6px">'+SEGS.filter(function(s){return rating(s,ci)===2;}).map(function(s){return '<span class="pill strong">'+esc(s.n.split(" (")[0])+'</span>';}).join("")+'</div>'; }
+    h += '</div></div>';
+  } else {
+    h += '<div class="sec"><h2>Key facts</h2><div class="facts" style="margin-top:10px">'+c.facts.map(function(f){ return '<div class="fact"><div class="k">'+esc(f.k)+'</div><div>'+esc(f.t)+'</div>'+srcLink(f.s)+'</div>'; }).join("")+'</div></div>';
+    h += '<div class="sec"><h2>Who is the employer?</h2><p class="small muted" style="margin:0 0 12px">The legal entity on a candidate payslip. Highlighted box = where most of your mandates sit.</p><div class="card"><div class="tree"><div class="root">'+esc(c.tree.root)+'</div><div class="stem"></div><div class="kids">'+c.tree.kids.map(function(k){ return '<div class="kid'+(k.hl?" hl":"")+'"><b>'+esc(k.n)+'</b>'+esc(k.d||"")+(k.sub?'<div class="sub">'+k.sub.map(function(s){return '<div>• '+esc(s)+'</div>';}).join("")+'</div>':'')+'</div>'; }).join("")+'</div></div></div></div>';
+    h += '<div class="sec"><h2>Business lines</h2><p class="small muted" style="margin:0 0 12px">What each team sells and who buys it. Match the JD to one box.</p><div class="grid g3">'+c.bus.map(function(b){ return '<div class="card bu"><h3>'+esc(b.n)+'</h3><div class="small">'+esc(b.p)+'</div><div class="who"><b>Buyer:</b> '+esc(b.w)+'</div></div>'; }).join("")+'</div></div>';
+    h += '<div class="sec"><h2>Where they are</h2><p class="small muted" style="margin:0 0 12px">Approximate positions. Amber = to verify on candidate calls.</p><div class="card foot"><div>'+siteMap(c)+'</div><div><div class="legend" style="margin-bottom:10px"><span><span class="sym hq" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>HQ</span><span><span class="sym" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>Plant / office</span><span><span class="sym new" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>New plant</span><span><span class="sym rd" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>R&amp;D</span><span><span class="sym tc" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>Training centre</span></div><div class="sites">'+c.sites.map(function(s){ var cls = s.t==="hq"?"hq":s.t==="rd"?"rd":s.t==="new"?"new":s.t==="tc"?"tc":""; return '<div class="site"><span class="sym '+cls+'"></span><div><b>'+esc(s.c)+'</b> <span class="muted">'+esc(s.n)+'</span> '+(s.v?'<span class="pill verify">verify</span>':'')+(s.s?' <span class="src">'+srcLink(s.s)+'</span>':'')+'</div></div>'; }).join("")+'</div></div></div></div>';
+    h += '<div class="sec"><h2>Timeline</h2><div class="card"><div class="tl">'+c.tl.map(function(t){ return '<div class="step"><div class="yr">'+esc(t.y)+'</div><div class="tx">'+esc(t.t)+'</div></div>'; }).join("")+'</div></div></div>';
+    h += '<div class="sec grid g2"><div class="card"><h3>Talent profile</h3><p class="small">'+esc(c.talent)+'</p><h3 style="margin-top:12px">Typical sales ladder</h3><div class="chips" style="margin-top:6px">'+c.ladder.map(function(l,i){ return '<span class="chip"><span class="mono muted">'+(i+1)+'</span>'+esc(l)+'</span>'+(i<c.ladder.length-1?'<span class="muted">→</span>':''); }).join("")+'</div></div><div class="card"><h3>Source from</h3><p class="small muted">Companies whose people fit here most often</p><div class="chips">'+c.from.map(coLink).join("")+'</div><h3 style="margin-top:14px">Verify on calls</h3><p class="small">'+esc(c.watch)+'</p></div></div>';
+  }
+  h += '<div class="sec"><div class="sec-head"><div><h2>Your learnings</h2><p>From your learning log, tagged '+esc(c.short)+'.</p></div><button class="btn ghost" data-addlog="'+id+'">Add a learning</button></div><div class="card">'+(mylog.length? '<div class="learn">'+mylog.map(function(e){ return '<div class="lrow"><span class="mono small muted">'+esc(e.date)+'</span><div>'+esc(e.text)+'<div class="small muted">'+esc(e.bu||"")+(e.from?" · "+esc(e.from):"")+'</div></div><span class="pill '+(e.conf===2?"strong":e.conf===1?"present":"")+'">'+["Heard once","Confirmed 2+","Verified"][e.conf||0]+'</span></div>'; }).join("")+'</div>' : '<p class="small muted" style="margin:0">Nothing yet. Add what you hear on your next call with someone from '+esc(c.short)+'.</p>')+'</div></div>';
+  return h;
+}
+
+function vMatrix(){
+  var h = '<h1>Competitor heatmap</h1><p class="lead">Read across a row to see who fights in a segment. Read down a column to see where a company is strongest. Click a segment name for its sourcing pool.</p>';
+  h += '<div class="sec sec-head" style="margin-top:20px"><div class="legend"><span><i style="background:var(--accent)"></i>Strong: top-3, deep team</span><span><i style="background:var(--accent-soft)"></i>Present: smaller team</span><span><i style="border:1px solid var(--line)"></i>Not a real player</span><span><i style="box-shadow:0 0 0 2px var(--amber) inset"></i>Edited by you</span></div><label class="switch"><input type="checkbox" id="editM" '+(ui.editM?"checked":"")+'> Edit ratings (click a cell to change it)</label></div>';
+  h += '<div class="card scroll"><table class="hm'+(ui.editM?" editing":"")+'"><thead><tr><th></th>'+MCOLS.map(function(id){ return '<th class="colh"><button data-go="company-'+id+'">'+esc(coName(id))+'</button></th>'; }).join("")+'</tr></thead><tbody>';
+  h += SEGS.map(function(s){ return '<tr><th class="rowh'+(ui.seg===s.id?" on":"")+'"><button data-seg="'+s.id+'">'+esc(s.n)+'</button></th>'+MCOLS.map(function(id,ci){ var r = rating(s,ci); return '<td><div class="cell s'+r+(edited(s,ci)?" edited":"")+'" data-cell="'+s.id+'|'+ci+'" title="'+esc(coName(id)+" · "+s.n)+'">'+(r===2?"Strong":r===1?"Present":"–")+'</div></td>'; }).join("")+'</tr>'; }).join("");
+  h += '</tbody></table></div>';
+  if (ui.seg){
+    var s = SEGS.filter(function(x){return x.id===ui.seg;})[0];
+    var strong = MCOLS.filter(function(id,ci){return rating(s,ci)===2;}), present = MCOLS.filter(function(id,ci){return rating(s,ci)===1;});
+    h += '<div class="sec card"><h3>Sourcing pool: '+esc(s.n)+'</h3>'+(SEGNOTE[s.id]?'<p class="small muted">'+esc(SEGNOTE[s.id])+'</p>':'')+'<div class="grid g2" style="margin-top:10px"><div><div class="small muted" style="margin-bottom:6px">Primary pool (Strong)</div><div class="chips">'+(strong.map(coLink).join("")||'<span class="muted small">None</span>')+'</div></div><div><div class="small muted" style="margin-bottom:6px">Secondary pool (Present, often want a bigger platform)</div><div class="chips">'+(present.map(coLink).join("")||'<span class="muted small">None</span>')+'</div></div></div></div>';
+  }
+  if (Object.keys(STATE.matrix).length) h += '<p class="small muted">'+Object.keys(STATE.matrix).length+' rating(s) changed by you. <button class="icon-btn" data-act="resetm">Reset to original</button></p>';
+  h += '<p class="small muted">Ratings are working estimates from market knowledge, not survey data. Change them as candidates tell you more.</p>';
+  return h;
+}
+
+function vTalent(){
+  var P = POOLS.filter(function(p){return p.id===ui.pool;})[0] || POOLS[1];
+  var R = ui.role ? ROLES.filter(function(r){return r.id===ui.role;})[0] : null;
+  var h = '<h1>Talent map</h1><p class="lead">Five talent pools and how easily people move between them. Click a pool for its companies, or pick a role to see where to source it.</p>';
+  h += '<div class="sec"><div class="small muted" style="margin-bottom:6px">Pick a role you are hiring for</div><div class="chips">'+ROLES.map(function(r){ return '<button class="chip'+(ui.role===r.id?" on":"")+'" data-role="'+r.id+'">'+esc(r.n)+'</button>'; }).join("")+(ui.role?'<button class="chip" data-role="">Clear</button>':'')+'</div></div>';
+  h += '<div class="sec tm"><div class="card"><svg viewBox="0 0 760 380" role="img" aria-label="Talent pools and moves between them" style="width:100%;height:auto"><defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>';
+  h += '<g fill="none" stroke="var(--muted)" stroke-width="1.5"><path d="M236 114H274" marker-start="url(#ar)" marker-end="url(#ar)"/><path d="M486 114H524" marker-start="url(#ar)" marker-end="url(#ar)" stroke-dasharray="5 5"/><path d="M318 158V250" marker-start="url(#ar)" marker-end="url(#ar)"/><path d="M442 158V250" marker-start="url(#ar)" marker-end="url(#ar)" stroke-dasharray="5 5"/></g>';
+  h += '<text x="255" y="104" text-anchor="middle" font-size="12" fill="var(--muted)">easy</text><text x="505" y="104" text-anchor="middle" font-size="12" fill="var(--muted)">rare</text><text x="308" y="208" text-anchor="end" font-size="12" fill="var(--muted)">common for key accounts</text><text x="452" y="208" font-size="12" fill="var(--muted)">MV people only</text>';
+  POOLS.forEach(function(p){
+    var sel = p.id===P.id, hit = R && R.pools.indexOf(p.id)>=0, first = R && R.pools[0]===p.id;
+    var fill = hit ? (first?"var(--accent)":"var(--accent-soft)") : sel ? "var(--accent-soft)" : "var(--surface)";
+    var ink = first ? "#fff" : "var(--ink)", sub = first ? "#fff" : "var(--muted)";
+    var stroke = sel||hit ? "var(--accent)" : "var(--line)";
+    var lines = POOLLINES[p.id].split("|");
+    h += '<g class="pool" data-pool="'+p.id+'" tabindex="0" role="button" aria-label="'+esc(p.n)+'"><rect x="'+p.x+'" y="'+p.y+'" width="212" height="88" rx="10" fill="'+fill+'" stroke="'+stroke+'" stroke-width="'+(sel||hit?2:1.25)+'"/><text x="'+(p.x+16)+'" y="'+(p.y+24)+'" font-size="14" font-weight="600" fill="'+ink+'">'+esc(p.n)+'</text>'+lines.map(function(l,i){ return '<text x="'+(p.x+16)+'" y="'+(p.y+42+i*16)+'" font-size="12" fill="'+sub+'">'+esc(l)+'</text>'; }).join("")+'</g>';
+  });
+  h += '<text x="24" y="368" font-size="12" fill="var(--muted)">Solid line = frequent move · dashed = only with a specific background</text></svg></div>';
+  h += '<div class="card">';
+  if (R){
+    h += '<div class="pill strong">Hiring: '+esc(R.n)+'</div><h3 style="margin-top:10px">Where to source</h3><ol class="small" style="padding-left:18px;margin:6px 0">'+R.pools.map(function(pid,i){ var p = POOLS.filter(function(x){return x.id===pid;})[0]; return '<li><b>'+esc(p.n)+'</b>'+(i===0?' (start here)':'')+'</li>'; }).join("")+'</ol><p class="small"><b>Sells to:</b> '+esc(R.to)+'<br><b>Success looks like:</b> '+esc(R.ok)+'<br><b>Best bench:</b> '+esc(R.src)+'</p><hr style="border:0;border-top:1px solid var(--line);margin:14px 0">';
+  }
+  h += '<h3>'+esc(P.n)+'</h3><p class="small">'+esc(P.tip)+'</p><div class="small muted" style="margin:8px 0 4px">Roles you find here</div><p class="small" style="margin:0">'+esc(P.roles)+'</p><div class="small muted" style="margin:12px 0 6px">Companies (open profile)</div><div class="chips">'+P.cos.map(coLink).join("")+'</div></div></div>';
+  h += '<div class="sec callout"><b>Upward flow:</b> Indian companies (Havells, Polycab, Panasonic Anchor, CG) feed MNCs at every level. MNC people move to Indian companies mainly for a title jump or a bigger territory.</div>';
+  return h;
+}
+
+function vRoles(){
+  var P = pay();
+  var h = '<h1>Roles and pay</h1><p class="lead">Almost every JD from these companies maps to one of seven sales types. The sales type decides who you source, more than the product does.</p>';
+  h += '<div class="sec"><h2>The seven sales roles</h2><p class="small muted" style="margin:0 0 12px">Click a card to open its sourcing view on the talent map.</p><div class="grid g4">'+ROLES.map(function(r){ return '<button class="card role" data-rolego="'+r.id+'"><h3>'+esc(r.n)+'</h3><div class="m"><span class="muted">Sells to</span><br>'+esc(r.to)+'</div><div class="m"><span class="muted">Success</span><br>'+esc(r.ok)+'</div><div class="m"><span class="muted">Best bench</span><br>'+esc(r.src)+'</div></button>'; }).join("")+'</div></div>';
+  var ticks=[5,10,20,50,100,150], lo=3, hi=170, X0=250, X1=730;
+  function sx(v){ return X0 + (Math.log(v)-Math.log(lo))/(Math.log(hi)-Math.log(lo))*(X1-X0); }
+  var H = 60 + P.length*44;
+  var svg = '<svg viewBox="0 0 760 '+H+'" role="img" aria-label="Fixed CTC bands by level, rupees lakh per year" style="width:100%;height:auto">';
+  ticks.forEach(function(t){ svg += '<line x1="'+sx(t).toFixed(1)+'" x2="'+sx(t).toFixed(1)+'" y1="30" y2="'+(H-20)+'" stroke="var(--line)"/><text x="'+sx(t).toFixed(1)+'" y="22" text-anchor="middle" font-size="12" fill="var(--muted)" class="mono">'+t+'</text>'; });
+  svg += '<text x="'+X1+'" y="'+(H-4)+'" text-anchor="end" font-size="11.5" fill="var(--muted)">Rs lakh per year, fixed CTC (log scale)</text>';
+  P.forEach(function(p,i){
+    var y = 52 + i*44, a = sx(Math.max(lo,p.lo)), b = sx(Math.min(hi,p.hi));
+    svg += '<text x="16" y="'+(y-3)+'" font-size="13" font-weight="600" fill="var(--ink)">'+esc(p.l)+' · '+esc(p.e)+'</text><text x="16" y="'+(y+13)+'" font-size="11.5" fill="var(--muted)">'+esc(p.t)+'</text>';
+    svg += '<rect x="'+a.toFixed(1)+'" y="'+(y-9)+'" width="'+Math.max(4,b-a).toFixed(1)+'" height="18" rx="9" fill="var(--accent)" fill-opacity="'+(0.35+i*0.11).toFixed(2)+'"/>';
+    svg += '<text x="'+(a-6).toFixed(1)+'" y="'+(y+4)+'" text-anchor="end" font-size="12" fill="var(--ink)" class="mono">'+p.lo+'</text><text x="'+(b+6).toFixed(1)+'" y="'+(y+4)+'" font-size="12" fill="var(--ink)" class="mono">'+p.hi+(p.hi>=150?"+":"")+'</text>';
+  });
+  svg += '</svg>';
+  h += '<div class="sec"><div class="sec-head"><div><h2>Title ladder and pay bands</h2><p>Working estimates for India in 2026, not survey data. MNCs usually pay at the top of each band, L&amp;K and Indian companies near the middle, data-centre and automation software at a premium.</p></div><label class="switch"><input type="checkbox" id="editP" '+(ui.editP?"checked":"")+'> Edit bands with real offers</label></div><div class="card">'+svg;
+  if (ui.editP){
+    h += '<div class="scroll ladder" style="margin-top:12px"><table><thead><tr><th style="text-align:left;padding:6px">Level</th><th style="text-align:left;padding:6px">Titles</th><th style="padding:6px">Low (Rs L)</th><th style="padding:6px">High (Rs L)</th></tr></thead><tbody>'+P.map(function(p,i){ return '<tr><td style="padding:6px"><b>'+esc(p.l)+'</b></td><td style="padding:6px" class="small">'+esc(p.t)+'</td><td style="padding:6px;text-align:center"><input type="number" min="1" max="500" id="plo'+i+'" value="'+p.lo+'"></td><td style="padding:6px;text-align:center"><input type="number" min="1" max="500" id="phi'+i+'" value="'+p.hi+'"></td></tr>'; }).join("")+'</tbody></table><div style="display:flex;gap:8px;margin-top:10px"><button class="btn" data-act="savepay">Save bands</button>'+(STATE.pay?'<button class="btn ghost" data-act="resetpay">Reset to estimates</button>':'')+'</div></div>';
+  }
+  h += '</div></div>';
+  h += '<div class="sec"><h2>Non-sales functions you will hire for</h2><div class="grid g4" style="margin-top:10px">'+FUNCS.map(function(f){ return '<div class="card"><h3>'+esc(f[0])+'</h3><p class="small" style="margin:6px 0">'+esc(f[1])+'</p><p class="small muted" style="margin:0">'+esc(f[2])+'</p></div>'; }).join("")+'</div></div>';
+  return h;
+}
+
+function vTrends(){
+  var h = '<h1>Where hiring is growing</h1><p class="lead">Demand is strong across the board: IEEMA reported FY2025 growth of 14.8% for LV switchgear and 16.8% for HV switchgear ('+srcLink(S.ken,"Ken Research")+'). Six themes drive almost every new mandate.</p>';
+  h += '<div class="sec grid g3">'+TRENDS.map(function(t,i){ return '<div class="card trend"><div class="num">0'+(i+1)+' / 06</div><h3>'+esc(t.n)+'</h3><p class="small" style="margin:0">'+esc(t.w)+' <span class="src">'+srcLink(t.s)+'</span></p><div><div class="small muted" style="margin-bottom:4px">Roles that open</div><div class="chips">'+t.roles.map(function(r){return '<span class="chip">'+esc(r)+'</span>';}).join("")+'</div></div><div><div class="small muted" style="margin-bottom:4px">Companies to watch</div><div class="chips">'+t.cos.map(coLink).join("")+'</div></div></div>'; }).join("")+'</div>';
+  h += '<div class="sec callout"><b>Technology to track:</b> SF6-free MV switchgear (Schneider AirSeT, Hitachi). Candidates who have sold or commissioned it are early-market and in demand.</div>';
+  return h;
+}
+
+function vGlossary(){
+  var groups = ["All","LV","MV/HV","Automation","Data centre","Trade terms"];
+  var q = ui.gq.toLowerCase();
+  var list = GLOSS.filter(function(g){ return (ui.gg==="All"||g[0]===ui.gg) && (!q || (g[1]+" "+g[2]+" "+g[3]).toLowerCase().indexOf(q)>=0); });
+  var h = '<h1>Glossary</h1><p class="lead">Terms you will hear on calls, in plain words. LV is up to 1 kV (buildings, factories), MV is about 1-33 kV (distribution, large plants), HV is the transmission grid.</p>';
+  h += '<div class="sec" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><input class="search" id="gq" type="search" placeholder="Search a term, e.g. ACB or panel builder" value="'+esc(ui.gq)+'" aria-label="Search glossary"><div class="chips">'+groups.map(function(g){ return '<button class="chip'+(ui.gg===g?" on":"")+'" data-gg="'+esc(g)+'">'+esc(g)+'</button>'; }).join("")+'</div></div>';
+  h += '<div class="sec grid g3" id="glist">'+glossCards(list)+'</div>';
+  return h;
+}
+function glossCards(list){
+  if (!list.length) return '<p class="muted">No term matches. Try a shorter word.</p>';
+  return list.map(function(g){ return '<div class="card term"><span class="pill">'+esc(g[0])+'</span><b>'+esc(g[1])+'</b><span class="small">'+esc(g[2])+'</span><span class="small muted">Shows up in: '+esc(g[3])+'</span></div>'; }).join("");
+}
+
+function vCallkit(){
+  var tabs = Object.keys(QS);
+  var h = '<h1>Call kit</h1><p class="lead">Ten minutes with these questions tells you whether a candidate really did the role on the CV. Ask for numbers every time. Ticks reset when you leave the page.</p>';
+  h += '<div class="sec chips">'+tabs.map(function(t){ return '<button class="chip'+(ui.qtab===t?" on":"")+'" data-qtab="'+esc(t)+'">'+esc(t)+'</button>'; }).join("")+'</div>';
+  h += '<div class="sec grid g2"><div class="card"><h3>'+esc(ui.qtab)+'</h3>'+QS[ui.qtab].map(function(q,i){ return '<label class="q"><input type="checkbox" id="q'+i+'"><span>'+esc(q)+'</span></label>'; }).join("")+'</div><div class="card" style="border-left:4px solid var(--crit)"><h3>Red flags</h3>'+REDFLAGS.map(function(r){ return '<div class="q"><span style="color:var(--crit);font-weight:700">!</span><span>'+esc(r)+'</span></div>'; }).join("")+'<p class="small muted" style="margin-top:12px">Heard something new? <a href="#log">Add it to the learning log</a>.</p></div></div>';
+  return h;
+}
+
+function vLog(){
+  var e = ui.editId ? STATE.log.filter(function(x){return x.id===ui.editId;})[0] : null;
+  var pre = e || {date:today(), co:ui.prefillCo||"schneider", bu:"", from:"", text:"", conf:0, moved:false};
+  var opts = COS.map(function(c){ return '<option value="'+c.id+'"'+(pre.co===c.id?" selected":"")+'>'+esc(c.name)+'</option>'; }).join("") + '<option value="general"'+(pre.co==="general"?" selected":"")+'>General / industry</option>';
+  var h = '<h1>Learning log</h1><p class="lead">One entry per new thing you learn on a call. Entries show on that company\'s profile too. Once two candidates confirm something, mark it Confirmed.</p>';
+  if (saveState==="readonly") h += '<div class="banner">Saving is not available in this view, so entries you add here disappear when you reload. Sign in to HireLab to keep them.</div>';
+  h += '<div class="sec card"><h3>'+(e?"Edit entry":"Add a learning")+'</h3><form class="form" id="logform" style="margin-top:10px"><label>Date<input type="date" id="f-date" value="'+esc(pre.date)+'" required></label><label>Company<select id="f-co">'+opts+'</select></label><label>BU / team<input id="f-bu" value="'+esc(pre.bu)+'" placeholder="e.g. Secure Power"></label><label>Heard from (role, not name)<input id="f-from" value="'+esc(pre.from)+'" placeholder="e.g. KAM, 9 yrs"></label><label class="wide">What you learned<textarea id="f-text" required placeholder="e.g. Schneider and L&K channel teams merged in North zone in 2026">'+esc(pre.text)+'</textarea></label><label>Confidence<select id="f-conf"><option value="0"'+(pre.conf===0?" selected":"")+'>Heard once</option><option value="1"'+(pre.conf===1?" selected":"")+'>Confirmed by 2+</option><option value="2"'+(pre.conf===2?" selected":"")+'>Verified (public source)</option></select></label><label>Moved into playbook<select id="f-moved"><option value="0"'+(!pre.moved?" selected":"")+'>Not yet</option><option value="1"'+(pre.moved?" selected":"")+'>Done</option></select></label><div style="display:flex;gap:8px;align-items:flex-end" class="wide"><button class="btn" type="submit">'+(e?"Save changes":"Add entry")+'</button>'+(e?'<button class="btn ghost" type="button" data-act="canceledit">Cancel</button>':'')+'</div></form></div>';
+  var list = STATE.log.slice().sort(function(a,b){ return a.date<b.date?1:a.date>b.date?-1:0; }).filter(function(x){ return ui.logco==="all" || x.co===ui.logco; });
+  var used = {}; STATE.log.forEach(function(x){ used[x.co]=1; });
+  h += '<div class="sec"><div class="sec-head"><div><h2>Entries <span class="muted mono" style="font-size:16px">'+list.length+'</span></h2></div><div class="chips"><button class="chip'+(ui.logco==="all"?" on":"")+'" data-logco="all">All</button>'+Object.keys(used).map(function(id){ return '<button class="chip'+(ui.logco===id?" on":"")+'" data-logco="'+id+'">'+esc(id==="general"?"General":coName(id))+'</button>'; }).join("")+'</div></div><div class="card">';
+  h += list.length ? list.map(function(x){ return '<div class="entry"><span class="mono small muted">'+esc(x.date)+'</span><div>'+(x.co==="general"?'<span class="chip">General</span>':coLink(x.co))+'<div class="small muted" style="margin-top:4px">'+esc(x.bu||"")+'</div></div><div>'+esc(x.text)+'<div class="small muted" style="margin-top:4px">'+(x.from?esc(x.from)+" · ":"")+'<span class="pill '+(x.conf===2?"strong":x.conf===1?"present":"")+'">'+["Heard once","Confirmed 2+","Verified"][x.conf||0]+'</span> '+(x.moved?'<span class="pill">In playbook</span>':'')+'</div></div><div class="acts"><button class="icon-btn" data-edit="'+esc(x.id)+'">Edit</button><button class="icon-btn" data-del="'+esc(x.id)+'">Delete</button></div></div>'; }).join("") : '<p class="muted small" style="margin:0">No entries yet.</p>';
+  h += '</div></div>';
+  return h;
+}
+
+/* ---------- render + events ---------- */
+function currentView(){ var h = (location.hash||"").replace(/^#/,""); if (!h) return "overview"; if (h.indexOf("company-")===0 && CO[h.slice(8)]) return h; return VIEWS.some(function(v){return v[0]===h;}) ? h : "overview"; }
+var pendingDel = null;
+function render(){
+  var v = currentView(), inner;
+  if (v.indexOf("company-")===0) inner = vCompany(v.slice(8));
+  else inner = {overview:vOverview, matrix:vMatrix, talent:vTalent, roles:vRoles, trends:vTrends, glossary:vGlossary, callkit:vCallkit, log:vLog}[v]();
+  document.getElementById("app").innerHTML = shell(inner, v);
+  var t = document.title; if (t !== TITLE) document.title = TITLE;
+}
+function go(hash){ if (location.hash === "#"+hash) { render(); window.scrollTo(0,0); } else { location.hash = hash; } }
+
+document.addEventListener("click", function(ev){
+  var el = ev.target.closest("[data-go],[data-layer],[data-act],[data-seg],[data-cell],[data-pool],[data-role],[data-rolego],[data-gg],[data-qtab],[data-logco],[data-edit],[data-del],[data-addlog]");
+  if (!el) return;
+  var d = el.dataset;
+  if (d.go){ ev.preventDefault(); go(d.go); return; }
+  if (d.layer){ ui.layer = ui.layer===d.layer ? null : d.layer; render(); return; }
+  if (d.seg){ ui.seg = ui.seg===d.seg ? null : d.seg; render(); return; }
+  if (d.cell !== undefined){
+    if (!ui.editM){ var p0 = d.cell.split("|"); ui.seg = p0[0]; render(); return; }
+    var p = d.cell.split("|"), seg = SEGS.filter(function(s){return s.id===p[0];})[0], ci = +p[1];
+    var nv = (rating(seg,ci)+2)%3; var k = p[0]+"|"+MCOLS[ci];
+    if (nv === seg.r[ci]) delete STATE.matrix[k]; else STATE.matrix[k] = nv;
+    persist(); return;
+  }
+  if (d.pool){ ui.pool = d.pool; render(); return; }
+  if (d.role !== undefined && el.classList.contains("chip")){ ui.role = d.role || null; if (ui.role){ var r = ROLES.filter(function(x){return x.id===ui.role;})[0]; ui.pool = r.pools[0]; } render(); return; }
+  if (d.rolego){ ui.role = d.rolego; ui.pool = ROLES.filter(function(x){return x.id===d.rolego;})[0].pools[0]; go("talent"); return; }
+  if (d.gg){ ui.gg = d.gg; render(); return; }
+  if (d.qtab){ ui.qtab = d.qtab; render(); return; }
+  if (d.logco){ ui.logco = d.logco; render(); return; }
+  if (d.addlog){ ui.prefillCo = d.addlog; ui.editId = null; go("log"); return; }
+  if (d.edit){ ui.editId = d.edit; render(); window.scrollTo(0,0); return; }
+  if (d.del){
+    if (pendingDel === d.del){ STATE.log = STATE.log.filter(function(x){return x.id!==d.del;}); pendingDel = null; persist(); }
+    else { pendingDel = d.del; el.textContent = "Click again to delete"; el.style.borderColor = "var(--crit)"; el.style.color = "var(--crit)"; setTimeout(function(){ if (pendingDel===d.del){ pendingDel=null; render(); } }, 3000); }
+    return;
+  }
+  if (d.act==="clearlayer"){ ui.layer=null; render(); return; }
+  if (d.act==="resetm"){ STATE.matrix = {}; persist(); return; }
+  if (d.act==="canceledit"){ ui.editId=null; render(); return; }
+  if (d.act==="savepay"){
+    var np = PAY0.map(function(p,i){ var lo = parseFloat($("#plo"+i).value), hi = parseFloat($("#phi"+i).value); if (!(lo>0)) lo = p.lo; if (!(hi>0)) hi = p.hi; if (hi<lo){ var t=hi; hi=lo; lo=t; } return {l:p.l,t:p.t,e:p.e,lo:lo,hi:hi}; });
+    STATE.pay = np; ui.editP = false; persist(); return;
+  }
+  if (d.act==="resetpay"){ STATE.pay = null; ui.editP=false; persist(); return; }
+});
+document.addEventListener("keydown", function(ev){
+  if ((ev.key==="Enter"||ev.key===" ") && ev.target.closest && ev.target.closest("[data-pool]")){ ev.preventDefault(); ui.pool = ev.target.closest("[data-pool]").dataset.pool; render(); }
+});
+document.addEventListener("change", function(ev){
+  if (ev.target.id==="editM"){ ui.editM = ev.target.checked; render(); }
+  if (ev.target.id==="editP"){ ui.editP = ev.target.checked; render(); }
+});
+document.addEventListener("input", function(ev){
+  if (ev.target.id==="gq"){ ui.gq = ev.target.value; var q = ui.gq.toLowerCase(); var list = GLOSS.filter(function(g){ return (ui.gg==="All"||g[0]===ui.gg) && (!q || (g[1]+" "+g[2]+" "+g[3]).toLowerCase().indexOf(q)>=0); }); var gl = $("#glist"); if (gl) gl.innerHTML = glossCards(list); }
+});
+document.addEventListener("submit", function(ev){
+  if (ev.target.id !== "logform") return;
+  ev.preventDefault();
+  var text = $("#f-text").value.trim(); if (!text) return;
+  var rec = {date:$("#f-date").value||today(), co:$("#f-co").value, bu:$("#f-bu").value.trim(), from:$("#f-from").value.trim(), text:text, conf:+$("#f-conf").value, moved:$("#f-moved").value==="1"};
+  if (ui.editId){ STATE.log = STATE.log.map(function(x){ if (x.id===ui.editId){ rec.id = x.id; return rec; } return x; }); ui.editId = null; }
+  else { rec.id = "e"+Date.now().toString(36); STATE.log.push(rec); }
+  ui.prefillCo = null;
+  persist();
+});
+window.addEventListener("hashchange", function(){ render(); window.scrollTo(0,0); try { localStorage.setItem("eie-view", location.hash); } catch(e){} });
+
+try { if (!location.hash){ var last = localStorage.getItem("eie-view"); if (last && last.length>1) history.replaceState(null, "", last); } } catch(e){}
+render();
+})();
+</script>
+</body>
+</html>
