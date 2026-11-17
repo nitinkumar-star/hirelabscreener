@@ -7,7 +7,10 @@ Legrand and peers). The page is learning.html, kept as one self-contained file.
 
 What the ATS adds:
   - It is a sidebar tab, behind sign-in, with the app menu (modules/app_nav.py).
-  - The page's edits (learning log entries, heatmap ratings, pay table) are kept
+  - Everything on the page is editable (Edit content): companies, heatmap,
+    talent pools, roles, pay, trends, glossary, call kit, headings. The page's
+    edits (learning log, heatmap ratings, pay table, and `data` = the agency's
+    own copy of each edited part) are kept
     PER AGENCY in the database instead of in the file: every recruiter of the
     agency sees the same notes, and other agencies never see them.
 
@@ -70,7 +73,8 @@ def _migrate_learning(conn):
 def _valid(st):
     return (isinstance(st, dict) and isinstance(st.get('log', []), list)
             and isinstance(st.get('matrix', {}), dict)
-            and (st.get('pay') is None or isinstance(st.get('pay'), list)))
+            and (st.get('pay') is None or isinstance(st.get('pay'), list))
+            and (st.get('data') is None or isinstance(st.get('data'), dict)))
 
 
 def _load(cid):

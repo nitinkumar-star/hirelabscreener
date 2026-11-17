@@ -219,6 +219,58 @@ table{border-collapse:collapse;width:100%}
   .influ{grid-column:1}
   .form{grid-template-columns:1fr}
 }
+
+/* ---- content editor ---- */
+#main{min-width:0}
+.elist>.eitem{margin:0}
+.echips select{border:0;background:transparent;color:inherit;font:inherit;padding:0}
+.editbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:-8px 0 18px;font-size:12.5px;color:var(--muted)}
+.editbar .icon-btn{font-weight:500}
+.editbar .add{border-color:var(--accent);color:var(--accent)}
+.ehead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:12px}
+.dsgrid button{text-align:left;cursor:pointer;font:inherit;color:inherit;display:flex;flex-direction:column;gap:4px}
+.dsgrid button:hover{border-color:var(--accent)}
+.dsgrid .meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.eitem{border:1px solid var(--line);border-radius:10px;background:var(--surface);margin:8px 0}
+.eitem>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:9px 12px;font-weight:600}
+.eitem>summary::-webkit-details-marker{display:none}
+.eitem>summary .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eitem>summary:before{content:"\25B8";color:var(--muted);font-size:12px}
+.eitem[open]>summary:before{content:"\25BE"}
+.eitem>.eb{padding:4px 12px 12px;border-top:1px solid var(--line)}
+.eitem .eitem{background:var(--bg)}
+.ef{display:grid;grid-template-columns:170px minmax(0,1fr);gap:10px;align-items:start;padding:6px 0}
+.ef>.el{font-size:12.5px;color:var(--muted);font-weight:500;padding-top:8px}
+.ef input[type=text],.ef input[type=number],.ef input[type=url],.ef select,.ef textarea,.erow input,.erow select,.erow textarea{width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;font-size:14px}
+.ef textarea,.erow textarea{min-height:64px;resize:vertical}
+.ef input[type=checkbox]{width:17px;height:17px;margin-top:8px;accent-color:var(--accent)}
+.efs{border:1px dashed var(--line);border-radius:10px;padding:6px 12px 10px;margin:6px 0}
+.efs>legend{font-size:12.5px;color:var(--muted);font-weight:600;padding:0 6px}
+.elist{display:flex;flex-direction:column;gap:6px}
+.erow{display:flex;gap:6px;align-items:flex-start}
+.erow>.grow{flex:1;min-width:0;display:flex;gap:6px;flex-wrap:wrap}
+.erow>.grow>*{flex:1 1 160px}
+.erow .k{flex:0 0 220px}
+.erow .acts{display:flex;gap:4px;flex:0 0 auto}
+.erow .acts .icon-btn,.eitem summary .icon-btn{padding:3px 8px}
+.echips{display:flex;flex-wrap:wrap;gap:6px}
+.echips label{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12.5px;cursor:pointer;background:var(--surface)}
+.echips label:has(input:checked){background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.echips input{margin:0;accent-color:var(--accent)}
+.eadd{margin-top:6px}
+.ebar{position:sticky;bottom:0;z-index:5;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end;margin-top:18px;padding:12px 14px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+.ebar .msg{margin-right:auto;font-size:13px;color:var(--muted)}
+.ebar.dirty{border-color:var(--amber)}
+.ebar.dirty .msg{color:var(--amber);font-weight:600}
+.eerr{border:1px solid var(--crit);color:var(--crit);border-radius:10px;padding:10px 14px;margin:12px 0;font-size:13.5px}
+.ehint{font-size:12.5px;color:var(--muted);margin:2px 0 8px}
+.egroup{margin:18px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+@media (max-width:700px){
+  .ef{grid-template-columns:1fr;gap:4px}
+  .ef>.el{padding-top:0}
+  .erow{flex-wrap:wrap}
+  .erow .k{flex:1 1 100%}
+}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
 </head>
@@ -606,11 +658,112 @@ var QS = {
  "Application / pre-sales":["Which software do you use for drawings, BOQ and selection (EcoStruxure, ETAP, SIMARIS, AutoCAD)?","How many offers a month, and what is your hit rate?"],
  "Service":["Which products can you commission and test on your own?","What share of your work is breakdown vs AMC vs retrofit?"]
 };
+
+/* page headings, intro lines and callouts (editable: Edit content -> Page headings and notes).
+   **bold** and [label](https://link) work in these. */
+var TEXT = {
+ brand:"Electrical Industry Explorer",
+ brandsub:"Schneider, Siemens, L&K, Legrand and peers · for HireLab sourcing",
+ navbig:"Big four",
+ ov_h1:"Know the industry before you dial",
+ ov_lead:"Every company here makes some of the same five product layers and sells them through the same four routes. Pick a product layer to see who is strong in it, then open a company for its structure, sites and talent profile.",
+ ov_map_h:"Industry map",
+ ov_map_p:"Click a product layer. The routes, customers and strongest companies light up.",
+ ov_influ:"**Influencers:** consultants, architects and PMCs name the brand in the BOQ. That is why specifier sales exists.",
+ ov_big_h:"The big four",
+ ov_big_p:"Open any card for its entity tree, business lines, location map, timeline and talent profile.",
+ ov_peers_h:"Peers, grouped by what they really sell",
+ ov_peers_p:"Same customers, same talent pool. Click for a quick profile.",
+ ov_callout:"**Siemens is now three employers.** Siemens Limited (DI, SI, Mobility, C&S), Siemens Energy India (listed June 2025) and Innomotics India (LV motors, Dec 2025 deal). Check the entity on every Siemens CV.",
+ co_facts_h:"Key facts",
+ co_tree_h:"Who is the employer?",
+ co_tree_p:"The legal entity on a candidate payslip. Highlighted box = where most of your mandates sit.",
+ co_bus_h:"Business lines",
+ co_bus_p:"What each team sells and who buys it. Match the JD to one box.",
+ co_sites_h:"Where they are",
+ co_sites_p:"Approximate positions. Amber = to verify on candidate calls.",
+ co_tl_h:"Timeline",
+ mx_h1:"Competitor heatmap",
+ mx_lead:"Read across a row to see who fights in a segment. Read down a column to see where a company is strongest. Click a segment name for its sourcing pool.",
+ mx_note:"Ratings are working estimates from market knowledge, not survey data. Change them as candidates tell you more.",
+ tm_h1:"Talent map",
+ tm_lead:"Five talent pools and how easily people move between them. Click a pool for its companies, or pick a role to see where to source it.",
+ tm_callout:"**Upward flow:** Indian companies (Havells, Polycab, Panasonic Anchor, CG) feed MNCs at every level. MNC people move to Indian companies mainly for a title jump or a bigger territory.",
+ ro_h1:"Roles and pay",
+ ro_lead:"Almost every JD from these companies maps to one of seven sales types. The sales type decides who you source, more than the product does.",
+ ro_roles_h:"The seven sales roles",
+ ro_roles_p:"Click a card to open its sourcing view on the talent map.",
+ ro_pay_h:"Title ladder and pay bands",
+ ro_pay_p:"Working estimates for India in 2026, not survey data. MNCs usually pay at the top of each band, L&K and Indian companies near the middle, data-centre and automation software at a premium.",
+ ro_funcs_h:"Non-sales functions you will hire for",
+ tr_h1:"Where hiring is growing",
+ tr_lead:"Demand is strong across the board: IEEMA reported FY2025 growth of 14.8% for LV switchgear and 16.8% for HV switchgear ([Ken Research](https://www.kenresearch.com/india-electric-switchgear-market)). Six themes drive almost every new mandate.",
+ tr_callout:"**Technology to track:** SF6-free MV switchgear (Schneider AirSeT, Hitachi). Candidates who have sold or commissioned it are early-market and in demand.",
+ gl_h1:"Glossary",
+ gl_lead:"Terms you will hear on calls, in plain words. LV is up to 1 kV (buildings, factories), MV is about 1-33 kV (distribution, large plants), HV is the transmission grid.",
+ ck_h1:"Call kit",
+ ck_lead:"Ten minutes with these questions tells you whether a candidate really did the role on the CV. Ask for numbers every time. Ticks reset when you leave the page.",
+ lg_h1:"Learning log",
+ lg_lead:"One entry per new thing you learn on a call. Entries show on that company's profile too. Once two candidates confirm something, mark it Confirmed."
+};
 var REDFLAGS = ["Cannot name their legal entity or BU","Target in units with no rupee value","All accounts are 'team accounts'","Vague on competitors"];
 
 /* city coordinates (lon, lat) */
 var CITY = {"Mumbai":[72.88,19.08],"Navi Mumbai":[73.03,19.03],"Kalwa":[73.0,19.2],"Pune":[73.86,18.52],"Ahmednagar":[74.74,19.09],"Nashik":[73.79,20.0],"Sinnar":[74.0,19.85],"Aurangabad":[75.34,19.88],"Vadodara":[73.18,22.31],"Ahmedabad":[72.57,23.02],"Goa":[73.83,15.49],"Bengaluru":[77.59,12.97],"Chennai":[80.27,13.08],"Coimbatore":[76.96,11.0],"Coonoor":[76.79,11.35],"Hyderabad":[78.49,17.39],"Kolkata":[88.36,22.57],"Delhi":[77.21,28.61],"Gurugram":[77.03,28.46],"Noida":[77.39,28.54],"Lucknow":[80.95,26.85],"Nagpur":[79.09,21.15],"Puducherry":[79.81,11.94],"Faridabad":[77.32,28.41]};
 var OUTLINE = [[68.2,23.6],[70.0,20.8],[72.6,21.0],[72.8,19.0],[73.5,16.0],[74.6,12.9],[76.2,9.9],[77.5,8.1],[78.2,8.9],[79.8,10.3],[80.3,13.1],[80.2,15.5],[82.3,16.6],[84.8,19.3],[86.9,20.8],[87.5,21.6],[88.8,21.6],[89.0,22.6],[88.6,24.3],[88.1,26.4],[89.8,26.2],[92.0,26.9],[95.5,27.9],[97.0,27.5],[95.0,25.5],[94.2,23.5],[93.2,22.2],[92.3,23.7],[91.2,23.9],[91.9,24.9],[90.0,25.2],[89.8,26.0],[88.2,26.7],[84.0,27.4],[81.0,28.9],[80.1,28.8],[78.9,30.3],[78.4,31.3],[79.0,32.5],[78.0,35.5],[76.5,35.8],[74.5,34.8],[73.8,34.0],[74.6,32.7],[74.5,31.1],[73.9,30.0],[72.3,28.1],[70.4,27.9],[69.5,26.8],[70.3,25.6],[68.8,24.3]];
+
+
+/* ---------- editable data ----------
+   Everything above is the starting content. STATE.data holds the agency's own
+   copy of any part it has edited (Edit content); it replaces that part here. */
+var DSKEYS = ["TEXT","COS","CLUSTERS","MCOLS","SEGS","SEGNOTE","LAYERS","ROUTES","CUST","POOLS","POOLLINES","ROLES","FUNCS","PAY0","TRENDS","GLOSS","QS","REDFLAGS","CITY"];
+function clone(x){ return x==null ? x : JSON.parse(JSON.stringify(x)); }
+function dsGet(k){ return {TEXT:TEXT,COS:COS,CLUSTERS:CLUSTERS,MCOLS:MCOLS,SEGS:SEGS,SEGNOTE:SEGNOTE,LAYERS:LAYERS,ROUTES:ROUTES,CUST:CUST,POOLS:POOLS,POOLLINES:POOLLINES,ROLES:ROLES,FUNCS:FUNCS,PAY0:PAY0,TRENDS:TRENDS,GLOSS:GLOSS,QS:QS,REDFLAGS:REDFLAGS,CITY:CITY}[k]; }
+function dsSet(k,v){
+  switch(k){
+   case "TEXT": TEXT=v; break; case "COS": COS=v; break; case "CLUSTERS": CLUSTERS=v; break; case "MCOLS": MCOLS=v; break;
+   case "SEGS": SEGS=v; break; case "SEGNOTE": SEGNOTE=v; break; case "LAYERS": LAYERS=v; break; case "ROUTES": ROUTES=v; break;
+   case "CUST": CUST=v; break; case "POOLS": POOLS=v; break; case "POOLLINES": POOLLINES=v; break; case "ROLES": ROLES=v; break;
+   case "FUNCS": FUNCS=v; break; case "PAY0": PAY0=v; break; case "TRENDS": TRENDS=v; break; case "GLOSS": GLOSS=v; break;
+   case "QS": QS=v; break; case "REDFLAGS": REDFLAGS=v; break; case "CITY": CITY=v; break;
+  }
+}
+var DEF = {}; DSKEYS.forEach(function(k){ DEF[k] = clone(dsGet(k)); });
+function arr(x){ return Array.isArray(x) ? x : []; }
+function str(x){ return x==null ? "" : String(x); }
+function normalize(){
+  COS = arr(COS).filter(function(c){ return c && typeof c==="object"; });
+  COS.forEach(function(c){
+    c.id = str(c.id); c.name = str(c.name); c.short = str(c.short) || c.name;
+    ["overview","facts","bus","sites","tl","ladder","from"].forEach(function(f){ c[f] = arr(c[f]); });
+    if (!c.tree || typeof c.tree!=="object") c.tree = {root:"", kids:[]};
+    c.tree.kids = arr(c.tree.kids); c.tree.kids.forEach(function(k){ if (k && k.sub && !Array.isArray(k.sub)) k.sub = []; });
+  });
+  MCOLS = arr(MCOLS).map(str);
+  SEGS = arr(SEGS); SEGS.forEach(function(sg){ sg.r = arr(sg.r).map(function(v){ return +v===2?2:+v===1?1:0; }); while (sg.r.length < MCOLS.length) sg.r.push(0); });
+  LAYERS = arr(LAYERS); LAYERS.forEach(function(l){ l.segs = arr(l.segs); l.routes = arr(l.routes); l.cust = arr(l.cust); });
+  ROUTES = arr(ROUTES); CUST = arr(CUST); CLUSTERS = arr(CLUSTERS);
+  POOLS = arr(POOLS); POOLS.forEach(function(p){ p.cos = arr(p.cos); p.x = +p.x||0; p.y = +p.y||0; });
+  ROLES = arr(ROLES); ROLES.forEach(function(r){ r.pools = arr(r.pools); });
+  TRENDS = arr(TRENDS); TRENDS.forEach(function(x){ x.roles = arr(x.roles); x.cos = arr(x.cos); });
+  FUNCS = arr(FUNCS).map(function(f){ return arr(f); }); GLOSS = arr(GLOSS).map(function(g){ return arr(g); });
+  PAY0 = arr(PAY0); PAY0.forEach(function(p){ p.lo = +p.lo||1; p.hi = +p.hi||p.lo; });
+  REDFLAGS = arr(REDFLAGS).map(str);
+  ["SEGNOTE","POOLLINES","QS","CITY"].forEach(function(k){ var v = dsGet(k); if (!v || typeof v!=="object" || Array.isArray(v)) dsSet(k, {}); });
+  Object.keys(QS).forEach(function(q){ QS[q] = arr(QS[q]).map(str); });
+}
+function applyData(){
+  var D = (STATE.data && typeof STATE.data==="object") ? STATE.data : {};
+  DSKEYS.forEach(function(k){ dsSet(k, D[k]!==undefined && D[k]!==null ? clone(D[k]) : clone(DEF[k])); });
+  TEXT = Object.assign({}, DEF.TEXT, (D.TEXT && typeof D.TEXT==="object") ? D.TEXT : {});
+  normalize();
+  CO = {}; COS.forEach(function(c){ CO[c.id]=c; });
+}
+function md(x){
+  return esc(x).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>").replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+function t(k){ return md(TEXT[k]); }
+function callout(k){ return TEXT[k] ? '<div class="sec callout">'+t(k)+'</div>' : ''; }
 
 /* ---------- helpers ---------- */
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];}); }
@@ -662,6 +815,8 @@ try {
   } else { setTimeout(function(){ setSave("readonly"); }, 0); }
 } catch(e){ setSave("readonly"); }
 
+applyData();
+
 /* ---------- shell ---------- */
 var VIEWS = [
  ["overview","Overview"],["matrix","Competitor heatmap"],["talent","Talent map"],["roles","Roles and pay"],["trends","Where hiring grows"],["glossary","Glossary"],["callkit","Call kit"],["log","Learning log"]
@@ -670,32 +825,289 @@ var ui = {layer:null, seg:null, pool:"lvmv", role:null, editM:false, editP:false
 
 function shell(inner, view){
   var nav = '<div class="nav-label">Explore</div>' + VIEWS.map(function(v){ return '<a href="#'+v[0]+'" class="'+(view===v[0]?"on":"")+'">'+esc(v[1])+'</a>'; }).join("");
-  nav += '<div class="nav-label">Big four</div>' + COS.filter(function(c){return c.big;}).map(function(c){ return '<a href="#company-'+c.id+'" class="'+(view==="company-"+c.id?"on":"")+'"><span class="dot" style="background:var('+c.color+')"></span>'+esc(c.short)+'</a>'; }).join("");
-  return '<div class="app"><aside class="rail"><div class="brand">Electrical Industry Explorer<small>Schneider, Siemens, L&amp;K, Legrand and peers · for HireLab sourcing</small></div><nav class="nav">'+nav+'</nav><div class="save" id="savebox">'+saveLabel()+'</div></aside><main id="main">'+inner+'</main></div>';
+  nav += '<div class="nav-label">'+esc(TEXT.navbig)+'</div>' + COS.filter(function(c){return c.big;}).map(function(c){ return '<a href="#company-'+c.id+'" class="'+(view==="company-"+c.id?"on":"")+'"><span class="dot" style="background:var('+c.color+')"></span>'+esc(c.short)+'</a>'; }).join("");
+  nav += '<div class="nav-label">Manage</div><a href="#edit" class="'+(view.indexOf("edit")===0?"on":"")+'">✎ Edit content</a>';
+  if (view.indexOf("edit")!==0) inner = editBar(view) + inner;
+  return '<div class="app"><aside class="rail"><div class="brand">'+esc(TEXT.brand)+'<small>'+esc(TEXT.brandsub)+'</small></div><nav class="nav">'+nav+'</nav><div class="save" id="savebox">'+saveLabel()+'</div></aside><main id="main">'+inner+'</main></div>';
+}
+
+
+/* ---------- content editor ---------- */
+var DS = [
+ ["TEXT","Page headings and notes","Headings, intro lines and the yellow callout boxes on every page. Write **bold** for bold and [label](https://link) for a link. Leave a callout empty to hide it."],
+ ["COS","Companies","Every company: full profiles (like the big four) and short peer profiles. Add a new one here."],
+ ["CLUSTERS","Peer groups","The groups that short-profile companies sit in on the overview page."],
+ ["MCOLS","Heatmap columns","Which companies are columns of the competitor heatmap, in this order."],
+ ["SEGS","Heatmap rows","Segments, and each company's rating in it."],
+ ["SEGNOTE","Heatmap row notes","A note shown under a segment's sourcing pool on the heatmap."],
+ ["LAYERS","Industry map: what they make","Product layers on the overview, with the rows, routes and customers they light up."],
+ ["ROUTES","Industry map: how it is sold",""],
+ ["CUST","Industry map: who uses it",""],
+ ["POOLS","Talent pools","Boxes on the talent map. X and Y place the box in the drawing (760 wide, 380 high; a box is 212 × 88)."],
+ ["POOLLINES","Talent pool box lines","The company lines inside each pool box; separate up to three lines with |."],
+ ["ROLES","Sales roles","The sales role cards, and which pools to source each from (first = start here)."],
+ ["FUNCS","Non-sales functions",""],
+ ["PAY0","Pay bands","Fixed CTC bands in Rs lakh per year."],
+ ["TRENDS","Hiring trends",""],
+ ["GLOSS","Glossary","Each term: group, term, meaning, where it shows up. A new group name makes a new filter."],
+ ["QS","Call kit questions","Each tab of the call kit and its questions."],
+ ["REDFLAGS","Red flags","Shown next to the call kit questions."],
+ ["CITY","Cities on the site map","Longitude and latitude of each city. Add a city here before you use it in a company's sites."]
+];
+function dsInfo(k){ return DS.filter(function(d){ return d[0]===k; })[0]; }
+var LBL = {
+ id:"ID", n:"Name", d:"Description", name:"Full name", short:"Short name", big:"Full profile", color:"Colour", tag:"One-line summary",
+ overview:"Card bullets", facts:"Key facts", k:"Headline", t:"Text", s:"Source link", tree:"Employer tree", root:"Parent company",
+ kids:"Legal entities", sub:"Teams inside", hl:"Highlight (most mandates)", bus:"Business lines", p:"Products", w:"Buyers", sites:"Sites",
+ c:"City", v:"To verify", tl:"Timeline", y:"When", talent:"Talent profile", ladder:"Sales ladder", from:"Source from (talent neighbours)",
+ watch:"Verify on calls", cluster:"Peer group", core:"What they sell", sig:"Recent signal", r:"Ratings", routes:"How it is sold",
+ cust:"Who uses it", segs:"Heatmap rows", x:"X position", hub:"Hub pool", cos:"Companies", roles:"Roles", tip:"Tip", to:"Sells to",
+ ok:"Measured on", pools:"Source from pools", src:"Typical source companies", l:"Level", e:"Experience", lo:"Low (Rs lakh)", hi:"High (Rs lakh)"
+};
+var LBL_IN = {"POOLS.y":"Y position", "COS.sites.t":"Type", "PAY0.t":"Titles", "TRENDS.w":"Why it is growing", "TRENDS.roles":"Roles that open", "TRENDS.n":"Theme"};
+var TEXTLBL = {
+ brand:"Name at the top of the left rail", brandsub:"Line under the name", navbig:"Rail heading over the full-profile companies",
+ ov_h1:"Heading", ov_lead:"Intro", ov_map_h:"Industry map heading", ov_map_p:"Industry map line", ov_influ:"Influencers note", ov_big_h:"Full-profile companies heading",
+ ov_big_p:"Full-profile companies line", ov_peers_h:"Peers heading", ov_peers_p:"Peers line", ov_callout:"Callout box",
+ co_facts_h:"Key facts heading", co_tree_h:"Employer tree heading", co_tree_p:"Employer tree line", co_bus_h:"Business lines heading", co_bus_p:"Business lines line",
+ co_sites_h:"Sites heading", co_sites_p:"Sites line", co_tl_h:"Timeline heading",
+ mx_h1:"Heading", mx_lead:"Intro", mx_note:"Note under the heatmap", tm_h1:"Heading", tm_lead:"Intro", tm_callout:"Callout box",
+ ro_h1:"Heading", ro_lead:"Intro", ro_roles_h:"Roles heading", ro_roles_p:"Roles line", ro_pay_h:"Pay heading", ro_pay_p:"Pay line", ro_funcs_h:"Functions heading",
+ tr_h1:"Heading", tr_lead:"Intro", tr_callout:"Callout box", gl_h1:"Heading", gl_lead:"Intro", ck_h1:"Heading", ck_lead:"Intro", lg_h1:"Heading", lg_lead:"Intro"
+};
+var TEXTGRP = [["","Left rail"],["ov_","Overview"],["co_","Company pages"],["mx_","Competitor heatmap"],["tm_","Talent map"],["ro_","Roles and pay"],["tr_","Where hiring grows"],["gl_","Glossary"],["ck_","Call kit"],["lg_","Learning log"]];
+var COLORS = [["--co-schneider","Green"],["--co-siemens","Teal"],["--co-lk","Navy"],["--co-legrand","Red"],["--accent","Blue"],["--amber","Amber"],["--co-peer","Grey"]];
+var SITE_T = [["hq","HQ"],["plant","Plant / office"],["office","Office"],["new","New plant"],["rd","R&D"],["tc","Training centre"]];
+var CO_FULL = {id:"", name:"", short:"", big:true, color:"--co-peer", tag:"", overview:[], facts:[], tree:{root:"", kids:[]}, bus:[], sites:[], tl:[], talent:"", ladder:[], from:[], watch:""};
+var CO_PEER = {id:"", name:"", short:"", big:false, color:"--co-peer", cluster:"", core:"", sig:"", s:"", from:[]};
+var TPL = {
+ "COS.facts":{k:"",t:"",s:""}, "COS.tree.kids":{n:"",d:"",sub:[],hl:false}, "COS.bus":{n:"",p:"",w:""},
+ "COS.sites":{c:"",t:"plant",n:"",s:"",v:false}, "COS.tl":{y:"",t:""},
+ "CLUSTERS":{id:"",n:""}, "SEGS":{id:"",n:"",r:[]}, "LAYERS":{id:"",n:"",d:"",segs:[],routes:[],cust:[]},
+ "ROUTES":{id:"",n:"",d:""}, "CUST":{id:"",n:"",d:""}, "POOLS":{id:"",n:"",x:24,y:160,hub:false,cos:[],roles:"",tip:""},
+ "ROLES":{id:"",n:"",to:"",ok:"",pools:[],src:""}, "FUNCS":["","",""], "PAY0":{l:"",t:"",e:"",lo:5,hi:10},
+ "TRENDS":{n:"",w:"",roles:[],cos:[],s:""}, "GLOSS":["","","",""]
+};
+var COLS = {FUNCS:["Function","Titles","Profile / where"], GLOSS:["Group","Term","Meaning","Shows up in"]};
+var REQ = {COS:"name", CLUSTERS:"n", SEGS:"n", LAYERS:"n", ROUTES:"n", CUST:"n", POOLS:"n", ROLES:"n", TRENDS:"n", PAY0:"l"};
+function refs(key){
+  if (key==="from" || key==="cos") return COS.map(function(c){ return [c.id, c.short||c.name]; });
+  if (key==="segs") return SEGS.map(function(x){ return [x.id, x.n]; });
+  if (key==="routes") return ROUTES.map(function(x){ return [x.id, x.n]; });
+  if (key==="cust") return CUST.map(function(x){ return [x.id, x.n]; });
+  if (key==="pools") return POOLS.map(function(x){ return [x.id, x.n]; });
+  return null;
+}
+function pat(path){ return [ui.ek].concat(path.filter(function(p){ return typeof p!=="number"; })).join("."); }
+function getAt(o, path){ for (var i=0;i<path.length;i++){ if (o==null) return o; o = o[path[i]]; } return o; }
+function setAt(o, path, v){ var p = getAt(o, path.slice(0,-1)); if (p!=null) p[path[path.length-1]] = v; }
+function tplFor(path, item){
+  if (ui.ek==="COS" && path.length===1) return (item && item.big===false) ? CO_PEER : CO_FULL;
+  return TPL[pat(path.slice(0,-1).concat(["*"])).replace(/\.\*$/,"")] ;
+}
+function listTpl(path){
+  if (ui.ek==="COS" && path.length===0) return CO_FULL;
+  var tp = TPL[pat(path)]; if (tp!==undefined) return tp;
+  var cur = getAt(ui.draft, path); if (Array.isArray(cur) && cur.length && typeof cur[0]==="object") return cur[0] && Array.isArray(cur[0]) ? cur[0].map(function(){return "";}) : null;
+  return "";
+}
+function lbl(path, key){ var p = pat(path.slice(0,-1)).replace(/^[^.]*/, ui.ek); return LBL_IN[p+"."+key] || LBL_IN[ui.ek+"."+key] || LBL[key] || key; }
+function P(path){ return esc(JSON.stringify(path)); }
+function itemTitle(it, i){
+  if (Array.isArray(it)) return it.filter(Boolean).slice(0,2).join(" · ") || "New row";
+  var x = it.short || it.name || it.n || it.k || it.l || it.y || it.c || it.root || "";
+  if (it.l && it.t) x = it.l+" · "+it.t;
+  return x || "New item";
+}
+function fld(label, inner){ return '<div class="ef"><span class="el">'+esc(label)+'</span><div>'+inner+'</div></div>'; }
+function inp(path, v, type){
+  type = type || (typeof v==="number" ? "number" : "text");
+  if (type==="text" && str(v).length > 70) return '<textarea data-p="'+P(path)+'">'+esc(v)+'</textarea>';
+  return '<input type="'+type+'" data-p="'+P(path)+'"'+(type==="number"?' data-num="1" step="any"':'')+' value="'+esc(v==null?"":v)+'">';
+}
+function sel(path, v, opts, free){
+  var has = opts.some(function(o){ return o[0]===v; });
+  return '<select data-p="'+P(path)+'">'+(!has?'<option value="'+esc(v||"")+'" selected>'+(v?esc(v)+' (not in list)':'Choose…')+'</option>':'')+opts.map(function(o){ return '<option value="'+esc(o[0])+'"'+(o[0]===v?" selected":"")+'>'+esc(o[1])+'</option>'; }).join("")+'</select>';
+}
+function edField(path, key, v){
+  var L = lbl(path, key), inSites = pat(path.slice(0,-1))==="COS.sites";
+  if (key==="id" && typeof v==="string") return fld(L, '<span class="mono small muted">'+(v?esc(v):"set when you save")+'</span>');
+  var R = Array.isArray(v) ? refs(key) : null;
+  if (R && !(ui.ek==="TRENDS" && key==="roles")) return fld(L, refPick(path, v, R));
+  if (key==="cluster") return fld(L, sel(path, v, CLUSTERS.map(function(c){ return [c.id, c.n]; })));
+  if (key==="color") return fld(L, sel(path, v, COLORS));
+  if (inSites && key==="c") return fld(L, sel(path, v, Object.keys(CITY).sort().map(function(c){ return [c,c]; }))+'<div class="ehint">City missing? Add it under <a href="#edit/CITY">Cities on the site map</a> first.</div>');
+  if (inSites && key==="t") return fld(L, sel(path, v, SITE_T));
+  if (key==="r" && ui.ek==="SEGS") return fld(L, '<div class="echips">'+MCOLS.map(function(id,ci){ return '<label>'+esc(coName(id))+' <select data-p="'+P(path.concat([ci]))+'" data-num="1">'+[[0,"–"],[1,"Present"],[2,"Strong"]].map(function(o){ return '<option value="'+o[0]+'"'+(+v[ci]===o[0]?" selected":"")+'>'+o[1]+'</option>'; }).join("")+'</select></label>'; }).join("")+'</div>');
+  if (typeof v==="boolean") return fld(L, '<input type="checkbox" data-p="'+P(path)+'" data-bool="1"'+(v?" checked":"")+'>');
+  if (Array.isArray(v)) return fld(L, listEd(path, v));
+  if (v && typeof v==="object") return '<fieldset class="efs"><legend>'+esc(L)+'</legend>'+objEd(path, v, null)+'</fieldset>';
+  if (key==="s") return fld(L, inp(path, v, "url"));
+  return fld(L, inp(path, v));
+}
+function objEd(path, o, tpl){
+  var keys = Object.keys(tpl||{}); Object.keys(o).forEach(function(k){ if (keys.indexOf(k)<0) keys.push(k); });
+  return keys.map(function(k){ var v = o[k]; if (v===undefined){ v = clone(tpl[k]); o[k] = v; } return edField(path.concat([k]), k, v); }).join("");
+}
+function refPick(path, v, R){
+  var known = R.map(function(r){ return r[0]; });
+  var extra = v.filter(function(x){ return known.indexOf(x)<0; }).map(function(x){ return [x, x+" (removed)"]; });
+  return '<div class="echips">'+R.concat(extra).map(function(r){ return '<label><input type="checkbox" data-ref="'+P(path)+'" value="'+esc(r[0])+'"'+(v.indexOf(r[0])>=0?" checked":"")+'>'+esc(r[1])+'</label>'; }).join("")+'</div>';
+}
+function rowActs(path, i, n){
+  var lp = P(path);
+  return '<span class="acts"><button class="icon-btn" type="button" data-eact="up" data-lp="'+lp+'" data-i="'+i+'" title="Move up"'+(i===0?" disabled":"")+'>↑</button><button class="icon-btn" type="button" data-eact="down" data-lp="'+lp+'" data-i="'+i+'" title="Move down"'+(i===n-1?" disabled":"")+'>↓</button><button class="icon-btn" type="button" data-eact="del" data-lp="'+lp+'" data-i="'+i+'" title="Delete">✕</button></span>';
+}
+function listEd(path, v){
+  var tp = listTpl(path), n = v.length, h = '<div class="elist">';
+  var isObj = (tp && typeof tp==="object" && !Array.isArray(tp)) || (n && v[0] && typeof v[0]==="object" && !Array.isArray(v[0]));
+  var isRow = Array.isArray(tp) || (n && Array.isArray(v[0]));
+  if (ui.ek==="MCOLS" && path.length===0){
+    h += v.map(function(id,i){ return '<div class="erow"><div class="grow">'+sel([i], id, COS.map(function(c){ return [c.id, c.name]; }))+'</div>'+rowActs(path,i,n)+'</div>'; }).join("");
+  } else if (isObj){
+    h += v.map(function(it,i){
+      var ip = path.concat([i]), key = JSON.stringify(ip), open = ui.open[key];
+      return '<details class="eitem" data-ok="'+esc(key)+'" data-ei="'+i+'"'+(open?" open":"")+'><summary><span class="t">'+esc(itemTitle(it,i))+'</span>'+(it.big===false&&ui.ek==="COS"&&path.length===0?'<span class="pill">short profile</span>':'')+rowActs(path,i,n)+'</summary><div class="eb">'+(open ? objEd(ip, it, tplFor(ip, it)) : '')+'</div></details>';
+    }).join("");
+  } else if (isRow){
+    var cols = COLS[ui.ek] || [];
+    h += v.map(function(row,i){ return '<div class="erow"><div class="grow">'+row.map(function(c,j){ return str(c).length>60 ? '<textarea data-p="'+P(path.concat([i,j]))+'" placeholder="'+esc(cols[j]||"")+'">'+esc(c)+'</textarea>' : '<input type="text" data-p="'+P(path.concat([i,j]))+'" placeholder="'+esc(cols[j]||"")+'" value="'+esc(c)+'">'; }).join("")+'</div>'+rowActs(path,i,n)+'</div>'; }).join("");
+  } else {
+    h += v.map(function(x,i){ return '<div class="erow"><div class="grow">'+inp(path.concat([i]), x)+'</div>'+rowActs(path,i,n)+'</div>'; }).join("");
+  }
+  h += '</div><button class="icon-btn eadd" type="button" data-eact="add" data-lp="'+P(path)+'">+ Add</button>';
+  if (ui.ek==="COS" && path.length===0) h += ' <button class="icon-btn eadd" type="button" data-eact="addpeer" data-lp="'+P(path)+'">+ Add short profile</button>';
+  return h;
+}
+function mapEd(k, o){
+  var keys = Object.keys(o), h = '';
+  if (k==="TEXT"){
+    TEXTGRP.forEach(function(g){
+      var ks = keys.filter(function(x){ return g[0] ? x.indexOf(g[0])===0 : !/^[a-z]{2}_/.test(x); });
+      if (!ks.length) return;
+      h += '<div class="egroup">'+esc(g[1])+'</div>'+ks.map(function(x){ return fld(TEXTLBL[x]||x, '<textarea data-p="'+P([x])+'" style="min-height:'+(str(o[x]).length>70?70:38)+'px">'+esc(o[x])+'</textarea>'); }).join("");
+    });
+    return h;
+  }
+  var keyLbl = {SEGNOTE:"Heatmap row", POOLLINES:"Pool", QS:"Tab name", CITY:"City"}[k];
+  h += '<div class="elist">'+keys.map(function(x){
+    var kh = k==="SEGNOTE" ? sel(null, x, SEGS.map(function(s){ return [s.id, s.n]; })).replace('data-p="null"','data-rk="'+esc(x)+'"')
+           : k==="POOLLINES" ? sel(null, x, POOLS.map(function(p){ return [p.id, p.n]; })).replace('data-p="null"','data-rk="'+esc(x)+'"')
+           : '<input type="text" data-rk="'+esc(x)+'" value="'+esc(x)+'" aria-label="'+esc(keyLbl)+'">';
+    var vh;
+    if (k==="CITY") vh = '<input type="number" step="any" data-num="1" data-p="'+P([x,0])+'" value="'+esc(o[x][0])+'" placeholder="Longitude" title="Longitude"><input type="number" step="any" data-num="1" data-p="'+P([x,1])+'" value="'+esc(o[x][1])+'" placeholder="Latitude" title="Latitude">';
+    else if (k==="QS") vh = '<div style="flex:1 1 100%">'+listEd([x], o[x])+'</div>';
+    else vh = inp([x], o[x]);
+    return '<div class="'+(k==="QS"?"eitem":"erow")+'" style="'+(k==="QS"?"padding:10px 12px":"")+'"><div class="erow"><span class="k">'+kh+'</span><div class="grow">'+(k==="QS"?'':vh)+'</div><span class="acts"><button class="icon-btn" type="button" data-eact="delkey" data-key="'+esc(x)+'" title="Delete">✕</button></span></div>'+(k==="QS"?vh:'')+'</div>';
+  }).join("")+'</div><button class="icon-btn eadd" type="button" data-eact="addkey">+ Add '+esc((keyLbl||"item").toLowerCase())+'</button>';
+  return h;
+}
+function effective(k){
+  if (k==="SEGS") return SEGS.map(function(sg){ var c = clone(sg); c.r = MCOLS.map(function(id,ci){ return rating(sg,ci); }); return c; });
+  if (k==="PAY0") return clone(pay());
+  return clone(dsGet(k));
+}
+function editedKeys(){ return STATE.data && typeof STATE.data==="object" ? Object.keys(STATE.data).filter(function(k){ return STATE.data[k]!=null; }) : []; }
+function vEdit(v){
+  var parts = v.split("/"), k = parts[1], h;
+  if (!k || !dsInfo(k)){
+    var ed = editedKeys();
+    h = '<h1>Edit content</h1><p class="lead">Change anything on these pages: companies, heatmap, talent pools, roles, pay, trends, glossary, call kit and every heading. Changes save to HireLab for your whole agency. Each part can be reset to the original.</p>';
+    h += '<div class="sec" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-go="edit/COS/new">+ Add a company (full profile)</button><button class="btn ghost" data-go="edit/COS/newpeer">+ Add a company (short profile)</button><button class="btn ghost" data-go="log">+ Add a learning</button></div>';
+    h += '<div class="sec grid g3 dsgrid">'+DS.map(function(d){ var cur = dsGet(d[0]); var n = Array.isArray(cur) ? cur.length : Object.keys(cur||{}).length; return '<button class="card" data-go="edit/'+d[0]+'"><b>'+esc(d[1])+'</b><span class="small muted">'+esc(d[2]||"")+'</span><span class="meta"><span class="pill">'+n+(Array.isArray(cur)?" items":" entries")+'</span>'+(ed.indexOf(d[0])>=0?'<span class="pill strong">edited</span>':'')+'</span></button>'; }).join("")+'</div>';
+    return h;
+  }
+  if (ui.ek !== k){ ui.ek = k; ui.draft = effective(k); ui.dirty = false; ui.open = {}; ui.err = ""; }
+  if (k==="COS" && (parts[2]==="new" || parts[2]==="newpeer")){
+    ui.draft.push(clone(parts[2]==="new" ? CO_FULL : CO_PEER)); var ni = ui.draft.length-1;
+    if (parts[2]==="newpeer" && CLUSTERS[0]) ui.draft[ni].cluster = CLUSTERS[0].id;
+    ui.open[JSON.stringify([ni])] = true; ui.dirty = true; ui.scrollTo = ni;
+    history.replaceState(null, "", "#edit/COS");
+  } else if (parts[2]!==undefined && /^\d+$/.test(parts[2])){
+    ui.open[JSON.stringify([+parts[2]])] = true; ui.scrollTo = +parts[2];
+    history.replaceState(null, "", "#edit/"+k);
+  }
+  var info = dsInfo(k), isEd = editedKeys().indexOf(k)>=0;
+  h = '<div class="ehead"><div><a href="#edit" class="small">← All content</a><h1 style="margin-top:6px">'+esc(info[1])+'</h1>'+(info[2]?'<p class="lead">'+esc(info[2])+'</p>':'')+'</div></div>';
+  if (k==="SEGS") h += '<p class="small muted">Ratings: – = not a real player, Present = smaller team, Strong = top-3, deep team. Columns come from <a href="#edit/MCOLS">Heatmap columns</a>.</p>';
+  if (ui.err) h += '<div class="eerr">'+esc(ui.err)+'</div>';
+  h += '<div class="sec" id="eform">'+(Array.isArray(ui.draft) ? listEd([], ui.draft) : mapEd(k, ui.draft))+'</div>';
+  h += '<div class="ebar'+(ui.dirty?" dirty":"")+'" id="ebar"><span class="msg">'+(ui.dirty?"Unsaved changes":"No changes yet")+'</span>'+(isEd?'<button class="btn ghost" type="button" data-eact="reset">Reset to original</button>':'')+'<button class="btn ghost" type="button" data-eact="discard">Discard</button><button class="btn" type="button" data-eact="save"'+(ui.dirty?"":" disabled")+'>Save changes</button></div>';
+  return h;
+}
+function markDirty(){ ui.dirty = true; var b = document.getElementById("ebar"); if (b){ b.classList.add("dirty"); b.querySelector(".msg").textContent = "Unsaved changes"; var sv = b.querySelector('[data-eact="save"]'); if (sv) sv.disabled = false; } }
+function slug(x){ return str(x).toLowerCase().replace(/&/g,"and").replace(/[^a-z0-9]+/g,"").slice(0,24) || "item"; }
+function remapCols(cols){
+  STATE.data = STATE.data || {};
+  STATE.data.SEGS = SEGS.map(function(sg){ var c = clone(sg); c.r = cols.map(function(id){ var ci = MCOLS.indexOf(id); return ci>=0 ? rating(sg,ci) : 0; }); return c; });
+  STATE.data.MCOLS = cols; STATE.matrix = {};
+}
+function saveDraft(){
+  var k = ui.ek, d = clone(ui.draft), req = REQ[k];
+  if (req && Array.isArray(d)){
+    for (var i=0;i<d.length;i++){ if (!str(d[i][req]).trim()){ ui.err = "Item "+(i+1)+" needs a "+lbl([i],req).toLowerCase()+" before you can save."; ui.open[JSON.stringify([i])] = true; render(); return; } }
+  }
+  if (Array.isArray(d) && d.length && d[0] && typeof d[0]==="object" && "id" in (TPL[k]||(k==="COS"?CO_FULL:{}))){
+    var used = {general:1, new:1, newpeer:1}; d.forEach(function(x){ if (x.id) used[x.id] = 1; });
+    d.forEach(function(x){ if (!x.id){ var b = slug(x.short||x.n||x.name), id = b, j = 2; while (used[id]) id = b+(j++); x.id = id; used[id] = 1; } });
+  }
+  if (k==="COS") d.forEach(function(c){ if (!str(c.short).trim()) c.short = c.name; });
+  if (k==="QS"){ var q2 = {}; Object.keys(d).forEach(function(x){ if (str(x).trim()) q2[x.trim()] = d[x]; }); d = q2; }
+  STATE.data = (STATE.data && typeof STATE.data==="object") ? STATE.data : {};
+  if (k==="MCOLS"){ var seen = {}; d = d.filter(function(id){ if (!id || seen[id]) return false; seen[id]=1; return true; }); remapCols(d); }
+  else {
+    if (k==="SEGS") STATE.matrix = {};
+    if (k==="PAY0") STATE.pay = null;
+    STATE.data[k] = d;
+    if (k==="COS"){ var ids = d.map(function(c){ return c.id; }); var keep = MCOLS.filter(function(id){ return ids.indexOf(id)>=0; }); if (keep.length !== MCOLS.length) remapCols(keep); }
+  }
+  ui.ek = null; ui.dirty = false; ui.err = "";
+  applyData(); persist();
+}
+function resetDs(k){
+  STATE.data = STATE.data || {};
+  if (k==="MCOLS"){ remapCols(clone(DEF.MCOLS)); delete STATE.data.MCOLS; }
+  else { delete STATE.data[k]; if (k==="SEGS") STATE.matrix = {}; if (k==="PAY0") STATE.pay = null; }
+  ui.ek = null; ui.dirty = false; ui.err = "";
+  applyData(); persist();
+}
+var EB = {overview:["TEXT","COS","LAYERS","ROUTES","CUST","CLUSTERS"], matrix:["SEGS","MCOLS","SEGNOTE"], talent:["POOLS","POOLLINES","ROLES"], roles:["ROLES","PAY0","FUNCS"], trends:["TRENDS"], glossary:["GLOSS"], callkit:["QS","REDFLAGS"], log:[]};
+function editBar(view){
+  var b = [];
+  if (view.indexOf("company-")===0){
+    var i = COS.map(function(c){ return c.id; }).indexOf(view.slice(8));
+    b.push('<button class="icon-btn" data-go="edit/COS/'+i+'">This company</button>');
+    b.push('<button class="icon-btn" data-go="edit/TEXT">Page headings</button>');
+  } else {
+    (EB[view]||[]).forEach(function(k){ b.push('<button class="icon-btn" data-go="edit/'+k+'">'+esc(dsInfo(k)[1])+'</button>'); });
+    if (view!=="log" && (EB[view]||[]).indexOf("TEXT")<0) b.push('<button class="icon-btn" data-go="edit/TEXT">Page headings</button>');
+  }
+  if (view==="overview" || view.indexOf("company-")===0) b.push('<button class="icon-btn add" data-go="edit/COS/new">+ Add company</button>');
+  return b.length ? '<div class="editbar">✎ Edit:'+b.join("")+'</div>' : '';
 }
 
 /* ---------- views ---------- */
 function vOverview(){
-  var h = '<h1>Know the industry before you dial</h1><p class="lead">Every company here makes some of the same five product layers and sells them through the same four routes. Pick a product layer to see who is strong in it, then open a company for its structure, sites and talent profile.</p>';
-  h += '<div class="sec"><div class="sec-head"><div><h2>Industry map</h2><p>Click a product layer. The routes, customers and strongest companies light up.</p></div>'+(ui.layer?'<button class="btn ghost" data-act="clearlayer">Clear selection</button>':'')+'</div><div class="card">';
+  var h = '<h1>'+t("ov_h1")+'</h1><p class="lead">'+t("ov_lead")+'</p>';
+  h += '<div class="sec"><div class="sec-head"><div><h2>'+t("ov_map_h")+'</h2><p>'+t("ov_map_p")+'</p></div>'+(ui.layer?'<button class="btn ghost" data-act="clearlayer">Clear selection</button>':'')+'</div><div class="card">';
   var L = ui.layer ? LAYERS.filter(function(l){return l.id===ui.layer;})[0] : null;
   h += '<div class="map3"><div class="col"><div class="colh">What they make</div>' + LAYERS.map(function(l){ return '<button class="node '+(L? (L.id===l.id?"on":"dim") : "")+'" data-layer="'+l.id+'"><b>'+esc(l.n)+'</b><span>'+esc(l.d)+'</span></button>'; }).join("") + '</div>';
   h += '<div class="arrowcol" aria-hidden="true">→</div><div class="col"><div class="colh">How it is sold</div>' + ROUTES.map(function(r){ var on = L && L.routes.indexOf(r.id)>=0; return '<div class="node '+(L?(on?"on":"dim"):"")+'"><b>'+esc(r.n)+'</b><span>'+esc(r.d)+'</span></div>'; }).join("") + '</div>';
   h += '<div class="arrowcol" aria-hidden="true">→</div><div class="col"><div class="colh">Who uses it</div>' + CUST.map(function(c){ var on = L && L.cust.indexOf(c.id)>=0; return '<div class="node '+(L?(on?"on":"dim"):"")+'"><b>'+esc(c.n)+'</b><span>'+esc(c.d)+'</span></div>'; }).join("") + '</div>';
-  h += '<div class="influ"><b>Influencers:</b> consultants, architects and PMCs name the brand in the BOQ. That is why specifier sales exists.</div></div>';
+  h += '<div class="influ">'+t("ov_influ")+'</div></div>';
   if (L){
-    var scores = MCOLS.map(function(id, ci){ var s=0; L.segs.forEach(function(sid){ var seg = SEGS.filter(function(x){return x.id===sid;})[0]; s += rating(seg, ci); }); return {id:id, s:s}; }).filter(function(x){return x.s>0;}).sort(function(a,b){return b.s-a.s;});
+    var scores = MCOLS.map(function(id, ci){ var s=0; L.segs.forEach(function(sid){ var seg = SEGS.filter(function(x){return x.id===sid;})[0]; if (seg) s += rating(seg, ci); }); return {id:id, s:s}; }).filter(function(x){return x.s>0;}).sort(function(a,b){return b.s-a.s;});
     var max = L.segs.length*2;
     h += '<div class="result"><h3>Who is strong in '+esc(L.n.toLowerCase())+'</h3><p class="small muted" style="margin:4px 0 10px">Score across '+L.segs.length+' heatmap rows (Strong = 2, Present = 1). Your sourcing pool, best first.</p><div class="grid g4">' + scores.map(function(x){ var pct = Math.round(x.s/max*100); return '<button class="card peer" data-go="company-'+x.id+'"><b>'+esc(coName(x.id))+'</b><div style="height:8px;border-radius:4px;background:var(--bg);overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--accent)"></div></div><span class="small muted mono">'+x.s+' / '+max+'</span></button>'; }).join("") + '</div></div>';
   }
   h += '</div></div>';
-  h += '<div class="sec"><div class="sec-head"><div><h2>The big four</h2><p>Open any card for its entity tree, business lines, location map, timeline and talent profile.</p></div></div><div class="grid g4">';
-  h += COS.filter(function(c){return c.big;}).map(function(c){ return '<button class="card cocard" style="border-top-color:var('+c.color+')" data-go="company-'+c.id+'"><h3>'+esc(c.short)+'</h3><div class="tag">'+esc(c.tag)+'</div><ul>'+c.overview.map(function(o){return '<li>'+esc(o)+'</li>';}).join("")+'</ul><span class="small" style="color:var(--accent);font-weight:600">Open profile →</span></button>'; }).join("");
+  h += '<div class="sec"><div class="sec-head"><div><h2>'+t("ov_big_h")+'</h2><p>'+t("ov_big_p")+'</p></div></div><div class="grid g4">';
+  h += COS.filter(function(c){return c.big;}).map(function(c){ return '<button class="card cocard" style="border-top-color:var('+(c.color||"--co-peer")+')" data-go="company-'+c.id+'"><h3>'+esc(c.short)+'</h3><div class="tag">'+esc(c.tag)+'</div><ul>'+c.overview.map(function(o){return '<li>'+esc(o)+'</li>';}).join("")+'</ul><span class="small" style="color:var(--accent);font-weight:600">Open profile →</span></button>'; }).join("");
   h += '</div></div>';
-  h += '<div class="sec"><div class="sec-head"><div><h2>Peers, grouped by what they really sell</h2><p>Same customers, same talent pool. Click for a quick profile.</p></div></div><div class="grid g3">';
+  h += '<div class="sec"><div class="sec-head"><div><h2>'+t("ov_peers_h")+'</h2><p>'+t("ov_peers_p")+'</p></div></div><div class="grid g3">';
   h += CLUSTERS.map(function(cl){ var list = COS.filter(function(c){return c.cluster===cl.id;}); return '<div class="cluster"><h3>'+esc(cl.n)+'</h3><div class="grid" style="gap:8px">'+list.map(function(c){ return '<button class="card peer" data-go="company-'+c.id+'"><b>'+esc(c.name)+'</b><span class="small muted">'+esc(c.core)+'</span></button>'; }).join("")+'</div></div>'; }).join("");
   h += '</div></div>';
-  h += '<div class="sec callout"><b>Siemens is now three employers.</b> Siemens Limited (DI, SI, Mobility, C&amp;S), Siemens Energy India (listed June 2025) and Innomotics India (LV motors, Dec 2025 deal). Check the entity on every Siemens CV.</div>';
+  h += callout("ov_callout");
   return h;
 }
 
@@ -708,7 +1120,7 @@ function siteMap(c){
   svg += '<path d="'+d+'" fill="var(--bg)" stroke="var(--line)" stroke-width="1.5"/>';
   Object.keys(CITY).forEach(function(k){ svg += '<circle cx="'+px(CITY[k][0]).toFixed(1)+'" cy="'+py(CITY[k][1]).toFixed(1)+'" r="2" fill="var(--line)"/>'; });
   var placed = [];
-  var sites = c.sites.slice().sort(function(a,b){ return CITY[b.c][1]-CITY[a.c][1]; });
+  var sites = c.sites.filter(function(s){ return CITY[s.c]; }).sort(function(a,b){ return CITY[b.c][1]-CITY[a.c][1]; });
   sites.forEach(function(s, i){
     var p = CITY[s.c]; if (!p) return;
     var x = px(p[0]), y = py(p[1]);
@@ -735,11 +1147,11 @@ function vCompany(id){
     if (ci>=0){ h += '<h3 style="margin-top:14px">Heatmap strengths</h3><div class="chips" style="margin-top:6px">'+SEGS.filter(function(s){return rating(s,ci)===2;}).map(function(s){return '<span class="pill strong">'+esc(s.n.split(" (")[0])+'</span>';}).join("")+'</div>'; }
     h += '</div></div>';
   } else {
-    h += '<div class="sec"><h2>Key facts</h2><div class="facts" style="margin-top:10px">'+c.facts.map(function(f){ return '<div class="fact"><div class="k">'+esc(f.k)+'</div><div>'+esc(f.t)+'</div>'+srcLink(f.s)+'</div>'; }).join("")+'</div></div>';
-    h += '<div class="sec"><h2>Who is the employer?</h2><p class="small muted" style="margin:0 0 12px">The legal entity on a candidate payslip. Highlighted box = where most of your mandates sit.</p><div class="card"><div class="tree"><div class="root">'+esc(c.tree.root)+'</div><div class="stem"></div><div class="kids">'+c.tree.kids.map(function(k){ return '<div class="kid'+(k.hl?" hl":"")+'"><b>'+esc(k.n)+'</b>'+esc(k.d||"")+(k.sub?'<div class="sub">'+k.sub.map(function(s){return '<div>• '+esc(s)+'</div>';}).join("")+'</div>':'')+'</div>'; }).join("")+'</div></div></div></div>';
-    h += '<div class="sec"><h2>Business lines</h2><p class="small muted" style="margin:0 0 12px">What each team sells and who buys it. Match the JD to one box.</p><div class="grid g3">'+c.bus.map(function(b){ return '<div class="card bu"><h3>'+esc(b.n)+'</h3><div class="small">'+esc(b.p)+'</div><div class="who"><b>Buyer:</b> '+esc(b.w)+'</div></div>'; }).join("")+'</div></div>';
-    h += '<div class="sec"><h2>Where they are</h2><p class="small muted" style="margin:0 0 12px">Approximate positions. Amber = to verify on candidate calls.</p><div class="card foot"><div>'+siteMap(c)+'</div><div><div class="legend" style="margin-bottom:10px"><span><span class="sym hq" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>HQ</span><span><span class="sym" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>Plant / office</span><span><span class="sym new" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>New plant</span><span><span class="sym rd" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>R&amp;D</span><span><span class="sym tc" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>Training centre</span></div><div class="sites">'+c.sites.map(function(s){ var cls = s.t==="hq"?"hq":s.t==="rd"?"rd":s.t==="new"?"new":s.t==="tc"?"tc":""; return '<div class="site"><span class="sym '+cls+'"></span><div><b>'+esc(s.c)+'</b> <span class="muted">'+esc(s.n)+'</span> '+(s.v?'<span class="pill verify">verify</span>':'')+(s.s?' <span class="src">'+srcLink(s.s)+'</span>':'')+'</div></div>'; }).join("")+'</div></div></div></div>';
-    h += '<div class="sec"><h2>Timeline</h2><div class="card"><div class="tl">'+c.tl.map(function(t){ return '<div class="step"><div class="yr">'+esc(t.y)+'</div><div class="tx">'+esc(t.t)+'</div></div>'; }).join("")+'</div></div></div>';
+    h += '<div class="sec"><h2>'+t("co_facts_h")+'</h2><div class="facts" style="margin-top:10px">'+c.facts.map(function(f){ return '<div class="fact"><div class="k">'+esc(f.k)+'</div><div>'+esc(f.t)+'</div>'+srcLink(f.s)+'</div>'; }).join("")+'</div></div>';
+    h += '<div class="sec"><h2>'+t("co_tree_h")+'</h2><p class="small muted" style="margin:0 0 12px">'+t("co_tree_p")+'</p><div class="card"><div class="tree"><div class="root">'+esc(c.tree.root)+'</div><div class="stem"></div><div class="kids">'+c.tree.kids.map(function(k){ return '<div class="kid'+(k.hl?" hl":"")+'"><b>'+esc(k.n)+'</b>'+esc(k.d||"")+(k.sub?'<div class="sub">'+k.sub.map(function(s){return '<div>• '+esc(s)+'</div>';}).join("")+'</div>':'')+'</div>'; }).join("")+'</div></div></div></div>';
+    h += '<div class="sec"><h2>'+t("co_bus_h")+'</h2><p class="small muted" style="margin:0 0 12px">'+t("co_bus_p")+'</p><div class="grid g3">'+c.bus.map(function(b){ return '<div class="card bu"><h3>'+esc(b.n)+'</h3><div class="small">'+esc(b.p)+'</div><div class="who"><b>Buyer:</b> '+esc(b.w)+'</div></div>'; }).join("")+'</div></div>';
+    h += '<div class="sec"><h2>'+t("co_sites_h")+'</h2><p class="small muted" style="margin:0 0 12px">'+t("co_sites_p")+'</p><div class="card foot"><div>'+siteMap(c)+'</div><div><div class="legend" style="margin-bottom:10px"><span><span class="sym hq" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>HQ</span><span><span class="sym" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>Plant / office</span><span><span class="sym new" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>New plant</span><span><span class="sym rd" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>R&amp;D</span><span><span class="sym tc" style="display:inline-block;vertical-align:-2px;margin-right:5px"></span>Training centre</span></div><div class="sites">'+c.sites.map(function(s){ var cls = s.t==="hq"?"hq":s.t==="rd"?"rd":s.t==="new"?"new":s.t==="tc"?"tc":""; return '<div class="site"><span class="sym '+cls+'"></span><div><b>'+esc(s.c)+'</b> <span class="muted">'+esc(s.n)+'</span> '+(s.v?'<span class="pill verify">verify</span>':'')+(s.s?' <span class="src">'+srcLink(s.s)+'</span>':'')+'</div></div>'; }).join("")+'</div></div></div></div>';
+    h += '<div class="sec"><h2>'+t("co_tl_h")+'</h2><div class="card"><div class="tl">'+c.tl.map(function(t){ return '<div class="step"><div class="yr">'+esc(t.y)+'</div><div class="tx">'+esc(t.t)+'</div></div>'; }).join("")+'</div></div></div>';
     h += '<div class="sec grid g2"><div class="card"><h3>Talent profile</h3><p class="small">'+esc(c.talent)+'</p><h3 style="margin-top:12px">Typical sales ladder</h3><div class="chips" style="margin-top:6px">'+c.ladder.map(function(l,i){ return '<span class="chip"><span class="mono muted">'+(i+1)+'</span>'+esc(l)+'</span>'+(i<c.ladder.length-1?'<span class="muted">→</span>':''); }).join("")+'</div></div><div class="card"><h3>Source from</h3><p class="small muted">Companies whose people fit here most often</p><div class="chips">'+c.from.map(coLink).join("")+'</div><h3 style="margin-top:14px">Verify on calls</h3><p class="small">'+esc(c.watch)+'</p></div></div>';
   }
   h += '<div class="sec"><div class="sec-head"><div><h2>Your learnings</h2><p>From your learning log, tagged '+esc(c.short)+'.</p></div><button class="btn ghost" data-addlog="'+id+'">Add a learning</button></div><div class="card">'+(mylog.length? '<div class="learn">'+mylog.map(function(e){ return '<div class="lrow"><span class="mono small muted">'+esc(e.date)+'</span><div>'+esc(e.text)+'<div class="small muted">'+esc(e.bu||"")+(e.from?" · "+esc(e.from):"")+'</div></div><span class="pill '+(e.conf===2?"strong":e.conf===1?"present":"")+'">'+["Heard once","Confirmed 2+","Verified"][e.conf||0]+'</span></div>'; }).join("")+'</div>' : '<p class="small muted" style="margin:0">Nothing yet. Add what you hear on your next call with someone from '+esc(c.short)+'.</p>')+'</div></div>';
@@ -747,7 +1159,7 @@ function vCompany(id){
 }
 
 function vMatrix(){
-  var h = '<h1>Competitor heatmap</h1><p class="lead">Read across a row to see who fights in a segment. Read down a column to see where a company is strongest. Click a segment name for its sourcing pool.</p>';
+  var h = '<h1>'+t("mx_h1")+'</h1><p class="lead">'+t("mx_lead")+'</p>';
   h += '<div class="sec sec-head" style="margin-top:20px"><div class="legend"><span><i style="background:var(--accent)"></i>Strong: top-3, deep team</span><span><i style="background:var(--accent-soft)"></i>Present: smaller team</span><span><i style="border:1px solid var(--line)"></i>Not a real player</span><span><i style="box-shadow:0 0 0 2px var(--amber) inset"></i>Edited by you</span></div><label class="switch"><input type="checkbox" id="editM" '+(ui.editM?"checked":"")+'> Edit ratings (click a cell to change it)</label></div>';
   h += '<div class="card scroll"><table class="hm'+(ui.editM?" editing":"")+'"><thead><tr><th></th>'+MCOLS.map(function(id){ return '<th class="colh"><button data-go="company-'+id+'">'+esc(coName(id))+'</button></th>'; }).join("")+'</tr></thead><tbody>';
   h += SEGS.map(function(s){ return '<tr><th class="rowh'+(ui.seg===s.id?" on":"")+'"><button data-seg="'+s.id+'">'+esc(s.n)+'</button></th>'+MCOLS.map(function(id,ci){ var r = rating(s,ci); return '<td><div class="cell s'+r+(edited(s,ci)?" edited":"")+'" data-cell="'+s.id+'|'+ci+'" title="'+esc(coName(id)+" · "+s.n)+'">'+(r===2?"Strong":r===1?"Present":"–")+'</div></td>'; }).join("")+'</tr>'; }).join("");
@@ -758,14 +1170,15 @@ function vMatrix(){
     h += '<div class="sec card"><h3>Sourcing pool: '+esc(s.n)+'</h3>'+(SEGNOTE[s.id]?'<p class="small muted">'+esc(SEGNOTE[s.id])+'</p>':'')+'<div class="grid g2" style="margin-top:10px"><div><div class="small muted" style="margin-bottom:6px">Primary pool (Strong)</div><div class="chips">'+(strong.map(coLink).join("")||'<span class="muted small">None</span>')+'</div></div><div><div class="small muted" style="margin-bottom:6px">Secondary pool (Present, often want a bigger platform)</div><div class="chips">'+(present.map(coLink).join("")||'<span class="muted small">None</span>')+'</div></div></div></div>';
   }
   if (Object.keys(STATE.matrix).length) h += '<p class="small muted">'+Object.keys(STATE.matrix).length+' rating(s) changed by you. <button class="icon-btn" data-act="resetm">Reset to original</button></p>';
-  h += '<p class="small muted">Ratings are working estimates from market knowledge, not survey data. Change them as candidates tell you more.</p>';
+  h += '<p class="small muted">'+t("mx_note")+'</p>';
   return h;
 }
 
 function vTalent(){
-  var P = POOLS.filter(function(p){return p.id===ui.pool;})[0] || POOLS[1];
+  var P = POOLS.filter(function(p){return p.id===ui.pool;})[0] || POOLS[1] || POOLS[0];
+  if (!P) return '<h1>'+t("tm_h1")+'</h1><p class="lead">No talent pools yet. <a href="#edit/POOLS">Add one</a>.</p>';
   var R = ui.role ? ROLES.filter(function(r){return r.id===ui.role;})[0] : null;
-  var h = '<h1>Talent map</h1><p class="lead">Five talent pools and how easily people move between them. Click a pool for its companies, or pick a role to see where to source it.</p>';
+  var h = '<h1>'+t("tm_h1")+'</h1><p class="lead">'+t("tm_lead")+'</p>';
   h += '<div class="sec"><div class="small muted" style="margin-bottom:6px">Pick a role you are hiring for</div><div class="chips">'+ROLES.map(function(r){ return '<button class="chip'+(ui.role===r.id?" on":"")+'" data-role="'+r.id+'">'+esc(r.n)+'</button>'; }).join("")+(ui.role?'<button class="chip" data-role="">Clear</button>':'')+'</div></div>';
   h += '<div class="sec tm"><div class="card"><svg viewBox="0 0 760 380" role="img" aria-label="Talent pools and moves between them" style="width:100%;height:auto"><defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>';
   h += '<g fill="none" stroke="var(--muted)" stroke-width="1.5"><path d="M236 114H274" marker-start="url(#ar)" marker-end="url(#ar)"/><path d="M486 114H524" marker-start="url(#ar)" marker-end="url(#ar)" stroke-dasharray="5 5"/><path d="M318 158V250" marker-start="url(#ar)" marker-end="url(#ar)"/><path d="M442 158V250" marker-start="url(#ar)" marker-end="url(#ar)" stroke-dasharray="5 5"/></g>';
@@ -775,23 +1188,23 @@ function vTalent(){
     var fill = hit ? (first?"var(--accent)":"var(--accent-soft)") : sel ? "var(--accent-soft)" : "var(--surface)";
     var ink = first ? "#fff" : "var(--ink)", sub = first ? "#fff" : "var(--muted)";
     var stroke = sel||hit ? "var(--accent)" : "var(--line)";
-    var lines = POOLLINES[p.id].split("|");
+    var lines = String(POOLLINES[p.id]||"").split("|");
     h += '<g class="pool" data-pool="'+p.id+'" tabindex="0" role="button" aria-label="'+esc(p.n)+'"><rect x="'+p.x+'" y="'+p.y+'" width="212" height="88" rx="10" fill="'+fill+'" stroke="'+stroke+'" stroke-width="'+(sel||hit?2:1.25)+'"/><text x="'+(p.x+16)+'" y="'+(p.y+24)+'" font-size="14" font-weight="600" fill="'+ink+'">'+esc(p.n)+'</text>'+lines.map(function(l,i){ return '<text x="'+(p.x+16)+'" y="'+(p.y+42+i*16)+'" font-size="12" fill="'+sub+'">'+esc(l)+'</text>'; }).join("")+'</g>';
   });
   h += '<text x="24" y="368" font-size="12" fill="var(--muted)">Solid line = frequent move · dashed = only with a specific background</text></svg></div>';
   h += '<div class="card">';
   if (R){
-    h += '<div class="pill strong">Hiring: '+esc(R.n)+'</div><h3 style="margin-top:10px">Where to source</h3><ol class="small" style="padding-left:18px;margin:6px 0">'+R.pools.map(function(pid,i){ var p = POOLS.filter(function(x){return x.id===pid;})[0]; return '<li><b>'+esc(p.n)+'</b>'+(i===0?' (start here)':'')+'</li>'; }).join("")+'</ol><p class="small"><b>Sells to:</b> '+esc(R.to)+'<br><b>Success looks like:</b> '+esc(R.ok)+'<br><b>Best bench:</b> '+esc(R.src)+'</p><hr style="border:0;border-top:1px solid var(--line);margin:14px 0">';
+    h += '<div class="pill strong">Hiring: '+esc(R.n)+'</div><h3 style="margin-top:10px">Where to source</h3><ol class="small" style="padding-left:18px;margin:6px 0">'+R.pools.filter(function(pid){ return POOLS.some(function(x){return x.id===pid;}); }).map(function(pid,i){ var p = POOLS.filter(function(x){return x.id===pid;})[0]; return '<li><b>'+esc(p.n)+'</b>'+(i===0?' (start here)':'')+'</li>'; }).join("")+'</ol><p class="small"><b>Sells to:</b> '+esc(R.to)+'<br><b>Success looks like:</b> '+esc(R.ok)+'<br><b>Best bench:</b> '+esc(R.src)+'</p><hr style="border:0;border-top:1px solid var(--line);margin:14px 0">';
   }
   h += '<h3>'+esc(P.n)+'</h3><p class="small">'+esc(P.tip)+'</p><div class="small muted" style="margin:8px 0 4px">Roles you find here</div><p class="small" style="margin:0">'+esc(P.roles)+'</p><div class="small muted" style="margin:12px 0 6px">Companies (open profile)</div><div class="chips">'+P.cos.map(coLink).join("")+'</div></div></div>';
-  h += '<div class="sec callout"><b>Upward flow:</b> Indian companies (Havells, Polycab, Panasonic Anchor, CG) feed MNCs at every level. MNC people move to Indian companies mainly for a title jump or a bigger territory.</div>';
+  h += callout("tm_callout");
   return h;
 }
 
 function vRoles(){
   var P = pay();
-  var h = '<h1>Roles and pay</h1><p class="lead">Almost every JD from these companies maps to one of seven sales types. The sales type decides who you source, more than the product does.</p>';
-  h += '<div class="sec"><h2>The seven sales roles</h2><p class="small muted" style="margin:0 0 12px">Click a card to open its sourcing view on the talent map.</p><div class="grid g4">'+ROLES.map(function(r){ return '<button class="card role" data-rolego="'+r.id+'"><h3>'+esc(r.n)+'</h3><div class="m"><span class="muted">Sells to</span><br>'+esc(r.to)+'</div><div class="m"><span class="muted">Success</span><br>'+esc(r.ok)+'</div><div class="m"><span class="muted">Best bench</span><br>'+esc(r.src)+'</div></button>'; }).join("")+'</div></div>';
+  var h = '<h1>'+t("ro_h1")+'</h1><p class="lead">'+t("ro_lead")+'</p>';
+  h += '<div class="sec"><h2>'+t("ro_roles_h")+'</h2><p class="small muted" style="margin:0 0 12px">'+t("ro_roles_p")+'</p><div class="grid g4">'+ROLES.map(function(r){ return '<button class="card role" data-rolego="'+r.id+'"><h3>'+esc(r.n)+'</h3><div class="m"><span class="muted">Sells to</span><br>'+esc(r.to)+'</div><div class="m"><span class="muted">Success</span><br>'+esc(r.ok)+'</div><div class="m"><span class="muted">Best bench</span><br>'+esc(r.src)+'</div></button>'; }).join("")+'</div></div>';
   var ticks=[5,10,20,50,100,150], lo=3, hi=170, X0=250, X1=730;
   function sx(v){ return X0 + (Math.log(v)-Math.log(lo))/(Math.log(hi)-Math.log(lo))*(X1-X0); }
   var H = 60 + P.length*44;
@@ -805,27 +1218,27 @@ function vRoles(){
     svg += '<text x="'+(a-6).toFixed(1)+'" y="'+(y+4)+'" text-anchor="end" font-size="12" fill="var(--ink)" class="mono">'+p.lo+'</text><text x="'+(b+6).toFixed(1)+'" y="'+(y+4)+'" font-size="12" fill="var(--ink)" class="mono">'+p.hi+(p.hi>=150?"+":"")+'</text>';
   });
   svg += '</svg>';
-  h += '<div class="sec"><div class="sec-head"><div><h2>Title ladder and pay bands</h2><p>Working estimates for India in 2026, not survey data. MNCs usually pay at the top of each band, L&amp;K and Indian companies near the middle, data-centre and automation software at a premium.</p></div><label class="switch"><input type="checkbox" id="editP" '+(ui.editP?"checked":"")+'> Edit bands with real offers</label></div><div class="card">'+svg;
+  h += '<div class="sec"><div class="sec-head"><div><h2>'+t("ro_pay_h")+'</h2><p>'+t("ro_pay_p")+'</p></div><label class="switch"><input type="checkbox" id="editP" '+(ui.editP?"checked":"")+'> Edit bands with real offers</label></div><div class="card">'+svg;
   if (ui.editP){
     h += '<div class="scroll ladder" style="margin-top:12px"><table><thead><tr><th style="text-align:left;padding:6px">Level</th><th style="text-align:left;padding:6px">Titles</th><th style="padding:6px">Low (Rs L)</th><th style="padding:6px">High (Rs L)</th></tr></thead><tbody>'+P.map(function(p,i){ return '<tr><td style="padding:6px"><b>'+esc(p.l)+'</b></td><td style="padding:6px" class="small">'+esc(p.t)+'</td><td style="padding:6px;text-align:center"><input type="number" min="1" max="500" id="plo'+i+'" value="'+p.lo+'"></td><td style="padding:6px;text-align:center"><input type="number" min="1" max="500" id="phi'+i+'" value="'+p.hi+'"></td></tr>'; }).join("")+'</tbody></table><div style="display:flex;gap:8px;margin-top:10px"><button class="btn" data-act="savepay">Save bands</button>'+(STATE.pay?'<button class="btn ghost" data-act="resetpay">Reset to estimates</button>':'')+'</div></div>';
   }
   h += '</div></div>';
-  h += '<div class="sec"><h2>Non-sales functions you will hire for</h2><div class="grid g4" style="margin-top:10px">'+FUNCS.map(function(f){ return '<div class="card"><h3>'+esc(f[0])+'</h3><p class="small" style="margin:6px 0">'+esc(f[1])+'</p><p class="small muted" style="margin:0">'+esc(f[2])+'</p></div>'; }).join("")+'</div></div>';
+  h += '<div class="sec"><h2>'+t("ro_funcs_h")+'</h2><div class="grid g4" style="margin-top:10px">'+FUNCS.map(function(f){ return '<div class="card"><h3>'+esc(f[0])+'</h3><p class="small" style="margin:6px 0">'+esc(f[1])+'</p><p class="small muted" style="margin:0">'+esc(f[2])+'</p></div>'; }).join("")+'</div></div>';
   return h;
 }
 
 function vTrends(){
-  var h = '<h1>Where hiring is growing</h1><p class="lead">Demand is strong across the board: IEEMA reported FY2025 growth of 14.8% for LV switchgear and 16.8% for HV switchgear ('+srcLink(S.ken,"Ken Research")+'). Six themes drive almost every new mandate.</p>';
-  h += '<div class="sec grid g3">'+TRENDS.map(function(t,i){ return '<div class="card trend"><div class="num">0'+(i+1)+' / 06</div><h3>'+esc(t.n)+'</h3><p class="small" style="margin:0">'+esc(t.w)+' <span class="src">'+srcLink(t.s)+'</span></p><div><div class="small muted" style="margin-bottom:4px">Roles that open</div><div class="chips">'+t.roles.map(function(r){return '<span class="chip">'+esc(r)+'</span>';}).join("")+'</div></div><div><div class="small muted" style="margin-bottom:4px">Companies to watch</div><div class="chips">'+t.cos.map(coLink).join("")+'</div></div></div>'; }).join("")+'</div>';
-  h += '<div class="sec callout"><b>Technology to track:</b> SF6-free MV switchgear (Schneider AirSeT, Hitachi). Candidates who have sold or commissioned it are early-market and in demand.</div>';
+  var h = '<h1>'+t("tr_h1")+'</h1><p class="lead">'+t("tr_lead")+'</p>';
+  h += '<div class="sec grid g3">'+TRENDS.map(function(t,i){ return '<div class="card trend"><div class="num">'+String(i+1).padStart(2,"0")+' / '+String(TRENDS.length).padStart(2,"0")+'</div><h3>'+esc(t.n)+'</h3><p class="small" style="margin:0">'+esc(t.w)+' <span class="src">'+srcLink(t.s)+'</span></p><div><div class="small muted" style="margin-bottom:4px">Roles that open</div><div class="chips">'+t.roles.map(function(r){return '<span class="chip">'+esc(r)+'</span>';}).join("")+'</div></div><div><div class="small muted" style="margin-bottom:4px">Companies to watch</div><div class="chips">'+t.cos.map(coLink).join("")+'</div></div></div>'; }).join("")+'</div>';
+  h += callout("tr_callout");
   return h;
 }
 
 function vGlossary(){
-  var groups = ["All","LV","MV/HV","Automation","Data centre","Trade terms"];
+  var groups = ["All"]; GLOSS.forEach(function(g){ if (g[0] && groups.indexOf(g[0])<0) groups.push(g[0]); });
   var q = ui.gq.toLowerCase();
   var list = GLOSS.filter(function(g){ return (ui.gg==="All"||g[0]===ui.gg) && (!q || (g[1]+" "+g[2]+" "+g[3]).toLowerCase().indexOf(q)>=0); });
-  var h = '<h1>Glossary</h1><p class="lead">Terms you will hear on calls, in plain words. LV is up to 1 kV (buildings, factories), MV is about 1-33 kV (distribution, large plants), HV is the transmission grid.</p>';
+  var h = '<h1>'+t("gl_h1")+'</h1><p class="lead">'+t("gl_lead")+'</p>';
   h += '<div class="sec" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><input class="search" id="gq" type="search" placeholder="Search a term, e.g. ACB or panel builder" value="'+esc(ui.gq)+'" aria-label="Search glossary"><div class="chips">'+groups.map(function(g){ return '<button class="chip'+(ui.gg===g?" on":"")+'" data-gg="'+esc(g)+'">'+esc(g)+'</button>'; }).join("")+'</div></div>';
   h += '<div class="sec grid g3" id="glist">'+glossCards(list)+'</div>';
   return h;
@@ -837,7 +1250,9 @@ function glossCards(list){
 
 function vCallkit(){
   var tabs = Object.keys(QS);
-  var h = '<h1>Call kit</h1><p class="lead">Ten minutes with these questions tells you whether a candidate really did the role on the CV. Ask for numbers every time. Ticks reset when you leave the page.</p>';
+  if (!QS[ui.qtab]) ui.qtab = tabs[0] || "";
+  if (!tabs.length) return '<h1>'+t("ck_h1")+'</h1><p class="lead">No questions yet. <a href="#edit/QS">Add some</a>.</p>';
+  var h = '<h1>'+t("ck_h1")+'</h1><p class="lead">'+t("ck_lead")+'</p>';
   h += '<div class="sec chips">'+tabs.map(function(t){ return '<button class="chip'+(ui.qtab===t?" on":"")+'" data-qtab="'+esc(t)+'">'+esc(t)+'</button>'; }).join("")+'</div>';
   h += '<div class="sec grid g2"><div class="card"><h3>'+esc(ui.qtab)+'</h3>'+QS[ui.qtab].map(function(q,i){ return '<label class="q"><input type="checkbox" id="q'+i+'"><span>'+esc(q)+'</span></label>'; }).join("")+'</div><div class="card" style="border-left:4px solid var(--crit)"><h3>Red flags</h3>'+REDFLAGS.map(function(r){ return '<div class="q"><span style="color:var(--crit);font-weight:700">!</span><span>'+esc(r)+'</span></div>'; }).join("")+'<p class="small muted" style="margin-top:12px">Heard something new? <a href="#log">Add it to the learning log</a>.</p></div></div>';
   return h;
@@ -847,7 +1262,7 @@ function vLog(){
   var e = ui.editId ? STATE.log.filter(function(x){return x.id===ui.editId;})[0] : null;
   var pre = e || {date:today(), co:ui.prefillCo||"schneider", bu:"", from:"", text:"", conf:0, moved:false};
   var opts = COS.map(function(c){ return '<option value="'+c.id+'"'+(pre.co===c.id?" selected":"")+'>'+esc(c.name)+'</option>'; }).join("") + '<option value="general"'+(pre.co==="general"?" selected":"")+'>General / industry</option>';
-  var h = '<h1>Learning log</h1><p class="lead">One entry per new thing you learn on a call. Entries show on that company\'s profile too. Once two candidates confirm something, mark it Confirmed.</p>';
+  var h = '<h1>'+t("lg_h1")+'</h1><p class="lead">'+t("lg_lead")+'</p>';
   if (saveState==="readonly") h += '<div class="banner">Saving is not available in this view, so entries you add here disappear when you reload. Sign in to HireLab to keep them.</div>';
   h += '<div class="sec card"><h3>'+(e?"Edit entry":"Add a learning")+'</h3><form class="form" id="logform" style="margin-top:10px"><label>Date<input type="date" id="f-date" value="'+esc(pre.date)+'" required></label><label>Company<select id="f-co">'+opts+'</select></label><label>BU / team<input id="f-bu" value="'+esc(pre.bu)+'" placeholder="e.g. Secure Power"></label><label>Heard from (role, not name)<input id="f-from" value="'+esc(pre.from)+'" placeholder="e.g. KAM, 9 yrs"></label><label class="wide">What you learned<textarea id="f-text" required placeholder="e.g. Schneider and L&K channel teams merged in North zone in 2026">'+esc(pre.text)+'</textarea></label><label>Confidence<select id="f-conf"><option value="0"'+(pre.conf===0?" selected":"")+'>Heard once</option><option value="1"'+(pre.conf===1?" selected":"")+'>Confirmed by 2+</option><option value="2"'+(pre.conf===2?" selected":"")+'>Verified (public source)</option></select></label><label>Moved into playbook<select id="f-moved"><option value="0"'+(!pre.moved?" selected":"")+'>Not yet</option><option value="1"'+(pre.moved?" selected":"")+'>Done</option></select></label><div style="display:flex;gap:8px;align-items:flex-end" class="wide"><button class="btn" type="submit">'+(e?"Save changes":"Add entry")+'</button>'+(e?'<button class="btn ghost" type="button" data-act="canceledit">Cancel</button>':'')+'</div></form></div>';
   var list = STATE.log.slice().sort(function(a,b){ return a.date<b.date?1:a.date>b.date?-1:0; }).filter(function(x){ return ui.logco==="all" || x.co===ui.logco; });
@@ -859,18 +1274,23 @@ function vLog(){
 }
 
 /* ---------- render + events ---------- */
-function currentView(){ var h = (location.hash||"").replace(/^#/,""); if (!h) return "overview"; if (h.indexOf("company-")===0 && CO[h.slice(8)]) return h; return VIEWS.some(function(v){return v[0]===h;}) ? h : "overview"; }
+function currentView(){ var h = decodeURIComponent((location.hash||"").replace(/^#/,"")); if (!h) return "overview"; if (h==="edit" || h.indexOf("edit/")===0) return h; if (h.indexOf("company-")===0 && CO[h.slice(8)]) return h; return VIEWS.some(function(v){return v[0]===h;}) ? h : "overview"; }
 var pendingDel = null;
 function render(){
   var v = currentView(), inner;
-  if (v.indexOf("company-")===0) inner = vCompany(v.slice(8));
+  if (v.indexOf("edit")===0) inner = vEdit(v);
+  else if (v.indexOf("company-")===0) inner = vCompany(v.slice(8));
   else inner = {overview:vOverview, matrix:vMatrix, talent:vTalent, roles:vRoles, trends:vTrends, glossary:vGlossary, callkit:vCallkit, log:vLog}[v]();
   document.getElementById("app").innerHTML = shell(inner, v);
-  var t = document.title; if (t !== TITLE) document.title = TITLE;
+  var tt = document.title; if (tt !== TITLE) document.title = TITLE;
+  ui.lastView = location.hash || "#overview";
+  if (ui.scrollTo !== undefined && ui.scrollTo !== null){ var si = ui.scrollTo; ui.scrollTo = null; setTimeout(function(){ var el = document.querySelector('.eitem[data-ei="'+si+'"]'); if (el) el.scrollIntoView({block:"start"}); }, 30); }
 }
 function go(hash){ if (location.hash === "#"+hash) { render(); window.scrollTo(0,0); } else { location.hash = hash; } }
 
 document.addEventListener("click", function(ev){
+  var ea = ev.target.closest("[data-eact]");
+  if (ea){ ev.preventDefault(); editAction(ea); return; }
   var el = ev.target.closest("[data-go],[data-layer],[data-act],[data-seg],[data-cell],[data-pool],[data-role],[data-rolego],[data-gg],[data-qtab],[data-logco],[data-edit],[data-del],[data-addlog]");
   if (!el) return;
   var d = el.dataset;
@@ -885,8 +1305,8 @@ document.addEventListener("click", function(ev){
     persist(); return;
   }
   if (d.pool){ ui.pool = d.pool; render(); return; }
-  if (d.role !== undefined && el.classList.contains("chip")){ ui.role = d.role || null; if (ui.role){ var r = ROLES.filter(function(x){return x.id===ui.role;})[0]; ui.pool = r.pools[0]; } render(); return; }
-  if (d.rolego){ ui.role = d.rolego; ui.pool = ROLES.filter(function(x){return x.id===d.rolego;})[0].pools[0]; go("talent"); return; }
+  if (d.role !== undefined && el.classList.contains("chip")){ ui.role = d.role || null; if (ui.role){ var r = ROLES.filter(function(x){return x.id===ui.role;})[0]; if (r && r.pools[0]) ui.pool = r.pools[0]; } render(); return; }
+  if (d.rolego){ ui.role = d.rolego; var r1 = ROLES.filter(function(x){return x.id===d.rolego;})[0]; if (r1 && r1.pools[0]) ui.pool = r1.pools[0]; go("talent"); return; }
   if (d.gg){ ui.gg = d.gg; render(); return; }
   if (d.qtab){ ui.qtab = d.qtab; render(); return; }
   if (d.logco){ ui.logco = d.logco; render(); return; }
@@ -906,14 +1326,78 @@ document.addEventListener("click", function(ev){
   }
   if (d.act==="resetpay"){ STATE.pay = null; ui.editP=false; persist(); return; }
 });
+
+function editAction(el){
+  var a = el.dataset.eact, lp = el.dataset.lp ? JSON.parse(el.dataset.lp) : null, i = +el.dataset.i;
+  if (a==="save"){ saveDraft(); return; }
+  if (a==="discard"){ ui.ek = null; ui.dirty = false; ui.err = ""; render(); return; }
+  if (a==="reset"){
+    if (el.dataset.sure!=="1"){ el.dataset.sure = "1"; el.textContent = "Click again to reset"; el.style.borderColor = "var(--crit)"; el.style.color = "var(--crit)"; return; }
+    resetDs(ui.ek); return;
+  }
+  if (a==="addkey"){
+    var o = ui.draft, base = ui.ek==="QS" ? "New tab" : ui.ek==="CITY" ? "New city" : ui.ek==="SEGNOTE" ? ((SEGS.filter(function(s){ return !(s.id in o); })[0]||{}).id || "row") : ui.ek==="POOLLINES" ? ((POOLS.filter(function(p){ return !(p.id in o); })[0]||{}).id || "pool") : "new";
+    var nk = base, j = 2; while (nk in o) nk = base+" "+(j++);
+    o[nk] = ui.ek==="QS" ? [""] : ui.ek==="CITY" ? [78, 21] : "";
+    markDirty(); render(); return;
+  }
+  if (a==="delkey"){ delete ui.draft[el.dataset.key]; markDirty(); render(); return; }
+  var list = getAt(ui.draft, lp); if (!Array.isArray(list)) return;
+  if (a==="add" || a==="addpeer"){
+    var tp = a==="addpeer" ? CO_PEER : listTpl(lp), item = clone(tp==null ? "" : tp);
+    if (a==="addpeer" && CLUSTERS[0]) item.cluster = CLUSTERS[0].id;
+    if (ui.ek==="MCOLS" && lp.length===0){ var free = COS.filter(function(c){ return list.indexOf(c.id)<0; })[0]; item = free ? free.id : ""; }
+    if (ui.ek==="SEGS" && lp.length===0) item.r = MCOLS.map(function(){ return 0; });
+    list.push(item);
+    if (item && typeof item==="object" && !Array.isArray(item)) ui.open[JSON.stringify(lp.concat([list.length-1]))] = true;
+    markDirty(); render();
+    var fs = document.querySelectorAll('[data-lp="'+CSS.escape(JSON.stringify(lp))+'"][data-eact="del"]'); if (fs.length){ var last = fs[fs.length-1].closest(".eitem,.erow"); if (last){ last.scrollIntoView({block:"nearest"}); var f = last.querySelector("input:not([type=checkbox]),textarea,select"); if (f) f.focus(); } }
+    return;
+  }
+  if (a==="del"){ list.splice(i,1); ui.open = {}; markDirty(); render(); return; }
+  if (a==="up" && i>0){ var x = list[i]; list[i] = list[i-1]; list[i-1] = x; ui.open = {}; markDirty(); render(); return; }
+  if (a==="down" && i<list.length-1){ var y = list[i]; list[i] = list[i+1]; list[i+1] = y; ui.open = {}; markDirty(); render(); return; }
+}
+function editInput(el){
+  if (el.dataset.p){
+    var p = JSON.parse(el.dataset.p), v;
+    if (el.dataset.bool) v = el.checked; else if (el.dataset.num){ v = parseFloat(el.value); if (isNaN(v)) v = 0; } else v = el.value;
+    setAt(ui.draft, p, v); markDirty();
+    if (ui.ek==="COS" && p.length===2 && p[1]==="big") render();
+    return true;
+  }
+  if (el.dataset.ref){
+    var rp = JSON.parse(el.dataset.ref), arr0 = getAt(ui.draft, rp);
+    if (Array.isArray(arr0)){ var at = arr0.indexOf(el.value); if (el.checked && at<0) arr0.push(el.value); if (!el.checked && at>=0) arr0.splice(at,1); markDirty(); }
+    return true;
+  }
+  if (el.dataset.rk !== undefined){
+    var ok = el.dataset.rk, nk = el.value.trim(), o = ui.draft;
+    if (!nk || nk===ok) return true;
+    if (nk in o){ el.value = ok; return true; }
+    var o2 = {}; Object.keys(o).forEach(function(x){ o2[x===ok?nk:x] = o[x]; }); ui.draft = o2;
+    markDirty(); render(); return true;
+  }
+  return false;
+}
+document.addEventListener("toggle", function(ev){
+  var d = ev.target; if (!d.classList || !d.classList.contains("eitem") || !d.dataset.ok) return;
+  ui.open[d.dataset.ok] = d.open;
+  var body = d.querySelector(":scope > .eb");
+  if (d.open && body && !body.innerHTML){ var ip = JSON.parse(d.dataset.ok), it = getAt(ui.draft, ip); body.innerHTML = objEd(ip, it, tplFor(ip, it)); }
+}, true);
 document.addEventListener("keydown", function(ev){
   if ((ev.key==="Enter"||ev.key===" ") && ev.target.closest && ev.target.closest("[data-pool]")){ ev.preventDefault(); ui.pool = ev.target.closest("[data-pool]").dataset.pool; render(); }
 });
 document.addEventListener("change", function(ev){
+  var tg = ev.target;
+  if (tg.dataset && (tg.dataset.bool || tg.dataset.ref || tg.dataset.rk!==undefined || tg.tagName==="SELECT") && editInput(tg)) return;
   if (ev.target.id==="editM"){ ui.editM = ev.target.checked; render(); }
   if (ev.target.id==="editP"){ ui.editP = ev.target.checked; render(); }
 });
 document.addEventListener("input", function(ev){
+  var ti = ev.target;
+  if (ti.dataset && ti.dataset.p && !ti.dataset.bool && ti.tagName!=="SELECT"){ editInput(ti); return; }
   if (ev.target.id==="gq"){ ui.gq = ev.target.value; var q = ui.gq.toLowerCase(); var list = GLOSS.filter(function(g){ return (ui.gg==="All"||g[0]===ui.gg) && (!q || (g[1]+" "+g[2]+" "+g[3]).toLowerCase().indexOf(q)>=0); }); var gl = $("#glist"); if (gl) gl.innerHTML = glossCards(list); }
 });
 document.addEventListener("submit", function(ev){
@@ -926,7 +1410,13 @@ document.addEventListener("submit", function(ev){
   ui.prefillCo = null;
   persist();
 });
-window.addEventListener("hashchange", function(){ render(); window.scrollTo(0,0); try { localStorage.setItem("eie-view", location.hash); } catch(e){} });
+window.addEventListener("hashchange", function(){
+  var nh = location.hash || "#overview";
+  if (ui.dirty && ui.ek && nh.indexOf("#edit/"+ui.ek)!==0){
+    if (!confirm("You have unsaved changes. Leave without saving?")){ history.replaceState(null, "", ui.lastView || "#edit/"+ui.ek); return; }
+    ui.ek = null; ui.dirty = false;
+  }
+  render(); window.scrollTo(0,0); try { localStorage.setItem("eie-view", location.hash); } catch(e){} });
 
 try { if (!location.hash){ var last = localStorage.getItem("eie-view"); if (last && last.length>1) history.replaceState(null, "", last); } } catch(e){}
 render();
