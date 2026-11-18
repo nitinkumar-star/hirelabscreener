@@ -413,14 +413,20 @@ def assistant_split():
         except Exception as exc:
             return ns._ai_error(core, exc)
     else:
-        @copy_current_request_context
-        def safe(win):
-            try:
-                return one(win), None
-            except Exception as exc:
-                return [], exc
+        # Each window gets its OWN copy of the request context. One shared
+        # copy pushed from several threads at once breaks Flask's context
+        # variables ("Token was created in a different Context" ValueError).
+        def make(win):
+            @copy_current_request_context
+            def safe():
+                try:
+                    return one(win), None
+                except Exception as exc:
+                    return [], exc
+            return safe
+        jobs = [make(w) for w in windows]
         with ThreadPoolExecutor(max_workers=min(SPLIT_WORKERS, len(windows))) as pool:
-            for got, exc in pool.map(safe, windows):
+            for got, exc in pool.map(lambda f: f(), jobs):
                 if exc is not None:
                     failed += 1
                     last_exc = exc
