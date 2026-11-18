@@ -408,3 +408,26 @@ def test_feedback_access_and_export(srv, ds):
     assert rows[0]['role'] == 'LV Switchgear Sales Engineer' and 'TARGET COMPANIES' in rows[0]['breakdown']
     assert cl(srv, OADMIN).get('/api/extension/screen/feedback/export').get_data(as_text=True).strip() == ''
     assert srv.app.test_client().get('/api/extension/screen/feedback/stats').status_code == 401
+
+
+def test_split_parallel_windows_with_slow_ai(srv, ds):
+    """Regression (Nov 18 2026): live DeepSeek calls overlap in time; a single
+    copied request context shared by all threads raised
+    'ValueError: Token was created in a different Context' -> 500."""
+    import time
+    page = _big_page(120)                 # ~840 lines -> 5 windows, 4 threads
+    lines = page.split('\n')
+
+    def answer(payload, endpoint):
+        time.sleep(0.3)
+        out = []
+        for l in payload['messages'][-1]['content'].split('\n'):
+            if '|' in l:
+                n = int(l.split('|')[0])
+                if lines[n - 1].startswith('Cand Name'):
+                    out.append({'name': lines[n - 1], 'start': n, 'end': n + 6})
+        return {'profiles': out}
+    ds.answer = answer
+    r = cl(srv, ADMIN).post('/api/assistant/split', json={'text': page})
+    j = r.get_json()
+    assert r.status_code == 200 and j['ok'] and j['count'] == 120, j
