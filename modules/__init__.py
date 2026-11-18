@@ -48,6 +48,7 @@ _MODULE_NAMES = [
     'match_diag',      # read-only matching diagnosis for admins
     'naukri_screen',   # Chrome extension: screen a Naukri search page with DeepSeek
     'job_profile',     # Job Breakdown (core/important/nice) + extension profile explanation
+    'screen_feedback', # Screener training: recruiter's ✓/✗ on search cards -> prompt examples, rule ideas, export
     'google_meet',     # Google Calendar + Meet invites for Video bookings
     'talent_map',      # Company Talent Map: a company's people side by side + client view (/talent-map)
     'job_link',        # job application link per mandate (social posts) -> straight onto that job's pipeline

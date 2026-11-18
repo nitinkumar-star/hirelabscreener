@@ -246,6 +246,88 @@ THE JOB:
 Reply with ONLY a JSON object: {{"results": [{{"key": "<key exactly as given>", "verdict": "open|maybe|skip", "score": 0-100, "reason": "...", "flags": ["..."]}}]}} with one entry per card, in the same order."""
 
 
+# v2 (Nov 2026): the AI no longer picks the 0-100 score. It answers three
+# fixed questions per card on an absolute scale; the numbers (experience,
+# CTC, employer) are read in code (modules/card_facts.py) and the final score
+# comes from ONE formula, so a 70 means the same in every batch.
+SCREEN_PROMPT_V2 = """You are a senior recruiter at HireLab, an agency hiring for Solar, Electrical, Automation, Data Center and Renewable-energy companies in India.
+You are looking at Naukri Resdex SEARCH RESULT cards (short summaries, not full CVs) for ONE job, and you rate each card on a FIXED scale.
+Rate every card on its own against the job — never relative to the other cards in this message.
+
+role_fit (0-4): is the person's CURRENT role the same kind of job?
+   4 = same function and level (e.g. switchgear sales engineer for a switchgear sales job)
+   3 = same function, level or product slightly off
+   2 = related function that could switch (e.g. pre-sales/application for a sales job)
+   1 = weakly related
+   0 = different kind of job altogether (e.g. civil site engineer for a sales job) -> the card will be skipped
+domain_fit (0-4): does the person work in the same industry / product line as the job?
+   4 = same product line (or a TARGET company)   3 = close product line   2 = same broad industry   1 = loosely related   0 = unrelated industry
+core_fit (0-3): how many CORE requirements does the card visibly show (titles, skills, employer type)?
+   3 = all or nearly all   2 = most   1 = some   0 = none visible
+rule_break: "" or the recruiter rule / NOT-THIS item the card clearly breaks (quote it briefly). Only when it CLEARLY breaks it.
+budget_ok_by_rule: true ONLY if a recruiter rule below explicitly allows going above the CTC budget for this card; else false.
+reason: ONE short line, max 18 words, naming the decisive facts (e.g. "Area sales mgr, LV switchgear, Schneider dealer channel, NCR").
+flags: up to 3 very short tags (e.g. "job hopper", "dealer side", "no OEM exp").
+
+Each card starts with CODE-READ FACTS (experience, CTC, notice, employer class) read by a program from the card. Trust them for numbers;
+do not re-judge experience, CTC or location yourself — the program scores those. Judge ONLY from the card; never invent facts.
+If a card is too thin to judge a question, give the middle value and say what is missing in the reason.
+The recruiter's rules and past decisions OVERRIDE your general judgement whenever they apply.
+
+{budget}
+
+JOB BREAKDOWN (agreed with the recruiter):
+{breakdown}
+
+RECRUITER'S RULES FOR THIS JOB:
+{rules}
+{past}
+THE JOB:
+{job}
+
+Reply with ONLY a JSON object: {{"results": [{{"key": "<key exactly as given>", "role_fit": 0-4, "domain_fit": 0-4, "core_fit": 0-3, "rule_break": "", "budget_ok_by_rule": false, "reason": "...", "flags": ["..."]}}]}} with one entry per card, in the same order."""
+
+
+def rubric_items(raw, keys):
+    """{key: ai_item} for answers in the v2 rubric format; {} when the reply
+    is in the old verdict/score format (then the old mapping is used)."""
+    items = []
+    if isinstance(raw, dict):
+        items = raw.get('results') or raw.get('profiles') or []
+    elif isinstance(raw, list):
+        items = raw
+    out = {}
+    for it in items if isinstance(items, list) else []:
+        if not isinstance(it, dict) or 'role_fit' not in it:
+            continue
+        k = str(it.get('key') or it.get('id') or '').strip()
+        if k in keys and k not in out:
+            out[k] = it
+    return out
+
+
+def past_decisions(conn, mid, n=10):
+    """The recruiter's own verdicts on this job (from the training buttons),
+    disagreements with the AI first — the strongest signal of how they think."""
+    try:
+        rows = conn.execute(
+            "SELECT card_text, my_verdict, ai_verdict, reason, downloaded FROM screen_feedback "
+            "WHERE company_id=? AND mandate_id=? AND my_verdict IN ('open','skip') "
+            "ORDER BY (CASE WHEN ai_verdict != my_verdict THEN 0 ELSE 1 END), id DESC LIMIT ?",
+            (effective_company_id(), mid, n)).fetchall()
+    except Exception:
+        return ''     # feedback table not created yet
+    lines = []
+    for r in rows:
+        card = ' / '.join([l.strip() for l in str(r['card_text'] or '').split('\n') if l.strip()][:5])[:260]
+        why = (' — because: ' + re.sub(r'\s+', ' ', str(r['reason']))[:140]) if r['reason'] else ''
+        lines.append('- %s => RECRUITER: %s%s%s' % (card, 'OPEN' if r['my_verdict'] == 'open' else 'SKIP',
+                                                  ' (downloaded CV)' if r['downloaded'] else '', why))
+    if not lines:
+        return ''
+    return '\nRECRUITER\'S OWN PAST DECISIONS ON THIS JOB (learn this pattern; it outranks your judgement):\n' + '\n'.join(lines) + '\n'
+
+
 CHAT_PROMPT = """You maintain the screening rules a recruiter uses to judge Naukri search-result cards for ONE job.
 The recruiter writes in English, Hindi or Hinglish. They may (a) add, change or remove a rule, (b) ask why a profile got a verdict, or (c) ask something else.
 
@@ -470,20 +552,51 @@ def screen_profiles():
         if not _rate_ok('screen', uid, SCREEN_LIMIT):
             return _err('Too many analyses in the last 10 minutes. Wait a little and retry.', 429)
         rules, _chat, _a, _b = _get_state(conn, m['id'])
+        from modules import card_facts as cf
+        prof = {}
         try:
-            from modules.job_profile import load_for_prompt
-            breakdown = load_for_prompt(conn, core, m) or '(not available)'
-        except ImportError:
+            from modules.job_profile import ensure, profile_text
+            got = ensure(conn, core, m, create=True)
+            prof = (got or {}).get('profile') or {}
+            breakdown = profile_text(prof) or '(not available)'
+        except Exception as exc:
+            print('[naukri-screen] breakdown unavailable for mandate %s: %s' % (m['id'], exc))
             breakdown = '(not available)'
-        system = SCREEN_PROMPT.format(budget=budget_line(m), rules=_rules_text(rules), job=job_brief(core, m),
-                                      breakdown=breakdown)
-        user = 'CARDS:\n' + '\n\n'.join('[key: %s]\n%s' % (c['key'], c['text']) for c in clean)
+        limits = dict(prof.get('limits') or {})
+        for k in ('exp_min', 'exp_max', 'ctc_max'):
+            if _num(m[k] if k in m.keys() else 0):
+                limits[k] = _num(m[k])
+        if not limits.get('locations') and 'location' in m.keys() and str(m['location'] or '').strip():
+            limits['locations'] = [x.strip() for x in re.split(r'[,;/]', str(m['location'])) if x.strip()]
+        facts = {c['key']: cf.card_facts(c['text'], limits, prof.get('companies')) for c in clean}
+        system = SCREEN_PROMPT_V2.format(budget=budget_line(m), rules=_rules_text(rules), job=job_brief(core, m),
+                                         breakdown=breakdown, past=past_decisions(conn, m['id']))
+        user = 'CARDS:\n' + '\n\n'.join('[key: %s]\n%s\n%s' % (c['key'], cf.facts_line(facts[c['key']]), c['text'])
+                                          for c in clean)
         try:
-            raw = _ask_deepseek(core, key, system, user, max_tokens=150 + 110 * len(clean),
+            raw = _ask_deepseek(core, key, system, user, max_tokens=200 + 130 * len(clean),
                                 endpoint='naukri-screen', timeout=75)
         except Exception as exc:
             return _ai_error(core, exc)
-        results = normalize_results(raw, keys)
+        rub = rubric_items(raw, keys)
+        if rub:
+            relaxed_ok = cf.rules_mention_budget(rules)
+            results = []
+            for k in keys:
+                it = rub.get(k)
+                if not it:
+                    results.append({'key': k, 'verdict': 'unknown', 'score': None,
+                                    'reason': 'The AI did not return a verdict for this profile.', 'flags': []})
+                    continue
+                r = cf.combine(it, facts[k], limits, budget_relaxed=relaxed_ok and bool(it.get('budget_ok_by_rule')))
+                r['key'] = k
+                results.append(r)
+        else:
+            results = normalize_results(raw, keys)
+        for r in results:
+            f = facts.get(r['key']) or {}
+            r['facts'] = {'exp': f.get('exp'), 'ctc': f.get('ctc'), 'notice': f.get('notice'),
+                          'company': f.get('company'), 'company_name': f.get('company_name')}
         cnt = {v: sum(1 for r in results if r['verdict'] == v) for v in VERDICTS}
         try:
             conn.execute('INSERT INTO ext_screen_log (company_id, user_id, mandate_id, kind, n_profiles, n_open, n_maybe, n_skip, created_at) '
