@@ -41,7 +41,8 @@ from modules import register_migration
 
 bp = Blueprint('job_profile', __name__)
 
-LIMITS = {'core': 6, 'important': 8, 'nice': 10, 'not_this': 6}
+LIMITS = {'core': 6, 'important': 8, 'nice': 10, 'not_this': 6, 'titles': 12, 'companies': 30}
+PROFILE_VERSION = 2
 EXPLAIN_LIMIT, WINDOW = 150, 600
 _rl, _rl_lock = {}, threading.Lock()
 _gen_locks, _gen_guard = {}, threading.Lock()
@@ -103,6 +104,35 @@ def _items(raw, n, with_why=True):
     return out
 
 
+def _list(raw, n, width):
+    if isinstance(raw, str):
+        raw = re.split(r'[\n,;]+', raw)
+    out, seen = [], set()
+    for x in raw if isinstance(raw, list) else []:
+        v = _s(x.get('name') if isinstance(x, dict) else x, width)
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            out.append(v)
+        if len(out) >= n:
+            break
+    return out
+
+
+def clean_companies(raw):
+    """{'target': [...], 'ok': [...], 'avoid': [...]} — a company lives in
+    one list only; avoid wins over target wins over ok."""
+    raw = raw if isinstance(raw, dict) else {}
+    out, seen = {}, set()
+    for k in ('avoid', 'target', 'ok'):
+        keep = []
+        for c in _list(raw.get(k), LIMITS['companies'], 60):
+            if c.lower() not in seen:
+                seen.add(c.lower())
+                keep.append(c)
+        out[k] = keep
+    return {'target': out['target'], 'ok': out['ok'], 'avoid': out['avoid']}
+
+
 def clean_profile(p, mandate=None):
     """A well-formed breakdown. Mandate fields (experience, CTC) override the
     AI's limits, because the recruiter typed those numbers deliberately."""
@@ -121,6 +151,12 @@ def clean_profile(p, mandate=None):
                    'locations': [x for x in (_s(l, 60) for l in locs) if x][:8],
                    'notes': _s(lim.get('notes'), 300)},
         'not_this': [x for x in (_s(t, 180) for t in (p.get('not_this') or [])) if x][:LIMITS['not_this']],
+        # v2 (Nov 2026): what a Naukri search CARD actually shows — employer
+        # and designation — so the Screener can judge a card the way a
+        # recruiter does.
+        'companies': clean_companies(p.get('companies')),
+        'titles': _list(p.get('titles'), LIMITS['titles'], 80),
+        'v': PROFILE_VERSION,
     }
     # an item may live in one tier only — the stricter one wins
     seen = set()
@@ -179,6 +215,15 @@ def profile_text(p):
         lines.append('LIMITS: ' + '; '.join(bits) + (('. ' + lim['notes']) if lim.get('notes') else ''))
     if p.get('not_this'):
         lines.append('NOT THIS (reject look-alikes): ' + ' | '.join(p['not_this']))
+    co = p.get('companies') or {}
+    if co.get('target'):
+        lines.append('TARGET COMPANIES (people here do this exact job): ' + ', '.join(co['target']))
+    if co.get('ok'):
+        lines.append('ACCEPTABLE COMPANIES: ' + ', '.join(co['ok']))
+    if co.get('avoid'):
+        lines.append('AVOID — do not source from: ' + ', '.join(co['avoid']))
+    if p.get('titles'):
+        lines.append('DESIGNATIONS THAT FIT: ' + ', '.join(p['titles']))
     return '\n'.join(lines)
 
 
@@ -291,22 +336,33 @@ def blend(base, fit, conf, core_missing):
 # ══════════════════════════════════════════════════════════════════════════
 #  DeepSeek
 # ══════════════════════════════════════════════════════════════════════════
-GEN_PROMPT = """You are a senior technical recruiter for Solar, Electrical, Automation and Renewable-energy roles in India.
-Read the job below and decide what REALLY matters for doing it. Reply with ONLY a JSON object:
-{"summary": "2-3 sentences: what this person will actually do day to day and at what level",
+GEN_PROMPT = """You are a senior agency recruiter for Solar, Electrical, Automation, Data Center and Renewable-energy roles in India.
+Read the job below and write the breakdown a recruiter uses to SOURCE for it on Naukri. Remember what a Naukri search-result
+card shows: current designation and employer, past employer, total experience, CTC, location, education and a few key skills.
+So the most useful parts are WHO the person works for and WHAT their title is — not long skill lists.
+Reply with ONLY a JSON object:
+{"summary": "2-3 sentences: what this person will actually do day to day, at what level, in which product/industry",
+ "titles": ["designations as candidates write them on Naukri that fit this job, e.g. 'Sr. Sales Engineer', 'Area Sales Manager'"],
+ "companies": {"target": ["companies whose people do this exact job in this product line (the client's direct competitors and peers, plus any company named in the job text)"],
+               "ok": ["adjacent companies whose people could make the switch"],
+               "avoid": ["the client itself (an agency does not source from its own client) and any company the job text says to avoid"]},
  "core": [{"skill": "...", "why": "one line", "equivalents": ["other names/tools that count the same"]}],
  "important": [{"skill": "...", "why": "...", "equivalents": [...]}],
  "nice": [{"skill": "...", "equivalents": [...]}],
  "limits": {"locations": ["..."], "notes": "anything else that limits who fits (shift, travel, licence)"},
- "not_this": ["look-alike profiles that should be rejected, e.g. 'Rooftop solar sales is not utility-scale plant O&M'"]}
+ "not_this": ["look-alike profiles that should be rejected, e.g. 'Rooftop solar sales is not utility-scale plant O&M', 'Panel builder sales is not OEM switchgear sales'"]}
 Rules:
-- core = without it the person cannot do this job from day one. Usually 3-5 items, never more than 6.
-- Skills the recruiter entered as MUST-HAVE and every AND-line of the boolean are core, unless obviously generic (e.g. MS Office).
-- important = strongly preferred; a gap can be trained or offset by other strengths.
-- nice = desirable; the job can be done without them.
-- Write each item as a capability a CV would show ("Utility-scale solar plant O&M", "Siemens S7 PLC programming"), not a single vague word.
-- Do NOT invent requirements that are not in the job text. If the job text is thin, keep the lists short.
-- English only."""
+- core = without it the person cannot do this job from day one. 3-5 items, never more than 6. Write each as a capability a
+  card or CV would show ("Utility-scale solar plant O&M", "LV switchgear channel sales"), not a single vague word.
+- Must-have skills the recruiter entered are core unless obviously generic (e.g. MS Office). A long boolean is a SEARCH string,
+  not a list of requirements: take only its central idea as core.
+- important = strongly preferred; a gap can be trained or offset. nice = desirable; the job can be done without them.
+- target companies: 5-15 real Indian or multinational companies active in India in this product line. Use your knowledge of
+  the industry; the recruiter will correct the list. Do not list consultancies or job portals.
+- titles: 4-10 designations at the right level; include common variants and abbreviations.
+- If PEOPLE THE RECRUITER ALREADY LIKED are given, learn from them: their employers and titles are strong evidence for the
+  target companies and titles.
+- Do NOT invent hard requirements that are not in the job text. English only."""
 
 EXPLAIN_PROMPT = """You are a senior recruiter checking ONE candidate against an agreed job breakdown.
 For every requirement id (C1.. = core, I1.. = important) decide:
@@ -407,12 +463,55 @@ def _save(conn, mid, prof, h, status):
     conn.commit()
 
 
+_GOOD_STAGE = re.compile(r'shortlist|submit|cv sent|sent to client|interview|offer|select|placed|join|hired', re.I)
+
+
+def liked_examples(conn, m, n=8):
+    """Up to n short lines about people the recruiter moved forward on this
+    job (pipeline stage) or marked 'open' in the Screener. '' when none.
+    Only employer, title and experience — never contact details."""
+    out = []
+    try:
+        rows = conn.execute('SELECT designation, company, experience, stage FROM candidates '
+                            'WHERE owner_id=? AND mandate_id=? ORDER BY id DESC LIMIT 300',
+                            (effective_company_id(), m['id'])).fetchall()
+        for r in rows:
+            if _GOOD_STAGE.search(str(r['stage'] or '')) and (r['designation'] or r['company']):
+                out.append('- %s at %s, %s yrs (stage: %s)' % (_s(r['designation'], 60) or '?', _s(r['company'], 60) or '?',
+                                                             ('%g' % r['experience']) if r['experience'] else '?', _s(r['stage'], 30)))
+            if len(out) >= n:
+                break
+    except Exception as e:
+        print('[job-profile] liked examples (pipeline) skipped: %s' % e)
+    if len(out) < n:
+        try:
+            rows = conn.execute("SELECT card_text FROM screen_feedback WHERE company_id=? AND mandate_id=? "
+                                "AND (my_verdict='open' OR downloaded=1) ORDER BY id DESC LIMIT ?",
+                                (effective_company_id(), m['id'], n - len(out))).fetchall()
+            for r in rows:
+                first = ' / '.join([l.strip() for l in str(r['card_text'] or '').split('\n') if l.strip()][:4])
+                if first:
+                    out.append('- Naukri card: ' + _s(first, 220))
+        except Exception:
+            pass        # feedback table not created yet
+    return '\n'.join(out)
+
+
+def _is_old_version(r):
+    try:
+        return int((json.loads(r['profile'] or '{}') or {}).get('v') or 1) < PROFILE_VERSION
+    except Exception:
+        return True
+
+
 def generate(conn, core, m):
     key = _key(core)
     if not key:
         raise RuntimeError('DeepSeek is not set up. Add the DeepSeek API key in ATS Settings.')
     src = source_text(core, m)
-    raw = _ask(core, key, GEN_PROMPT, 'THE JOB:\n' + src, 1400, 'job-breakdown', 60)
+    liked = liked_examples(conn, m)
+    user = 'THE JOB:\n' + src + (('\n\nPEOPLE THE RECRUITER ALREADY LIKED FOR THIS JOB:\n' + liked) if liked else '')
+    raw = _ask(core, key, GEN_PROMPT, user, 2400, 'job-breakdown', 75)
     prof = clean_profile(raw, m)
     if not prof['core'] and not prof['important']:
         raise ValueError('The AI returned an empty breakdown.')
@@ -427,7 +526,10 @@ def ensure(conn, core, m, create=True):
     or the mandate has no job content)."""
     h = hashlib.sha1(source_text(core, m).encode('utf-8')).hexdigest()
     r = _row(conn, m['id'])
-    if r and (r['status'] == 'edited' or r['source_hash'] == h):
+    # An AI breakdown from before v2 (no companies / titles) is rebuilt once;
+    # an edited one is kept — the recruiter adds companies in the editor.
+    upgrade = bool(r) and r['status'] != 'edited' and _is_old_version(r) and create
+    if r and not upgrade and (r['status'] == 'edited' or r['source_hash'] == h):
         return _pack(r, h)
     if not create or not has_job_content(core, m):
         return _pack(r, h) if r else None
@@ -437,9 +539,16 @@ def ensure(conn, core, m, create=True):
         lk = _gen_locks.setdefault(lk_key, threading.Lock())
     with lk:
         r = _row(conn, m['id'])
-        if r and (r['status'] == 'edited' or r['source_hash'] == h):
+        if r and (r['status'] == 'edited' or (r['source_hash'] == h and not _is_old_version(r))):
             return _pack(r, h)
-        generate(conn, core, m)
+        try:
+            generate(conn, core, m)
+        except Exception as exc:
+            if r and r['source_hash'] == h:
+                # only a v1 -> v2 upgrade failed: keep using the old breakdown
+                print('[job-profile] v2 upgrade failed for mandate %s, keeping v1: %s' % (m['id'], exc))
+                return _pack(r, h)
+            raise
         return _pack(_row(conn, m['id']), h)
 
 

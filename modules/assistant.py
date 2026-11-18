@@ -10,7 +10,8 @@ with such plugins. The Assistant only works on what the recruiter hands it:
 Routes (JSON unless noted, all under /api/assistant, logged-in session)
   POST /parse   multipart: page_text?, cv?  ->  fields, resume_text, candidate_text
   POST /dupes   {mandate_id, name, phone, email, company, text}  ->  who is already in HireLab
-  POST /split   {text}  ->  profiles [{key, name, text}] read from a pasted search-results page
+  POST /split   {text}  ->  profiles [{key, name, text, line}] read from a pasted search-results page,
+                plus expected (cards the page seems to hold) and warnings
   POST /jobs    {text?}  ->  open jobs the recruiter can work on (for the Jobs search tab);
                 with text, each job also gets an AI match % (embeddings, same space as Job Matching)
 
@@ -37,8 +38,8 @@ from modules import naukri_screen as ns
 bp = Blueprint('assistant', __name__, url_prefix='/api/assistant')
 
 MAX_PAGE_CHARS = 20000
-MAX_SPLIT_CHARS = 60000
-MAX_SPLIT_PROFILES = 60
+MAX_SPLIT_CHARS = 250000
+MAX_SPLIT_PROFILES = 150
 MAX_CV_BYTES = 8 * 1024 * 1024
 CV_EXTS = ('.pdf', '.docx', '.doc', '.rtf')
 
@@ -269,12 +270,79 @@ def assistant_dupes():
 
 
 SPLIT_PROMPT = (
-    'The user pasted the text of a Naukri Resdex SEARCH RESULTS page. Each line starts with its '
-    'line number. The page holds several candidate cards plus menus, filters and ads. '
-    'Find every candidate card. Return ONLY JSON: {"profiles": [{"name": "...", "start": <first line>, '
+    'The user pasted PART of the text of a Naukri Resdex SEARCH RESULTS page. Each line starts with its '
+    'line number. The text holds candidate cards plus menus, filters and ads. '
+    'Find EVERY candidate card whose name line is inside this part — do not skip any, even if a card looks '
+    'short or similar to another. Return ONLY JSON: {"profiles": [{"name": "...", "start": <first line>, '
     '"end": <last line>}]} in page order. A card starts at the candidate name and ends just before '
     'the next candidate name. Do not include filter panels, menus or footer lines. If there are no '
     'candidates, return {"profiles": []}.')
+
+# A whole results page (40-100 cards) is too long for one reliable AI pass:
+# the model starts skipping cards. The page is cut into windows; each window
+# OWNS the cards whose first line falls inside it, and sees some extra lines
+# after it so its last card can be finished.
+SPLIT_CHUNK_LINES = 180
+SPLIT_OVERLAP = 60
+SPLIT_PRECONTEXT = 8
+SPLIT_WORKERS = 4
+
+
+def chunk_windows(n_lines, size=SPLIT_CHUNK_LINES, overlap=SPLIT_OVERLAP, pre=SPLIT_PRECONTEXT):
+    """[(own_start, own_end, win_start, win_end)] — 1-based, inclusive."""
+    out, s = [], 1
+    while s <= n_lines:
+        e = min(n_lines, s + size - 1)
+        out.append((s, e, max(1, s - pre), min(n_lines, e + overlap)))
+        s = e + 1
+    return out
+
+
+def tidy_spans(spans, n_lines):
+    """Sort, de-duplicate by start line, and stop each card before the next
+    one starts (the AI sometimes runs a card into its neighbour)."""
+    by_start = {}
+    for sp in spans:
+        if not isinstance(sp, dict):
+            continue
+        try:
+            a, b = int(sp.get('start')), int(sp.get('end'))
+        except (TypeError, ValueError):
+            continue
+        if a < 1 or a > n_lines:
+            continue
+        b = max(a, min(n_lines, b))
+        if a not in by_start or b > by_start[a]['end']:
+            by_start[a] = {'name': sp.get('name'), 'start': a, 'end': b}
+    out = [by_start[k] for k in sorted(by_start)]
+    for i in range(len(out) - 1):
+        if out[i]['end'] >= out[i + 1]['start']:
+            out[i]['end'] = out[i + 1]['start'] - 1
+    return [x for x in out if x['end'] >= x['start']]
+
+
+_NAMEISH = re.compile(r"^[A-Za-z][A-Za-z.'\- ]{1,60}$")
+
+
+def recover_from_anchors(lines, spans, anchors, max_len=25):
+    """Cards the AI missed: every summary line (experience / pay) that no
+    card covers becomes a card starting one line above it (the name line)."""
+    covered = set()
+    for sp in spans:
+        covered.update(range(sp['start'], sp['end'] + 1))
+    starts = sorted(sp['start'] for sp in spans)
+    extra = []
+    for k, a in enumerate(anchors):
+        if a in covered:
+            continue
+        st = a - 1 if a > 1 and a - 1 not in covered else a
+        nxt = [x for x in starts if x > st] + [x - 1 for x in anchors[k + 1:] if x - 1 > st]
+        en = min([n - 1 for n in nxt] + [st + max_len - 1, len(lines)])
+        cand = lines[st - 1].strip()
+        name = cand if (_NAMEISH.match(cand) and 1 <= len(cand.split()) <= 5) else 'Profile at line %d' % st
+        extra.append({'name': name, 'start': st, 'end': max(st, en)})
+        covered.update(range(st, max(st, en) + 1))
+    return extra
 
 
 def split_by_lines(text, spans):
@@ -296,7 +364,7 @@ def split_by_lines(text, spans):
         if len(body) < 20 or not name:
             continue
         key = 'p' + hashlib.sha1((name + '|' + body[:200]).encode('utf-8', 'ignore')).hexdigest()[:12]
-        out.append({'key': key, 'name': name, 'text': body[:ns.MAX_PROFILE_CHARS]})
+        out.append({'key': key, 'name': name, 'text': body[:ns.MAX_PROFILE_CHARS], 'line': a})
         if len(out) >= MAX_SPLIT_PROFILES:
             break
     return out
@@ -305,10 +373,14 @@ def split_by_lines(text, spans):
 @bp.route('/split', methods=['POST', 'OPTIONS'])
 @ns._ext_route
 def assistant_split():
+    from concurrent.futures import ThreadPoolExecutor
+    from flask import copy_current_request_context
+    from modules import card_facts as cf
     core = _core()
     d = request.get_json(silent=True) or {}
-    raw = str(d.get('text') or '')[:MAX_SPLIT_CHARS]
-    text = ns.redact(raw)
+    raw = str(d.get('text') or '')
+    truncated = len(raw) > MAX_SPLIT_CHARS
+    text = ns.redact(raw[:MAX_SPLIT_CHARS])
     lines = text.split('\n')
     if len(text) < 80:
         return ns._err('Paste the whole search results page (Ctrl+A, Ctrl+C on the page).', 400)
@@ -317,15 +389,64 @@ def assistant_split():
         return jsonify({'ok': False, 'kind': 'nokey', 'error': 'The DeepSeek API key is not set in HireLab Settings.'}), 400
     if not ns._rate_ok('assistant-split', ns.real_user_id(), 60):
         return ns._err('Too many requests — wait a minute and try again.', 429)
-    numbered = '\n'.join('%d| %s' % (i + 1, l[:300]) for i, l in enumerate(lines))
-    try:
+
+    windows = chunk_windows(len(lines))
+
+    def one(win):
+        own_s, own_e, ws, we = win
+        numbered = '\n'.join('%d| %s' % (i, lines[i - 1][:300]) for i in range(ws, we + 1))
         j = ns._ask_deepseek(core, key, SPLIT_PROMPT, numbered, 3000, 'assistant-split', timeout=90)
-    except Exception as exc:
-        return ns._ai_error(core, exc)
-    profiles = split_by_lines(text, (j or {}).get('profiles') or [])
+        got = []
+        for sp in (j or {}).get('profiles') or []:
+            try:
+                st = int(sp.get('start'))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if own_s <= st <= own_e:
+                got.append(sp)
+        return got
+
+    spans, failed, last_exc = [], 0, None
+    if len(windows) == 1:
+        try:
+            spans = one(windows[0])
+        except Exception as exc:
+            return ns._ai_error(core, exc)
+    else:
+        @copy_current_request_context
+        def safe(win):
+            try:
+                return one(win), None
+            except Exception as exc:
+                return [], exc
+        with ThreadPoolExecutor(max_workers=min(SPLIT_WORKERS, len(windows))) as pool:
+            for got, exc in pool.map(safe, windows):
+                if exc is not None:
+                    failed += 1
+                    last_exc = exc
+                spans.extend(got)
+        if failed == len(windows):
+            return ns._ai_error(core, last_exc)
+
+    spans = tidy_spans(spans, len(lines))
+    anchors = cf.anchor_lines(text)
+    recovered = recover_from_anchors(lines, spans, anchors) if len(anchors) >= 2 else []
+    if recovered:
+        spans = tidy_spans(spans + recovered, len(lines))
+    profiles = split_by_lines(text, spans)
     if not profiles:
         return ns._err('No candidate profiles were found in the pasted text. Copy the whole results page and try again.', 422)
-    return jsonify({'ok': True, 'profiles': profiles, 'count': len(profiles)})
+    expected = len(anchors) if len(anchors) >= 3 else None
+    warn = []
+    if truncated:
+        warn.append('The pasted page was very long; only the first %d characters were read.' % MAX_SPLIT_CHARS)
+    if failed:
+        warn.append('%d part(s) of the page could not be read by the AI; some cards may be missing. Try again.' % failed)
+    if expected and len(profiles) < expected:
+        warn.append('Found %d profiles but the page seems to have about %d. Check that you copied the whole page.'
+                    % (len(profiles), expected))
+    return jsonify({'ok': True, 'profiles': profiles, 'count': len(profiles), 'expected': expected,
+                    'recovered': len(recovered), 'warnings': warn})
 
 
 # ══════════════════════════════════════════════════════════════════════════

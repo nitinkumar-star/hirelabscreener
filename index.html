@@ -25768,6 +25768,13 @@ async function _bdhDone(id, box){
 .jb-er button{border:none;background:none;color:#A32D2D;font-size:18px;cursor:pointer;line-height:1;padding:4px}
 .jb-eh{display:grid;grid-template-columns:120px minmax(0,1.3fr) minmax(0,1.5fr) minmax(0,1.2fr) 30px;gap:6px;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;padding-bottom:4px}
 .jb-lab{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:14px 0 5px}
+.jb-chips{display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 8px}
+.jb-chips span{font-size:11.5px;padding:2px 9px;border-radius:10px;background:#F1EFE8;color:#334155}
+.jb-chips span.tg{background:#E6F6F1;color:#0F6B53}
+.jb-chips span.okc{background:#EEF2F7;color:#334155}
+.jb-chips span.av{background:#FDEEEE;color:#A32D2D}
+.jb-chips span.ti{background:#E6F1FB;color:#185FA5}
+.jb-cl{font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:4px}
 @media (max-width:860px){
   .jb-grid,.jb-row2{grid-template-columns:1fr}
   .jb-er,.jb-eh{grid-template-columns:1fr 1fr}
@@ -25849,6 +25856,19 @@ async function _bdhDone(id, box){
     h += '<div class="jb-row2"><div class="jb-box"><h4>Limits</h4>' + (lim.length ? '<ul>' + lim.join('') + '</ul>' : '<span style="color:var(--muted)">None set.</span>')
       + '<div class="jb-note" style="margin-top:6px">Experience and CTC come from Mandate Setup.</div></div>'
       + '<div class="jb-box"><h4>Not this — look-alikes to reject</h4>' + ((p.not_this || []).length ? '<ul>' + p.not_this.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '<span style="color:var(--muted)">None listed.</span>') + '</div></div>';
+    /* v2 (Nov 2026): what a Naukri search card shows — employer + designation */
+    var C = p.companies || {}, chips = function(arr, cls){
+      return (arr || []).length ? '<div class="jb-chips">' + arr.map(function(x){ return '<span class="' + cls + '">' + esc(x) + '</span>'; }).join('') + '</div>'
+                                : '<span style="color:var(--muted)">None listed.</span>'; };
+    if (!(C.target || []).length && !(p.titles || []).length)
+      h += '<div class="jb-warn" style="margin-top:12px">No target companies or designations yet. The Naukri Screener judges search cards mostly on employer and title — '
+        + (d.status === 'edited' ? 'press <b>Edit</b> and add them.' : 'press <b>Regenerate with AI</b> to add them.') + '</div>';
+    h += '<div class="jb-row2"><div class="jb-box"><h4>Companies — who to source from</h4>'
+      + '<div class="jb-cl">Target</div>' + chips(C.target, 'tg')
+      + '<div class="jb-cl">Acceptable</div>' + chips(C.ok, 'okc')
+      + '<div class="jb-cl">Avoid</div>' + chips(C.avoid, 'av') + '</div>'
+      + '<div class="jb-box"><h4>Designations that fit</h4>' + chips(p.titles, 'ti')
+      + '<div class="jb-note" style="margin-top:8px">The Screener gives extra points to a card whose current employer is a target company, and skips a card whose current employer is on the avoid list.</div></div></div>';
     h += '</div>';
     el.innerHTML = h; bind(el, m, st);
   }
@@ -25874,6 +25894,10 @@ async function _bdhDone(id, box){
       + '<div class="jb-lab">Locations (comma separated)</div><input data-f="locs" value="' + q((L.locations || []).join(', ')) + '">'
       + '<div class="jb-lab">Other limits (shift, travel, licence…)</div><input data-f="notes" value="' + q(L.notes || '') + '">'
       + '<div class="jb-lab">Not this — look-alikes to reject (one per line)</div><textarea data-f="not" rows="3">' + esc((p.not_this || []).join('\n')) + '</textarea>'
+      + '<div class="jb-lab">Target companies — people here do this exact job (comma separated)</div><textarea data-f="co_t" rows="2">' + esc(((p.companies || {}).target || []).join(', ')) + '</textarea>'
+      + '<div class="jb-lab">Acceptable companies (comma separated)</div><textarea data-f="co_o" rows="2">' + esc(((p.companies || {}).ok || []).join(', ')) + '</textarea>'
+      + '<div class="jb-lab">Avoid — never source from (comma separated; usually the client itself)</div><textarea data-f="co_a" rows="2">' + esc(((p.companies || {}).avoid || []).join(', ')) + '</textarea>'
+      + '<div class="jb-lab">Designations that fit (comma separated)</div><textarea data-f="titles" rows="2">' + esc((p.titles || []).join(', ')) + '</textarea>'
       + '<div class="jb-note">Experience and CTC budget are taken from Mandate Setup — change them there.</div></div>';
     bind(el, m, st);
   }
@@ -25883,6 +25907,9 @@ async function _bdhDone(id, box){
              limits: {locations: el.querySelector('[data-f=locs]').value.split(',').map(function(s){ return s.trim(); }).filter(Boolean),
                       notes: el.querySelector('[data-f=notes]').value},
              not_this: el.querySelector('[data-f=not]').value.split('\n').map(function(s){ return s.trim(); }).filter(Boolean)};
+    var csv = function(f){ return el.querySelector('[data-f=' + f + ']').value.split(/[,\n]+/).map(function(s){ return s.trim(); }).filter(Boolean); };
+    p.companies = {target: csv('co_t'), ok: csv('co_o'), avoid: csv('co_a')};
+    p.titles = csv('titles');
     el.querySelectorAll('[data-row]').forEach(function(r){
       var skill = r.querySelector('[data-f=skill]').value.trim();
       if (!skill) return;
