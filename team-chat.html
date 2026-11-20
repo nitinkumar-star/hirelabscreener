@@ -176,6 +176,23 @@ a{color:var(--accent)}
 .err{color:var(--crit);font-size:13px;margin:6px 0}
 .res .m{grid-template-columns:38px minmax(0,1fr);cursor:pointer}
 .res .where{font-size:12px;color:var(--muted);font-weight:600}
+/* ---- card actions, status, AI, scheduled ---- */
+.card.cand{flex-direction:column;gap:6px;max-width:440px}
+.card.cand .ctop{display:flex;gap:10px;align-items:flex-start}
+.card .n a{color:var(--ink);text-decoration:none}
+.card .n a:hover{text-decoration:underline}
+.cacts{display:flex;flex-wrap:wrap;gap:5px;padding-top:6px;border-top:1px dashed var(--line)}
+.cacts button{border:1px solid var(--line);background:var(--soft);border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600;cursor:pointer;color:#344054}
+.cacts button:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-soft)}
+.av.bot{background:linear-gradient(135deg,#7A5AF8,#0F6E56)!important}
+.st{font-size:12.5px;margin-left:4px}
+.ststrip{display:flex;align-items:center;gap:8px;margin:2px 4px 6px;padding:7px 10px;border-radius:8px;background:rgba(255,255,255,.08);color:var(--side-ink);cursor:pointer;border:0;width:calc(100% - 8px);text-align:left;font-size:13px}
+.ststrip:hover{background:var(--side-hover)}
+.dmstatus{font-size:12.5px;color:var(--muted);margin-left:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.schedbar{margin:0 16px 6px;padding:6px 10px;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:12.5px;display:flex;gap:8px;align-items:center}
+.schedbar button{border:0;background:none;color:var(--accent);font-weight:700;cursor:pointer;text-decoration:underline}
+.aihead{font-size:12.5px;color:var(--muted)}
+.pick.emo label{padding:4px 12px}
 /* ---- phones ---- */
 @media (max-width:820px){
   .app{grid-template-columns:1fr}
@@ -226,13 +243,19 @@ function api(method, path, body, isForm){
   }).catch(function(){ return {ok:false, error:'Network error'}; });
 }
 function toast(t){ var d = document.createElement('div'); d.className = 'toast'; d.textContent = t; document.body.appendChild(d); setTimeout(function(){ d.remove(); }, 2600); }
-function uname(id){ var u = S.users[id]; return u ? u.name : 'Someone'; }
+function uname(id){ if (+id === 0) return 'HireLab AI'; var u = S.users[id]; return u ? u.name : 'Someone'; }
+function stat(id){ var s0 = (S.statuses || {})[id]; return s0 && (s0.emoji || s0.text) ? s0 : null; }
+function statBadge(id){ var s0 = stat(id); return s0 ? '<span class="st" title="'+esc((s0.emoji||'')+' '+(s0.text||'')+(s0.until?' · until '+fmtWhen(s0.until):''))+'">'+esc(s0.emoji || '💬')+'</span>' : ''; }
+function fmtWhen(v){ var d = parseTs(v); if (!d) return v || ''; var t = new Date(), tm2 = new Date(t); tm2.setDate(t.getDate()+1);
+  var hm = d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+  if (d.toDateString() === t.toDateString()) return 'today ' + hm; if (d.toDateString() === tm2.toDateString()) return 'tomorrow ' + hm;
+  return d.toLocaleDateString([], {weekday:'short', day:'numeric', month:'short'}) + ' ' + hm; }
 function initials(n){ return String(n||'?').split(/\s+/).filter(Boolean).slice(0,2).map(function(w){ return w.charAt(0).toUpperCase(); }).join('') || '?'; }
 function color(id){ return COLORS[Math.abs(+id||0) % COLORS.length]; }
-function avatar(id, sm){ return '<div class="av'+(sm?' sm':'')+'" style="background:'+color(id)+'">'+esc(initials(uname(id)))+'</div>'; }
+function avatar(id, sm){ if (+id === 0) return '<div class="av bot'+(sm?' sm':'')+'">✨</div>'; return '<div class="av'+(sm?' sm':'')+'" style="background:'+color(id)+'">'+esc(initials(uname(id)))+'</div>'; }
 function chan(id){ return S.channels.filter(function(c){ return c.id === id; })[0]; }
 function dmOther(c){ var o = (c.members||[]).filter(function(x){ return x !== S.me; })[0]; return o || S.me; }
-function chanTitle(c){ if (!c) return ''; return c.kind === 'dm' ? uname(dmOther(c)) + (dmOther(c) === S.me ? ' (you)' : '') : '#' + c.name; }
+function chanTitle(c){ if (!c) return ''; if (c.kind === 'ai') return '✨ HireLab AI'; return c.kind === 'dm' ? uname(dmOther(c)) + (dmOther(c) === S.me ? ' (you)' : '') : '#' + c.name; }
 function parseTs(s){ if (!s) return null; var d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? null : d; }
 function tm(s){ var d = parseTs(s); return d ? d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}) : ''; }
 function dayLabel(s){
@@ -282,8 +305,15 @@ function cardsFor(body){
 }
 function refCard(r, k, id){
   if (r.restricted || r.missing) return '<span class="card dim"><span><span class="k">'+(k==='c'?'Candidate':'Job')+'</span><br>'+(r.restricted?'You do not have access to this '+(k==='c'?'candidate':'job')+'.':'This was deleted.')+'</span></span>';
-  if (k === 'c') return '<a class="card" href="'+refHref(r,k,id)+'" target="_blank" rel="noopener"><span style="font-size:22px">👤</span><span><span class="k">Candidate</span><br><span class="n">'+esc(r.name)+'</span><br><span class="s">'+esc([r.designation, r.company].filter(Boolean).join(' · '))+(r.experience ? ' · ' + esc(r.experience) + ' yrs' : '')+'</span>'+(r.job ? '<br><span class="s">For: '+esc(r.job)+'</span>' : '')+(r.stage ? '<br><span class="stage">'+esc(r.stage)+'</span>' : '')+'</span></a>';
+  if (k === 'c') return '<div class="card cand"><div class="ctop"><span style="font-size:22px">👤</span><span><span class="k">Candidate</span><br><span class="n"><a href="'+refHref(r,k,id)+'" target="_blank" rel="noopener" title="Open in HireLab">'+esc(r.name)+' ↗</a></span><br><span class="s">'+esc([r.designation, r.company].filter(Boolean).join(' · '))+(r.experience ? ' · ' + esc(r.experience) + ' yrs' : '')+'</span>'+(r.job ? '<br><span class="s">For: '+esc(r.job)+'</span>' : '')+(r.stage ? '<br><span class="stage">'+esc(r.stage)+'</span>' : '')+'</span></div>'+cardActs(id, r)+'</div>';
   return '<a class="card job" href="'+refHref(r,k,id)+'" target="_blank" rel="noopener"><span style="font-size:22px">💼</span><span><span class="k">Job</span><br><span class="n">'+esc(r.role)+'</span><br><span class="s">'+esc([r.client, r.location].filter(Boolean).join(' · '))+'</span><br><span class="s">'+(+r.candidates||0)+' candidates · '+esc(r.status||'')+'</span></span></a>';
+}
+function cardActs(id, r){
+  if (S.view && S.view.readonly) return '';
+  return '<div class="cacts"><button data-cact="stage" data-cid="'+id+'" title="Change the stage in HireLab">🔁 Stage</button>'
+    + '<button data-cact="assign" data-cid="'+id+'" title="Give a follow-up to a teammate">👉 Assign</button>'
+    + '<button data-cact="iv" data-cid="'+id+'" title="Schedule an interview">📅 Interview</button>'
+    + '<button data-cact="job" data-cid="'+id+'" title="Put on another job">➕ Add to job</button></div>';
 }
 function plain(body){
   return String(body || '').replace(/<@(\d+)>/g, function(_, id){ return '@' + uname(+id); })
@@ -297,7 +327,13 @@ function renderSide(){
   var chs = S.channels.filter(function(c){ return c.kind === 'channel' && !c.archived; });
   var dms = {}; S.channels.forEach(function(c){ if (c.kind === 'dm') dms[dmOther(c)] = c; });
   var totalMent = S.channels.reduce(function(a, c){ return a + (c.mentions||0); }, 0);
-  var h = '<button class="it'+(S.view && S.view.type==='mentions'?' on':'')+'" data-go="mentions"><span class="hash">@</span><span class="nm">Mentions</span>'+(totalMent?'<span class="cnt">'+totalMent+'</span>':'')+'</button>';
+  var mine = stat(S.me), aich = S.channels.filter(function(c){ return c.kind === 'ai'; })[0];
+  var h = '<button class="ststrip" data-act="status" title="Set your status">'+(mine ? esc(mine.emoji || '💬')+' <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(mine.text || 'Status set')+'</span>' : '😊 <span style="flex:1">Set a status</span>')+'</button>';
+  if (aich){ var aun = aich.unread > 0 && aich.id !== cur;
+    h += '<button class="it'+(aich.id===cur?' on':'')+(aun?' un':'')+'" data-ch="'+aich.id+'"><span class="hash">✨</span><span class="nm">HireLab AI</span>'+(aun?'<span class="cnt">'+aich.unread+'</span>':'')+'</button>'; }
+  var nsch = (S.scheduled || []).length;
+  if (nsch) h += '<button class="it" data-act="schedlist"><span class="hash">🕒</span><span class="nm">Scheduled</span><span class="cnt soft">'+nsch+'</span></button>';
+  h += '<button class="it'+(S.view && S.view.type==='mentions'?' on':'')+'" data-go="mentions"><span class="hash">@</span><span class="nm">Mentions</span>'+(totalMent?'<span class="cnt">'+totalMent+'</span>':'')+'</button>';
   h += '<div class="sec">Channels<button data-act="newch" title="Create a channel" aria-label="Create a channel">+</button></div>';
   h += chs.map(function(c){
     var un = c.unread > 0 && c.id !== cur && !c.muted;
@@ -312,12 +348,12 @@ function renderSide(){
   });
   h += people.map(function(u){
     var c = dms[u.id], on = c && c.id === cur, un = c && c.unread > 0 && !on;
-    return '<button class="it'+(on?' on':'')+(un?' un':'')+'" data-dm="'+u.id+'"><span class="dot'+(S.online.indexOf(u.id)>=0?' on':'')+'"></span><span class="nm">'+esc(u.name)+(u.id===S.me?' (you)':'')+'</span>'+(un?'<span class="cnt">'+c.unread+'</span>':'')+'</button>';
+    return '<button class="it'+(on?' on':'')+(un?' un':'')+'" data-dm="'+u.id+'"><span class="dot'+(S.online.indexOf(u.id)>=0?' on':'')+'"></span><span class="nm">'+esc(u.name)+(u.id===S.me?' (you)':'')+'</span>'+statBadge(u.id)+(un?'<span class="cnt">'+c.unread+'</span>':'')+'</button>';
   }).join('');
   var archived = S.channels.filter(function(c){ return c.kind === 'channel' && c.archived; });
   if (archived.length) h += '<div class="sec">Archived</div>' + archived.map(function(c){ return '<button class="it more'+(c.id===cur?' on':'')+'" data-ch="'+c.id+'"><span class="hash">#</span><span class="nm">'+esc(c.name)+'</span></button>'; }).join('');
   $('#side').innerHTML = h;
-  var total = S.channels.reduce(function(a, c){ return a + (c.muted ? 0 : (c.kind === 'dm' ? c.unread : c.mentions)||0); }, 0);
+  var total = S.channels.reduce(function(a, c){ return a + (c.muted ? 0 : (c.kind !== 'channel' ? c.unread : c.mentions)||0); }, 0);
   document.title = (total ? '(' + total + ') ' : '') + 'Team Chat · HireLab';
 }
 
@@ -329,13 +365,13 @@ function msgHtml(m, prev, opts){
   var mine = m.user_id === S.me;
   var h = '<div class="m'+(cont?' cont':'')+(!mine && mentionsMe(m.body) && !m.deleted?' mention':'')+'" data-m="'+m.id+'">';
   h += avatar(m.user_id) + '<div style="min-width:0">';
-  if (!cont) h += '<div class="mh"><b>'+esc(uname(m.user_id))+'</b><span class="tm" title="'+esc(m.created_at)+'">'+tm(m.created_at)+'</span>'+(m.pinned?'<span class="pinned-tag">📌 pinned</span>':'')+'</div>';
+  if (!cont) h += '<div class="mh"><b>'+esc(uname(m.user_id))+'</b>'+statBadge(m.user_id)+'<span class="tm" title="'+esc(m.created_at)+'">'+tm(m.created_at)+'</span>'+(m.pinned?'<span class="pinned-tag">📌 pinned</span>':'')+'</div>';
   else if (m.pinned) h += '<div class="pinned-tag">📌 pinned</div>';
   if (m.deleted) h += '<div class="mb"><span class="del">This message was deleted.</span></div>';
   else {
     if (m.body) h += '<div class="mb">'+fmt(m.body)+(m.edited_at?' <span class="ed">(edited)</span>':'')+'</div>';
     if (m.file) h += fileHtml(m);
-    h += cardsFor(m.body);
+    if (!/^(🔁|👉|📅|➕) /.test(m.body || '')) h += cardsFor(m.body);      // action notes: the name link is enough
     if (m.reactions && m.reactions.length) h += '<div class="reacts">' + m.reactions.map(function(r){
       var me = r.users.indexOf(S.me) >= 0;
       return '<button class="rx'+(me?' mine':'')+'" data-react="'+m.id+'" data-e="'+esc(r.emoji)+'" title="'+esc(r.users.map(uname).join(', '))+'">'+r.emoji+' '+r.users.length+'</button>';
@@ -394,10 +430,13 @@ function renderMain(scroll, focusMsg){
   var c = chan(v.id) || {};
   var list = S.msgs[v.id] || [];
   var h = '<div class="chead"><button class="hb back" data-act="back" aria-label="Back">←</button>';
-  h += '<span class="t">'+(c.kind==='dm' ? '<span class="dot'+(S.online.indexOf(dmOther(c))>=0?' on':'')+'" style="display:inline-block;border-color:#98A2B3"></span> ' : (c.is_private?'🔒 ':'# '))+esc(c.kind==='dm'?chanTitle(c):c.name)+'</span>';
+  if (c.kind === 'ai') h += '<span class="t">✨ HireLab AI</span><span class="aihead">Answers from HireLab with your access</span>';
+  else h += '<span class="t">'+(c.kind==='dm' ? '<span class="dot'+(S.online.indexOf(dmOther(c))>=0?' on':'')+'" style="display:inline-block;border-color:#98A2B3"></span> ' : (c.is_private?'🔒 ':'# '))+esc(c.kind==='dm'?chanTitle(c):c.name)+'</span>';
+  if (c.kind === 'dm' && stat(dmOther(c))){ var ds = stat(dmOther(c)); h += '<span class="dmstatus">'+esc((ds.emoji||'')+' '+(ds.text||''))+(ds.until?' · until '+esc(fmtWhen(ds.until)):'')+'</span>'; }
   if (c.kind === 'channel') h += '<span class="tp" data-act="topic" title="Edit topic">'+(c.topic ? esc(c.topic) : 'Add a topic')+'</span>';
   h += '<span class="sp"></span>';
-  if (S.ai) h += '<button class="hb ai" data-act="catchup" title="AI summary of what you missed">✨ <span class="lb">Catch me up</span></button>';
+  if (S.ai && c.kind !== 'ai') h += '<button class="hb ai" data-act="catchup" title="AI summary of what you missed">✨ <span class="lb">Catch me up</span></button>';
+  if (c.kind === 'ai') h += '<button class="hb" data-act="digest" title="Turn the morning summary on or off">☀️ <span class="lb">Morning summary: '+(S.digestOff?'off':'on')+'</span></button>';
   if ((S.pins[v.id]||[]).length) h += '<button class="hb" data-act="pins" title="Pinned messages">📌 '+S.pins[v.id].length+'</button>';
   if (c.kind === 'channel') h += '<button class="hb" data-act="members" title="Members">👥 '+(S.members[v.id]||[]).length+'</button>';
   if (c.kind === 'channel') h += '<button class="hb" data-act="chmenu" title="Channel settings" aria-label="Channel settings">⋯</button>';
@@ -409,12 +448,18 @@ function renderMain(scroll, focusMsg){
   if (S.view.showPins) h += '<div class="pins">'+(S.pins[v.id]||[]).map(function(p){ return '<div class="p" data-jump="'+p.id+'">📌 <b>'+esc(uname(p.user_id))+':</b> '+esc(plain(p.body).slice(0,140) || (p.file ? p.file.name : ''))+'</div>'; }).join('')+'</div>';
   h += '<div class="msgs" id="msgs">';
   if (S.more[v.id]) h += '<div style="text-align:center;padding:8px"><button class="hb" data-act="older">Load older messages</button></div>';
-  if (!list.length) h += '<div class="empty"><h3>'+(c.kind==='dm' ? 'This is the start of your conversation with '+esc(chanTitle(c)) : 'Welcome to #'+esc(c.name)+'!')+'</h3>'+(c.kind==='channel' ? esc(c.topic || 'Say hello, share a candidate, or post an update for the team.') : 'Messages here are only between the two of you.')+'</div>';
+  if (!list.length && c.kind === 'ai') h += '<div class="empty"><h3>Ask HireLab AI anything</h3>e.g. “aaj kitne interviews hain?”</div>';
+  else if (!list.length) h += '<div class="empty"><h3>'+(c.kind==='dm' ? 'This is the start of your conversation with '+esc(chanTitle(c)) : 'Welcome to #'+esc(c.name)+'!')+'</h3>'+(c.kind==='channel' ? esc(c.topic || 'Say hello, share a candidate, or post an update for the team.') : 'Messages here are only between the two of you.')+'</div>';
   h += listHtml(list, S.view.lastRead) + '</div>';
   h += '<div class="typing" id="typing-main"></div>';
   if (c.archived) h += '<div class="joinbar">This channel is archived. You can read it, but not post.</div>';
   else if (S.member[v.id] === false) h += '<div class="joinbar">You are reading <b>#'+esc(c.name)+'</b>. <button class="b p" data-act="join" style="margin-left:8px">Join channel</button></div>';
-  else h += composer('main', c.kind === 'dm' ? 'Message ' + chanTitle(c) : 'Message #' + c.name) + '<div class="hint"><b>Enter</b> to send · <b>Shift+Enter</b> new line · <b>@</b> to mention · *bold* _italic_ `code`</div>';
+  else {
+    var sch = (S.scheduled || []).filter(function(x){ return x.channel_id === v.id && x.status === 'pending'; });
+    if (sch.length) h += '<div class="schedbar">🕒 '+sch.length+' scheduled message'+(sch.length===1?'':'s')+' here · next '+esc(fmtWhen(sch[0].send_at))+' <button data-act="schedlist">View</button></div>';
+    h += composer('main', c.kind === 'ai' ? 'Ask HireLab AI… e.g. aaj kitne interviews hain?' : c.kind === 'dm' ? 'Message ' + chanTitle(c) : 'Message #' + c.name)
+      + '<div class="hint"><b>Enter</b> to send · <b>Shift+Enter</b> new line · <b>@</b> to mention · <b>@AI</b> to ask HireLab AI · ⏰ to send later</div>';
+  }
   var keep = document.activeElement && document.activeElement.id === 'ta-main' ? $('#ta-main').value : null;
   var box = $('#msgs'), atBottom = box ? box.scrollHeight - box.scrollTop - box.clientHeight < 80 : true, oldTop = box ? box.scrollTop : 0;
   $('#main').innerHTML = h;
@@ -432,6 +477,7 @@ function composer(where, ph){
     + '<button data-act="link" data-where="'+where+'" title="Link a candidate or job" aria-label="Link a candidate or job">🔗</button>'
     + '<button data-act="mention" data-where="'+where+'" title="Mention someone" aria-label="Mention someone">@</button>'
     + '<button data-act="emojiins" data-where="'+where+'" title="Emoji" aria-label="Emoji">😊</button>'
+    + '<button data-act="later" data-where="'+where+'" title="Send later (schedule)" aria-label="Send later">⏰</button>'
     + '<button class="send" data-act="send" data-where="'+where+'">Send ➤</button></div></div>';
 }
 var drafts = {};
@@ -447,6 +493,7 @@ function runSearch(q){
   api('GET', '/search?q=' + encodeURIComponent(q)).then(function(r){ resultsInto(r, 'No messages match. Try fewer words, or from:name.'); });
 }
 function resultsInto(r, none){
+  S.view.readonly = true;
   if (!r.ok){ $('#msgs').innerHTML = '<div class="empty">'+esc(r.error||'')+'</div>'; return; }
   Object.assign(S.refs, r.refs);
   if (!r.messages.length){ $('#msgs').innerHTML = '<div class="empty">'+esc(none)+'</div>'; return; }
@@ -561,6 +608,7 @@ function poll(){
     if (r && r.ok){
       var before = {}; S.channels.forEach(function(c){ before[c.id] = c; });
       S.channels = r.channels; S.typing = r.typing || {}; S.online = r.online || [];
+      if (r.statuses) S.statuses = r.statuses; if (r.scheduled) S.scheduled = r.scheduled;
       Object.assign(S.refs, r.refs || {});
       var fresh = [];
       (r.messages || []).forEach(function(m){
@@ -633,13 +681,14 @@ function acCheck(ta){
   var q = m[2].toLowerCase().trim();
   var opts = S.ulist.filter(function(u){ return !q || u.name.toLowerCase().indexOf(q) >= 0; }).slice(0, 7).map(function(u){ return {label: u.name, sub: u.id === S.me ? 'you' : '', ins: '@' + u.name + ' ', uid: u.id}; });
   var c = S.view && chan(S.view.id);
+  if ('ai'.indexOf(q) === 0 || 'hirelab ai'.indexOf(q) === 0) opts.unshift({label: 'AI', sub: 'HireLab AI - ask about your ATS', ins: '@AI ', bot: true});
   if (c && c.kind === 'channel') ['channel','here'].forEach(function(x){ if (!q || x.indexOf(q) === 0) opts.push({label: '@' + x, sub: 'notify everyone in this channel', ins: '@' + x + ' '}); });
   if (!opts.length){ acClose(); return; }
   ac = {ta: ta, start: pos - m[2].length - 1, opts: opts, i: 0};
   acRender();
 }
 function acRender(){
-  var p = popAt(ac.ta, ac.opts.map(function(o, i){ return '<div class="o'+(i===ac.i?' on':'')+'" data-ac="'+i+'">'+(o.uid?avatar(o.uid, true):'<span>📣</span>')+'<span>'+esc(o.label)+'</span><span class="s">'+esc(o.sub)+'</span></div>'; }).join(''));
+  var p = popAt(ac.ta, ac.opts.map(function(o, i){ return '<div class="o'+(i===ac.i?' on':'')+'" data-ac="'+i+'">'+(o.bot?avatar(0, true):o.uid?avatar(o.uid, true):'<span>📣</span>')+'<span>'+esc(o.label)+'</span><span class="s">'+esc(o.sub)+'</span></div>'; }).join(''));
   p.addEventListener('mousedown', function(e){ var o = e.target.closest('[data-ac]'); if (o){ e.preventDefault(); acPick(+o.dataset.ac); } });
 }
 function acPick(i){
@@ -780,8 +829,9 @@ function catchup(){
 /* ---------- events ---------- */
 document.addEventListener('click', function(e){
   var t = e.target;
-  if (pop && !t.closest('.pop') && !t.closest('[data-act=emoji],[data-act=emojiins],[data-act=chmenu]')) closePop();
+  if (pop && !t.closest('.pop') && !t.closest('[data-act=emoji],[data-act=emojiins],[data-act=chmenu],[data-act=later],[data-cact=stage]')) closePop();
   var el;
+  if ((el = t.closest('[data-cact]'))){ e.preventDefault(); cardAction(el); return; }
   if ((el = t.closest('[data-ch]'))){ openChannel(+el.dataset.ch); return; }
   if ((el = t.closest('[data-dm]'))){ var u = +el.dataset.dm; var c = S.channels.filter(function(x){ return x.kind === 'dm' && dmOther(x) === u; })[0];
     if (c){ openChannel(c.id); return; } api('POST', '/dm', {user: u}).then(function(r){ if (!r.ok){ toast(r.error); return; } refresh().then(function(){ openChannel(r.id); }); }); return; }
@@ -831,7 +881,169 @@ document.addEventListener('click', function(e){
   else if (a === 'members') membersDlg();
   else if (a === 'chmenu') chMenu(el);
   else if (a === 'topic') editTopic();
+  else if (a === 'status') statusDlg();
+  else if (a === 'later') laterPop(el, w);
+  else if (a === 'schedlist') schedList();
+  else if (a === 'digest') api('POST', '/prefs', {digest_off: !S.digestOff}).then(function(r){ if (r.ok){ S.digestOff = !!r.digest_off; toast(S.digestOff ? 'Morning summary turned off' : '☀️ Morning summary on - every day after 8:30 AM'); renderMain(false); } });
 });
+
+/* ---------- candidate card actions (the ATS's own routes, with your access) ---------- */
+function ats(path, body){
+  return fetch('/api' + path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ j = j || {}; if (!r.ok){ j.ok = false; j.error = j.error || j.message || ('HTTP ' + r.status); } else if (j.ok === undefined) j.ok = true; return j; }); })
+    .catch(function(){ return {ok:false, error:'Network error'}; });
+}
+function cardMsg(el){ var row = el.closest('[data-m]'); return row ? findMsg(+row.dataset.m) : null; }
+function note(m, body){
+  if (!m || S.member[m.channel_id] === false) return;
+  var payload = {body: body}; if (m.parent_id) payload.parent_id = m.parent_id;
+  api('POST', '/channels/' + m.channel_id + '/messages', payload).then(function(r){ if (r.ok){ Object.assign(S.refs, r.refs); upsert(r.message); afterChange(true); } });
+}
+function localIso(d){ var p = function(n){ return (n < 10 ? '0' : '') + n; }; return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
+function cardAction(el){
+  var a = el.dataset.cact, cid = +el.dataset.cid, r = S.refs['c:' + cid] || {}, m = cardMsg(el);
+  if (a === 'stage'){
+    var p = popAt(el, '<div style="font-size:12px;color:var(--muted);padding:4px 8px">Move <b>'+esc(r.name)+'</b> to…</div>'
+      + (S.stages || []).map(function(st){ return '<div class="o'+(st===r.stage?' on':'')+'" data-st="'+esc(st)+'">'+(st===r.stage?'✓ ':'')+esc(st)+'</div>'; }).join(''), true);
+    p.addEventListener('click', function(e){
+      var o = e.target.closest('[data-st]'); if (!o) return; closePop();
+      var st = o.dataset.st; if (st === r.stage) return;
+      ats('/candidates/' + cid + '/stage', {stage: st, note: 'Changed from Team Chat'}).then(function(j){
+        if (!j.ok){ toast(j.error || 'Could not change the stage'); return; }
+        r.stage = st; toast('🔁 ' + r.name + ' → ' + st); afterChange(false);
+        note(m, '🔁 Stage changed: <c:' + cid + '> → **' + st + '**');
+      });
+    });
+  }
+  else if (a === 'assign'){
+    var tmr = localIso(new Date(Date.now() + 864e5)).slice(0, 10);
+    var ov = dialog('<h2>👉 Assign '+esc(r.name)+'</h2><p class="lead">Gives a follow-up task to a teammate (HireLab → Tasks, linked to this candidate) and tells them here.</p>'
+      + '<label class="fld">To<select id="as-u">'+S.ulist.map(function(u){ return '<option value="'+u.id+'">'+esc(u.name)+(u.id===S.me?' (me)':'')+'</option>'; }).join('')+'</select></label>'
+      + '<label class="fld">What to do<input type="text" id="as-t" maxlength="200" value="Follow up with '+esc(r.name)+'"></label>'
+      + '<label class="fld">Due<input type="date" id="as-d" value="'+tmr+'"></label>'
+      + '<div class="err" id="as-e"></div><div class="btns"><button class="b" data-close>Cancel</button><button class="b p" id="as-go">Assign</button></div>');
+    var first = S.ulist.filter(function(u){ return u.id !== S.me; })[0]; if (first) ov.querySelector('#as-u').value = first.id;
+    ov.querySelector('#as-go').onclick = function(){
+      var uid = +ov.querySelector('#as-u').value, title = ov.querySelector('#as-t').value.trim() || ('Follow up with ' + r.name), due = ov.querySelector('#as-d').value;
+      var body = {title: title, candidate_id: cid, due_at: due, notes: 'Assigned from Team Chat by ' + uname(S.me)};
+      if (uid !== S.me) body.assigned_to = uid;
+      fetch('/api/todo/tasks', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
+        .then(function(x){ return x.json().catch(function(){ return {ok:false, error:'HTTP ' + x.status}; }); })
+        .then(function(j){ if (!j.ok){ ov.querySelector('#as-e').textContent = j.error || 'Could not assign'; return; }
+          ov.remove(); toast('👉 Assigned to ' + uname(uid));
+          note(m, '👉 <@' + uid + '> assigned: <c:' + cid + '> - ' + title + (due ? ' (due ' + fmtWhen(due + 'T09:00').replace(/ 9:00.*$/, '') + ')' : '')); });
+    };
+  }
+  else if (a === 'iv'){
+    var d0 = new Date(Date.now() + 864e5);
+    var ov2 = dialog('<h2>📅 Interview for '+esc(r.name)+'</h2><p class="lead">Adds it to HireLab (Interviews) and moves the candidate to “Interview Inprocess”.</p>'
+      + '<label class="fld">Round<input type="text" id="iv-r" maxlength="80" value="Round 1"></label>'
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap"><label class="fld" style="flex:1 1 150px">Date<input type="date" id="iv-d" value="'+localIso(d0).slice(0,10)+'"></label>'
+      + '<label class="fld" style="flex:1 1 110px">Time<input type="text" id="iv-t" value="11:00" placeholder="HH:MM (24h)"></label>'
+      + '<label class="fld" style="flex:1 1 130px">Mode<select id="iv-m"><option>Video</option><option>Phone</option><option>In person</option></select></label></div>'
+      + '<label class="fld">Interviewer (optional)<input type="text" id="iv-i" maxlength="120" placeholder="e.g. Client HR, Rakesh (Plant Head)"></label>'
+      + '<div class="err" id="iv-e"></div><div class="btns"><button class="b" data-close>Cancel</button><button class="b p" id="iv-go">Schedule</button></div>');
+    ov2.querySelector('#iv-go').onclick = function(){
+      var dd = ov2.querySelector('#iv-d').value, tt = ov2.querySelector('#iv-t').value.trim();
+      if (!/^\d{1,2}:\d{2}$/.test(tt)){ ov2.querySelector('#iv-e').textContent = 'Time as HH:MM, e.g. 16:30'; return; }
+      if (tt.length === 4) tt = '0' + tt;
+      var when = dd + 'T' + tt, round = ov2.querySelector('#iv-r').value.trim() || 'Interview', mode = ov2.querySelector('#iv-m').value;
+      ats('/candidates/' + cid + '/interviews', {round_name: round, scheduled_at: when, mode: mode, interviewer: ov2.querySelector('#iv-i').value.trim()}).then(function(j){
+        if (!j.ok){ ov2.querySelector('#iv-e').textContent = j.error || 'Could not schedule'; return; }
+        ov2.remove(); r.stage = 'Interview Inprocess'; toast('📅 Interview scheduled'); afterChange(false);
+        note(m, '📅 Interview fixed: <c:' + cid + '> - ' + round + ' · ' + fmtWhen(when) + ' (' + mode + ')');
+      });
+    };
+  }
+  else if (a === 'job'){
+    var ov3 = dialog('<h2>➕ Add '+esc(r.name)+' to a job</h2><p class="lead">Puts them on another job too (they stay on '+esc(r.job || 'their current job')+'). From the Central Database they move.</p>'
+      + '<label class="fld">Job<input type="search" id="jb-q" placeholder="Search your jobs…"></label><div class="list" id="jb-out"></div>'
+      + '<div class="err" id="jb-e"></div><div class="btns"><button class="b" data-close>Cancel</button></div>');
+    var inp = ov3.querySelector('#jb-q'), out = ov3.querySelector('#jb-out'), tm0 = null;
+    var run = function(){ api('GET', '/lookup?q=' + encodeURIComponent(inp.value)).then(function(x){
+      out.innerHTML = (x.jobs || []).filter(function(jb){ return jb.id !== r.mandate_id; }).map(function(jb){ return '<div class="r" style="cursor:pointer" data-jb="'+jb.id+'"><span>💼</span><span class="grow">'+esc(jb.role)+'<div class="s">'+esc(jb.client||'')+' · '+esc(jb.status||'')+'</div></span></div>'; }).join('') || '<div class="r"><span class="grow s">No job matches.</span></div>'; }); };
+    inp.addEventListener('input', function(){ clearTimeout(tm0); tm0 = setTimeout(run, 250); }); run();
+    out.addEventListener('click', function(e){
+      var row = e.target.closest('[data-jb]'); if (!row) return;
+      var mid = +row.dataset.jb;
+      ats('/candidates/' + cid + '/add-to-job', {mandate_id: mid}).then(function(j){
+        if (!j.ok){ ov3.querySelector('#jb-e').textContent = j.error || 'Could not add'; return; }
+        ov3.remove(); toast('➕ Added to ' + (j.job || 'the job'));
+        note(m, '➕ <c:' + (j.candidate_id || cid) + '> added to <m:' + mid + '>');
+      });
+    });
+  }
+}
+
+/* ---------- status ---------- */
+function statusDlg(){
+  var cur = stat(S.me) || {};
+  var ov = dialog('<h2>Set your status</h2><p class="lead">Your team sees it next to your name, so they know when to expect a reply.</p>'
+    + '<div class="pick emo">' + (S.presets || []).map(function(p0, i){ return '<label><input type="radio" name="stp" value="'+i+'">'+p0[0]+' '+esc(p0[1])+'</label>'; }).join('') + '</div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px"><label class="fld" style="flex:0 0 76px">Emoji<input type="text" id="st-e" maxlength="4" value="'+esc(cur.emoji||'')+'"></label>'
+    + '<label class="fld" style="flex:1">Status<input type="text" id="st-t" maxlength="80" value="'+esc(cur.text||'')+'" placeholder="What are you up to?"></label></div>'
+    + '<label class="fld">Clear after<select id="st-u"><option value="60">1 hour</option><option value="240">4 hours</option><option value="today" selected>Today</option><option value="week">This week</option><option value="">Don’t clear</option></select></label>'
+    + '<div class="btns">'+(cur.emoji||cur.text?'<button class="b d" id="st-clear" style="margin-right:auto">Clear status</button>':'')+'<button class="b" data-close>Cancel</button><button class="b p" id="st-go">Save</button></div>');
+  ov.querySelectorAll('input[name=stp]').forEach(function(x){ x.onchange = function(){ var p0 = S.presets[+x.value]; ov.querySelector('#st-e').value = p0[0]; ov.querySelector('#st-t').value = p0[1];
+    var u = ov.querySelector('#st-u'); u.value = /leave|sick/i.test(p0[1]) ? 'week' : /lunch|call|interview|meeting/i.test(p0[1]) ? '60' : 'today'; }; });
+  function save(e0, t0, until){ api('POST', '/status', {emoji: e0, text: t0, until: until, tz: new Date().getTimezoneOffset()}).then(function(r){ if (!r.ok){ toast(r.error || 'Could not save'); return; } S.statuses = r.statuses; ov.remove(); renderSide(); afterChange(false); }); }
+  ov.querySelector('#st-go').onclick = function(){
+    var v = ov.querySelector('#st-u').value, d = new Date(), until = '';
+    if (v === '60' || v === '240') until = localIso(new Date(Date.now() + (+v) * 6e4));
+    else if (v === 'today'){ d.setHours(23, 59, 0, 0); until = localIso(d); }
+    else if (v === 'week'){ d.setDate(d.getDate() + (7 - d.getDay()) % 7); d.setHours(23, 59, 0, 0); until = localIso(d); }
+    var e0 = ov.querySelector('#st-e').value.trim(), t0 = ov.querySelector('#st-t').value.trim();
+    if (!e0 && !t0){ save('', '', ''); return; }
+    save(e0, t0, until);
+  };
+  var clr = ov.querySelector('#st-clear'); if (clr) clr.onclick = function(){ save('', '', ''); };
+}
+
+/* ---------- send later ---------- */
+function laterPop(el, where){
+  var ta = $('#ta-' + where);
+  if (!ta || !encodeBody(ta.value, where)){ toast('Write the message first, then pick when to send it.'); return; }
+  var now = new Date(), opts = [];
+  opts.push(['In 1 hour', new Date(now.getTime() + 36e5)]);
+  var e6 = new Date(now); e6.setHours(18, 0, 0, 0); if (e6 - now > 30*6e4) opts.push(['Today, 6:00 PM', e6]);
+  var t9 = new Date(now); t9.setDate(t9.getDate() + 1); t9.setHours(9, 0, 0, 0); opts.push(['Tomorrow, 9:00 AM', t9]);
+  var m9 = new Date(now); m9.setDate(m9.getDate() + ((8 - m9.getDay()) % 7 || 7)); m9.setHours(9, 0, 0, 0); if (m9.toDateString() !== t9.toDateString()) opts.push(['Monday, 9:00 AM', m9]);
+  var p = popAt(el, '<div style="font-size:12px;color:var(--muted);padding:4px 8px">Send this message…</div>'
+    + opts.map(function(o, i){ return '<div class="o" data-lt="'+i+'">⏰ '+esc(o[0])+'</div>'; }).join('')
+    + '<div style="padding:6px 8px;border-top:1px solid var(--line);margin-top:4px;display:flex;gap:6px;align-items:center"><input type="datetime-local" id="lt-c" min="'+localIso(new Date(now.getTime()+6e4))+'" style="font:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:6px;padding:4px"><button class="b p" id="lt-go" style="padding:4px 10px">Set</button></div>');
+  p.addEventListener('click', function(e){
+    var o = e.target.closest('[data-lt]');
+    if (o){ closePop(); doSchedule(where, localIso(opts[+o.dataset.lt][1])); return; }
+    if (e.target.id === 'lt-go'){ var v = p.querySelector('#lt-c').value; if (!v){ toast('Pick a date and time'); return; } closePop(); doSchedule(where, v.slice(0, 16)); }
+  });
+}
+function doSchedule(where, when){
+  var ta = $('#ta-' + where), chid = where === 'thread' ? (S.tmsgs[0] || {}).channel_id : S.view.id;
+  var body = encodeBody(ta.value, where); if (!body) return;
+  var payload = {body: body, send_at: when, tz: new Date().getTimezoneOffset()}; if (where === 'thread') payload.parent_id = S.thread;
+  api('POST', '/channels/' + chid + '/schedule', payload).then(function(r){
+    if (!r.ok){ toast(r.error || 'Could not schedule'); return; }
+    ta.value = ''; autosize(ta); S.attach[where] = []; renderChips(where); delete drafts['main:' + chid];
+    S.scheduled = r.scheduled || S.scheduled; toast('⏰ Will send ' + fmtWhen(when)); renderSide(); afterChange(false);
+  });
+}
+function schedList(){
+  var L = (S.scheduled || []);
+  var ov = dialog('<h2>🕒 Scheduled messages</h2><p class="lead">They go out at the time you picked. You can send one now or cancel it.</p><div class="list" id="sl"></div><div class="btns"><button class="b" data-close>Close</button></div>');
+  function draw(){
+    var el = ov.querySelector('#sl'); L = S.scheduled || [];
+    el.innerHTML = L.length ? L.map(function(x){ var c = chan(x.channel_id);
+      return '<div class="r"><span class="grow"><b>'+esc(fmtWhen(x.send_at))+'</b> · '+esc(chanTitle(c) || 'a chat')+(x.parent_id?' (thread)':'')+(x.status==='failed'?' · <span style="color:var(--crit)">not sent: '+esc(x.error||'')+'</span>':'')+'<div class="s">'+esc(plain(x.body).slice(0, 160))+'</div></span>'
+        + (x.status==='pending' ? '<button class="b" data-sn="'+x.id+'">Send now</button>' : '') + '<button class="b d" data-sc="'+x.id+'">Cancel</button></div>'; }).join('')
+      : '<div class="r"><span class="grow s">Nothing scheduled.</span></div>';
+  }
+  draw();
+  ov.addEventListener('click', function(e){
+    var a = e.target.closest('[data-sn]'), c = e.target.closest('[data-sc]');
+    if (a) api('PATCH', '/scheduled/' + a.dataset.sn, {send_now: 1}).then(function(r){ if (r.ok){ S.scheduled = r.scheduled; draw(); renderSide(); poll(); } else toast(r.error); });
+    if (c) api('DELETE', '/scheduled/' + c.dataset.sc).then(function(r){ if (r.ok){ S.scheduled = r.scheduled; draw(); renderSide(); afterChange(false); } else toast(r.error); });
+  });
+}
 function saveEdit(mid){
   var te = $('#ta-edit'); if (!te) return;
   var body = encodeBody(te.value, '__none') + (te.dataset.tail ? '\n' + te.dataset.tail : '');
@@ -902,6 +1114,7 @@ function refresh(){
     S.me = r.me; S.isAdmin = r.is_admin; S.ulist = r.users; S.users = {}; r.users.forEach(function(u){ S.users[u.id] = u; });
     var muted = getMuted(); S.channels = r.channels.map(function(c){ c.muted = !!muted[c.id]; return c; });
     S.browse = r.browse; S.emojis = r.emojis; S.ai = r.ai; if (!S.rev) S.rev = r.rev;
+    S.statuses = r.statuses || {}; S.presets = r.presets || []; S.stages = r.stages || []; S.digestOff = !!r.digest_off; S.scheduled = r.scheduled || [];
     renderSide();
   });
 }

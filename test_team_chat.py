@@ -285,3 +285,162 @@ def test_chat_windows_on_every_page_but_the_full_chat(srv):
     for page in ('/learning', '/talent-pool', '/hotlist'):
         assert b'/chat-dock.js' in c.get(page).data, page                     # separate pages (app menu)
     assert b'/chat-dock.js' not in c.get('/team-chat').data                    # the full page has it all
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Nov 2026: HireLab AI, morning summary, scheduled messages, status, card actions
+# ══════════════════════════════════════════════════════════════════════════
+@pytest.fixture
+def ai(srv, monkeypatch):
+    from modules import team_chat
+    monkeypatch.setattr(team_chat, 'AI_SYNC', True)
+    team_chat._ai_calls.clear()
+    seen = []
+
+    def fake(key, payload, timeout=60, endpoint='deepseek'):
+        seen.append(payload)
+        return _Txt('Aaj interviews: see data')
+    monkeypatch.setattr(srv, 'call_deepseek', fake)
+    real = srv.get_setting
+    monkeypatch.setattr(srv, 'get_setting', lambda k, default='': 'test-key' if k == 'deepseek_api_key' else real(k, default))
+    return seen
+
+
+class _Txt:
+    status_code = 200
+
+    def __init__(self, text):
+        self.text = text
+
+    def json(self):
+        return {'choices': [{'message': {'content': self.text}}], 'usage': {}}
+
+
+def _seed_interviews(srv):
+    conn = srv.get_db(); today = srv.ts()[:10]
+    for iid, cid, mid in ((98401, C_A, M_A), (98402, C_R, M_R)):
+        conn.execute("INSERT OR REPLACE INTO interviews (id, candidate_id, mandate_id, owner_id, round_name, mode, scheduled_at, status, created_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?)", (iid, cid, mid, CO, 'Round 1', 'Video', today + 'T16:00', 'scheduled', srv.ts()))
+    conn.commit(); conn.close()
+
+
+def test_at_ai_answers_in_a_thread_with_the_askers_access(srv, ai):
+    _seed_interviews(srv)
+    gid, _ = general(srv)
+    general(srv, RIYA)
+    q = cl(srv, RIYA).post('/api/chat/channels/%d/messages' % gid, json={'body': '@AI aaj kitne interviews hain?'}).get_json()['message']
+    th = cl(srv, RIYA).get('/api/chat/messages/%d/thread' % q['id']).get_json()['messages']
+    assert th[-1]['user_id'] == 0 and th[-1]['body'] == 'Aaj interviews: see data'
+    data = ai[-1]['messages'][0]['content']
+    assert 'Asha Verma' in data and '<c:%d>' % C_R in data                  # Riya's own job
+    assert 'Secret Sharma' not in data and 'Admin Job' not in data           # not the admin's job
+    assert ai[-1]['messages'][-1]['content'] == 'aaj kitne interviews hain?'
+    # the admin sees the whole agency
+    cl(srv, ADMIN).post('/api/chat/channels/%d/messages' % gid, json={'body': '@ai interviews today?'})
+    assert 'Secret Sharma' in ai[-1]['messages'][0]['content']
+    # a normal message does not wake the AI
+    n = len(ai)
+    cl(srv, ADMIN).post('/api/chat/channels/%d/messages' % gid, json={'body': 'email me at said@x.com'})
+    assert len(ai) == n
+
+
+def test_private_ai_chat(srv, ai):
+    st = cl(srv, AMIT).get('/api/chat/state').get_json()
+    aic = [c for c in st['channels'] if c['kind'] == 'ai']
+    assert len(aic) == 1
+    msgs = cl(srv, AMIT).get('/api/chat/channels/%d/messages' % aic[0]['id']).get_json()['messages']
+    assert msgs[0]['user_id'] == 0 and 'HireLab AI' in msgs[0]['body']            # welcome
+    cl(srv, AMIT).post('/api/chat/channels/%d/messages' % aic[0]['id'], json={'body': 'pending offers?'})
+    msgs = cl(srv, AMIT).get('/api/chat/channels/%d/messages' % aic[0]['id']).get_json()['messages']
+    assert msgs[-1]['user_id'] == 0 and msgs[-1]['parent_id'] == 0
+    assert cl(srv, RIYA).get('/api/chat/channels/%d/messages' % aic[0]['id']).status_code == 404   # private
+
+
+def test_morning_summary_once_a_day_with_access(srv, monkeypatch):
+    import datetime
+    from modules import team_chat
+    _seed_interviews(srv)
+    monkeypatch.setattr(team_chat, '_ist', lambda: datetime.datetime.fromisoformat(srv.ts()[:10] + 'T09:00:00'))
+    conn = srv.get_db()
+    conn.execute("UPDATE chat_prefs SET digest_date='', digest_off=0 WHERE user_id IN (?,?)", (RIYA, ADMIN))
+    conn.commit()
+    assert team_chat.maybe_digest(conn, CO, RIYA) is True
+    assert team_chat.maybe_digest(conn, CO, RIYA) is False                     # once a day
+    conn.close()
+    aic = [c for c in cl(srv, RIYA).get('/api/chat/state').get_json()['channels'] if c['kind'] == 'ai'][0]['id']
+    body = cl(srv, RIYA).get('/api/chat/channels/%d/messages' % aic).get_json()['messages'][-1]['body']
+    assert 'Good morning, Riya' in body and '<c:%d>' % C_R in body and '<c:%d>' % C_A not in body
+    # turned off -> nothing
+    cl(srv, ADMIN).post('/api/chat/prefs', json={'digest_off': True})
+    conn = srv.get_db()
+    assert team_chat.maybe_digest(conn, CO, ADMIN) is False
+    conn.close()
+    cl(srv, ADMIN).post('/api/chat/prefs', json={'digest_off': False})
+    # before 08:30 -> nothing
+    monkeypatch.setattr(team_chat, '_ist', lambda: datetime.datetime.fromisoformat(srv.ts()[:10] + 'T07:00:00'))
+    conn = srv.get_db(); conn.execute("UPDATE chat_prefs SET digest_date='' WHERE user_id=?", (AMIT,)); conn.commit()
+    assert team_chat.maybe_digest(conn, CO, AMIT) is False
+    conn.close()
+
+
+def test_scheduled_messages(srv):
+    from modules import team_chat
+    gid, _ = general(srv, RIYA)
+    r = cl(srv, RIYA)
+    assert r.post('/api/chat/channels/%d/schedule' % gid, json={'body': 'too late', 'send_at': '2020-01-01T09:00'}).status_code == 400
+    j = r.post('/api/chat/channels/%d/schedule' % gid, json={'body': 'Good morning team <@%d>' % AMIT, 'send_at': '2099-01-01T09:00'})
+    assert j.status_code == 400                                                  # > 60 days
+    import datetime
+    later = (datetime.datetime.fromisoformat(srv.ts()) + datetime.timedelta(hours=2)).isoformat()[:16]
+    j = r.post('/api/chat/channels/%d/schedule' % gid, json={'body': 'Standup in 5', 'send_at': later}).get_json()
+    assert j['ok'] and [x['body'] for x in j['scheduled']] == ['Standup in 5']
+    sid = j['id']
+    assert cl(srv, ADMIN).delete('/api/chat/scheduled/%d' % sid).status_code == 404    # only the author
+    conn = srv.get_db(); conn.execute("UPDATE chat_scheduled SET send_at='2020-01-01T00:00:00' WHERE id=?", (sid,)); conn.commit()
+    assert team_chat.run_due(conn) >= 1
+    row = conn.execute('SELECT status, message_id FROM chat_scheduled WHERE id=?', (sid,)).fetchone()
+    m = conn.execute('SELECT user_id, body, channel_id FROM chat_messages WHERE id=?', (row['message_id'],)).fetchone()
+    conn.close()
+    assert row['status'] == 'sent' and m['user_id'] == RIYA and m['body'] == 'Standup in 5' and m['channel_id'] == gid
+    # cancel
+    j = r.post('/api/chat/channels/%d/schedule' % gid, json={'body': 'never', 'send_at': later}).get_json()
+    assert r.delete('/api/chat/scheduled/%d' % j['id']).get_json()['scheduled'] == []
+
+
+def test_status(srv):
+    a = cl(srv, ADMIN)
+    st = a.post('/api/chat/status', json={'emoji': '📞', 'text': 'On calls', 'until': '2099-01-01T10:00'}).get_json()['statuses']
+    assert st[str(ADMIN)]['text'] == 'On calls'
+    s2 = cl(srv, RIYA).get('/api/chat/state').get_json()
+    assert s2['statuses'][str(ADMIN)]['emoji'] == '📞' and any(p[1] == 'On leave' for p in s2['presets'])
+    assert 'Screening' in s2['stages'] and s2['stages'][-2:] == ['Placed', 'Joined']
+    a.post('/api/chat/status', json={'emoji': '🍽️', 'text': 'Lunch', 'until': '2020-01-01T10:00'})   # already over
+    assert str(ADMIN) not in cl(srv, RIYA).get('/api/chat/state').get_json()['statuses']
+    a.post('/api/chat/status', json={})
+    assert cl(srv, OADMIN).get('/api/chat/state').get_json()['statuses'] == {}        # other agency
+
+
+def test_bell_text_never_names_a_candidate(srv):
+    gid, _ = general(srv)
+    general(srv, RIYA)
+    from modules import team_chat
+    team_chat._seen.clear()
+    conn = srv.get_db(); conn.execute("DELETE FROM notifications WHERE user_id=?", (RIYA,)); conn.commit(); conn.close()
+    cl(srv, ADMIN).post('/api/chat/channels/%d/messages' % gid, json={'body': '<@%d> look at <c:%d>' % (RIYA, C_A)})
+    n = [x for x in cl(srv, RIYA).get('/api/notifications').get_json()['notifications'] if x['kind'] == 'chat_mention']
+    assert n and 'Secret Sharma' not in n[0]['body'] and '[candidate]' in n[0]['body']
+
+
+def test_card_action_routes_respect_recruiter_access(srv):
+    # the card buttons call the ATS's own routes; a recruiter cannot act on another job's candidate
+    r = cl(srv, RIYA)
+    assert r.post('/api/candidates/%d/stage' % C_A, json={'stage': 'Interested'}).status_code in (403, 404)
+    assert r.post('/api/candidates/%d/stage' % C_R, json={'stage': 'Interested'}).get_json()['ok']
+
+
+def test_browser_times_are_turned_into_ist():
+    from modules.team_chat import to_ist
+    assert to_ist('2026-11-21T09:00', -330) == '2026-11-21T09:00'      # a browser in India
+    assert to_ist('2026-11-21T09:00', 0) == '2026-11-21T14:30'         # a browser on UTC
+    assert to_ist('2026-11-21T09:00', None) == '2026-11-21T09:00'      # no zone sent
+    assert to_ist('tomorrow', -330) == ''

@@ -336,6 +336,10 @@ def test_every_table_recruiter_report(full_world):
     shared = ('/api/jobmail/settings', '/api/outreach/stats', '/api/skill-graph', '/api/todo/meta', '/api/todo/tags')
     leaks = [x for x in leaks if not any(x.startswith('GET ' + p + ' ') or x.startswith('GET ' + p + '?')
                                          for p in shared)]
+    # Team Chat: a teammate's status ("On calls", "On leave") is shown to the whole team on purpose
+    # -- only the status columns may show; any other chat data would still be a leak.
+    leaks = [x for x in leaks if not (re.match(r'GET /api/chat/(state|poll)\b', x)
+                                      and all(h.strip().startswith('ZZSECRET chat_prefs.stat') for h in x.split(' -> ', 1)[1].split(',')))]
     assert not leaks, 'Recruiter reads:\n  ' + '\n  '.join(leaks)
 
 
