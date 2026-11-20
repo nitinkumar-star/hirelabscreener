@@ -434,6 +434,46 @@ def _ask_deepseek(core, key, system, user, max_tokens, endpoint, timeout=60):
     return j
 
 
+SCREEN_CHUNK = 5          # cards per DeepSeek call (a batch of 10-12 is split)
+SCREEN_TIMEOUT = 60       # seconds per call; one retry
+
+
+def _screen_chunk(core, key, system, chunk, facts):
+    """(raw, None) or (None, exc). One retry on timeout / HTTP error / bad JSON."""
+    from modules import card_facts as cf
+    user = 'CARDS:\n' + '\n\n'.join('[key: %s]\n%s\n%s' % (c['key'], cf.facts_line(facts[c['key']]), c['text'])
+                                      for c in chunk)
+    last = None
+    for attempt in range(2):
+        try:
+            return _ask_deepseek(core, key, system, user, max_tokens=200 + 130 * len(chunk),
+                                 endpoint='naukri-screen', timeout=SCREEN_TIMEOUT), None
+        except Exception as exc:
+            if type(exc).__name__ == 'TokenCapError':
+                return None, exc
+            print('[naukri-screen] chunk of %d failed (try %d): %s: %s' % (len(chunk), attempt + 1, type(exc).__name__, exc))
+            last = exc
+    return None, last
+
+
+def _screen_chunks(core, key, system, chunks, facts):
+    if len(chunks) == 1:
+        return [_screen_chunk(core, key, system, chunks[0], facts)]
+    from concurrent.futures import ThreadPoolExecutor
+    from flask import copy_current_request_context
+
+    def make(ch):
+        # each thread gets its OWN copy of the request context (a shared one
+        # breaks Flask's context variables when calls overlap)
+        @copy_current_request_context
+        def run():
+            return _screen_chunk(core, key, system, ch, facts)
+        return run
+    jobs = [make(ch) for ch in chunks]
+    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        return list(pool.map(lambda f: f(), jobs))
+
+
 def _parse(core, raw):
     """json.loads first: the core parse_json tries '[' before '{', so an object
     that contains a list (our {"results": [...]}) would come back as the list."""
@@ -571,28 +611,45 @@ def screen_profiles():
         facts = {c['key']: cf.card_facts(c['text'], limits, prof.get('companies')) for c in clean}
         system = SCREEN_PROMPT_V2.format(budget=budget_line(m), rules=_rules_text(rules), job=job_brief(core, m),
                                          breakdown=breakdown, past=past_decisions(conn, m['id']))
-        user = 'CARDS:\n' + '\n\n'.join('[key: %s]\n%s\n%s' % (c['key'], cf.facts_line(facts[c['key']]), c['text'])
-                                          for c in clean)
-        try:
-            raw = _ask_deepseek(core, key, system, user, max_tokens=200 + 130 * len(clean),
-                                endpoint='naukri-screen', timeout=75)
-        except Exception as exc:
-            return _ai_error(core, exc)
-        rub = rubric_items(raw, keys)
-        if rub:
-            relaxed_ok = cf.rules_mention_budget(rules)
-            results = []
-            for k in keys:
+        relaxed_ok = cf.rules_mention_budget(rules)
+
+        def build(chunk_keys, raw):
+            rub = rubric_items(raw, chunk_keys)
+            if not rub:
+                return normalize_results(raw, chunk_keys)
+            out = []
+            for k in chunk_keys:
                 it = rub.get(k)
                 if not it:
-                    results.append({'key': k, 'verdict': 'unknown', 'score': None,
-                                    'reason': 'The AI did not return a verdict for this profile.', 'flags': []})
+                    out.append({'key': k, 'verdict': 'unknown', 'score': None,
+                                'reason': 'The AI did not return a verdict for this profile.', 'flags': []})
                     continue
                 r = cf.combine(it, facts[k], limits, budget_relaxed=relaxed_ok and bool(it.get('budget_ok_by_rule')))
                 r['key'] = k
-                results.append(r)
-        else:
-            results = normalize_results(raw, keys)
+                out.append(r)
+            return out
+
+        # Small chunks in parallel, each retried once: one slow DeepSeek answer
+        # for a whole batch used to time out and fail all of it (HTTP 502).
+        chunks = [clean[x:x + SCREEN_CHUNK] for x in range(0, len(clean), SCREEN_CHUNK)]
+        got = _screen_chunks(core, key, system, chunks, facts)
+        results, failed, last_exc = [], 0, None
+        for chunk, (raw, exc) in zip(chunks, got):
+            ck = [c['key'] for c in chunk]
+            if exc is None:
+                results.extend(build(ck, raw))
+                continue
+            if type(exc).__name__ == 'TokenCapError':
+                return _ai_error(core, exc)
+            failed += 1
+            last_exc = exc
+            results.extend({'key': k, 'verdict': 'unknown', 'score': None, 'flags': ['ai timeout'],
+                            'reason': 'The AI did not answer in time for this profile. Press Screen again to retry it.'}
+                           for k in ck)
+        if failed == len(chunks):
+            return _ai_error(core, last_exc)
+        order = {k: n for n, k in enumerate(keys)}
+        results.sort(key=lambda r: order.get(r['key'], 0))
         for r in results:
             f = facts.get(r['key']) or {}
             r['facts'] = {'exp': f.get('exp'), 'ctc': f.get('ctc'), 'notice': f.get('notice'),

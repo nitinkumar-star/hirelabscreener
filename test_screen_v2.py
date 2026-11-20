@@ -431,3 +431,56 @@ def test_split_parallel_windows_with_slow_ai(srv, ds):
     r = cl(srv, ADMIN).post('/api/assistant/split', json={'text': page})
     j = r.get_json()
     assert r.status_code == 200 and j['ok'] and j['count'] == 120, j
+
+
+# ── Nov 20 2026: one slow DeepSeek answer used to fail a whole batch (HTTP 502) ──
+def _cards(n):
+    return [{'key': 'p%d' % i, 'text': 'Sales Engineer at ABB, 6 yrs, 9 Lacs, LV switchgear to panel builders #%d' % i}
+            for i in range(n)]
+
+
+def test_batch_is_split_into_small_calls(srv, ds):
+    ds.answer = rubric
+    j = cl(srv, ADMIN).post('/api/extension/screen', json={'mandate_id': M_A, 'profiles': _cards(12)}).get_json()
+    assert j['ok'] and [r['key'] for r in j['results']] == ['p%d' % i for i in range(12)]
+    calls = [c for c in ds.calls if c['endpoint'] == 'naukri-screen']
+    assert len(calls) == 3 and all(c['payload']['messages'][-1]['content'].count('[key: ') <= 5 for c in calls)
+
+
+def test_slow_chunk_is_retried_once(srv, ds):
+    seen = {}
+
+    def ans(payload, endpoint):
+        user = payload['messages'][-1]['content']
+        if endpoint == 'naukri-screen' and '[key: p0]' in user and not seen.get('p0'):
+            seen['p0'] = 1
+            raise TimeoutError('read timed out')
+        return rubric(payload, endpoint)
+    ds.answer = ans
+    r = cl(srv, ADMIN).post('/api/extension/screen', json={'mandate_id': M_A, 'profiles': _cards(10)})
+    j = r.get_json()
+    assert r.status_code == 200 and all(x['verdict'] != 'unknown' for x in j['results']), j
+
+
+def test_failed_chunk_does_not_lose_the_rest(srv, ds):
+    def ans(payload, endpoint):
+        if endpoint == 'naukri-screen' and '[key: p0]' in payload['messages'][-1]['content']:
+            raise TimeoutError('read timed out')
+        return rubric(payload, endpoint)
+    ds.answer = ans
+    r = cl(srv, ADMIN).post('/api/extension/screen', json={'mandate_id': M_A, 'profiles': _cards(10)})
+    j = r.get_json()
+    assert r.status_code == 200 and j['ok'], j
+    v = {x['key']: x['verdict'] for x in j['results']}
+    assert all(v['p%d' % i] == 'unknown' for i in range(5)) and all(v['p%d' % i] != 'unknown' for i in range(5, 10))
+    assert 'Press Screen again' in j['results'][0]['reason']
+
+
+def test_all_chunks_failing_is_still_an_error(srv, ds):
+    def ans(payload, endpoint):
+        if endpoint == 'naukri-screen':
+            raise TimeoutError('read timed out')
+        return rubric(payload, endpoint)
+    ds.answer = ans
+    r = cl(srv, ADMIN).post('/api/extension/screen', json={'mandate_id': M_A, 'profiles': _cards(10)})
+    assert r.status_code == 502 and 'TimeoutError' in r.get_json()['error']
