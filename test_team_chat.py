@@ -676,3 +676,66 @@ def test_thread_ai_summary(srv, monkeypatch):
     monkeypatch.setattr(srv, 'get_setting', lambda k, default='': 'test-key' if k == 'deepseek_api_key' else real(k, default))
     j = a.post('/api/chat/threads/%d/summary' % root).get_json()
     assert j['ok'] and 'Monday' in j['summary'] and 'Secret Sharma' in seen['text']
+
+
+# ── read receipts / blue ticks (Nov 2026) ───────────────────────────────────
+def _rc(client, chid):
+    st = client.get('/api/chat/state').get_json()
+    return [c for c in st['channels'] if c['id'] == chid][0]['rcpt']
+
+
+def test_read_receipts_dm_sent_delivered_seen(srv):
+    a, r = cl(srv, ADMIN), cl(srv, AMIT)
+    dm = a.post('/api/chat/dm', json={'user': AMIT}).get_json()['id']
+    mid = a.post('/api/chat/channels/%d/messages' % dm, json={'body': 'rr hello'}).get_json()['message']['id']
+    conn = srv.get_db()
+    conn.execute('UPDATE chat_members SET delivered_id=0, last_read_id=0 WHERE channel_id=? AND user_id=?', (dm, AMIT))
+    conn.commit(); conn.close()
+    read, dlv = _rc(a, dm)[str(AMIT)]
+    assert read < mid and dlv < mid                       # ✓ sent
+    r.get('/api/chat/poll?since=1')                       # Amit's app fetched it
+    read, dlv = _rc(a, dm)[str(AMIT)]
+    assert read < mid and dlv >= mid                      # ✓✓ delivered
+    r.post('/api/chat/channels/%d/read' % dm, json={})
+    read, dlv = _rc(a, dm)[str(AMIT)]
+    assert read >= mid                                    # blue ✓✓ seen
+    # my own id is never in the list
+    assert str(ADMIN) not in _rc(a, dm)
+
+
+def test_read_receipts_can_be_turned_off_both_ways(srv):
+    a, r = cl(srv, ADMIN), cl(srv, AMIT)
+    dm = a.post('/api/chat/dm', json={'user': AMIT}).get_json()['id']
+    mid = a.post('/api/chat/channels/%d/messages' % dm, json={'body': 'rr private'}).get_json()['message']['id']
+    r.get('/api/chat/poll?since=1'); r.post('/api/chat/channels/%d/read' % dm, json={})
+    assert r.post('/api/chat/prefs', json={'receipts_off': True}).get_json()['receipts_off'] == 1
+    read, dlv = _rc(a, dm)[str(AMIT)]
+    assert read == 0 and dlv >= mid                       # Amit's "seen" is hidden, delivered still shows
+    back = a.post('/api/chat/channels/%d/messages' % dm, json={'body': 'x'})
+    assert back.get_json()['ok']
+    # and Amit does not see anybody's blue ticks while his are off
+    r.post('/api/chat/channels/%d/messages' % dm, json={'body': 'rr from amit'})
+    a.get('/api/chat/poll?since=1'); a.post('/api/chat/channels/%d/read' % dm, json={})
+    assert _rc(r, dm)[str(ADMIN)][0] == 0
+    assert r.get('/api/chat/state').get_json()['receipts_off'] == 1
+    r.post('/api/chat/prefs', json={'receipts_off': False})
+    assert _rc(r, dm)[str(ADMIN)][0] > 0 and _rc(a, dm)[str(AMIT)][0] >= mid
+
+
+def test_read_receipts_in_channels_and_threads(srv):
+    gid, _ = general(srv)
+    general(srv, RIYA)
+    a, r = cl(srv, ADMIN), cl(srv, RIYA)
+    root = a.post('/api/chat/channels/%d/messages' % gid, json={'body': 'rr team update'}).get_json()['message']['id']
+    r.post('/api/chat/channels/%d/read' % gid, json={})
+    rc = _rc(a, gid)
+    assert rc[str(RIYA)][0] >= root                       # Riya has seen it
+    rep = a.post('/api/chat/channels/%d/messages' % gid, json={'body': 'rr reply', 'parent_id': root}).get_json()['message']['id']
+    r.post('/api/chat/channels/%d/messages' % gid, json={'body': 'rr ok', 'parent_id': root})   # Riya follows now
+    rep2 = a.post('/api/chat/channels/%d/messages' % gid, json={'body': 'rr one more', 'parent_id': root}).get_json()['message']['id']
+    tr = a.get('/api/chat/poll?since=1&thread=%d' % root).get_json()['thread_rcpt']
+    assert tr['root'] == root and tr['reads'][str(RIYA)] < rep2
+    r.get('/api/chat/messages/%d/thread' % root)          # Riya opens the thread
+    assert a.get('/api/chat/messages/%d/thread' % root).get_json()['reads'][str(RIYA)] >= rep2 > rep
+    # another agency gets nothing
+    assert cl(srv, OADMIN).get('/api/chat/messages/%d/thread' % root).status_code == 404

@@ -196,7 +196,10 @@ def _migrate_chat(conn):
                 'CREATE INDEX IF NOT EXISTS idx_chat_follow_user ON chat_thread_follows(user_id, muted)',
                 "ALTER TABLE chat_messages ADD COLUMN broadcast INTEGER DEFAULT 0",
                 "ALTER TABLE chat_messages ADD COLUMN resolved_by INTEGER DEFAULT 0",
-                "ALTER TABLE chat_messages ADD COLUMN resolved_at TEXT DEFAULT ''"]:
+                "ALTER TABLE chat_messages ADD COLUMN resolved_at TEXT DEFAULT ''",
+                # read receipts (Nov 2026): the newest message that reached each member; opt-out like WhatsApp
+                "ALTER TABLE chat_members ADD COLUMN delivered_id INTEGER DEFAULT 0",
+                "ALTER TABLE chat_prefs ADD COLUMN receipts_off INTEGER DEFAULT 0"]:
         try:
             c.execute(sql)
         except Exception:
@@ -377,6 +380,42 @@ def _touch(conn, mid):
     conn.execute('UPDATE chat_messages SET rev=? WHERE id=?', (next_rev(), mid))
 
 
+def _receipts_off(conn, cid):
+    """People in this agency who turned read receipts off."""
+    return {r['user_id'] for r in conn.execute('SELECT user_id FROM chat_prefs WHERE company_id=? AND receipts_off=1', (cid,))}
+
+
+def _receipts(conn, cid, uid, chid, off=None):
+    """{other member: [read up to, delivered up to]} for ticks on my own messages.
+    Like WhatsApp: someone with receipts off never shows blue (only delivered), and if I turned
+    mine off I do not see anyone's blue ticks either."""
+    off = _receipts_off(conn, cid) if off is None else off
+    hide_all = uid in off
+    out = {}
+    for r in conn.execute('SELECT user_id, last_read_id, delivered_id FROM chat_members WHERE channel_id=? AND user_id!=?',
+                          (chid, uid)).fetchall():
+        rd = r['last_read_id'] or 0
+        dl = max(r['delivered_id'] or 0, rd)
+        out[str(r['user_id'])] = [0 if (hide_all or r['user_id'] in off) else rd, dl]
+    return out
+
+
+def _thread_receipts(conn, cid, uid, root, off=None):
+    off = _receipts_off(conn, cid) if off is None else off
+    if uid in off:
+        return {}
+    return {str(r['user_id']): r['last_read_id'] or 0 for r in conn.execute(
+        'SELECT user_id, last_read_id FROM chat_thread_follows WHERE message_id=? AND user_id!=? AND muted=0', (root, uid))
+        if r['user_id'] not in off}
+
+
+def _delivered(conn, cid, uid):
+    """Polling means this person's app has every message so far: move their 'delivered' marker."""
+    conn.execute('UPDATE chat_members SET delivered_id=(SELECT COALESCE(MAX(id),0) FROM chat_messages m '
+                 'WHERE m.channel_id=chat_members.channel_id) WHERE user_id=? AND company_id=?', (uid, cid))
+    conn.commit()
+
+
 def _channel_summaries(conn, cid, uid):
     """The caller's channels (member) with unread / mention counts."""
     rows = conn.execute(
@@ -384,6 +423,7 @@ def _channel_summaries(conn, cid, uid):
         'WHERE c.company_id=? AND m.user_id=? ORDER BY c.kind, c.name COLLATE NOCASE', (cid, uid)).fetchall()
     out = []
     tag = '<@%d>' % uid
+    off = _receipts_off(conn, cid)
     for r in rows:
         d = dict(r)
         un = conn.execute('SELECT COUNT(*) n, COALESCE(MAX(id),0) mx FROM chat_messages WHERE channel_id=? AND (parent_id=0 OR broadcast=1) '
@@ -399,6 +439,8 @@ def _channel_summaries(conn, cid, uid):
                 'last_at': last['created_at'] if last else d['created_at'], 'muted': d['muted']}
         if d['kind'] in ('dm', 'ai'):
             item['members'] = _member_ids(conn, d['id'])
+        if d['kind'] != 'ai':
+            item['rcpt'] = _receipts(conn, cid, uid, d['id'], off)
         out.append(item)
     return out
 
@@ -505,6 +547,7 @@ def chat_state():
         _ensure_general(conn, cid, uid)
         _ensure_ai(conn, cid, uid)
         _housekeeping(conn, cid, uid)
+        _delivered(conn, cid, uid)
         users = _users(conn, cid)
         mine = {c['id'] for c in _channel_summaries(conn, cid, uid)}
         browse = [dict(r) for r in conn.execute(
@@ -517,6 +560,7 @@ def chat_state():
                         'emojis': EMOJIS, 'rev': _last_rev[0] or next_rev(),
                         'ai': bool(_ai_key()), 'statuses': _statuses(conn, cid), 'presets': STATUS_PRESETS,
                         'stages': _stages(), 'digest_off': _prefs(conn, uid, cid).get('digest_off', 0),
+                        'receipts_off': _prefs(conn, uid, cid).get('receipts_off') or 0,
                         'scheduled': _my_scheduled(conn, cid, uid), 'threads': _thread_unread(conn, uid)})
     finally:
         conn.close()
@@ -535,6 +579,7 @@ def chat_poll():
     conn = get_db()
     try:
         _housekeeping(conn, cid, uid)
+        _delivered(conn, cid, uid)
         ids = _visible_channel_ids(conn, cid, uid)
         msgs = []
         if ids and since:
@@ -552,6 +597,12 @@ def chat_poll():
         out.update({'ok': True, 'channels': _channel_summaries(conn, cid, uid), 'typing': typing,
                     'online': online, 'rev': _last_rev[0], 'statuses': _statuses(conn, cid),
                     'scheduled': _my_scheduled(conn, cid, uid), 'threads': _thread_unread(conn, uid)})
+        try:
+            troot = int(request.args.get('thread') or 0)
+        except ValueError:
+            troot = 0
+        if troot:
+            out['thread_rcpt'] = {'root': troot, 'reads': _thread_receipts(conn, cid, uid, troot)}
         return jsonify(out)
     finally:
         conn.close()
@@ -568,7 +619,7 @@ def _prefs(conn, uid, cid):
         conn.execute('INSERT OR IGNORE INTO chat_prefs (user_id, company_id) VALUES (?,?)', (uid, cid))
         conn.commit()
         return {'user_id': uid, 'company_id': cid, 'status_emoji': '', 'status_text': '', 'status_until': '',
-                'digest_date': '', 'digest_off': 0}
+                'digest_date': '', 'digest_off': 0, 'receipts_off': 0}
     return dict(r)
 
 
@@ -630,8 +681,11 @@ def set_prefs():
         _prefs(conn, uid, cid)
         if 'digest_off' in d:
             conn.execute('UPDATE chat_prefs SET digest_off=? WHERE user_id=?', (1 if d.get('digest_off') else 0, uid))
+        if 'receipts_off' in d:
+            conn.execute('UPDATE chat_prefs SET receipts_off=? WHERE user_id=?', (1 if d.get('receipts_off') else 0, uid))
         conn.commit()
-        return jsonify({'ok': True, 'digest_off': _prefs(conn, uid, cid)['digest_off']})
+        pr = _prefs(conn, uid, cid)
+        return jsonify({'ok': True, 'digest_off': pr['digest_off'], 'receipts_off': pr.get('receipts_off') or 0})
     finally:
         conn.close()
 
@@ -1158,7 +1212,8 @@ def thread(mid):
         rows = conn.execute('SELECT * FROM chat_messages WHERE parent_id=? ORDER BY id', (mid,)).fetchall()
         out = _with_refs(conn, cid, _ser([p] + list(rows), conn))
         f = conn.execute('SELECT last_read_id, muted FROM chat_thread_follows WHERE message_id=? AND user_id=?', (mid, uid)).fetchone()
-        out.update({'ok': True, 'following': bool(f and not f['muted']), 'last_read_id': f['last_read_id'] if f else 0})
+        out.update({'ok': True, 'following': bool(f and not f['muted']), 'last_read_id': f['last_read_id'] if f else 0,
+                    'reads': _thread_receipts(conn, cid, uid, mid)})
         if f and rows:                      # opening a thread reads it
             conn.execute('UPDATE chat_thread_follows SET last_read_id=MAX(last_read_id, ?) WHERE message_id=? AND user_id=?',
                          (rows[-1]['id'], mid, uid))
