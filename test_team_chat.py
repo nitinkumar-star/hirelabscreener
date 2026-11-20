@@ -540,3 +540,11 @@ def test_ring_script_served(srv):
     js = srv.app.test_client().get('/chat-ring.js')
     assert js.status_code == 200 and b'HLCalls' in js.data
     assert srv.app.test_client().get('/call/1').status_code == 302                    # signed out
+
+
+def test_composer_stays_on_screen_css(srv):
+    """Nov 20 2026: with a long chat the message box was pushed below the screen
+    (the grid row grew with its content). The row must be capped at the screen."""
+    html = cl(srv, RIYA).get('/team-chat').get_data(as_text=True)
+    assert 'grid-template-rows:minmax(0,1fr)' in html
+    assert '.main{display:flex;flex-direction:column;min-width:0;min-height:0' in html
