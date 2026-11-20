@@ -160,7 +160,7 @@
   /* ---------- render ---------- */
   function unreadTotal(){
     var m = muted();
-    return S.channels.reduce(function(a, c){ return a + (m[c.id] ? 0 : (c.kind !== 'channel' ? (c.unread||0) : (c.mentions||0))); }, 0);
+    return S.channels.reduce(function(a, c){ return a + (m[c.id] ? 0 : (c.kind !== 'channel' ? (c.unread||0) : (c.mentions||0))); }, 0) + ((S.threadsU || {}).unread || 0);
   }
   function render(){
     if (!S.ready) { dock.innerHTML = ''; return; }
@@ -193,7 +193,8 @@
       + '<a class="ib" href="/team-chat" title="Open full Team Chat" aria-label="Open full Team Chat">↗</a>'
       + '<button class="ib" data-a="roster" title="Close" aria-label="Close">✕</button></div>'
       + '<div class="srch"><input type="search" placeholder="Find a person or channel" aria-label="Find a person or channel" value="'+esc(S.q)+'"></div><div class="list">';
-    var conv = recent.slice(0, 30);
+    var conv = recent.slice(0, 30), tu = S.threadsU || {};
+    if (tu.unread && !q) h += '<a class="row un" href="/team-chat?threads=1" style="text-decoration:none;color:inherit"><span class="hash">🧵</span><span class="nm">Thread replies<span class="sub">'+tu.threads+' thread'+(tu.threads===1?'':'s')+' with new replies</span></span><span class="badge">'+tu.unread+'</span></a>';
     if (conv.length) h += '<div class="sec">Conversations</div>' + conv.map(function(c){
       var un = !m[c.id] && c.unread > 0, badge = m[c.id] ? '' : (c.kind !== 'channel' ? c.unread : c.mentions);
       var icon = c.kind === 'ai' ? av(0, 28) : c.kind === 'dm' ? '<span style="position:relative;display:inline-flex">'+av(dmOther(c), 28)+(S.online.indexOf(dmOther(c))>=0?'<span class="on-dot"></span>':'')+'</span>' : '<span class="hash">'+(c.is_private?'🔒':'#')+'</span>';
@@ -394,7 +395,7 @@
     return api('GET', '/state').then(function(r){
       if (!r.ok) return r;
       S.me = r.me; S.ulist = r.users; S.users = {}; r.users.forEach(function(u){ S.users[u.id] = u; });
-      S.channels = r.channels; S.emojis = r.emojis; if (!S.rev) S.rev = r.rev; S.statuses = r.statuses || {};
+      S.channels = r.channels; S.emojis = r.emojis; if (!S.rev) S.rev = r.rev; S.statuses = r.statuses || {}; S.threadsU = r.threads || {};
       S.wins = S.wins.filter(function(w){ return chan(w.id); });
       if (!S.ready){ S.ready = true; document.body.appendChild(host); loadRing(); }
       render(); S.wins.forEach(function(w){ load(w.id); });
@@ -413,7 +414,7 @@
       if (r._status === 401 || r._status === 403){ stop(r._status); return; }
       if (r.ok){
         var known = {}; S.channels.forEach(function(c){ known[c.id] = 1; });
-        S.channels = r.channels; S.online = r.online || []; S.typing = r.typing || {}; if (r.statuses) S.statuses = r.statuses;
+        S.channels = r.channels; S.online = r.online || []; S.typing = r.typing || {}; if (r.statuses) S.statuses = r.statuses; if (r.threads) S.threadsU = r.threads;
         Object.assign(S.refs, r.refs || {});
         var fresh = [];
         (r.messages || []).forEach(function(m){
