@@ -368,6 +368,7 @@ _NUMERIC_OK = [re.compile(p) for p in [
     r'^/api/emailbox/',                       # every query is scoped to the caller's own mailbox (server._box_where)
     r'^/api/jobmail/',                        # every campaign is checked against can_see_mandate inside modules/jobmail.py
     r'^/api/profile-groups/',                 # agency-wide definitions, company checked in modules/profile_groups.py
+    r'^/api/chat/',                           # Team Chat: every route checks company + channel membership (modules/team_chat.py)
 ]]
 _HAS_ID = re.compile(r'/\d+(/|$)')
 

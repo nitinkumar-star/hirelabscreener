@@ -75,6 +75,7 @@ _MODULE_NAMES = [
     'ai_meter',        # AI cost meter in ₹: per agency and per recruiter
     'perf',            # Speed: indexes on the core tables (candidates, stage_history, events …)
     'learning',        # Learning: Electrical Industry Explorer, edits saved per agency (/learning)
+    'team_chat',       # Team Chat: channels, DMs, threads, @mentions, files, candidate/job cards (/team-chat)
 ]
 
 _MIGRATIONS = []
