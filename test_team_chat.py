@@ -275,3 +275,13 @@ def test_recruiter_guard_allows_chat_routes(srv):
     # numbers in /api/chat/... URLs must not trip the recruiter "unmapped object route" guard
     gid, _ = general(srv, RIYA)
     assert cl(srv, RIYA).get('/api/chat/channels/%d/messages' % gid).status_code == 200
+
+
+def test_chat_windows_on_every_page_but_the_full_chat(srv):
+    js = srv.app.test_client().get('/chat-dock.js')
+    assert js.status_code == 200 and js.mimetype == 'application/javascript' and b'attachShadow' in js.data
+    c = cl(srv, RIYA)
+    assert b'<script src="/chat-dock.js"' in c.get('/').data                  # main app
+    for page in ('/learning', '/talent-pool', '/hotlist'):
+        assert b'/chat-dock.js' in c.get(page).data, page                     # separate pages (app menu)
+    assert b'/chat-dock.js' not in c.get('/team-chat').data                    # the full page has it all

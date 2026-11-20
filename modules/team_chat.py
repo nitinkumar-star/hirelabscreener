@@ -11,6 +11,8 @@ Team Chat — Slack-style messaging for an agency's team, inside HireLab (/team-
   - Search, a Mentions view, unread counts, typing and who is online.
   - "Catch me up": an AI summary of what you missed in a channel (DeepSeek).
   - Make a task from a message: the page calls the existing /api/todo/tasks.
+  - Chat windows on every ATS page (/chat-dock.js, like Google Chat in Gmail):
+    a Chat button with the unread count, small windows per conversation.
 
 Updates reach the page by polling /api/chat/poll every few seconds. Every
 change to a message (new, edit, delete, reaction, reply, pin) gives it a new
@@ -398,6 +400,16 @@ def team_chat_page():
     with open(path, encoding='utf-8') as f:
         resp = Response(f.read(), mimetype='text/html')
     resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
+@pages.route('/chat-dock.js')
+def chat_dock_js():
+    """The small chat windows at the bottom right of every ATS page (chat-dock.js)."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'chat-dock.js')
+    with open(path, encoding='utf-8') as f:
+        resp = Response(f.read(), mimetype='application/javascript')
+    resp.headers['Cache-Control'] = 'no-cache'
     return resp
 
 
