@@ -26,9 +26,9 @@ a{color:var(--accent)}
 .top .q input::placeholder{color:#B9D3CA}
 .top .q svg{position:absolute;left:10px;top:9px;opacity:.75}
 .top #hln-btn{background:rgba(255,255,255,.14)!important;color:#fff!important;border-color:transparent!important}
-.app{display:grid;grid-template-columns:264px minmax(0,1fr) auto;height:calc(100vh - 50px)}
+.app{display:grid;grid-template-columns:264px minmax(0,1fr) auto;grid-template-rows:minmax(0,1fr);height:calc(100vh - 50px);height:calc(100dvh - 50px)}
 /* ---- sidebar ---- */
-.side{background:var(--side);color:var(--side-ink);overflow-y:auto;padding:10px 8px 20px}
+.side{background:var(--side);color:var(--side-ink);overflow-y:auto;padding:10px 8px 20px;min-height:0}
 .side .sec{display:flex;align-items:center;justify-content:space-between;margin:14px 8px 4px;font-size:12px;font-weight:700;color:var(--side-muted);text-transform:uppercase;letter-spacing:.06em}
 .side .sec button{background:none;border:0;color:var(--side-muted);cursor:pointer;font-size:18px;line-height:1;padding:0 4px;border-radius:4px}
 .side .sec button:hover{color:#fff;background:var(--side-hover)}
@@ -44,7 +44,7 @@ a{color:var(--accent)}
 .dot.on{background:#3DD68C;border-color:#3DD68C}
 .it.more{color:var(--side-muted);font-size:13.5px}
 /* ---- main ---- */
-.main{display:flex;flex-direction:column;min-width:0;background:var(--surface);border-right:1px solid var(--line)}
+.main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--surface);border-right:1px solid var(--line)}
 .chead{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);min-height:56px}
 .chead .t{font-weight:700;font-size:16.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chead .tp{color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;min-width:0}
@@ -131,7 +131,7 @@ a{color:var(--accent)}
 .joinbar{margin:0 16px 14px;padding:14px;border:1px solid var(--line);border-radius:10px;text-align:center;background:var(--soft)}
 .hint{font-size:11.5px;color:var(--muted);padding:0 18px 8px;margin-top:-8px}
 /* ---- thread ---- */
-.thread{width:380px;display:flex;flex-direction:column;background:var(--surface);min-width:0}
+.thread{width:380px;display:flex;flex-direction:column;background:var(--surface);min-width:0;min-height:0}
 .thread[hidden]{display:none}
 .thead{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);min-height:56px}
 .thead b{font-size:15.5px}
