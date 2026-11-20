@@ -176,6 +176,13 @@ a{color:var(--accent)}
 .err{color:var(--crit);font-size:13px;margin:6px 0}
 .res .m{grid-template-columns:38px minmax(0,1fr);cursor:pointer}
 .res .where{font-size:12px;color:var(--muted);font-weight:600}
+.rc{display:inline-flex;align-items:center;margin-left:6px;font-size:12px;font-weight:700;letter-spacing:-4px;padding-right:4px;color:#98A2B3;cursor:default;vertical-align:baseline;white-space:nowrap}
+.rc.dlv{color:#98A2B3}
+.rc.read{color:#1D9BF0}
+.rc.grp{cursor:pointer}
+.rcpop h5{margin:6px 6px 2px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.rcpop .o{cursor:default}
+.rcset{margin:14px 8px 4px;font-size:12px;opacity:.85}
 mark{background:#FDE68A;color:inherit;border-radius:3px;padding:0 1px}
 .shelp{display:flex;flex-wrap:wrap;gap:6px;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--soft);font-size:12.5px;color:var(--muted);align-items:center}
 .shelp button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:2px 10px;font-size:12px;cursor:pointer;color:var(--ink)}
@@ -395,6 +402,7 @@ function renderSide(){
     return '<button class="it'+(on?' on':'')+(un?' un':'')+'" data-dm="'+u.id+'"><span class="dot'+(S.online.indexOf(u.id)>=0?' on':'')+'"></span><span class="nm">'+esc(u.name)+(u.id===S.me?' (you)':'')+'</span>'+statBadge(u.id)+(un?'<span class="cnt">'+c.unread+'</span>':'')+'</button>';
   }).join('');
   var archived = S.channels.filter(function(c){ return c.kind === 'channel' && c.archived; });
+  h += '<button class="it more rcset" data-act="rcpt" title="Blue ticks: show others when you have read their messages">'+(S.rcptOff ? '<span class="hash">👁️</span><span class="nm">Read receipts: off</span>' : '<span class="hash" style="color:#1D9BF0;letter-spacing:-3px">✓✓</span><span class="nm">Read receipts: on</span>')+'</button>';
   if (archived.length) h += '<div class="sec">Archived</div>' + archived.map(function(c){ return '<button class="it more'+(c.id===cur?' on':'')+'" data-ch="'+c.id+'"><span class="hash">#</span><span class="nm">'+esc(c.name)+'</span></button>'; }).join('');
   $('#side').innerHTML = h;
   var total = S.channels.reduce(function(a, c){ return a + (c.muted ? 0 : (c.kind !== 'channel' ? c.unread : c.mentions)||0); }, 0) + ((S.threadsU || {}).unread || 0);
@@ -416,8 +424,9 @@ function msgHtml(m, prev, opts){
   else if (m.pinned) h += '<div class="pinned-tag">📌 pinned</div>';
   if (m.deleted) h += '<div class="mb"><span class="del">This message was deleted.</span></div>';
   else {
-    if (m.body) h += '<div class="mb">'+fmt(m.body)+(m.edited_at?' <span class="ed">(edited)</span>':'')+'</div>';
-    if (m.file) h += fileHtml(m);
+    var tk = opts.readonly ? '' : ticks(m, opts.inThread);
+    if (m.body) h += '<div class="mb">'+fmt(m.body)+(m.edited_at?' <span class="ed">(edited)</span>':'')+tk+'</div>';
+    if (m.file) h += fileHtml(m) + (m.body ? '' : tk);
     if (!/^(🔁|👉|📅|➕) /.test(m.body || '')) h += cardsFor(m.body);      // action notes: the name link is enough
     if (m.reactions && m.reactions.length) h += '<div class="reacts">' + m.reactions.map(function(r){
       var me = r.users.indexOf(S.me) >= 0;
@@ -443,6 +452,50 @@ function msgHtml(m, prev, opts){
       + '</div>';
   }
   return h + '</div>';
+}
+/* ---------- read receipts (WhatsApp-style ticks on my own messages) ---------- */
+function ticks(m, inThread){
+  var c = chan(m.channel_id);
+  if (m.user_id !== S.me || m.deleted || !c || c.kind === 'ai') return '';
+  var th = !!(inThread && m.parent_id), i = tickInfo(m, th), t = tickTitle(i);
+  return '<span class="rc '+i.state+(i.dm?'':' grp')+'" data-rc="'+m.id+'" data-rt="'+(th?1:0)+'" title="'+esc(t + (i.dm ? '' : ' (click for details)'))+'" aria-label="'+esc(t)+'">'+(i.state === 'sent' ? '✓' : '✓✓')+'</span>';
+}
+function tickInfo(m, thread){
+  var c = chan(m.channel_id) || {}, rc = c.rcpt || {}, who = [];
+  if (thread){ var tr = (S.treads && S.treads.root === m.parent_id) ? S.treads.reads : {};
+    who = Object.keys(tr).map(function(u){ var d = rc[u] || [0, 0]; return {u: +u, read: tr[u] >= m.id, dlv: Math.max(d[1], tr[u]) >= m.id}; }); }
+  else who = Object.keys(rc).map(function(u){ return {u: +u, read: rc[u][0] >= m.id, dlv: rc[u][1] >= m.id}; });
+  var read = who.filter(function(x){ return x.read; }), dlv = who.filter(function(x){ return x.dlv && !x.read; }), not = who.filter(function(x){ return !x.dlv; });
+  var state = who.length && read.length === who.length ? 'read' : who.length && !not.length ? 'dlv' : 'sent';
+  return {state: state, read: read, dlv: dlv, not: not, dm: c.kind === 'dm', n: who.length};
+}
+function tickTitle(i){
+  if (i.dm) return i.state === 'read' ? 'Seen' : i.state === 'dlv' ? 'Delivered' : 'Sent';
+  var n = function(L){ return L.map(function(x){ return uname(x.u); }).join(', '); };
+  if (!i.n) return 'Sent';
+  return (i.read.length ? 'Seen by ' + n(i.read) : 'Not seen yet') + (i.dlv.length ? ' · Delivered to ' + n(i.dlv) : '') + (i.not.length ? ' · Not delivered: ' + n(i.not) : '');
+}
+function refreshTicks(){
+  document.querySelectorAll('.rc[data-rc]').forEach(function(el){
+    var m = findMsg(+el.dataset.rc); if (!m) return;
+    var th = el.dataset.rt === '1', i = tickInfo(m, th);
+    el.className = 'rc ' + i.state + (i.dm ? '' : ' grp');
+    el.textContent = i.state === 'sent' ? '✓' : '✓✓';
+    el.title = tickTitle(i) + (i.dm ? '' : ' (click for details)');
+    el.setAttribute('aria-label', tickTitle(i));
+  });
+}
+function tickPop(el){
+  var m = findMsg(+el.dataset.rc); if (!m) return;
+  var i = tickInfo(m, el.dataset.rt === '1');
+  var row = function(L, ic){ return L.map(function(x){ return '<div class="o">'+avatar(x.u, true)+'<span>'+esc(uname(x.u))+'</span><span class="s" style="margin-left:auto">'+ic+'</span></div>'; }).join(''); };
+  var h = '<div class="rcpop">';
+  if (i.read.length) h += '<h5>Seen by '+i.read.length+'</h5>' + row(i.read, '<b style="color:#1D9BF0">✓✓</b>');
+  if (i.dlv.length) h += '<h5>Delivered to '+i.dlv.length+'</h5>' + row(i.dlv, '✓✓');
+  if (i.not.length) h += '<h5>Not delivered yet</h5>' + row(i.not, '✓');
+  if (!i.n) h += '<div class="o s">Only you are in this channel.</div>';
+  if (S.rcptOff) h += '<div class="o s" style="white-space:normal;max-width:240px">Aapne read receipts band kiye hain, isliye “seen” nahi dikhta.</div>';
+  popAt(el, h + '</div>', true);
 }
 function fileHtml(m){
   var f = m.file, url = '/api/chat/files/' + m.id;
@@ -528,7 +581,7 @@ function renderMain(scroll, focusMsg){
   box = $('#msgs');
   if (focusMsg){ var el = box.querySelector('[data-m="'+focusMsg+'"]'); if (el){ centerIn(box, el); el.classList.add('flash'); if (S.view.terms) highlight(el, S.view.terms); return; } }
   if (scroll || atBottom) box.scrollTop = box.scrollHeight; else box.scrollTop = oldTop;
-  renderTyping();
+  renderTyping(); refreshTicks();
 }
 function centerIn(box, el){ if (!box || !el) return; box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - (box.clientHeight - el.offsetHeight) / 2; }
 function composer(where, ph){
@@ -623,7 +676,7 @@ function openThread(id){
   t.innerHTML = '<div class="thead"><b>Thread</b><button class="x" data-act="closethread" aria-label="Close thread">×</button></div><div class="empty">Loading…</div>';
   api('GET', '/messages/' + id + '/thread').then(function(r){
     if (!r.ok){ t.innerHTML = '<div class="thead"><b>Thread</b><button class="x" data-act="closethread">×</button></div><div class="empty">'+esc(r.error||'')+'</div>'; return; }
-    Object.assign(S.refs, r.refs); S.tmsgs = r.messages; S.tfollow = r.following; S.tsum = null;
+    Object.assign(S.refs, r.refs); S.tmsgs = r.messages; S.tfollow = r.following; S.tsum = null; S.treads = {root: id, reads: r.reads || {}};
     var tu = S.threadsU || {}; if (tu.roots && tu.roots[id]){ tu.unread -= tu.roots[id]; delete tu.roots[id]; renderSide(); }
     renderThread(true);
     if (S.mainFocus){ centerIn($('#msgs'), document.querySelector('#msgs [data-m="'+S.mainFocus+'"]')); S.mainFocus = 0; }
@@ -656,6 +709,7 @@ function renderThread(scroll){
   if (keep !== null){ var ta = $('#ta-thread'); ta.value = keep; ta.focus(); autosize(ta); }
   renderChips('thread');
   box = $('#tmsgs'); if (scroll || atBottom) box.scrollTop = box.scrollHeight;
+  refreshTicks();
 }
 function closeThread(){ S.thread = null; S.tmsgs = []; var t = $('#thread'); t.hidden = true; t.innerHTML = ''; if ($('#app').classList.contains('v-thread')) setView('main'); }
 
@@ -712,7 +766,7 @@ function upsert(m){
   }
 }
 function idx(L, id){ for (var i = 0; i < L.length; i++) if (L[i].id === id) return i; return -1; }
-function afterChange(scroll){ if (S.view && S.view.type === 'ch') renderMain(scroll); if (S.thread) renderThread(scroll); }
+function afterChange(scroll){ if (S.view && S.view.type === 'ch') renderMain(scroll); if (S.thread) renderThread(scroll); refreshTicks(); }
 function renderChips(where){
   var el = $('#chips-' + where); if (!el) return;
   el.innerHTML = (S.attach[where] || []).map(function(r, i){ return '<span class="chip">'+(r.k==='c'?'👤 ':'💼 ')+esc(r.label)+'<button data-act="unchip" data-where="'+where+'" data-i="'+i+'" aria-label="Remove">×</button></span>'; }).join('');
@@ -734,11 +788,12 @@ function markRead(){
 /* ---------- polling ---------- */
 function poll(){
   clearTimeout(S.pollT);
-  api('GET', '/poll?since=' + S.rev).then(function(r){
+  api('GET', '/poll?since=' + S.rev + (S.thread ? '&thread=' + S.thread : '')).then(function(r){
     if (r && r.ok){
       var before = {}; S.channels.forEach(function(c){ before[c.id] = c; });
       S.channels = r.channels; S.typing = r.typing || {}; S.online = r.online || [];
       if (r.statuses) S.statuses = r.statuses; if (r.scheduled) S.scheduled = r.scheduled;
+      if (r.thread_rcpt) S.treads = r.thread_rcpt;
       if (r.threads){ S.threadsU = r.threads;
         if (S.thread && r.threads.roots && r.threads.roots[S.thread] && !document.hidden){ var tr = r.threads.roots[S.thread]; S.threadsU.unread -= tr; delete S.threadsU.roots[S.thread]; api('POST', '/threads/' + S.thread + '/read'); } }
       Object.assign(S.refs, r.refs || {});
@@ -753,6 +808,7 @@ function poll(){
       renderSide();
       if ((r.messages || []).length) afterChange(false); else renderTyping();
       if (S.view && S.view.type === 'ch' && !document.hidden) markRead();
+      refreshTicks();
       notifyFresh(fresh);
     }
     S.pollT = setTimeout(poll, document.hidden ? 12000 : 3000);
@@ -970,6 +1026,7 @@ document.addEventListener('click', function(e){
     if (c){ openChannel(c.id); return; } api('POST', '/dm', {user: u}).then(function(r){ if (!r.ok){ toast(r.error); return; } refresh().then(function(){ openChannel(r.id); }); }); return; }
   if ((el = t.closest('[data-go=mentions]'))){ openMentions(); return; }
   if ((el = t.closest('[data-go=threads]'))){ openThreads(); return; }
+  if ((el = t.closest('.rc.grp'))){ tickPop(el); return; }
   if ((el = t.closest('[data-thread]'))){ openThread(+el.dataset.thread); return; }
   if ((el = t.closest('[data-react]'))){ api('POST', '/messages/' + el.dataset.react + '/react', {emoji: el.dataset.e}).then(function(r){ if (r.ok){ upsert(r.message); afterChange(false); } }); return; }
   if ((el = t.closest('[data-jump]'))){ var id = +el.dataset.jump, L = S.msgs[S.view.id] || []; S.view.showPins = false;
@@ -989,6 +1046,9 @@ document.addEventListener('click', function(e){
   else if (a === 'back'){ setView('side'); S.view = null; renderSide(); }
   else if (a === 'threadback') setView('main');
   else if (a === 'latest') openChannel(S.view.id);
+  else if (a === 'rcpt') api('POST', '/prefs', {receipts_off: !S.rcptOff}).then(function(r){ if (!r.ok){ toast(r.error); return; }
+    S.rcptOff = !!r.receipts_off; renderSide(); poll();
+    toast(S.rcptOff ? 'Read receipts off - doosron ko aapka “seen” nahi dikhega, aur aapko bhi unka nahi' : '✓✓ Read receipts on'); });
   else if (a === 'sscope') runSearch(S.view.q, !S.view.scoped);
   else if (a === 'tfollow'){ var on = !S.tfollow; api('POST', '/threads/' + S.thread + '/follow', {follow: on}).then(function(r){ if (!r.ok){ toast(r.error); return; } S.tfollow = r.following; S.threadsU = r.threads; toast(on ? '🔔 Naye replies par notification milegi' : '🔕 Thread unfollow kar diya'); renderThread(false); renderSide(); }); }
   else if (a === 'tresolve'){ var p0 = S.tmsgs[0]; api('POST', '/threads/' + S.thread + '/resolve', {resolved: !p0.resolved_by}).then(function(r){ if (!r.ok){ toast(r.error); return; } upsert(r.message); afterChange(false); toast(r.message.resolved_by ? '✅ Thread resolved' : 'Thread reopened'); }); }
@@ -1266,7 +1326,7 @@ function refresh(){
     var muted = getMuted(); S.channels = r.channels.map(function(c){ c.muted = !!muted[c.id]; return c; });
     S.browse = r.browse; S.emojis = r.emojis; S.ai = r.ai; if (!S.rev) S.rev = r.rev;
     S.statuses = r.statuses || {}; S.presets = r.presets || []; S.stages = r.stages || []; S.digestOff = !!r.digest_off; S.scheduled = r.scheduled || [];
-    S.threadsU = r.threads || {};
+    S.threadsU = r.threads || {}; S.rcptOff = !!r.receipts_off;
     renderSide();
   });
 }

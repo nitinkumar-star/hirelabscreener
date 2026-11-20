@@ -113,6 +113,7 @@
     + '.m .h b{font-size:13px}'
     + '.m .h .tm{font-size:11px;color:#98A2B3}'
     + '.m .tx{font-size:13.5px;overflow-wrap:anywhere}'
+    + '.rc{margin-left:5px;font-size:11.5px;font-weight:700;letter-spacing:-3.5px;padding-right:3px;color:#98A2B3;white-space:nowrap}.rc.read{color:#1D9BF0}'
     + '.m.mine .h b{color:#0F6E56}'
     + '.m.ment{background:#FFF8E1;border-radius:6px;padding:2px 6px;margin:0 -6px}'
     + '.del{color:#98A2B3;font-style:italic}'
@@ -208,6 +209,16 @@
     h += '</div><div class="foot"><span style="color:#667085">'+S.online.filter(function(x){ return x !== S.me; }).length+' online</span><a href="/team-chat">Open full chat ↗</a></div></div>';
     return h;
   }
+  /* WhatsApp-style ticks on my own messages: ✓ sent, ✓✓ delivered, blue ✓✓ seen */
+  function tick(m, c){
+    if (m.user_id !== S.me || m.deleted || !c || c.kind === 'ai') return '';
+    var rc = c.rcpt || {}, who = Object.keys(rc);
+    var read = who.filter(function(u){ return rc[u][0] >= m.id; }), dlv = who.filter(function(u){ return rc[u][1] >= m.id; });
+    var st = who.length && read.length === who.length ? 'read' : who.length && dlv.length === who.length ? 'dlv' : 'sent';
+    var t = c.kind === 'dm' ? (st === 'read' ? 'Seen' : st === 'dlv' ? 'Delivered' : 'Sent')
+      : (read.length ? 'Seen by ' + read.map(function(u){ return uname(+u); }).join(', ') : 'Not seen yet');
+    return '<span class="rc '+st+'" title="'+esc(t)+'" aria-label="'+esc(t)+'">'+(st === 'sent' ? '✓' : '✓✓')+'</span>';
+  }
   function winHtml(w){
     var c = chan(w.id), list = S.msgs[w.id], member = S.member[w.id] !== false;
     var dot = c.kind === 'dm' && S.online.indexOf(dmOther(c)) >= 0 ? ' 🟢' : '';
@@ -234,7 +245,9 @@
         if (!grp) h += '<div class="h"><b>'+esc(m.user_id===S.me?'You':uname(m.user_id))+'</b>'+(m.user_id!==S.me?stEmoji(m.user_id):'')+'<span class="tm">'+esc(tm(m.created_at))+'</span></div>';
         if (m.deleted) h += '<div class="tx del">Message deleted</div>';
         else {
-          if (m.body) h += '<div class="tx">'+fmt(m.body)+(m.edited_at?' <span class="del" style="font-size:11px">(edited)</span>':'')+'</div>';
+          var tk = tick(m, c);
+          if (m.body) h += '<div class="tx">'+fmt(m.body)+(m.edited_at?' <span class="del" style="font-size:11px">(edited)</span>':'')+tk+'</div>';
+          else if (tk) h += '<div class="tx">'+tk+'</div>';
           if (m.file){ var url = '/api/chat/files/' + m.id;
             h += /^image\//.test(m.file.type) ? '<a href="'+url+'?inline=1" target="_blank" rel="noopener"><img class="img" src="'+url+'?inline=1" alt="'+esc(m.file.name)+'" loading="lazy"></a>'
                                               : '<a class="file" href="'+url+'" target="_blank" rel="noopener">📎 <span>'+esc(m.file.name)+'</span></a>'; }
