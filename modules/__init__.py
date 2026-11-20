@@ -76,6 +76,7 @@ _MODULE_NAMES = [
     'perf',            # Speed: indexes on the core tables (candidates, stage_history, events …)
     'learning',        # Learning: Electrical Industry Explorer, edits saved per agency (/learning)
     'team_chat',       # Team Chat: channels, DMs, threads, @mentions, files, candidate/job cards (/team-chat)
+    'chat_calls',      # Team Chat: audio / video calls + screen sharing (WebRTC, /call/<id>)
 ]
 
 _MIGRATIONS = []

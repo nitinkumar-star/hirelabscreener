@@ -444,3 +444,99 @@ def test_browser_times_are_turned_into_ist():
     assert to_ist('2026-11-21T09:00', 0) == '2026-11-21T14:30'         # a browser on UTC
     assert to_ist('2026-11-21T09:00', None) == '2026-11-21T09:00'      # no zone sent
     assert to_ist('tomorrow', -330) == ''
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  calls (audio / video / screen sharing): signalling + call state
+# ══════════════════════════════════════════════════════════════════════════
+def _dm(srv, a, b):
+    return cl(srv, a).post('/api/chat/dm', json={'user': b}).get_json()['id']
+
+
+def test_dm_call_rings_connects_and_is_recorded(srv):
+    from modules import chat_calls
+    dm = _dm(srv, ADMIN, RIYA)
+    a, r = cl(srv, ADMIN), cl(srv, RIYA)
+    j = a.post('/api/chat/channels/%d/call' % dm, json={'kind': 'video'}).get_json()
+    assert j['ok'] and j['call']['kind'] == 'video'
+    cid = j['call']['id']
+    a.post('/api/chat/calls/%d/join' % cid)
+    act = r.get('/api/chat/calls/active').get_json()['calls']
+    ring = [c for c in act if c['id'] == cid][0]
+    assert ring['ringing'] and ring['dm'] and ring['by_name'] == 'Nitin Admin' and ring['people'] == [ADMIN]
+    assert not [c for c in cl(srv, AMIT).get('/api/chat/calls/active').get_json()['calls'] if c['id'] == cid]   # not his chat
+    assert cl(srv, OADMIN).get('/api/chat/calls/%d' % cid).status_code == 404                                  # other agency
+    assert cl(srv, AMIT).post('/api/chat/calls/%d/join' % cid).status_code == 404
+    jr = r.post('/api/chat/calls/%d/join' % cid).get_json()
+    assert jr['peers'] == [ADMIN] and jr['call']['answered']
+    # Riya (the newcomer) sends the offer; Nitin receives it
+    assert r.post('/api/chat/calls/%d/signal' % cid, json={'to': ADMIN, 'type': 'offer', 'data': {'sdp': 'v=0', 'type': 'offer'}}).get_json()['ok']
+    got = a.get('/api/chat/calls/%d/signals?since=0' % cid).get_json()
+    assert [(s['frm'], s['type']) for s in got['signals']] == [(RIYA, 'offer')] and sorted(got['call']['people']) == sorted([ADMIN, RIYA])
+    assert a.get('/api/chat/calls/%d/signals?since=%d' % (cid, got['last'])).get_json()['signals'] == []
+    assert a.post('/api/chat/calls/%d/signal' % cid, json={'to': RIYA, 'type': 'hack', 'data': {}}).status_code == 400
+    # page + ICE servers
+    page = r.get('/call/%d' % cid)
+    assert page.status_code == 200 and 'camera=(self)' in page.headers.get('Permissions-Policy', '')
+    assert r.get('/api/chat/calls/%d' % cid).get_json()['ice'][0]['urls'][0].startswith('stun:')
+    # both leave -> ended, the chat message becomes the record
+    a.post('/api/chat/calls/%d/leave' % cid)
+    r.post('/api/chat/calls/%d/leave' % cid)
+    chat_calls._reap()
+    msgs = a.get('/api/chat/channels/%d/messages' % dm).get_json()['messages']
+    rec = [m for m in msgs if m['id'] == j['call']['msg_id']][0]
+    assert rec['body'].startswith('📞 Video call · ') and '2 people' in rec['body']
+
+
+def test_declined_and_missed_calls(srv):
+    from modules import chat_calls
+    dm = _dm(srv, ADMIN, AMIT)
+    a = cl(srv, ADMIN)
+    c1 = a.post('/api/chat/channels/%d/call' % dm, json={'kind': 'audio'}).get_json()['call']['id']
+    a.post('/api/chat/calls/%d/join' % c1)
+    cl(srv, AMIT).post('/api/chat/calls/%d/decline' % c1)
+    assert a.get('/api/chat/calls/%d/signals?since=0' % c1).get_json()['ended']
+    # not answered within the ring time -> missed, and on Amit's bell
+    conn = srv.get_db(); conn.execute("DELETE FROM notifications WHERE user_id=?", (AMIT,)); conn.commit(); conn.close()
+    c2 = a.post('/api/chat/channels/%d/call' % dm, json={'kind': 'audio'}).get_json()['call']
+    a.post('/api/chat/calls/%d/join' % c2['id'])
+    chat_calls.CALLS[c2['id']]['started'] -= chat_calls.RING_SECONDS + 1
+    chat_calls._reap()
+    msg = [m for m in a.get('/api/chat/channels/%d/messages' % dm).get_json()['messages'] if m['id'] == c2['msg_id']][0]
+    assert msg['body'] == '📞 Missed audio call'
+    bell = [x for x in cl(srv, AMIT).get('/api/notifications').get_json()['notifications'] if x['title'].startswith('Missed audio call')]
+    assert bell and 'Nitin Admin' in bell[0]['title']
+
+
+def test_channel_call_join_banner_and_limits(srv, monkeypatch):
+    from modules import chat_calls
+    gid, _ = general(srv)
+    general(srv, RIYA)
+    a = cl(srv, ADMIN)
+    c = a.post('/api/chat/channels/%d/call' % gid, json={'kind': 'video'}).get_json()['call']
+    again = cl(srv, RIYA).post('/api/chat/channels/%d/call' % gid, json={'kind': 'audio'}).get_json()
+    assert again['joined_existing'] and again['call']['id'] == c['id']            # one call per chat
+    a.post('/api/chat/calls/%d/join' % c['id'])
+    act = [x for x in cl(srv, RIYA).get('/api/chat/calls/active').get_json()['calls'] if x['id'] == c['id']][0]
+    assert not act['dm'] and act['chat'] == 'general'
+    monkeypatch.setattr(chat_calls, 'MAX_PEOPLE', 1)
+    assert cl(srv, RIYA).post('/api/chat/calls/%d/join' % c['id']).status_code == 409
+    a.post('/api/chat/calls/%d/leave' % c['id'])
+    chat_calls._reap()
+    assert not [x for x in a.get('/api/chat/calls/active').get_json()['calls'] if x['id'] == c['id']]
+    aic = [x for x in a.get('/api/chat/state').get_json()['channels'] if x['kind'] == 'ai'][0]['id']
+    assert a.post('/api/chat/channels/%d/call' % aic, json={}).status_code == 400   # no calls with the bot
+
+
+def test_turn_server_from_environment(monkeypatch):
+    from modules import chat_calls
+    monkeypatch.setenv('TURN_URLS', 'turn:turn.example.com:3478, turns:turn.example.com:5349')
+    monkeypatch.setenv('TURN_USERNAME', 'u'); monkeypatch.setenv('TURN_CREDENTIAL', 'p')
+    ice = chat_calls.ice_servers()
+    assert ice[1] == {'urls': ['turn:turn.example.com:3478', 'turns:turn.example.com:5349'], 'username': 'u', 'credential': 'p'}
+
+
+def test_ring_script_served(srv):
+    js = srv.app.test_client().get('/chat-ring.js')
+    assert js.status_code == 200 and b'HLCalls' in js.data
+    assert srv.app.test_client().get('/call/1').status_code == 302                    # signed out
