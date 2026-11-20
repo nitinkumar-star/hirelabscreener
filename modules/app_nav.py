@@ -28,6 +28,7 @@ bp = Blueprint('app_nav', __name__)
 
 NAV_PAGES = re.compile(r'^/(jobmail|talent-map|talent-pool|newsletter|hotlist|my-calls|reengage|backup|schedule|orgmap|admin/storage|finance|team-activity|learning|team-chat)/?$')
 _TAG = b'<script src="/app-nav.js" defer></script>'
+_DOCK = b'<script src="/chat-dock.js" defer></script>'   # Team Chat windows (modules/team_chat.py)
 
 
 @bp.after_app_request
@@ -41,8 +42,9 @@ def _inject(resp):
         body = resp.get_data()
         if b'/app-nav.js' in body:
             return resp
+        tags = _TAG + (b'' if request.path.rstrip('/') == '/team-chat' or b'/chat-dock.js' in body else _DOCK)
         i = body.lower().rfind(b'</body>')
-        body = (body[:i] + _TAG + body[i:]) if i >= 0 else (body + _TAG)
+        body = (body[:i] + tags + body[i:]) if i >= 0 else (body + tags)
         resp.set_data(body)
     except Exception as e:                      # never break a page over the menu
         print('[app_nav] inject skipped: %s' % e)
