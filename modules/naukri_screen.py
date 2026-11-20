@@ -650,6 +650,11 @@ def screen_profiles():
             return _ai_error(core, last_exc)
         order = {k: n for n, k in enumerate(keys)}
         results.sort(key=lambda r: order.get(r['key'], 0))
+        try:
+            n_dupes = mark_dupes(conn, m, profiles, results)
+        except Exception as exc:
+            print('[naukri-screen] duplicate check failed: %s: %s' % (type(exc).__name__, exc))
+            n_dupes = 0
         for r in results:
             f = facts.get(r['key']) or {}
             r['facts'] = {'exp': f.get('exp'), 'ctc': f.get('ctc'), 'notice': f.get('notice'),
@@ -662,7 +667,7 @@ def screen_profiles():
             conn.commit()
         except Exception as e:
             print('[naukri-screen] log failed: %s' % e)
-        return jsonify({'ok': True, 'results': results, 'rules_used': len(rules),
+        return jsonify({'ok': True, 'results': results, 'rules_used': len(rules), 'duplicates': n_dupes,
                         'mandate_role': m['role'], 'mandate_client': m['client']})
     finally:
         conn.close()
@@ -825,13 +830,134 @@ def match_level(card, cand):
     if card.get('ref') and cand.get('naukri_ref') and card['ref'] == cand['naukri_ref'] \
             and names_compatible(card.get('name'), cand.get('name')):
         return 'exact'
-    if norm_name(card.get('name')) != norm_name(cand.get('name')) or not norm_name(card.get('name')):
+    a, b = norm_name(card.get('name')), norm_name(cand.get('name'))
+    if not a or not b:
+        return None
+    if a != b:
+        # a middle name on one side only ("Rahul Kumar Sharma" / "Rahul Sharma"):
+        # the same person only when 2+ words agree AND the card names their company
+        ta, tb = set(a.split()), set(b.split())
+        small, big = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+        if len(small) >= 2 and small <= big and company_in(card.get('text') or '', cand.get('company')):
+            return 'strong'
         return None
     # strong  same name AND the card names the candidate's company as a phrase.
     #         The role is NOT used: every card in a search shares the role words.
     if company_in(card.get('text') or '', cand.get('company')):
         return 'strong'
     return 'name'
+
+
+def find_dupes(conn, m, cards):
+    """[{key, best, others}] for the cards that are already in this agency's
+    HireLab (the caller's access: a recruiter only sees their jobs + the pool)."""
+    co = effective_company_id()
+    try:
+        from modules.access import allowed_mandate_ids, _pool_id
+        allowed = allowed_mandate_ids(conn)
+        pool_ok = _pool_id(conn)
+    except ImportError:
+        allowed, pool_ok = None, 0
+    try:
+        from modules.shared import central_mandate_id
+        pool = int(central_mandate_id() or 0)
+    except Exception:
+        pool = 0
+    mcache = {}
+
+    def mand(mid):
+        if mid not in mcache:
+            r = conn.execute('SELECT id, role, client, status FROM mandates WHERE id=? AND owner_id=?', (mid, co)).fetchone()
+            mcache[mid] = dict(r) if r else None
+        return mcache[mid]
+
+    has_ref = True
+    out = []
+    for c in cards:
+        key = str(c.get('key') or '')[:80]
+        card = {'name': str(c.get('name') or '')[:80], 'text': redact(c.get('text'))[:1200],
+                'ref': str(c.get('ref') or '')[:120]}
+        nn = norm_name(card['name'])
+        if not key or (not nn and not card['ref']):
+            continue
+        rows = []
+        if card['ref'] and has_ref:
+            try:
+                rows += conn.execute('SELECT id, name, company, designation, mandate_id, stage, naukri_ref FROM candidates '
+                                     'WHERE owner_id=? AND naukri_ref=? LIMIT 20', (co, card['ref'])).fetchall()
+            except Exception:
+                has_ref = False
+        # look up by the name's distinctive words (not only the first one, so a
+        # middle name on one side does not hide the match)
+        words = sorted((w for w in nn.split() if len(w) >= 3), key=len, reverse=True)[:3] or nn.split()[:1]
+        if words:
+            sel = 'SELECT id, name, company, designation, mandate_id, stage' + (', naukri_ref' if has_ref else '') + \
+                  ' FROM candidates WHERE owner_id=? AND (' + ' OR '.join('LOWER(name) LIKE ?' for _ in words) + ') LIMIT 400'
+            rows += conn.execute(sel, [co] + ['%' + w + '%' for w in words]).fetchall()
+        hits, seen = [], set()
+        for r in rows:
+            r = dict(r)
+            if r['id'] in seen:
+                continue
+            seen.add(r['id'])
+            mid = int(r['mandate_id'] or 0)
+            if allowed is not None and mid not in allowed and not (mid == pool_ok and mid):
+                continue
+            lvl = match_level(card, r)
+            if not lvl:
+                continue
+            mm = mand(mid)
+            if not mm:
+                continue
+            where = 'this_job' if mid == int(m['id']) else ('pool' if mid == pool else 'other_job')
+            if lvl == 'name' and where != 'this_job':
+                continue                                # same name elsewhere is just noise
+            hits.append({'candidate_id': r['id'], 'mandate_id': mid, 'where': where, 'level': lvl,
+                         'stage': r['stage'] or '', 'job': mm['role'] or '', 'client': mm['client'] or '',
+                         'job_status': mm['status'] or '', 'name': r['name'] or ''})
+        if not hits:
+            continue
+        rank = {'exact': 0, 'strong': 1, 'name': 2}
+        wrank = {'this_job': 0, 'other_job': 1, 'pool': 2}
+        hits.sort(key=lambda h: (wrank[h['where']], rank[h['level']]))
+        out.append({'key': key, 'best': hits[0], 'others': hits[1:5]})
+    return out
+
+
+_WHERE_TXT = {'this_job': 'already in THIS job', 'other_job': 'already in another job', 'pool': 'already in the Central Database'}
+
+
+def dupe_label(best):
+    sure = best['level'] in ('exact', 'strong')
+    txt = ('Already in HireLab' if sure else 'Maybe already in HireLab (same name)') + ': ' + _WHERE_TXT.get(best['where'], '')
+    if best['where'] != 'pool' and best.get('job'):
+        txt += ' \u2014 ' + best['job'] + (' (%s)' % best['client'] if best.get('client') else '')
+    if best.get('stage'):
+        txt += ' \u00b7 ' + best['stage']
+    return txt
+
+
+def mark_dupes(conn, m, profiles, results):
+    """Put the duplicate check on each screening result, so the panel shows it
+    even when the extension does not call /dupes (Search page tab)."""
+    by_key = {str(p.get('key') or '')[:80]: p for p in profiles if isinstance(p, dict)}
+    cards = []
+    for k, p in by_key.items():
+        txt = redact(p.get('text'))[:MAX_PROFILE_CHARS]
+        name = str(p.get('name') or '').strip() or (txt.strip().split('\n')[0][:80] if txt.strip() else '')
+        cards.append({'key': k, 'name': name, 'text': txt, 'ref': p.get('ref') or p.get('naukri_ref') or ''})
+    found = {d['key']: d for d in find_dupes(conn, m, cards)}
+    n = 0
+    for r in results:
+        d = found.get(r.get('key'))
+        if not d:
+            continue
+        n += 1
+        label = dupe_label(d['best'])
+        r['dupe'] = dict(d['best'], label=label, others=d['others'])
+        r['flags'] = ['\u26a0 ' + label] + [f for f in (r.get('flags') or []) if f]
+        r['reason'] = '\u26a0 ' + label + '. ' + (r.get('reason') or '')
+    return n
 
 
 @bp.route('/dupes', methods=['POST', 'OPTIONS'])
@@ -847,74 +973,6 @@ def screen_dupes():
         m, err = _load_mandate(conn, d.get('mandate_id'))
         if err:
             return err
-        co = effective_company_id()
-        try:
-            from modules.access import allowed_mandate_ids, _pool_id
-            allowed = allowed_mandate_ids(conn)
-            pool_ok = _pool_id(conn)
-        except ImportError:
-            allowed, pool_ok = None, 0
-        try:
-            from modules.shared import central_mandate_id
-            pool = int(central_mandate_id() or 0)
-        except Exception:
-            pool = 0
-        mcache = {}
-
-        def mand(mid):
-            if mid not in mcache:
-                r = conn.execute('SELECT id, role, client, status FROM mandates WHERE id=? AND owner_id=?', (mid, co)).fetchone()
-                mcache[mid] = dict(r) if r else None
-            return mcache[mid]
-
-        has_ref = True
-        out = []
-        for c in cards:
-            key = str(c.get('key') or '')[:80]
-            card = {'name': str(c.get('name') or '')[:80], 'text': redact(c.get('text'))[:1200],
-                    'ref': str(c.get('ref') or '')[:120]}
-            nn = norm_name(card['name'])
-            if not key or (not nn and not card['ref']):
-                continue
-            rows = []
-            if card['ref'] and has_ref:
-                try:
-                    rows += conn.execute('SELECT id, name, company, designation, mandate_id, stage, naukri_ref FROM candidates '
-                                         'WHERE owner_id=? AND naukri_ref=? LIMIT 20', (co, card['ref'])).fetchall()
-                except Exception:
-                    has_ref = False
-            first = (nn.split() or [''])[0]
-            if first:
-                sel = 'SELECT id, name, company, designation, mandate_id, stage' + (', naukri_ref' if has_ref else '') + \
-                      ' FROM candidates WHERE owner_id=? AND LOWER(name) LIKE ? LIMIT 300'
-                rows += conn.execute(sel, (co, '%' + first + '%')).fetchall()
-            hits, seen = [], set()
-            for r in rows:
-                r = dict(r)
-                if r['id'] in seen:
-                    continue
-                seen.add(r['id'])
-                mid = int(r['mandate_id'] or 0)
-                if allowed is not None and mid not in allowed and not (mid == pool_ok and mid):
-                    continue
-                lvl = match_level(card, r)
-                if not lvl:
-                    continue
-                mm = mand(mid)
-                if not mm:
-                    continue
-                where = 'this_job' if mid == int(m['id']) else ('pool' if mid == pool else 'other_job')
-                if lvl == 'name' and where != 'this_job':
-                    continue                                # same name elsewhere is just noise
-                hits.append({'candidate_id': r['id'], 'mandate_id': mid, 'where': where, 'level': lvl,
-                             'stage': r['stage'] or '', 'job': mm['role'] or '', 'client': mm['client'] or '',
-                             'job_status': mm['status'] or ''})
-            if not hits:
-                continue
-            rank = {'exact': 0, 'strong': 1, 'name': 2}
-            wrank = {'this_job': 0, 'other_job': 1, 'pool': 2}
-            hits.sort(key=lambda h: (wrank[h['where']], rank[h['level']]))
-            out.append({'key': key, 'best': hits[0], 'others': hits[1:5]})
-        return jsonify({'ok': True, 'dupes': out, 'mandate_id': m['id']})
+        return jsonify({'ok': True, 'dupes': find_dupes(conn, m, cards), 'mandate_id': m['id']})
     finally:
         conn.close()

@@ -291,3 +291,33 @@ def test_dupes_no_false_positives(srv):
     assert 'ref' not in got                                 # a ref on a different name is not a match
     assert got['ok']['level'] == 'strong'
     assert got['ok2']['level'] == 'exact'
+
+
+# ── Nov 2026: the Search-page tab never called /dupes -> the check rides on /screen ──
+def test_screen_results_carry_the_duplicate_flag(srv, ds):
+    _seed_dupes(srv)
+    ds.answer = echo_answer
+    profiles = [{'key': 'a', 'name': 'Asha Verma', 'text': 'Asha Verma\nSolar O&M Engineer at Azure Power 8 yrs 12 Lacs'},
+                {'key': 'b', 'text': 'Ravi Kumar\nSite Engineer at L&T Construction, solar 6 yrs'},      # no name field
+                {'key': 'n', 'name': 'New Person', 'text': 'New Person\nSolar engineer at Waaree 7 yrs'}]
+    j = cl(srv, ADMIN).post('/api/extension/screen', json={'mandate_id': M_A, 'profiles': profiles}).get_json()
+    assert j['ok'] and j['duplicates'] == 2, j
+    r = {x['key']: x for x in j['results']}
+    assert r['a']['dupe']['where'] == 'this_job' and r['a']['dupe']['stage'] == 'Interested'
+    assert r['a']['flags'][0].startswith('⚠ Already in HireLab: already in THIS job')
+    assert r['a']['reason'].startswith('⚠ Already in HireLab')
+    assert r['b']['dupe']['where'] == 'other_job' and 'Old Wind Job' in r['b']['flags'][0]
+    assert 'dupe' not in r['n'] and not r['n']['reason'].startswith('⚠')
+
+
+def test_middle_name_matches_only_with_the_company(srv):
+    _seed_dupes(srv)
+    c = cl(srv, ADMIN)
+    cards = [{'key': 'mid', 'name': 'Rahul Kumar Mehta', 'text': 'Engineer at Tata Power Delhi'},
+             {'key': 'mid2', 'name': 'Asha Rani Verma', 'text': 'Solar O&M Engineer at Azure Power'},
+             {'key': 'other', 'name': 'Rahul Kumar Mehta', 'text': 'Engineer at Adani Green'},
+             {'key': 'one', 'name': 'Rahul', 'text': 'Engineer at Tata Power'}]
+    got = {x['key']: x['best'] for x in c.post('/api/extension/screen/dupes', json={'mandate_id': M_A, 'cards': cards}).get_json()['dupes']}
+    assert got['mid']['level'] == 'strong' and got['mid']['candidate_id'] == 97203
+    assert got['mid2']['level'] == 'strong' and got['mid2']['candidate_id'] == 97201
+    assert 'other' not in got and 'one' not in got          # extra name word without the company / one word only
