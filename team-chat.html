@@ -193,6 +193,12 @@ a{color:var(--accent)}
 .schedbar button{border:0;background:none;color:var(--accent);font-weight:700;cursor:pointer;text-decoration:underline}
 .aihead{font-size:12.5px;color:var(--muted)}
 .pick.emo label{padding:4px 12px}
+/* ---- calls ---- */
+.hb.call{font-size:15px;padding:5px 9px}
+.hb.live{background:#E5484D;border-color:#E5484D;color:#fff;font-weight:700;animation:lv 1.6s ease-in-out infinite}
+.hb.live:hover{color:#fff;filter:brightness(1.05)}
+@keyframes lv{50%{box-shadow:0 0 0 4px rgba(229,72,77,.25)}}
+.joinc{border:0;background:#E5484D;color:#fff;border-radius:999px;padding:2px 12px;font-weight:700;font-size:12.5px;cursor:pointer;margin:0 4px}
 /* ---- phones ---- */
 @media (max-width:820px){
   .app{grid-template-columns:1fr}
@@ -222,6 +228,7 @@ a{color:var(--accent)}
   <section class="main" id="main" aria-label="Messages"><div class="empty"><h3>Loading…</h3></div></section>
   <aside class="thread" id="thread" hidden aria-label="Thread"></aside>
 </div>
+<script src="/chat-ring.js"></script>
 <script>
 (function(){
 'use strict';
@@ -281,6 +288,8 @@ function fmt(body){
   s = s.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
   s = s.replace(/&lt;@(\d+)&gt;/g, function(_, id){ return '<span class="at'+(+id === S.me ? ' me' : '')+'">@' + esc(uname(+id)) + '</span>'; });
   s = s.replace(/(^|\s)@(channel|here|everyone)\b/gi, '$1<span class="at me">@$2</span>');
+  s = s.replace(/&lt;call:(\d+)&gt;/g, function(_, id){ var c = window.HLCalls && HLCalls.active[id];
+    return c ? '<button class="joinc" data-act="joincall" data-call="'+id+'">🔴 Join · '+c.people.length+' in call</button>' : ''; });
   s = s.replace(/&lt;([cm]):(\d+)&gt;/g, function(_, k, id){ var r = S.refs[k + ':' + id] || {}; return '<a class="rlink" href="'+refHref(r, k, id)+'">' + esc(refName(r, k)) + '</a>'; });
   s = s.replace(/\n/g, '<br>');
   s = s.replace(/\u0000B(\d+)\u0000/g, function(_, i){ return '<pre>' + esc(blocks[+i]) + '</pre>'; });
@@ -316,7 +325,7 @@ function cardActs(id, r){
     + '<button data-cact="job" data-cid="'+id+'" title="Put on another job">➕ Add to job</button></div>';
 }
 function plain(body){
-  return String(body || '').replace(/<@(\d+)>/g, function(_, id){ return '@' + uname(+id); })
+  return String(body || '').replace(/<call:\d+>\s*/g, '').replace(/<@(\d+)>/g, function(_, id){ return '@' + uname(+id); })
     .replace(/<([cm]):(\d+)>/g, function(_, k, id){ return refName(S.refs[k + ':' + id] || {}, k); }).trim();
 }
 function mentionsMe(body){ return new RegExp('<@' + S.me + '>').test(body||'') || /(^|\s)@(channel|here|everyone)\b/i.test(body||''); }
@@ -435,6 +444,12 @@ function renderMain(scroll, focusMsg){
   if (c.kind === 'dm' && stat(dmOther(c))){ var ds = stat(dmOther(c)); h += '<span class="dmstatus">'+esc((ds.emoji||'')+' '+(ds.text||''))+(ds.until?' · until '+esc(fmtWhen(ds.until)):'')+'</span>'; }
   if (c.kind === 'channel') h += '<span class="tp" data-act="topic" title="Edit topic">'+(c.topic ? esc(c.topic) : 'Add a topic')+'</span>';
   h += '<span class="sp"></span>';
+  if (c.kind !== 'ai' && !c.archived && S.member[v.id] !== false){
+    var live = window.HLCalls ? Object.keys(HLCalls.active).map(function(k){ return HLCalls.active[k]; }).filter(function(x){ return x.channel_id === v.id; })[0] : null;
+    if (live) h += '<button class="hb live" data-act="joincall" data-call="'+live.id+'" title="Join the call">🔴 <span class="lb">Join call · </span>'+live.people.length+'</button>';
+    else h += '<button class="hb call" data-act="call" data-kind="audio" title="Start an audio call" aria-label="Start an audio call">📞</button>'
+      + '<button class="hb call" data-act="call" data-kind="video" title="Start a video call (screen sharing inside)" aria-label="Start a video call">🎥</button>';
+  }
   if (S.ai && c.kind !== 'ai') h += '<button class="hb ai" data-act="catchup" title="AI summary of what you missed">✨ <span class="lb">Catch me up</span></button>';
   if (c.kind === 'ai') h += '<button class="hb" data-act="digest" title="Turn the morning summary on or off">☀️ <span class="lb">Morning summary: '+(S.digestOff?'off':'on')+'</span></button>';
   if ((S.pins[v.id]||[]).length) h += '<button class="hb" data-act="pins" title="Pinned messages">📌 '+S.pins[v.id].length+'</button>';
@@ -882,6 +897,8 @@ document.addEventListener('click', function(e){
   else if (a === 'chmenu') chMenu(el);
   else if (a === 'topic') editTopic();
   else if (a === 'status') statusDlg();
+  else if (a === 'call'){ if (window.HLCalls) HLCalls.start(S.view.id, el.dataset.kind); }
+  else if (a === 'joincall'){ if (window.HLCalls) HLCalls.join(+el.dataset.call); }
   else if (a === 'later') laterPop(el, w);
   else if (a === 'schedlist') schedList();
   else if (a === 'digest') api('POST', '/prefs', {digest_off: !S.digestOff}).then(function(r){ if (r.ok){ S.digestOff = !!r.digest_off; toast(S.digestOff ? 'Morning summary turned off' : '☀️ Morning summary on - every day after 8:30 AM'); renderMain(false); } });
@@ -1135,6 +1152,7 @@ function openFirst(){
   if (window.innerWidth <= 820 && !want){ setView('side'); $('#main').innerHTML = ''; return; }
   if (c) openChannel(c.id);
 }
+if (window.HLCalls) HLCalls.on(function(){ if (S.view && S.view.type === 'ch') afterChange(false); });
 refresh().then(function(){
   var q = new URLSearchParams(location.search);
   if (q.get('mentions')) openMentions(); else openFirst();

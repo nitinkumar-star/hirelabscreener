@@ -55,11 +55,13 @@
     s = s.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
     s = s.replace(/&lt;@(\d+)&gt;/g, function(_, id){ return '<span class="at'+(+id === S.me ? ' me' : '')+'">@' + esc(uname(+id)) + '</span>'; });
     s = s.replace(/(^|\s)@(channel|here|everyone)\b/gi, '$1<span class="at me">@$2</span>');
+    s = s.replace(/&lt;call:(\d+)&gt;/g, function(_, id){ var c = window.HLCalls && HLCalls.active[id];
+      return c ? '<button class="joinc" data-a="joincall" data-call="'+id+'">🔴 Join · '+c.people.length+'</button>' : ''; });
     s = s.replace(/&lt;([cm]):(\d+)&gt;/g, function(_, k, id){ var r = S.refs[k + ':' + id], h = refHref(r, k, id);
       return h ? '<a class="ref" href="'+h+'">'+(k==='c'?'👤 ':'💼 ')+esc(refName(r, k))+(r && r.stage ? ' · ' + esc(r.stage) : '')+'</a>' : '<span class="ref dim">'+(k==='c'?'👤 ':'💼 ')+esc(refName(r, k))+'</span>'; });
     return s.replace(/\n/g, '<br>');
   }
-  function plain(body){ return String(body || '').replace(/<@(\d+)>/g, function(_, id){ return '@' + uname(+id); }).replace(/<([cm]):(\d+)>/g, function(_, k, id){ return refName(S.refs[k + ':' + id], k); }).trim(); }
+  function plain(body){ return String(body || '').replace(/<call:\d+>\s*/g, '').replace(/<@(\d+)>/g, function(_, id){ return '@' + uname(+id); }).replace(/<([cm]):(\d+)>/g, function(_, k, id){ return refName(S.refs[k + ':' + id], k); }).trim(); }
   function mentionsMe(b){ return new RegExp('<@' + S.me + '>').test(b || '') || /(^|\s)@(channel|here|everyone)\b/i.test(b || ''); }
   function maxWins(){ var w = window.innerWidth; return w < 700 ? 1 : Math.max(1, Math.min(3, Math.floor((w - 380) / 336))); }
   function isPhone(){ return window.innerWidth < 700; }
@@ -129,6 +131,8 @@
     + '.day{text-align:center;font-size:11px;color:#98A2B3;font-weight:700;margin:10px 0 2px}'
     + '.more{display:block;margin:4px auto;border:1px solid #D0D5DD;background:#fff;border-radius:7px;font-size:12px;padding:3px 10px;cursor:pointer}'
     + '.typing{font-size:11.5px;color:#667085;padding:0 12px;height:16px}'
+    + '.joinc{border:0;background:#E5484D;color:#fff;border-radius:999px;padding:1px 10px;font-weight:700;font-size:12px;cursor:pointer}'
+    + '.wh .ib.live{background:#E5484D}'
     + '.wj{padding:10px;border-top:1px solid #EAECF0;text-align:center;font-size:13px}'
     + '.wc{border-top:1px solid #EAECF0;padding:6px 8px 8px;display:flex;align-items:flex-end;gap:4px}'
     + '.wc textarea{flex:1;border:1px solid #D0D5DD;border-radius:16px;padding:7px 12px;font-size:13.5px;resize:none;outline:0;max-height:110px;min-height:34px;line-height:1.35}'
@@ -211,6 +215,7 @@
       + '<div class="wh" data-a="toggle" data-w="'+w.id+'">'+(c.kind==='ai'?av(0, 26):c.kind==='dm'?av(dmOther(c), 26):'<span class="hash" style="width:26px;height:26px;flex-basis:26px">#</span>')
       + '<span class="t">'+esc(title(c))+dot+(c.kind==='dm'?stEmoji(dmOther(c)):'')+'</span>'+(w.min && un ? '<span class="badge">'+un+'</span>' : '')
       + '<button class="ib" data-a="toggle" data-w="'+w.id+'" title="'+(w.min?'Open':'Minimise')+'" aria-label="'+(w.min?'Open':'Minimise')+'">'+(w.min?'▴':'▁')+'</button>'
+      + callBtns(c)
       + '<a class="ib" href="/team-chat#c'+w.id+'" title="Open in full Team Chat" aria-label="Open in full Team Chat">↗</a>'
       + '<button class="ib" data-a="close" data-w="'+w.id+'" title="Close" aria-label="Close">✕</button></div>';
     if (w.min) return h + '</section>';
@@ -245,6 +250,13 @@
       + '<textarea rows="1" data-w="'+w.id+'" placeholder="Message '+esc(title(c))+'" aria-label="Message '+esc(title(c))+'"></textarea>'
       + '<button class="ib send" data-a="send" data-w="'+w.id+'" title="Send" aria-label="Send">➤</button></div>';
     return h + '</section>';
+  }
+  function callBtns(c){
+    if (c.kind === 'ai' || c.archived || !window.HLCalls) return '';
+    var live = Object.keys(HLCalls.active).map(function(k){ return HLCalls.active[k]; }).filter(function(x){ return x.channel_id === c.id; })[0];
+    if (live) return '<button class="ib live" data-a="joincall" data-call="'+live.id+'" title="Join the call" aria-label="Join the call">🔴</button>';
+    return '<button class="ib" data-a="call" data-kind="audio" data-w="'+c.id+'" title="Audio call" aria-label="Audio call">📞</button>'
+      + '<button class="ib" data-a="call" data-kind="video" data-w="'+c.id+'" title="Video call" aria-label="Video call">🎥</button>';
   }
   function typingText(id){ var who = (S.typing[id] || []).map(uname); return who.length ? who.join(', ') + (who.length > 1 ? ' are' : ' is') + ' typing…' : ''; }
   function autosize(t){ t.style.height = 'auto'; t.style.height = Math.min(110, t.scrollHeight) + 'px'; }
@@ -343,6 +355,8 @@
       var w0 = S.wins.filter(function(w){ return w.id === id; })[0]; if (w0 && !w0.min) setTimeout(function(){ var t = root.querySelector('textarea[data-w="'+id+'"]'); if (t) t.focus(); }, 30); }
     else if (a === 'close'){ e.stopPropagation(); S.wins = S.wins.filter(function(w){ return w.id !== id; }); delete S.flash[id]; persist(); render(); }
     else if (a === 'send') send(id);
+    else if (a === 'call'){ e.stopPropagation(); if (window.HLCalls) HLCalls.start(id, el.dataset.kind); }
+    else if (a === 'joincall'){ e.stopPropagation(); if (window.HLCalls) HLCalls.join(+el.dataset.call); }
     else if (a === 'file'){ var fi = document.createElement('input'); fi.type = 'file'; fi.onchange = function(){ if (fi.files[0]) upload(id, fi.files[0]); }; fi.click(); }
     else if (a === 'join') api('POST', '/channels/' + id + '/join').then(function(){ S.member[id] = true; delete S.msgs[id]; refreshState().then(function(){ load(id); }); });
     else if (a === 'older'){ var L = S.msgs[id] || [];
@@ -382,10 +396,16 @@
       S.me = r.me; S.ulist = r.users; S.users = {}; r.users.forEach(function(u){ S.users[u.id] = u; });
       S.channels = r.channels; S.emojis = r.emojis; if (!S.rev) S.rev = r.rev; S.statuses = r.statuses || {};
       S.wins = S.wins.filter(function(w){ return chan(w.id); });
-      if (!S.ready){ S.ready = true; document.body.appendChild(host); }
+      if (!S.ready){ S.ready = true; document.body.appendChild(host); loadRing(); }
       render(); S.wins.forEach(function(w){ load(w.id); });
       return r;
     });
+  }
+  function loadRing(){
+    if (window.HLCalls){ HLCalls.on(render); return; }
+    var sc = document.createElement('script'); sc.src = '/chat-ring.js';
+    sc.onload = function(){ if (window.HLCalls) HLCalls.on(render); render(); };
+    document.head.appendChild(sc);
   }
   function poll(){
     clearTimeout(S.timer);
