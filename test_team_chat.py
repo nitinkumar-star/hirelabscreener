@@ -548,3 +548,131 @@ def test_composer_stays_on_screen_css(srv):
     html = cl(srv, RIYA).get('/team-chat').get_data(as_text=True)
     assert 'grid-template-rows:minmax(0,1fr)' in html
     assert '.main{display:flex;flex-direction:column;min-width:0;min-height:0' in html
+
+
+# ── search (Nov 2026) ───────────────────────────────────────────────────────
+def test_search_parser():
+    from modules.team_chat import parse_query
+    f = parse_query('from:riya in:#sales has:file "notice period" python x')
+    assert f['from'] == ['riya'] and f['in'] == ['sales'] and f['has'] == {'file'}
+    assert f['terms'] == ['notice period', 'python', 'x']
+
+
+def test_search_candidate_names_phrases_filters_and_access(srv):
+    gid, _ = general(srv)
+    general(srv, RIYA)
+    a, r = cl(srv, ADMIN), cl(srv, RIYA)
+    a.post('/api/chat/channels/%d/messages' % gid, json={'body': 'Please call her today <c:%d>' % C_R})
+    a.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zq notice period is two months'})
+    a.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zq period of notice unclear'})
+    r.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zq from riya with file talk'})
+    # a candidate's name finds the message that only carries the <c:ID> card
+    hits = r.get('/api/chat/search?q=asha verma').get_json()['messages']
+    assert any('<c:%d>' % C_R in m['body'] for m in hits)
+    # but not for someone who cannot see that candidate (the admin sees all, Amit has no access)
+    hits = cl(srv, AMIT).get('/api/chat/search?q=asha verma').get_json()['messages']
+    assert not any('<c:%d>' % C_R in m['body'] for m in hits)
+    # "exact phrase"
+    body = lambda q: [m['body'] for m in a.get('/api/chat/search', query_string={'q': q}).get_json()['messages']]
+    assert body('"notice period" zq') == ['zq notice period is two months']
+    assert len(body('notice period zq')) == 2
+    # from: / in: / has:
+    assert body('zq from:riya') == ['zq from riya with file talk']
+    assert body('zq in:#general') and not body('zq in:#nochannel')
+    assert body('has:candidate asha') and not body('zq has:file')
+    # short words do not pull in every message that @mentions someone with that letter in their name
+    a.post('/api/chat/channels/%d/messages' % gid, json={'body': 'hey <@%d> nothing else' % RIYA})
+    assert 'hey <@%d> nothing else' % RIYA not in body('ri')
+    assert 'hey <@%d> nothing else' % RIYA in body('riya')
+
+
+def test_messages_around_an_old_one(srv):
+    a = cl(srv, ADMIN)
+    chid = a.post('/api/chat/channels', json={'name': 'zz-history'}).get_json()['id']
+    ids = [a.post('/api/chat/channels/%d/messages' % chid, json={'body': 'old %d' % i}).get_json()['message']['id']
+           for i in range(120)]
+    target = ids[10]
+    r = a.get('/api/chat/channels/%d/messages?around=%d' % (chid, target)).get_json()
+    got = [m['id'] for m in r['messages']]
+    assert target in got and r['more'] is False and r['newer'] is True
+    assert got == sorted(got) and len(got) <= 50
+    latest = a.get('/api/chat/channels/%d/messages' % chid).get_json()
+    assert latest['newer'] is False and latest['messages'][-1]['id'] == ids[-1]
+
+
+# ── threads (Nov 2026) ──────────────────────────────────────────────────────
+def test_thread_follow_unread_notify_and_read(srv):
+    gid, _ = general(srv)
+    general(srv, RIYA)
+    a, r, m = cl(srv, ADMIN), cl(srv, RIYA), cl(srv, AMIT)
+    root = a.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zt who can take the ABB role?'}).get_json()['message']['id']
+    from modules import team_chat
+    team_chat._seen.clear()                 # Nitin is away from the chat
+    r.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zt I can', 'parent_id': root})
+    # the root's author follows automatically and sees an unread count + a bell
+    st = a.get('/api/chat/state').get_json()['threads']
+    assert st['roots'].get(str(root)) == 1 and st['unread'] >= 1
+    conn = srv.get_db()
+    n = conn.execute("SELECT * FROM notifications WHERE user_id=? AND kind='chat_thread' AND acked_at='' ORDER BY id DESC",
+                     (ADMIN,)).fetchone()
+    assert n and 'Riya Sharma: zt I can' in n['body']
+    # a mention in a reply: that person follows too (and gets the mention bell, not a duplicate thread bell)
+    r.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zt <@%d> can you help?' % AMIT, 'parent_id': root})
+    assert str(root) in m.get('/api/chat/poll?since=1').get_json()['threads']['roots']
+    assert not conn.execute("SELECT 1 FROM notifications WHERE user_id=? AND kind='chat_thread'", (AMIT,)).fetchone()
+    conn.close()
+    # the Threads list
+    t = a.get('/api/chat/threads').get_json()
+    item = [x for x in t['threads'] if x['root'] == root][0]
+    assert item['unread'] == 2 and len(item['latest']) == 2
+    # opening the thread reads it; the replier's own replies never count
+    th = a.get('/api/chat/messages/%d/thread' % root).get_json()
+    assert th['following'] is True and th['messages'][0]['participants'][0] == RIYA
+    assert str(root) not in a.get('/api/chat/state').get_json()['threads']['roots']
+    assert str(root) not in r.get('/api/chat/state').get_json()['threads']['roots']
+    # unfollow: no more counts
+    a.post('/api/chat/threads/%d/follow' % root, json={'follow': False})
+    r.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zt one more', 'parent_id': root})
+    assert str(root) not in a.get('/api/chat/state').get_json()['threads']['roots']
+    # outsiders cannot touch it
+    assert cl(srv, OADMIN).post('/api/chat/threads/%d/follow' % root, json={}).status_code == 404
+    assert cl(srv, OADMIN).get('/api/chat/messages/%d/thread' % root).status_code == 404
+
+
+def test_thread_also_send_to_channel_and_resolve(srv):
+    gid, _ = general(srv)
+    a, r = cl(srv, ADMIN), cl(srv, RIYA)
+    root = a.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zb question'}).get_json()['message']['id']
+    quiet = r.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zb quiet', 'parent_id': root}).get_json()['message']
+    loud = r.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zb loud', 'parent_id': root, 'broadcast': 1}).get_json()['message']
+    assert loud['broadcast'] == 1 and quiet['broadcast'] == 0
+    ids = [m['id'] for m in a.get('/api/chat/channels/%d/messages' % gid).get_json()['messages']]
+    assert loud['id'] in ids and quiet['id'] not in ids and root in ids
+    # resolve / reopen
+    x = r.post('/api/chat/threads/%d/resolve' % root, json={'resolved': True}).get_json()
+    assert x['message']['resolved_by'] == RIYA and x['message']['resolved_at']
+    x = a.post('/api/chat/threads/%d/resolve' % quiet['id'], json={'resolved': False}).get_json()   # a reply id resolves its root
+    assert x['message']['id'] == root and x['message']['resolved_by'] == 0
+
+
+def test_thread_ai_summary(srv, monkeypatch):
+    gid, _ = general(srv)
+    a = cl(srv, ADMIN)
+    root = a.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zs plan for <c:%d>' % C_A}).get_json()['message']['id']
+    a.post('/api/chat/channels/%d/messages' % gid, json={'body': 'zs call on Monday', 'parent_id': root})
+    seen = {}
+
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {'choices': [{'message': {'content': '- Call on Monday (Nitin)'}}]}
+
+    def fake(key, payload, timeout=60, endpoint=''):
+        seen['text'] = payload['messages'][1]['content']
+        return R()
+    monkeypatch.setattr(srv, 'call_deepseek', fake)
+    real = srv.get_setting
+    monkeypatch.setattr(srv, 'get_setting', lambda k, default='': 'test-key' if k == 'deepseek_api_key' else real(k, default))
+    j = a.post('/api/chat/threads/%d/summary' % root).get_json()
+    assert j['ok'] and 'Monday' in j['summary'] and 'Secret Sharma' in seen['text']

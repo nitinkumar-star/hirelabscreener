@@ -176,6 +176,39 @@ a{color:var(--accent)}
 .err{color:var(--crit);font-size:13px;margin:6px 0}
 .res .m{grid-template-columns:38px minmax(0,1fr);cursor:pointer}
 .res .where{font-size:12px;color:var(--muted);font-weight:600}
+mark{background:#FDE68A;color:inherit;border-radius:3px;padding:0 1px}
+.shelp{display:flex;flex-wrap:wrap;gap:6px;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--soft);font-size:12.5px;color:var(--muted);align-items:center}
+.shelp button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:2px 10px;font-size:12px;cursor:pointer;color:var(--ink)}
+.shelp button:hover,.shelp button.on{border-color:var(--brand);background:var(--brand-soft)}
+.shelp .n{margin-left:auto;font-weight:600}
+.jumpl{position:sticky;bottom:6px;display:flex;justify-content:center;pointer-events:none}
+.jumpl button{pointer-events:auto;border:0;background:var(--brand);color:#fff;border-radius:999px;padding:6px 14px;font-weight:700;font-size:12.5px;cursor:pointer;box-shadow:var(--shadow)}
+.thr .avs{display:inline-flex}
+.thr .avs .av{margin-right:-4px;border:2px solid var(--surface);width:20px;height:20px;font-size:9.5px;border-radius:6px}
+.thr .new{background:#E5484D;color:#fff;border-radius:999px;padding:0 7px;font-size:11px}
+.thr .res{color:#067647;font-weight:700}
+.resolved{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:700;color:#067647;background:#ECFDF3;border-radius:999px;padding:0 8px;margin-left:6px}
+.bcast{font-size:12px;color:var(--muted);margin-bottom:2px}
+.bcast a{color:var(--accent);cursor:pointer;font-weight:600}
+.ttools{display:flex;flex-wrap:wrap;gap:6px;padding:8px 14px;border-bottom:1px solid var(--line)}
+.ttools button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px;font-size:12.5px;cursor:pointer;font-weight:600}
+.ttools button:hover{border-color:var(--brand)}
+.ttools button.on{background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}
+.ttools .ppl{display:flex;align-items:center;gap:4px;margin-left:auto;color:var(--muted);font-size:12px}
+.tsum{margin:8px 14px 0;padding:10px 12px;border:1px solid #D9D6FE;background:#F4F3FF;border-radius:10px;font-size:13px;white-space:pre-wrap}
+.tsum b{display:block;margin-bottom:4px;color:#5925DC}
+.also{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);padding:0 10px 2px}
+.tl{padding:10px 16px;border-bottom:1px solid var(--line);cursor:pointer}
+.tl:hover{background:#FAFAFB}
+.tl .tlh{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);font-weight:600}
+.tl .tlh .cnt{margin-left:auto}
+.tl .root{margin:4px 0 2px;font-weight:600}
+.tl .rp{display:flex;gap:8px;font-size:13px;margin-top:4px;color:#344054}
+.tl .rp b{white-space:nowrap}
+.tl .more{font-size:12px;color:var(--accent);font-weight:700;margin-top:4px}
+.tl.unread{border-left:3px solid #E5484D}
+.tl .unf{border:0;background:none;color:var(--muted);cursor:pointer;font-size:12px}
+.tl .unf:hover{color:var(--crit)}
 /* ---- card actions, status, AI, scheduled ---- */
 .card.cand{flex-direction:column;gap:6px;max-width:440px}
 .card.cand .ctop{display:flex;gap:10px;align-items:flex-start}
@@ -220,7 +253,7 @@ a{color:var(--accent)}
   <span class="ttl">💬 Team Chat</span>
   <div class="q">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
-    <input id="q" type="search" placeholder="Search messages, files, people (from:riya)…" aria-label="Search messages">
+    <input id="q" type="search" placeholder="Search… naam, candidate, “exact phrase”, from:riya in:#sales has:file" aria-label="Search messages">
   </div>
 </header>
 <div class="app v-side" id="app">
@@ -233,7 +266,7 @@ a{color:var(--accent)}
 (function(){
 'use strict';
 var S = {me:0, isAdmin:false, users:{}, ulist:[], channels:[], browse:[], emojis:[], ai:false,
-         view:null, msgs:{}, more:{}, member:{}, members:{}, pins:{}, refs:{}, thread:null, tmsgs:[],
+         view:null, msgs:{}, more:{}, newer:{}, member:{}, members:{}, pins:{}, refs:{}, thread:null, tmsgs:[],
          rev:0, typing:{}, online:[], attach:{main:[], thread:[]}, lastTyping:0, unreadTitle:0, pollT:null};
 var COLORS = ['#0F6E56','#2D6FB3','#B54708','#7A5AF8','#C01048','#027A48','#155EEF','#DC6803','#6941C6','#0E9384'];
 
@@ -342,6 +375,8 @@ function renderSide(){
     h += '<button class="it'+(aich.id===cur?' on':'')+(aun?' un':'')+'" data-ch="'+aich.id+'"><span class="hash">✨</span><span class="nm">HireLab AI</span>'+(aun?'<span class="cnt">'+aich.unread+'</span>':'')+'</button>'; }
   var nsch = (S.scheduled || []).length;
   if (nsch) h += '<button class="it" data-act="schedlist"><span class="hash">🕒</span><span class="nm">Scheduled</span><span class="cnt soft">'+nsch+'</span></button>';
+  var tu = S.threadsU || {};
+  h += '<button class="it'+(S.view && S.view.type==='threads'?' on':'')+(tu.unread?' un':'')+'" data-go="threads"><span class="hash">🧵</span><span class="nm">Threads</span>'+(tu.unread?'<span class="cnt">'+tu.unread+'</span>':'')+'</button>';
   h += '<button class="it'+(S.view && S.view.type==='mentions'?' on':'')+'" data-go="mentions"><span class="hash">@</span><span class="nm">Mentions</span>'+(totalMent?'<span class="cnt">'+totalMent+'</span>':'')+'</button>';
   h += '<div class="sec">Channels<button data-act="newch" title="Create a channel" aria-label="Create a channel">+</button></div>';
   h += chs.map(function(c){
@@ -362,7 +397,7 @@ function renderSide(){
   var archived = S.channels.filter(function(c){ return c.kind === 'channel' && c.archived; });
   if (archived.length) h += '<div class="sec">Archived</div>' + archived.map(function(c){ return '<button class="it more'+(c.id===cur?' on':'')+'" data-ch="'+c.id+'"><span class="hash">#</span><span class="nm">'+esc(c.name)+'</span></button>'; }).join('');
   $('#side').innerHTML = h;
-  var total = S.channels.reduce(function(a, c){ return a + (c.muted ? 0 : (c.kind !== 'channel' ? c.unread : c.mentions)||0); }, 0);
+  var total = S.channels.reduce(function(a, c){ return a + (c.muted ? 0 : (c.kind !== 'channel' ? c.unread : c.mentions)||0); }, 0) + ((S.threadsU || {}).unread || 0);
   document.title = (total ? '(' + total + ') ' : '') + 'Team Chat · HireLab';
 }
 
@@ -372,9 +407,12 @@ function msgHtml(m, prev, opts){
   var cont = prev && prev.user_id === m.user_id && !prev.deleted && !m.deleted && parseTs(m.created_at) && parseTs(prev.created_at)
     && (parseTs(m.created_at) - parseTs(prev.created_at)) < 5*60e3 && dayLabel(m.created_at) === dayLabel(prev.created_at) && !opts.noGroup;
   var mine = m.user_id === S.me;
+  if (m.parent_id && m.broadcast && !opts.inThread){ var root = findMsg(m.parent_id); cont = false;
+    opts.bline = '<div class="bcast">↪ replied to a thread: <a data-thread="'+m.parent_id+'">'+esc(root ? (plain(root.body).slice(0, 70) || (root.file ? root.file.name : 'message')) : 'view thread')+'</a></div>'; }
   var h = '<div class="m'+(cont?' cont':'')+(!mine && mentionsMe(m.body) && !m.deleted?' mention':'')+'" data-m="'+m.id+'">';
-  h += avatar(m.user_id) + '<div style="min-width:0">';
-  if (!cont) h += '<div class="mh"><b>'+esc(uname(m.user_id))+'</b>'+statBadge(m.user_id)+'<span class="tm" title="'+esc(m.created_at)+'">'+tm(m.created_at)+'</span>'+(m.pinned?'<span class="pinned-tag">📌 pinned</span>':'')+'</div>';
+  h += avatar(m.user_id) + '<div style="min-width:0">' + (opts.bline || '');
+  if (!cont) h += '<div class="mh"><b>'+esc(uname(m.user_id))+'</b>'+statBadge(m.user_id)+'<span class="tm" title="'+esc(m.created_at)+'">'+tm(m.created_at)+'</span>'+(m.pinned?'<span class="pinned-tag">📌 pinned</span>':'')+(m.resolved_by && !m.parent_id?'<span class="resolved" title="Resolved by '+esc(uname(m.resolved_by))+'">✅ Resolved</span>':'')+'</div>';
+  else if (m.resolved_by && !m.parent_id) h += '<span class="resolved">✅ Resolved</span>';
   else if (m.pinned) h += '<div class="pinned-tag">📌 pinned</div>';
   if (m.deleted) h += '<div class="mb"><span class="del">This message was deleted.</span></div>';
   else {
@@ -386,7 +424,12 @@ function msgHtml(m, prev, opts){
       return '<button class="rx'+(me?' mine':'')+'" data-react="'+m.id+'" data-e="'+esc(r.emoji)+'" title="'+esc(r.users.map(uname).join(', '))+'">'+r.emoji+' '+r.users.length+'</button>';
     }).join('') + '<button class="rx add" data-act="emoji" data-mid="'+m.id+'" title="Add reaction">☺+</button></div>';
   }
-  if (!opts.inThread && m.reply_count > 0) h += '<button class="thr" data-thread="'+m.id+'">💬 '+m.reply_count+' repl'+(m.reply_count===1?'y':'ies')+' <span class="tm">'+ago(m.last_reply_at)+'</span></button>';
+  if (!opts.inThread && m.reply_count > 0){
+    var nnew = ((S.threadsU || {}).roots || {})[m.id] || 0;
+    h += '<button class="thr" data-thread="'+m.id+'"><span class="avs">'+(m.participants || []).slice(0, 4).map(function(u){ return avatar(u, true); }).join('')+'</span> '
+      + m.reply_count+' repl'+(m.reply_count===1?'y':'ies')+(nnew?' <span class="new">'+nnew+' new</span>':'')
+      + (m.resolved_by?' <span class="res">✅</span>':'')+' <span class="tm">Last reply '+ago(m.last_reply_at)+'</span></button>';
+  }
   h += '</div>';
   if (!m.deleted && !opts.readonly){
     h += '<div class="acts">'
@@ -429,7 +472,7 @@ function openChannel(id, focusMsg){
   $('#main').innerHTML = '<div class="empty">Loading…</div>';
   api('GET', '/channels/' + id + '/messages').then(function(r){
     if (!r.ok){ $('#main').innerHTML = '<div class="empty"><h3>Could not open this</h3>'+esc(r.error||'')+'</div>'; return; }
-    Object.assign(S.refs, r.refs); S.msgs[id] = r.messages; S.more[id] = r.more; S.member[id] = r.member; S.members[id] = r.members; S.pins[id] = r.pins;
+    Object.assign(S.refs, r.refs); S.msgs[id] = r.messages; S.more[id] = r.more; S.newer[id] = false; S.member[id] = r.member; S.members[id] = r.members; S.pins[id] = r.pins;
     renderMain(true, focusMsg);
     markRead();
   });
@@ -465,8 +508,9 @@ function renderMain(scroll, focusMsg){
   if (S.more[v.id]) h += '<div style="text-align:center;padding:8px"><button class="hb" data-act="older">Load older messages</button></div>';
   if (!list.length && c.kind === 'ai') h += '<div class="empty"><h3>Ask HireLab AI anything</h3>e.g. “aaj kitne interviews hain?”</div>';
   else if (!list.length) h += '<div class="empty"><h3>'+(c.kind==='dm' ? 'This is the start of your conversation with '+esc(chanTitle(c)) : 'Welcome to #'+esc(c.name)+'!')+'</h3>'+(c.kind==='channel' ? esc(c.topic || 'Say hello, share a candidate, or post an update for the team.') : 'Messages here are only between the two of you.')+'</div>';
-  h += listHtml(list, S.view.lastRead) + '</div>';
-  h += '<div class="typing" id="typing-main"></div>';
+  h += listHtml(list, S.view.lastRead);
+  if (S.newer[v.id]) h += '<div class="jumpl"><button data-act="latest">⬇ Jump to latest messages</button></div>';
+  h += '</div><div class="typing" id="typing-main"></div>';
   if (c.archived) h += '<div class="joinbar">This channel is archived. You can read it, but not post.</div>';
   else if (S.member[v.id] === false) h += '<div class="joinbar">You are reading <b>#'+esc(c.name)+'</b>. <button class="b p" data-act="join" style="margin-left:8px">Join channel</button></div>';
   else {
@@ -482,10 +526,11 @@ function renderMain(scroll, focusMsg){
   else { var draft = drafts['main:' + v.id]; if (draft && $('#ta-main')){ $('#ta-main').value = draft; autosize($('#ta-main')); } }
   renderChips('main');
   box = $('#msgs');
-  if (focusMsg){ var el = box.querySelector('[data-m="'+focusMsg+'"]'); if (el){ el.scrollIntoView({block:'center'}); el.classList.add('flash'); return; } }
+  if (focusMsg){ var el = box.querySelector('[data-m="'+focusMsg+'"]'); if (el){ centerIn(box, el); el.classList.add('flash'); if (S.view.terms) highlight(el, S.view.terms); return; } }
   if (scroll || atBottom) box.scrollTop = box.scrollHeight; else box.scrollTop = oldTop;
   renderTyping();
 }
+function centerIn(box, el){ if (!box || !el) return; box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - (box.clientHeight - el.offsetHeight) / 2; }
 function composer(where, ph){
   return '<div class="comp" data-where="'+where+'"><div class="chips" id="chips-'+where+'"></div><textarea id="ta-'+where+'" rows="1" placeholder="'+esc(ph)+'" aria-label="'+esc(ph)+'"></textarea>'
     + '<div class="bar"><button data-act="file" data-where="'+where+'" title="Attach a file (CV, JD…)" aria-label="Attach a file">📎</button>'
@@ -502,10 +547,39 @@ function openMentions(){
   $('#main').innerHTML = '<div class="chead"><button class="hb back" data-act="back">←</button><span class="t">@ Mentions</span></div><div class="msgs res" id="msgs"><div class="empty">Loading…</div></div>';
   api('GET', '/mentions').then(function(r){ resultsInto(r, 'Nobody has mentioned you yet.'); });
 }
-function runSearch(q){
-  S.view = {type:'search', q:q}; closeThread(); renderSide(); setView('main');
-  $('#main').innerHTML = '<div class="chead"><button class="hb back" data-act="back">←</button><span class="t">🔎 Results for “'+esc(q)+'”</span></div><div class="msgs res" id="msgs"><div class="empty">Searching…</div></div>';
-  api('GET', '/search?q=' + encodeURIComponent(q)).then(function(r){ resultsInto(r, 'No messages match. Try fewer words, or from:name.'); });
+function runSearch(q, here){
+  var from = S.view && S.view.type === 'ch' ? S.view.id : (S.view && S.view.here) || 0;
+  S.view = {type:'search', q:q, here: from, scoped: !!here}; closeThread(); renderSide(); setView('main');
+  var hc = from && chan(from);
+  var chips = [['has:file','📎 Files'],['has:candidate','👤 Candidates'],['has:job','💼 Jobs'],['has:thread','🧵 Threads'],['has:link','🔗 Links'],['from:'+(S.users[S.me]||{name:'me'}).name.split(' ')[0].toLowerCase(),'🙋 From me']];
+  $('#main').innerHTML = '<div class="chead"><button class="hb back" data-act="back">←</button><span class="t">🔎 '+esc(q)+'</span></div>'
+    + '<div class="shelp">'+(hc?'<button data-act="sscope" class="'+(here?'on':'')+'">'+(here?'✓ ':'')+'Only in '+esc(chanTitle(hc))+'</button>':'')
+    + chips.map(function(c){ var on = q.split(/\s+/).indexOf(c[0]) >= 0; return '<button data-sf="'+esc(c[0])+'" class="'+(on?'on':'')+'">'+c[1]+'</button>'; }).join('')
+    + '<span class="n" id="scount"></span></div>'
+    + '<div class="msgs res" id="msgs"><div class="empty">Searching…</div></div>';
+  api('GET', '/search?q=' + encodeURIComponent(q) + (here && from ? '&channel=' + from : '')).then(function(r){
+    S.view.terms = r.terms || [];
+    resultsInto(r, 'Kuch nahi mila. Kam shabd try karein, ya filters: from:naam  in:#channel  has:file  "exact phrase"');
+    var n = (r.messages || []).length; if ($('#scount')) $('#scount').textContent = n ? n + (n >= 80 ? '+' : '') + ' result' + (n === 1 ? '' : 's') : '';
+    highlight($('#msgs'), S.view.terms);
+  });
+}
+/* wrap matching words in <mark> (text nodes only, so links/mentions keep working) */
+function highlight(root, terms){
+  if (!root || !terms || !terms.length) return;
+  var words = terms.map(function(t){ return String(t).replace(/^@/, ''); }).filter(function(t){ return t.length >= 2; });
+  if (!words.length) return;
+  var rx = new RegExp('(' + words.map(function(w){ return w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|') + ')', 'gi');
+  root.querySelectorAll('.mb, .fn, .card .n, .card .s').forEach(function(el){
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), nodes = [], n;
+    while ((n = walker.nextNode())) if (n.nodeValue && rx.test(n.nodeValue)) nodes.push(n);
+    nodes.forEach(function(t){
+      rx.lastIndex = 0;
+      var span = document.createElement('span'); span.innerHTML = esc(t.nodeValue).replace(rx, '<mark>$1</mark>');
+      t.parentNode.replaceChild(span, t);
+    });
+    rx.lastIndex = 0;
+  });
 }
 function resultsInto(r, none){
   S.view.readonly = true;
@@ -514,8 +588,33 @@ function resultsInto(r, none){
   if (!r.messages.length){ $('#msgs').innerHTML = '<div class="empty">'+esc(none)+'</div>'; return; }
   $('#msgs').innerHTML = r.messages.map(function(m){
     var c = chan(m.channel_id) || {name:'channel'};
-    return '<div data-open="'+m.channel_id+'" data-at="'+(m.parent_id||m.id)+'" data-th="'+(m.parent_id?m.parent_id:'')+'"><div class="where" style="padding:8px 16px 0">'+esc(chanTitle(c) || '#'+c.name)+(m.parent_id?' · in a thread':'')+' · '+esc(dayLabel(m.created_at))+'</div>'+msgHtml(m, null, {readonly:true, noGroup:true})+'</div>';
+    return '<div data-open="'+m.channel_id+'" data-at="'+(m.parent_id && !m.broadcast ? m.parent_id : m.id)+'" data-th="'+(m.parent_id?m.parent_id:'')+'" data-hl="'+(m.parent_id?m.id:'')+'"><div class="where" style="padding:8px 16px 0">'+esc(chanTitle(c) || '#'+c.name)+(m.parent_id?' · in a thread':'')+' · '+esc(dayLabel(m.created_at))+'</div>'+msgHtml(m, null, {readonly:true, noGroup:true})+'</div>';
   }).join('');
+}
+
+/* ---------- threads I follow ---------- */
+function openThreads(){
+  S.view = {type:'threads'}; closeThread(); renderSide(); setView('main');
+  $('#main').innerHTML = '<div class="chead"><button class="hb back" data-act="back">←</button><span class="t">🧵 Threads</span><span class="tp">Threads you started, replied to or were mentioned in</span></div><div class="msgs" id="msgs"><div class="empty">Loading…</div></div>';
+  api('GET', '/threads').then(function(r){
+    if (!S.view || S.view.type !== 'threads') return;
+    if (!r.ok){ $('#msgs').innerHTML = '<div class="empty">'+esc(r.error||'')+'</div>'; return; }
+    Object.assign(S.refs, r.refs);
+    var by = {}; r.messages.forEach(function(m){ by[m.id] = m; });
+    var list = r.threads.filter(function(t){ return !t.muted; });
+    if (!list.length){ $('#msgs').innerHTML = '<div class="empty"><h3>No threads yet</h3>Kisi message par 💬 dabakar reply karein — woh thread yahan dikhega, aur naye replies ka count bhi.</div>'; return; }
+    $('#msgs').innerHTML = list.map(function(t){
+      var p = by[t.root], c = chan(t.channel_id) || {}, more = p.reply_count - t.latest.length;
+      return '<div class="tl'+(t.unread?' unread':'')+'" data-open="'+t.channel_id+'" data-at="'+t.root+'" data-th="'+t.root+'">'
+        + '<div class="tlh">'+esc(chanTitle(c) || 'channel')+(p.resolved_by?' <span class="resolved">✅ Resolved</span>':'')+' · '+esc(ago(p.last_reply_at))
+        + (t.unread?'<span class="cnt" style="background:#E5484D;color:#fff;border-radius:999px;padding:0 8px">'+t.unread+' new</span>':'<span class="cnt"></span>')
+        + '<button class="unf" data-act="unfollow" data-root="'+t.root+'" title="Stop following this thread">🔕 Unfollow</button></div>'
+        + '<div class="root"><b>'+esc(uname(p.user_id))+':</b> '+esc(plain(p.body).slice(0, 160) || (p.file ? '📎 ' + p.file.name : ''))+'</div>'
+        + (more > 0 ? '<div class="more">… '+more+' more repl'+(more===1?'y':'ies')+'</div>' : '')
+        + t.latest.map(function(id){ var m = by[id]; return '<div class="rp">'+avatar(m.user_id, true)+'<b>'+esc(uname(m.user_id))+'</b><span>'+esc(plain(m.body).slice(0, 160) || (m.file ? '📎 ' + m.file.name : ''))+'</span></div>'; }).join('')
+        + '</div>';
+    }).join('');
+  });
 }
 
 /* ---------- thread ---------- */
@@ -524,7 +623,11 @@ function openThread(id){
   t.innerHTML = '<div class="thead"><b>Thread</b><button class="x" data-act="closethread" aria-label="Close thread">×</button></div><div class="empty">Loading…</div>';
   api('GET', '/messages/' + id + '/thread').then(function(r){
     if (!r.ok){ t.innerHTML = '<div class="thead"><b>Thread</b><button class="x" data-act="closethread">×</button></div><div class="empty">'+esc(r.error||'')+'</div>'; return; }
-    Object.assign(S.refs, r.refs); S.tmsgs = r.messages; renderThread(true);
+    Object.assign(S.refs, r.refs); S.tmsgs = r.messages; S.tfollow = r.following; S.tsum = null;
+    var tu = S.threadsU || {}; if (tu.roots && tu.roots[id]){ tu.unread -= tu.roots[id]; delete tu.roots[id]; renderSide(); }
+    renderThread(true);
+    if (S.mainFocus){ centerIn($('#msgs'), document.querySelector('#msgs [data-m="'+S.mainFocus+'"]')); S.mainFocus = 0; }
+    if (S.thl){ var el = document.querySelector('#tmsgs [data-m="'+S.thl+'"]'); if (el){ centerIn($('#tmsgs'), el); el.classList.add('flash'); if (S.view && S.view.terms) highlight(el, S.view.terms); } S.thl = 0; }
   });
 }
 function renderThread(scroll){
@@ -535,11 +638,20 @@ function renderThread(scroll){
   var box = $('#tmsgs'), atBottom = box ? box.scrollHeight - box.scrollTop - box.clientHeight < 80 : true;
   var reps = S.tmsgs.slice(1), h = '';
   h += '<div class="thead"><button class="hb back" data-act="threadback">←</button><div><b>Thread</b><div class="sub">'+esc(chanTitle(c))+'</div></div><button class="x" data-act="closethread" aria-label="Close thread">×</button></div>';
+  var ppl = []; S.tmsgs.forEach(function(m){ if (ppl.indexOf(m.user_id) < 0) ppl.push(m.user_id); });
+  h += '<div class="ttools">'
+    + '<button data-act="tfollow" class="'+(S.tfollow?'on':'')+'" title="'+(S.tfollow?'You get a bell for new replies':'Get a bell for new replies')+'">'+(S.tfollow?'🔔 Following':'🔕 Follow')+'</button>'
+    + (p.deleted ? '' : '<button data-act="tresolve" class="'+(p.resolved_by?'on':'')+'" title="Mark this question / discussion as done">'+(p.resolved_by?'✅ Resolved':'☑️ Resolve')+'</button>')
+    + (S.ai && reps.length ? '<button data-act="tsummary" title="AI summary of this thread">✨ Summary</button>' : '')
+    + '<span class="ppl">'+ppl.slice(0, 6).map(function(u){ return avatar(u, true); }).join('')+'</span></div>';
+  if (p.resolved_by) h += '<div class="tsum" style="background:#ECFDF3;border-color:#ABEFC6"><b style="color:#067647">✅ Resolved by '+esc(uname(p.resolved_by))+' · '+esc(ago(p.resolved_at))+'</b>Koi aur reply karega to bhi thread khula rahega — zarurat ho to Reopen karein.</div>';
+  if (S.tsum) h += '<div class="tsum"><b>✨ Thread summary</b>'+esc(S.tsum)+'</div>';
   h += '<div class="msgs" id="tmsgs">' + msgHtml(p, null, {inThread:true});
   h += '<div class="tsep">'+reps.length+' repl'+(reps.length===1?'y':'ies')+'</div>';
   var prev = null; reps.forEach(function(m){ h += msgHtml(m, prev, {inThread:true}); prev = m; });
   h += '</div><div class="typing"></div>';
-  h += (S.member[p.channel_id] === false || c.archived) ? '<div class="joinbar">Join the channel to reply.</div>' : composer('thread', 'Reply…');
+  h += (S.member[p.channel_id] === false || c.archived) ? '<div class="joinbar">Join the channel to reply.</div>'
+    : composer('thread', 'Reply…').replace('<div class="bar">', '<label class="also"><input type="checkbox" id="also-thread"'+(S.alsoSend?' checked':'')+'> Also send to '+esc(c.kind === 'dm' ? 'the conversation' : chanTitle(c))+'</label><div class="bar">');
   t.innerHTML = h;
   if (keep !== null){ var ta = $('#ta-thread'); ta.value = keep; ta.focus(); autosize(ta); }
   renderChips('thread');
@@ -565,7 +677,7 @@ function send(where){
   var body = encodeBody(ta.value, where);
   if (!body) return;
   var payload = {body: body};
-  if (where === 'thread') payload.parent_id = S.thread;
+  if (where === 'thread'){ payload.parent_id = S.thread; var al = $('#also-thread'); if (al && al.checked) payload.broadcast = 1; S.tfollow = true; }
   ta.value = ''; autosize(ta); S.attach[where] = []; renderChips(where); delete drafts['main:' + chid];
   api('POST', '/channels/' + chid + '/messages', payload).then(function(r){
     if (!r.ok){ toast(r.error || 'Could not send'); ta.value = body; return; }
@@ -577,7 +689,7 @@ function upload(where, file){
   if (file.size > 25*1024*1024){ toast('Files up to 25 MB.'); return; }
   var ta = $('#ta-' + where), fd = new FormData();
   fd.append('file', file); fd.append('body', encodeBody(ta ? ta.value : '', where));
-  if (where === 'thread') fd.append('parent_id', S.thread);
+  if (where === 'thread'){ fd.append('parent_id', S.thread); var al2 = $('#also-thread'); if (al2 && al2.checked) fd.append('broadcast', '1'); }
   toast('Uploading ' + file.name + '…');
   api('POST', '/channels/' + chid + '/upload', fd, true).then(function(r){
     if (!r.ok){ toast(r.error || 'Upload failed'); return; }
@@ -588,9 +700,12 @@ function upload(where, file){
 function upsert(m){
   if (m.parent_id){
     if (S.thread === m.parent_id){ var i = idx(S.tmsgs, m.id); if (i >= 0) S.tmsgs[i] = m; else S.tmsgs.push(m); }
-  } else {
+  }
+  if (!m.parent_id || m.broadcast){
     var L = S.msgs[m.channel_id];
-    if (L){ var j = idx(L, m.id); if (j >= 0) L[j] = m; else { L.push(m); L.sort(function(a, b){ return a.id - b.id; }); } }
+    if (L){ var j = idx(L, m.id); if (j >= 0) L[j] = m; else if (!S.newer[m.channel_id]){ L.push(m); L.sort(function(a, b){ return a.id - b.id; }); } }
+  }
+  if (!m.parent_id){
     if (S.thread === m.id) S.tmsgs[0] = m;
     var P = S.pins[m.channel_id];
     if (P){ var k = idx(P, m.id); if (m.pinned && !m.deleted){ if (k >= 0) P[k] = m; else P.unshift(m); } else if (k >= 0) P.splice(k, 1); }
@@ -609,7 +724,7 @@ var readT = null;
 function markRead(){
   clearTimeout(readT);
   readT = setTimeout(function(){
-    var v = S.view; if (!v || v.type !== 'ch' || document.hidden) return;
+    var v = S.view; if (!v || v.type !== 'ch' || document.hidden || S.newer[v.id]) return;
     var L = S.msgs[v.id] || [], top = L.length ? L[L.length - 1].id : 0, c = chan(v.id);
     if (!c || !top) return;
     if (c.unread || c.mentions || (c.last_read_id||0) < top){ c.unread = 0; c.mentions = 0; c.last_read_id = top; renderSide(); api('POST', '/channels/' + v.id + '/read', {upto: top}); }
@@ -624,6 +739,8 @@ function poll(){
       var before = {}; S.channels.forEach(function(c){ before[c.id] = c; });
       S.channels = r.channels; S.typing = r.typing || {}; S.online = r.online || [];
       if (r.statuses) S.statuses = r.statuses; if (r.scheduled) S.scheduled = r.scheduled;
+      if (r.threads){ S.threadsU = r.threads;
+        if (S.thread && r.threads.roots && r.threads.roots[S.thread] && !document.hidden){ var tr = r.threads.roots[S.thread]; S.threadsU.unread -= tr; delete S.threadsU.roots[S.thread]; api('POST', '/threads/' + S.thread + '/read'); } }
       Object.assign(S.refs, r.refs || {});
       var fresh = [];
       (r.messages || []).forEach(function(m){
@@ -650,8 +767,9 @@ function renderTyping(){
 function notifyFresh(list){
   list.forEach(function(m){
     var c = chan(m.channel_id); if (!c || c.muted) return;
-    var important = c.kind === 'dm' || mentionsMe(m.body);
-    var viewing = S.view && S.view.type === 'ch' && S.view.id === m.channel_id && !document.hidden;
+    var followed = m.parent_id && (((S.threadsU || {}).roots || {})[m.parent_id]);
+    var important = c.kind === 'dm' || mentionsMe(m.body) || followed;
+    var viewing = (S.view && S.view.type === 'ch' && S.view.id === m.channel_id && !m.parent_id || S.thread === m.parent_id && m.parent_id) && !document.hidden;
     if (!important || viewing) return;
     beep();
     try {
@@ -851,13 +969,17 @@ document.addEventListener('click', function(e){
   if ((el = t.closest('[data-dm]'))){ var u = +el.dataset.dm; var c = S.channels.filter(function(x){ return x.kind === 'dm' && dmOther(x) === u; })[0];
     if (c){ openChannel(c.id); return; } api('POST', '/dm', {user: u}).then(function(r){ if (!r.ok){ toast(r.error); return; } refresh().then(function(){ openChannel(r.id); }); }); return; }
   if ((el = t.closest('[data-go=mentions]'))){ openMentions(); return; }
+  if ((el = t.closest('[data-go=threads]'))){ openThreads(); return; }
   if ((el = t.closest('[data-thread]'))){ openThread(+el.dataset.thread); return; }
   if ((el = t.closest('[data-react]'))){ api('POST', '/messages/' + el.dataset.react + '/react', {emoji: el.dataset.e}).then(function(r){ if (r.ok){ upsert(r.message); afterChange(false); } }); return; }
   if ((el = t.closest('[data-jump]'))){ var id = +el.dataset.jump, L = S.msgs[S.view.id] || []; S.view.showPins = false;
     if (idx(L, id) >= 0) renderMain(false, id); else openThread(id); return; }
+  if ((el = t.closest('[data-act=unfollow]'))){ api('POST', '/threads/' + el.dataset.root + '/follow', {follow: false}).then(function(r){ if (r.ok){ S.threadsU = r.threads; toast('🔕 Ab is thread ki notification nahi aayegi'); openThreads(); } }); return; }
+  if ((el = t.closest('[data-sf]'))){ var q0 = S.view.q || '', f0 = el.dataset.sf, parts = q0.split(/\s+/).filter(Boolean), at0 = parts.indexOf(f0);
+    if (at0 >= 0) parts.splice(at0, 1); else parts.push(f0); var nq = parts.join(' '); $('#q').value = nq; if (nq) runSearch(nq, S.view.scoped); return; }
   if ((el = t.closest('[data-open]'))){ var ch = +el.dataset.open, at = +el.dataset.at, th = +el.dataset.th || 0;
     if (!chan(ch)){ toast('Join the channel to open this.'); return; }
-    openChannelAt(ch, at, th); return; }
+    openChannelAt(ch, at, th, +el.dataset.hl || 0); return; }
   if (!(el = t.closest('[data-act]'))) return;
   var a = el.dataset.act, w = el.dataset.where, mid = +el.dataset.mid;
   var msg = mid ? (findMsg(mid)) : null;
@@ -866,6 +988,11 @@ document.addEventListener('click', function(e){
   else if (a === 'browse') browse();
   else if (a === 'back'){ setView('side'); S.view = null; renderSide(); }
   else if (a === 'threadback') setView('main');
+  else if (a === 'latest') openChannel(S.view.id);
+  else if (a === 'sscope') runSearch(S.view.q, !S.view.scoped);
+  else if (a === 'tfollow'){ var on = !S.tfollow; api('POST', '/threads/' + S.thread + '/follow', {follow: on}).then(function(r){ if (!r.ok){ toast(r.error); return; } S.tfollow = r.following; S.threadsU = r.threads; toast(on ? '🔔 Naye replies par notification milegi' : '🔕 Thread unfollow kar diya'); renderThread(false); renderSide(); }); }
+  else if (a === 'tresolve'){ var p0 = S.tmsgs[0]; api('POST', '/threads/' + S.thread + '/resolve', {resolved: !p0.resolved_by}).then(function(r){ if (!r.ok){ toast(r.error); return; } upsert(r.message); afterChange(false); toast(r.message.resolved_by ? '✅ Thread resolved' : 'Thread reopened'); }); }
+  else if (a === 'tsummary'){ el.disabled = true; el.textContent = '✨ Summarising…'; api('POST', '/threads/' + S.thread + '/summary').then(function(r){ if (!r.ok){ toast(r.error || 'Summary failed'); renderThread(false); return; } S.tsum = r.summary; renderThread(false); }); }
   else if (a === 'closethread') closeThread();
   else if (a === 'join') api('POST', '/channels/' + S.view.id + '/join').then(function(){ refresh().then(function(){ openChannel(S.view.id); }); });
   else if (a === 'older'){ var L = S.msgs[S.view.id] || []; api('GET', '/channels/' + S.view.id + '/messages?before=' + (L[0] ? L[0].id : 0)).then(function(r){
@@ -1071,15 +1198,21 @@ function findMsg(id){
   for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
   return null;
 }
-function openChannelAt(ch, at, th){
-  openChannel(ch);
-  var tries = 0;
-  (function wait(){
-    var L = S.msgs[ch];
-    if (!L){ if (++tries < 40) setTimeout(wait, 100); return; }
-    if (idx(L, at) >= 0) renderMain(false, at);
-    if (th) openThread(th);
-  })();
+function openChannelAt(ch, at, th, hl){
+  var terms = S.view && S.view.terms;
+  var c = chan(ch); if (!c) return;
+  S.view = {type:'ch', id:ch, lastRead: c.last_read_id, terms: terms};
+  try { history.replaceState(null, '', '#c' + ch); } catch(e){}
+  closeThread(); renderSide(); setView('main');
+  $('#main').innerHTML = '<div class="empty">Loading…</div>';
+  api('GET', '/channels/' + ch + '/messages?around=' + at).then(function(r){
+    if (!r.ok){ $('#main').innerHTML = '<div class="empty"><h3>Could not open this</h3>'+esc(r.error||'')+'</div>'; return; }
+    Object.assign(S.refs, r.refs); S.msgs[ch] = r.messages; S.more[ch] = r.more; S.newer[ch] = !!r.newer;
+    S.member[ch] = r.member; S.members[ch] = r.members; S.pins[ch] = r.pins;
+    renderMain(false, at);
+    if (!r.newer) markRead();
+    if (th){ S.thl = hl || 0; S.mainFocus = at; openThread(th); }
+  });
 }
 document.addEventListener('keydown', function(e){
   var ta = e.target;
@@ -1102,6 +1235,7 @@ document.addEventListener('keydown', function(e){
   if (e.key === 'Escape'){ closePop(); var ov = document.querySelector('.ov'); if (ov) ov.remove(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'){ e.preventDefault(); $('#q').focus(); }
 });
+document.addEventListener('change', function(e){ if (e.target.id === 'also-thread') S.alsoSend = e.target.checked; });
 document.addEventListener('input', function(e){
   var ta = e.target;
   if (ta.id === 'ta-main' || ta.id === 'ta-thread' || ta.id === 'ta-edit'){ autosize(ta); if (ta.id !== 'ta-edit') acCheck(ta); }
@@ -1132,6 +1266,7 @@ function refresh(){
     var muted = getMuted(); S.channels = r.channels.map(function(c){ c.muted = !!muted[c.id]; return c; });
     S.browse = r.browse; S.emojis = r.emojis; S.ai = r.ai; if (!S.rev) S.rev = r.rev;
     S.statuses = r.statuses || {}; S.presets = r.presets || []; S.stages = r.stages || []; S.digestOff = !!r.digest_off; S.scheduled = r.scheduled || [];
+    S.threadsU = r.threads || {};
     renderSide();
   });
 }
@@ -1155,7 +1290,7 @@ function openFirst(){
 if (window.HLCalls) HLCalls.on(function(){ if (S.view && S.view.type === 'ch') afterChange(false); });
 refresh().then(function(){
   var q = new URLSearchParams(location.search);
-  if (q.get('mentions')) openMentions(); else openFirst();
+  if (q.get('mentions')) openMentions(); else if (q.get('threads')) openThreads(); else openFirst();
   poll();
   if (window.Notification && Notification.permission === 'default'){
     var ask = function(){ try { Notification.requestPermission(); } catch(e){} document.removeEventListener('click', ask); };

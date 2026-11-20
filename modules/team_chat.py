@@ -181,6 +181,26 @@ def _migrate_chat(conn):
             c.execute(sql)
         except Exception:
             pass
+    # threads (Nov 2026): who follows a thread + how far they have read it;
+    # a reply can also be shown in the channel; a thread can be marked resolved
+    c.execute('''CREATE TABLE IF NOT EXISTS chat_thread_follows (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id INTEGER NOT NULL,
+        company_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        last_read_id INTEGER DEFAULT 0,
+        muted INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT ''
+    )''')
+    for sql in ['CREATE UNIQUE INDEX IF NOT EXISTS ux_chat_follow ON chat_thread_follows(message_id, user_id)',
+                'CREATE INDEX IF NOT EXISTS idx_chat_follow_user ON chat_thread_follows(user_id, muted)',
+                "ALTER TABLE chat_messages ADD COLUMN broadcast INTEGER DEFAULT 0",
+                "ALTER TABLE chat_messages ADD COLUMN resolved_by INTEGER DEFAULT 0",
+                "ALTER TABLE chat_messages ADD COLUMN resolved_at TEXT DEFAULT ''"]:
+        try:
+            c.execute(sql)
+        except Exception:
+            pass
     conn.commit()
 
 
@@ -334,6 +354,13 @@ def _ser(rows, conn):
     for r in rows:
         d = {k: r[k] for k in ('id', 'channel_id', 'user_id', 'parent_id', 'created_at', 'edited_at', 'deleted',
                                'reply_count', 'last_reply_at', 'pinned', 'rev')}
+        d['broadcast'] = r.get('broadcast') or 0
+        d['resolved_by'] = r.get('resolved_by') or 0
+        d['resolved_at'] = r.get('resolved_at') or ''
+        if r['reply_count'] and not r['parent_id']:
+            d['participants'] = [x['user_id'] for x in conn.execute(
+                'SELECT user_id, MAX(id) m FROM chat_messages WHERE parent_id=? AND deleted=0 GROUP BY user_id ORDER BY m DESC LIMIT 4',
+                (r['id'],))]
         d['body'] = '' if r['deleted'] else r['body']
         if r['file_name'] and not r['deleted']:
             d['file'] = {'name': r['file_name'], 'size': r['file_size'], 'type': r['file_type']}
@@ -359,7 +386,7 @@ def _channel_summaries(conn, cid, uid):
     tag = '<@%d>' % uid
     for r in rows:
         d = dict(r)
-        un = conn.execute('SELECT COUNT(*) n, COALESCE(MAX(id),0) mx FROM chat_messages WHERE channel_id=? AND parent_id=0 '
+        un = conn.execute('SELECT COUNT(*) n, COALESCE(MAX(id),0) mx FROM chat_messages WHERE channel_id=? AND (parent_id=0 OR broadcast=1) '
                           'AND id>? AND user_id!=? AND deleted=0', (d['id'], d['last_read_id'] or 0, uid)).fetchone()
         men = conn.execute("SELECT COUNT(*) n FROM chat_messages WHERE channel_id=? AND id>? AND user_id!=? AND deleted=0 "
                            "AND (instr(body, ?)>0 OR (? AND (lower(body) LIKE '%@channel%' OR lower(body) LIKE '%@here%')))",
@@ -490,7 +517,7 @@ def chat_state():
                         'emojis': EMOJIS, 'rev': _last_rev[0] or next_rev(),
                         'ai': bool(_ai_key()), 'statuses': _statuses(conn, cid), 'presets': STATUS_PRESETS,
                         'stages': _stages(), 'digest_off': _prefs(conn, uid, cid).get('digest_off', 0),
-                        'scheduled': _my_scheduled(conn, cid, uid)})
+                        'scheduled': _my_scheduled(conn, cid, uid), 'threads': _thread_unread(conn, uid)})
     finally:
         conn.close()
 
@@ -524,7 +551,7 @@ def chat_poll():
         online = [u for u, t in _seen.items() if now - t < 45]
         out.update({'ok': True, 'channels': _channel_summaries(conn, cid, uid), 'typing': typing,
                     'online': online, 'rev': _last_rev[0], 'statuses': _statuses(conn, cid),
-                    'scheduled': _my_scheduled(conn, cid, uid)})
+                    'scheduled': _my_scheduled(conn, cid, uid), 'threads': _thread_unread(conn, uid)})
         return jsonify(out)
     finally:
         conn.close()
@@ -1083,23 +1110,34 @@ def list_messages(chid):
             return _err('Not found', 404)
         try:
             before = int(request.args.get('before') or 0)
+            around = int(request.args.get('around') or 0)
         except ValueError:
-            before = 0
-        sql = 'SELECT * FROM chat_messages WHERE channel_id=? AND parent_id=0'
-        args = [chid]
-        if before:
-            sql += ' AND id<?'
-            args.append(before)
-        rows = conn.execute(sql + ' ORDER BY id DESC LIMIT ?', args + [PAGE + 1]).fetchall()
-        more = len(rows) > PAGE
-        rows = list(reversed(rows[:PAGE]))
+            before = around = 0
+        sql = 'SELECT * FROM chat_messages WHERE channel_id=? AND (parent_id=0 OR broadcast=1)'
+        newer = False
+        if around:
+            # a page centred on one message (search results, links to old messages)
+            half = PAGE // 2
+            old = conn.execute(sql + ' AND id<=? ORDER BY id DESC LIMIT ?', [chid, around, half + 1]).fetchall()
+            new = conn.execute(sql + ' AND id>? ORDER BY id ASC LIMIT ?', [chid, around, half + 1]).fetchall()
+            more = len(old) > half
+            newer = len(new) > half
+            rows = list(reversed(old[:half])) + list(new[:half])
+        else:
+            args = [chid]
+            if before:
+                sql += ' AND id<?'
+                args.append(before)
+            rows = conn.execute(sql + ' ORDER BY id DESC LIMIT ?', args + [PAGE + 1]).fetchall()
+            more = len(rows) > PAGE
+            rows = list(reversed(rows[:PAGE]))
         out = _with_refs(conn, cid, _ser(rows, conn))
         pins = _ser(conn.execute('SELECT * FROM chat_messages WHERE channel_id=? AND pinned=1 AND deleted=0 ORDER BY id DESC LIMIT 20',
                                  (chid,)).fetchall(), conn)
         out['refs'].update(_refs(conn, cid, [p['body'] for p in pins]))
         if ch['mandate_id']:
             out['refs'].update(_refs(conn, cid, ['<m:%d>' % ch['mandate_id']]))
-        out.update({'ok': True, 'more': more, 'pins': pins, 'member': _is_member(conn, chid, uid),
+        out.update({'ok': True, 'more': more, 'newer': newer, 'pins': pins, 'member': _is_member(conn, chid, uid),
                     'members': _member_ids(conn, chid)})
         return jsonify(out)
     finally:
@@ -1115,15 +1153,22 @@ def thread(mid):
         p = conn.execute('SELECT * FROM chat_messages WHERE id=? AND company_id=?', (mid, cid)).fetchone()
         if not p or not _can_read(conn, _channel(conn, p['channel_id'], cid), uid):
             return _err('Not found', 404)
+        if p['parent_id']:
+            return thread(p['parent_id'])
         rows = conn.execute('SELECT * FROM chat_messages WHERE parent_id=? ORDER BY id', (mid,)).fetchall()
         out = _with_refs(conn, cid, _ser([p] + list(rows), conn))
-        out['ok'] = True
+        f = conn.execute('SELECT last_read_id, muted FROM chat_thread_follows WHERE message_id=? AND user_id=?', (mid, uid)).fetchone()
+        out.update({'ok': True, 'following': bool(f and not f['muted']), 'last_read_id': f['last_read_id'] if f else 0})
+        if f and rows:                      # opening a thread reads it
+            conn.execute('UPDATE chat_thread_follows SET last_read_id=MAX(last_read_id, ?) WHERE message_id=? AND user_id=?',
+                         (rows[-1]['id'], mid, uid))
+            conn.commit()
         return jsonify(out)
     finally:
         conn.close()
 
 
-def _post(conn, ch, uid, cid, body, parent_id, file_info=None):
+def _post(conn, ch, uid, cid, body, parent_id, file_info=None, broadcast=False):
     if parent_id:
         p = conn.execute('SELECT id, parent_id FROM chat_messages WHERE id=? AND channel_id=?', (parent_id, ch['id'])).fetchone()
         if not p:
@@ -1132,13 +1177,15 @@ def _post(conn, ch, uid, cid, body, parent_id, file_info=None):
             parent_id = p['parent_id']           # a reply to a reply stays in the same thread
     fi = file_info or {}
     cur = conn.execute('INSERT INTO chat_messages (company_id, channel_id, user_id, parent_id, body, created_at, '
-                       'file_name, file_path, file_size, file_type, rev) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                       'file_name, file_path, file_size, file_type, rev, broadcast) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                        (cid, ch['id'], uid, parent_id or 0, body, ts(), fi.get('name', ''), fi.get('path', ''),
-                        fi.get('size', 0), fi.get('type', ''), next_rev()))
+                        fi.get('size', 0), fi.get('type', ''), next_rev(), 1 if (broadcast and parent_id) else 0))
     mid = cur.lastrowid
     if parent_id:
         conn.execute('UPDATE chat_messages SET reply_count=(SELECT COUNT(*) FROM chat_messages WHERE parent_id=? AND deleted=0), '
                      'last_reply_at=?, rev=? WHERE id=?', (parent_id, ts(), next_rev(), parent_id))
+        if uid != BOT_ID:
+            _thread_reply(conn, ch, cid, uid, parent_id, mid, body)
     else:
         conn.execute('UPDATE chat_members SET last_read_id=MAX(COALESCE(last_read_id,0), ?) WHERE channel_id=? AND user_id=?',
                      (mid, ch['id'], uid))
@@ -1170,7 +1217,7 @@ def send_message(chid):
             parent = int(d.get('parent_id') or 0)
         except (TypeError, ValueError):
             parent = 0
-        msg, e = _post(conn, ch, uid, cid, body, parent)
+        msg, e = _post(conn, ch, uid, cid, body, parent, broadcast=bool(d.get('broadcast')))
         if e:
             return _err(e)
         out = _with_refs(conn, cid, [msg])
@@ -1214,7 +1261,8 @@ def upload(chid):
             parent = 0
         body = _clean_body(request.form.get('body'))
         msg, e = _post(conn, ch, uid, cid, body, parent,
-                       {'name': name, 'path': rel, 'size': size, 'type': (f.mimetype or '')[:80]})
+                       {'name': name, 'path': rel, 'size': size, 'type': (f.mimetype or '')[:80]},
+                       broadcast=request.form.get('broadcast') in ('1', 'true'))
         if e:
             os.remove(path)
             return _err(e)
@@ -1328,37 +1376,342 @@ def pin(mid):
 # ══════════════════════════════════════════════════════════════════════════
 #  SEARCH, MENTIONS, LOOKUP
 # ══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════
+#  THREADS: follow, unread, notifications
+# ══════════════════════════════════════════════════════════════════════════
+def _follow(conn, root, cid, uid, read_to=None, muted=None):
+    """Make sure uid follows thread `root`; optionally move their read marker / mute flag."""
+    conn.execute('INSERT OR IGNORE INTO chat_thread_follows (message_id, company_id, user_id, last_read_id, muted, created_at) '
+                 'VALUES (?,?,?,0,0,?)', (root, cid, uid, ts()))
+    if read_to is not None:
+        conn.execute('UPDATE chat_thread_follows SET last_read_id=MAX(last_read_id, ?) WHERE message_id=? AND user_id=?',
+                     (read_to, root, uid))
+    if muted is not None:
+        conn.execute('UPDATE chat_thread_follows SET muted=? WHERE message_id=? AND user_id=?', (1 if muted else 0, root, uid))
+
+
+def _thread_reply(conn, ch, cid, uid, root, mid, body):
+    """A reply was posted: the root's author, everyone who replied and everyone @mentioned follow the thread;
+    followers who are not looking at the chat get one (merged) bell notification per thread."""
+    try:
+        p = conn.execute('SELECT user_id FROM chat_messages WHERE id=?', (root,)).fetchone()
+        if not p:
+            return
+        members = set(_member_ids(conn, ch['id']))
+        open_ch = ch['kind'] == 'channel' and not ch['is_private']
+        if p['user_id'] and p['user_id'] != BOT_ID and p['user_id'] != uid:
+            _follow(conn, root, cid, p['user_id'])
+        users = {u['id'] for u in _users(conn, cid)}
+        mentioned = {int(x) for x in _MENTION.findall(body or '')}
+        for m in mentioned:
+            if m != uid and m in users and (m in members or open_ch):
+                _follow(conn, root, cid, m)
+        _follow(conn, root, cid, uid, read_to=mid, muted=False)
+        if ch['kind'] == 'ai':
+            return
+        me = next((u['name'] for u in _users(conn, cid) if u['id'] == uid), 'Someone')
+        where = 'your conversation with %s' % me if ch['kind'] == 'dm' else '#%s' % ch['name']
+        title = 'New replies in a thread in %s' % where
+        line = '%s: %s' % (me, _plain(conn, cid, body, refs=False)[:140] or '(file)')
+        now = time.time()
+        for f in conn.execute('SELECT user_id FROM chat_thread_follows WHERE message_id=? AND muted=0 AND user_id!=?',
+                              (root, uid)).fetchall():
+            t = f['user_id']
+            if t in mentioned or now - _seen.get(t, 0) < 20 or not (t in members or open_ch):
+                continue                      # mentions get their own bell; the chat page shows the rest
+            ex = conn.execute("SELECT id, body FROM notifications WHERE user_id=? AND kind='chat_thread' AND title=? "
+                              "AND acked_at='' ORDER BY id DESC LIMIT 1", (t, title)).fetchone()
+            if ex:
+                lines = [l for l in (ex['body'] or '').split('\n') if l][-5:] + [line]
+                conn.execute("UPDATE notifications SET body=?, updated_at=?, read_at='', actor_id=?, actor_name=? WHERE id=?",
+                             ('\n'.join(lines[-6:]), ts(), uid, me, ex['id']))
+            else:
+                conn.execute('INSERT INTO notifications (company_id,user_id,kind,title,body,candidate_id,mandate_id,'
+                             "actor_id,actor_name,created_at,updated_at,read_at,acked_at) VALUES (?,?,'chat_thread',?,?,0,0,?,?,?,?,'','')",
+                             (cid, t, title, line, uid, me, ts(), ts()))
+    except Exception as e:
+        print('[team-chat] thread follow failed: %s' % e)
+
+
+def _thread_rows(conn, uid, cid, only_unread=False):
+    rows = conn.execute(
+        'SELECT f.message_id, f.last_read_id, f.muted, p.channel_id, '
+        '(SELECT COUNT(*) FROM chat_messages r WHERE r.parent_id=f.message_id AND r.id>f.last_read_id '
+        ' AND r.user_id!=f.user_id AND r.deleted=0) AS unread '
+        'FROM chat_thread_follows f JOIN chat_messages p ON p.id=f.message_id '
+        'WHERE f.user_id=? AND f.company_id=? AND p.deleted=0 ORDER BY p.last_reply_at DESC, p.id DESC LIMIT 200',
+        (uid, cid)).fetchall()
+    ok = set(_visible_channel_ids(conn, cid, uid))
+    out = [dict(r) for r in rows if r['channel_id'] in ok]
+    return [r for r in out if r['unread'] and not r['muted']] if only_unread else out
+
+
+def _thread_unread(conn, uid, cid=None):
+    if cid is None:
+        cid = _me()[1]
+    rows = _thread_rows(conn, uid, cid, only_unread=True)
+    return {'unread': sum(r['unread'] for r in rows), 'threads': len(rows),
+            'roots': {str(r['message_id']): r['unread'] for r in rows}}
+
+
+def _root_for(conn, cid, uid, root):
+    p = conn.execute('SELECT * FROM chat_messages WHERE id=? AND company_id=?', (root, cid)).fetchone()
+    if not p:
+        return None, None, 'Not found'
+    if p['parent_id']:
+        p = conn.execute('SELECT * FROM chat_messages WHERE id=?', (p['parent_id'],)).fetchone()
+    ch = _channel(conn, p['channel_id'], cid)
+    if not ch or not _can_read(conn, ch, uid):
+        return None, None, 'Not found'
+    return p, ch, None
+
+
+@bp.route('/threads', methods=['GET'])
+@login_required
+def threads_list():
+    """Threads I follow, newest activity first, with the latest replies of each."""
+    uid, cid = _me()
+    conn = get_db()
+    try:
+        rows = _thread_rows(conn, uid, cid)[:40]
+        items, msgs = [], []
+        for r in rows:
+            p = conn.execute('SELECT * FROM chat_messages WHERE id=?', (r['message_id'],)).fetchone()
+            last = conn.execute('SELECT * FROM chat_messages WHERE parent_id=? AND deleted=0 ORDER BY id DESC LIMIT 2',
+                                (p['id'],)).fetchall()
+            sp = _ser([p] + list(reversed(last)), conn)
+            msgs += sp
+            items.append({'root': p['id'], 'channel_id': p['channel_id'], 'unread': r['unread'], 'muted': r['muted'],
+                          'last_read_id': r['last_read_id'], 'latest': [m['id'] for m in sp[1:]]})
+        out = _with_refs(conn, cid, msgs)
+        out.update({'ok': True, 'threads': items})
+        return jsonify(out)
+    finally:
+        conn.close()
+
+
+@bp.route('/threads/<int:root>/read', methods=['POST'])
+@login_required
+def thread_read(root):
+    uid, cid = _me()
+    conn = get_db()
+    try:
+        p, ch, e = _root_for(conn, cid, uid, root)
+        if e:
+            return _err(e, 404)
+        last = conn.execute('SELECT COALESCE(MAX(id),0) m FROM chat_messages WHERE parent_id=?', (p['id'],)).fetchone()['m']
+        conn.execute('UPDATE chat_thread_follows SET last_read_id=MAX(last_read_id, ?) WHERE message_id=? AND user_id=?',
+                     (last, p['id'], uid))
+        conn.commit()
+        return jsonify({'ok': True, 'threads': _thread_unread(conn, uid, cid)})
+    finally:
+        conn.close()
+
+
+@bp.route('/threads/<int:root>/follow', methods=['POST'])
+@login_required
+def thread_follow(root):
+    uid, cid = _me()
+    d = request.get_json(silent=True) or {}
+    on = d.get('follow', True) not in (False, 0, '0', 'false')
+    conn = get_db()
+    try:
+        p, ch, e = _root_for(conn, cid, uid, root)
+        if e:
+            return _err(e, 404)
+        last = conn.execute('SELECT COALESCE(MAX(id),0) m FROM chat_messages WHERE parent_id=?', (p['id'],)).fetchone()['m']
+        _follow(conn, p['id'], cid, uid, read_to=last, muted=not on)
+        conn.commit()
+        return jsonify({'ok': True, 'following': on, 'threads': _thread_unread(conn, uid, cid)})
+    finally:
+        conn.close()
+
+
+@bp.route('/threads/<int:root>/resolve', methods=['POST'])
+@login_required
+def thread_resolve(root):
+    """Mark a question/thread as done (or reopen it). Anyone who can post in the channel may do it."""
+    uid, cid = _me()
+    d = request.get_json(silent=True) or {}
+    on = d.get('resolved', True) not in (False, 0, '0', 'false')
+    conn = get_db()
+    try:
+        p, ch, e = _root_for(conn, cid, uid, root)
+        if e:
+            return _err(e, 404)
+        if not _can_post(conn, ch, uid):
+            return _err('Join the channel first', 403)
+        conn.execute("UPDATE chat_messages SET resolved_by=?, resolved_at=?, rev=? WHERE id=?",
+                     (uid if on else 0, ts() if on else '', next_rev(), p['id']))
+        conn.commit()
+        msg = _ser([conn.execute('SELECT * FROM chat_messages WHERE id=?', (p['id'],)).fetchone()], conn)[0]
+        return jsonify({'ok': True, 'message': msg})
+    finally:
+        conn.close()
+
+
+@bp.route('/threads/<int:root>/summary', methods=['POST'])
+@login_required
+def thread_summary(root):
+    """AI: a few lines on what the thread decided, what is still open and who owns what."""
+    uid, cid = _me()
+    conn = get_db()
+    try:
+        p, ch, e = _root_for(conn, cid, uid, root)
+        if e:
+            return _err(e, 404)
+        rows = [p] + list(conn.execute('SELECT * FROM chat_messages WHERE parent_id=? AND deleted=0 ORDER BY id',
+                                       (p['id'],)).fetchall())
+        names = {u['id']: u['name'] for u in _users(conn, cid)}
+        names[BOT_ID] = 'HireLab AI'
+        lines = []
+        for r in rows[-80:]:
+            t = _plain(conn, cid, r['body'])
+            if r['file_name']:
+                t += ' [file: %s]' % r['file_name']
+            lines.append('%s (%s): %s' % (names.get(r['user_id'], 'Someone'), (r['created_at'] or '')[11:16], t[:600]))
+    finally:
+        conn.close()
+    if len(rows) < 2:
+        return jsonify({'ok': True, 'summary': 'Is thread mein abhi koi reply nahi hai.'})
+    key = _ai_key()
+    if not key:
+        return _err('AI is not set up for this account', 400)
+    payload = {'model': 'deepseek-chat', 'temperature': 0.2, 'max_tokens': 400, 'messages': [
+        {'role': 'system', 'content': 'You summarise a recruiting team\'s chat thread. Reply in at most 5 short bullet '
+                                      'points: what was asked, what was decided, what is still open, and who owns '
+                                      'which next step (with names). Use the language the thread is written in '
+                                      '(Hinglish is fine). No preamble.'},
+        {'role': 'user', 'content': '\n'.join(lines)}]}
+    try:
+        resp = _core().call_deepseek(key, payload, timeout=60, endpoint='team-chat-thread')
+        if resp.status_code != 200:
+            raise RuntimeError('DeepSeek returned HTTP %s' % resp.status_code)
+        txt = (resp.json()['choices'][0]['message']['content'] or '').strip()
+    except Exception as exc:
+        if type(exc).__name__ == 'TokenCapError':
+            return _err('Your AI usage cap for this period is reached. Ask the admin to raise it.', 429)
+        print('[team-chat] thread summary failed: %s: %s' % (type(exc).__name__, exc))
+        return _err('The AI could not summarise right now. Try again in a moment.', 502)
+    return jsonify({'ok': True, 'summary': txt or 'Summary nahi ban payi.'})
+
+
+_SEARCH_TOKEN = re.compile(r'"([^"]+)"|(\S+)')
+
+
+def parse_query(q):
+    """'from:riya in:#sales has:file "notice period" python' -> filters + terms (phrases kept whole)."""
+    f = {'from': [], 'in': [], 'has': set(), 'terms': []}
+    for ph, w in _SEARCH_TOKEN.findall(q or ''):
+        if ph:
+            if ph.strip():
+                f['terms'].append(ph.strip())
+            continue
+        lw = w.lower()
+        for key in ('from:', 'in:', 'has:'):
+            if lw.startswith(key) and len(w) > len(key):
+                v = w[len(key):].lstrip('@#').lower()
+                if key == 'has:':
+                    f['has'].add(v)
+                else:
+                    f[key[:-1]].append(v)
+                break
+        else:
+            f['terms'].append(w)
+    f['terms'] = f['terms'][:8]
+    return f
+
+
 @bp.route('/search', methods=['GET'])
 @login_required
 def search():
+    """Messages in channels I can read. Each word (or "quoted phrase") must match the text, a file name,
+    an @person or a linked candidate / job. Filters: from:name  in:#channel  has:file|candidate|job|link."""
     uid, cid = _me()
     q = str(request.args.get('q') or '').strip()
-    if len(q) < 2:
-        return jsonify({'ok': True, 'messages': [], 'refs': {}})
+    f = parse_query(q)
+    empty = {'ok': True, 'messages': [], 'refs': {}, 'terms': f['terms']}
+    if not f['terms'] and not (f['from'] or f['in'] or f['has']):
+        return jsonify(empty)
+    if f['terms'] and all(len(t) < 2 for t in f['terms']) and not (f['from'] or f['in'] or f['has']):
+        return jsonify(empty)
+    try:
+        chan_only = int(request.args.get('channel') or 0)
+    except ValueError:
+        chan_only = 0
     conn = get_db()
     try:
         ids = _visible_channel_ids(conn, cid, uid)
+        if chan_only:
+            ids = [i for i in ids if i == chan_only]
+        users = _users(conn, cid)
+        if f['in']:
+            want = []
+            names = {u['id']: u['name'].lower() for u in users}
+            for r in conn.execute('SELECT id, kind, name FROM chat_channels WHERE company_id=?', (cid,)).fetchall():
+                if r['id'] not in ids:
+                    continue
+                label = (r['name'] or '').lower()
+                if r['kind'] == 'dm':
+                    label = ' '.join(names.get(m, '') for m in _member_ids(conn, r['id']) if m != uid)
+                if r['kind'] == 'ai':
+                    label = 'hirelab ai'
+                if any(v in label for v in f['in']):
+                    want.append(r['id'])
+            ids = want
         if not ids:
-            return jsonify({'ok': True, 'messages': [], 'refs': {}})
+            return jsonify(empty)
         qs = ','.join('?' * len(ids))
         sql = f'SELECT * FROM chat_messages WHERE company_id=? AND deleted=0 AND channel_id IN ({qs})'
         args = [cid] + ids
-        # people: "from:riya"; words: every word must appear (names of @people and files count too)
-        names = {u['name'].lower(): u['id'] for u in _users(conn, cid)}
-        for w in q.split()[:8]:
-            if w.lower().startswith('from:'):
-                who = w[5:].lower()
-                hit = [i for n, i in names.items() if n.startswith(who) or who in n]
-                sql += ' AND user_id IN (%s)' % (','.join(str(int(i)) for i in hit) or '0')
-                continue
-            like = '%' + w.replace('%', '').replace('_', '') + '%'
-            ment = [i for n, i in names.items() if w.lower().lstrip('@') in n]
-            extra = ''.join(" OR body LIKE '%%<@%d>%%'" % int(i) for i in ment[:5])
-            sql += ' AND (body LIKE ? OR file_name LIKE ?%s)' % extra
-            args += [like, like]
-        rows = conn.execute(sql + ' ORDER BY id DESC LIMIT 60', args).fetchall()
+        if f['from']:
+            hit = [u['id'] for u in users if any(v in u['name'].lower() for v in f['from'])]
+            if any(v in ('ai', 'hirelab', 'bot') for v in f['from']):
+                hit.append(BOT_ID)
+            sql += ' AND user_id IN (%s)' % (','.join(str(int(i)) for i in hit) or '-1')
+        for h in f['has']:
+            if h in ('file', 'files', 'attachment'):
+                sql += " AND file_name!=''"
+            elif h in ('candidate', 'cand', 'cv'):
+                sql += " AND body LIKE '%<c:%'"
+            elif h in ('job', 'mandate', 'position'):
+                sql += " AND body LIKE '%<m:%'"
+            elif h in ('link', 'url'):
+                sql += " AND (body LIKE '%http://%' OR body LIKE '%https://%')"
+            elif h in ('reply', 'thread', 'replies'):
+                sql += ' AND reply_count>0'
+            elif h in ('pin', 'pinned'):
+                sql += ' AND pinned=1'
+        from modules import access
+        sc, sp = access.candidate_scope_sql('c.mandate_id')
+        mc, mp = access.mandate_scope_sql('m.id')
+        for t in f['terms']:
+            like = '%' + t.replace('%', '').replace('_', '') + '%'
+            ors = ['body LIKE ?', 'file_name LIKE ?']
+            oargs = [like, like]
+            if len(t.lstrip('@')) >= 3:
+                tl = t.lower().lstrip('@')
+                for i in [u['id'] for u in users if tl in u['name'].lower()][:6]:
+                    ors.append('instr(body, ?)>0')
+                    oargs.append('<@%d>' % int(i))
+                # candidates / jobs the caller may see, by name, company, role or client
+                cids = [r['id'] for r in conn.execute(
+                    'SELECT c.id FROM candidates c WHERE c.owner_id=? AND (c.name LIKE ? OR c.company LIKE ?)' + sc +
+                    ' ORDER BY c.id DESC LIMIT 25', [cid, like, like] + sp).fetchall()]
+                mids = [r['id'] for r in conn.execute(
+                    'SELECT m.id FROM mandates m WHERE m.owner_id=? AND (m.role LIKE ? OR m.client LIKE ?)' + mc +
+                    ' ORDER BY m.id DESC LIMIT 25', [cid, like, like] + mp).fetchall()]
+                for i in cids:
+                    ors.append('instr(body, ?)>0')
+                    oargs.append('<c:%d>' % int(i))
+                for i in mids:
+                    ors.append('instr(body, ?)>0')
+                    oargs.append('<m:%d>' % int(i))
+            sql += ' AND (%s)' % ' OR '.join(ors)
+            args += oargs
+        rows = conn.execute(sql + ' ORDER BY id DESC LIMIT 80', args).fetchall()
         out = _with_refs(conn, cid, _ser(rows, conn))
-        out['ok'] = True
+        out.update({'ok': True, 'terms': f['terms']})
         return jsonify(out)
     finally:
         conn.close()

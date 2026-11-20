@@ -3013,6 +3013,7 @@ async function ntfEnableDesktop(){
 function _ntfMeta(n){
   if (n.kind === 'chat_mention') return { icon:'\uD83D\uDCAC', label:'Team Chat \u00B7 you were mentioned', color:'#0F6E56', bg:'#ECFDF3' };
   if (n.kind === 'chat_dm') return { icon:'\uD83D\uDCAC', label:'Team Chat \u00B7 direct message', color:'#0F6E56', bg:'#ECFDF3' };
+  if (n.kind === 'chat_thread') return { icon:'\uD83E\uDDF5', label:'Team Chat \u00B7 new thread replies', color:'#0F6E56', bg:'#ECFDF3' };
   if (n.kind === 'fl_upload') return { icon:'\uD83D\uDCE5', label:'New CV from freelancer', color:'#0F6E56', bg:'#ECFDF3' };
   if (n.kind === 'mandate_assigned') return { icon:'\uD83D\uDCBC', label:'New position assigned to you', color:'#3538CD', bg:'#EEF0FF' };
   if (n.kind === 'cand_update') return { icon:'\uD83D\uDCDD', label:'Candidate updated their profile', color:'#B54708', bg:'#FFF6E5' };
@@ -3114,7 +3115,7 @@ async function ntfOpen(id){
   var n = _ntfFind(id);
   ntfAck([id]);
   ntfTogglePanel(false);
-  if (n && String(n.kind||'').indexOf('chat_') === 0) { location.href = n.kind === 'chat_mention' ? '/team-chat?mentions=1' : '/team-chat'; return; }
+  if (n && String(n.kind||'').indexOf('chat_') === 0) { location.href = n.kind === 'chat_mention' ? '/team-chat?mentions=1' : n.kind === 'chat_thread' ? '/team-chat?threads=1' : '/team-chat'; return; }
   if (!n || !n.candidate_id) return;
   var isFl = S.currentUser && S.currentUser.role === 'freelancer_sourcer';
   if (isFl) {
