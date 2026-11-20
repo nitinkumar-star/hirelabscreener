@@ -26,8 +26,21 @@ take part fully; only the candidate / job cards follow their access.
 @mentions and DMs also go to the HireLab bell (notifications, kind chat_*),
 unless the person has the chat open right now.
 
+More (Nov 2026):
+  - Buttons on a candidate card (the page calls the existing ATS routes):
+    stage, assign (a task for a teammate), interview, add to a job.
+  - HireLab AI: "@AI ..." in any chat, or the private "HireLab AI" chat that
+    everyone has. It answers from the ATS with the asker's own access
+    (modules/chat_ai.py). In a channel it answers in a thread.
+  - Morning summary: every day, the first time you open HireLab after 08:30
+    IST, a message in your HireLab AI chat (yesterday + what is pending
+    today). It can be turned off.
+  - Scheduled messages: write now, send later (delivered by the background
+    loop every minute, and on the next poll as a fallback).
+  - Status: "On calls", "In an interview", "On leave" ... shown next to names.
+
 Additive only: new tables chat_channels, chat_members, chat_messages,
-chat_reactions.
+chat_reactions, chat_prefs, chat_scheduled.
 """
 
 import os
@@ -53,6 +66,17 @@ EMOJIS = ['👍', '✅', '🎉', '🔥', '👀', '🙏', '😂', '❤️', '💯
 _MENTION = re.compile(r'<@(\d+)>')
 _REF = re.compile(r'<([cm]):(\d+)>')
 _BROADCAST = re.compile(r'(^|\s)@(channel|here|everyone)\b', re.I)
+
+BOT_ID = 0                     # HireLab AI writes as user 0
+AI_SYNC = False                # tests: answer inline instead of in a thread
+_AI_RX = re.compile(r'(^|[\s(])@ai\b', re.I)
+DIGEST_AT = (8, 30)            # IST
+STATUS_PRESETS = [['📞', 'On calls'], ['🎯', 'In an interview'], ['🤝', 'In a meeting'], ['🍽️', 'Lunch break'],
+                  ['🏠', 'Working from home'], ['🚗', 'Travelling'], ['🏖️', 'On leave'], ['🤒', 'Out sick']]
+DEFAULT_STAGES = ['Screening', 'Follow Up 1', 'Follow Up 2', 'Not Contacted', 'Called', 'Interested', 'Updated CV awaited',
+                  'Not Interested', 'Shared with Client', 'Interview Inprocess', 'Not Suitable', 'Client Rejected on Paper',
+                  'Client Rejected After Interview']
+_ai_calls = {}                 # user -> [times] (rate limit)
 
 _lock = threading.Lock()
 _last_rev = [0]
@@ -121,7 +145,30 @@ def _migrate_chat(conn):
         user_id INTEGER NOT NULL,
         emoji TEXT NOT NULL
     )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS chat_prefs (
+        user_id INTEGER PRIMARY KEY,
+        company_id INTEGER NOT NULL,
+        status_emoji TEXT DEFAULT '',
+        status_text TEXT DEFAULT '',
+        status_until TEXT DEFAULT '',
+        digest_date TEXT DEFAULT '',
+        digest_off INTEGER DEFAULT 0
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS chat_scheduled (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL,
+        channel_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        parent_id INTEGER DEFAULT 0,
+        body TEXT DEFAULT '',
+        send_at TEXT NOT NULL,
+        created_at TEXT DEFAULT '',
+        status TEXT DEFAULT 'pending',     -- pending | sending | sent | failed | cancelled
+        message_id INTEGER DEFAULT 0,
+        error TEXT DEFAULT ''
+    )''')
     for sql in [
+        'CREATE INDEX IF NOT EXISTS idx_chat_sched_due ON chat_scheduled(status, send_at)',
         'CREATE UNIQUE INDEX IF NOT EXISTS ux_chat_member ON chat_members(channel_id, user_id)',
         'CREATE INDEX IF NOT EXISTS idx_chat_member_user ON chat_members(user_id, company_id)',
         'CREATE INDEX IF NOT EXISTS idx_chat_msg_channel ON chat_messages(channel_id, parent_id, id)',
@@ -323,7 +370,7 @@ def _channel_summaries(conn, cid, uid):
                 'mandate_id': d['mandate_id'] or 0, 'archived': d['archived'], 'created_by': d['created_by'],
                 'unread': un['n'], 'mentions': men['n'], 'last_read_id': d['last_read_id'] or 0,
                 'last_at': last['created_at'] if last else d['created_at'], 'muted': d['muted']}
-        if d['kind'] == 'dm':
+        if d['kind'] in ('dm', 'ai'):
             item['members'] = _member_ids(conn, d['id'])
         out.append(item)
     return out
@@ -331,6 +378,8 @@ def _channel_summaries(conn, cid, uid):
 
 def _notify(conn, cid, uid, ch, msg_id, body, parent_id):
     """@mentions and DMs go to the HireLab bell too (unless the person has the chat open)."""
+    if uid == BOT_ID or ch['kind'] == 'ai':
+        return
     try:
         users = {u['id']: u for u in _users(conn, cid)}
         me = users.get(uid, {}).get('name', 'Someone')
@@ -352,7 +401,7 @@ def _notify(conn, cid, uid, ch, msg_id, body, parent_id):
         if not targets:
             return
         now = time.time()
-        line = _plain(conn, cid, body)[:160] or '(file)'
+        line = _plain(conn, cid, body, refs=False)[:160] or '(file)'
         for m, (kind, title) in targets.items():
             if now - _seen.get(m, 0) < 20:
                 continue                      # they have the chat open: the page shows it
@@ -370,10 +419,14 @@ def _notify(conn, cid, uid, ch, msg_id, body, parent_id):
         print('[team-chat] notify failed: %s' % e)
 
 
-def _plain(conn, cid, body):
-    """Readable text: <@12> -> @Name, <c:5> -> the candidate's name (if this user may see it)."""
+def _plain(conn, cid, body, refs=True):
+    """Readable text: <@12> -> @Name, <c:5> -> the candidate's name (if this user may see it).
+    refs=False (bell notifications, read by someone else): just "[candidate]" / "[job]"."""
     names = {u['id']: u['name'] for u in _users(conn, cid)}
+    names[BOT_ID] = 'HireLab AI'
     s = _MENTION.sub(lambda m: '@' + names.get(int(m.group(1)), 'someone'), body or '')
+    if not refs:
+        return _REF.sub(lambda m: '[candidate]' if m.group(1) == 'c' else '[job]', s).strip()
     refs = _refs(conn, cid, [s])
 
     def rr(m):
@@ -423,6 +476,8 @@ def chat_state():
     conn = get_db()
     try:
         _ensure_general(conn, cid, uid)
+        _ensure_ai(conn, cid, uid)
+        _housekeeping(conn, cid, uid)
         users = _users(conn, cid)
         mine = {c['id'] for c in _channel_summaries(conn, cid, uid)}
         browse = [dict(r) for r in conn.execute(
@@ -433,7 +488,9 @@ def chat_state():
         return jsonify({'ok': True, 'me': uid, 'is_admin': _is_admin(), 'users': users,
                         'channels': _channel_summaries(conn, cid, uid), 'browse': browse,
                         'emojis': EMOJIS, 'rev': _last_rev[0] or next_rev(),
-                        'ai': bool(_ai_key())})
+                        'ai': bool(_ai_key()), 'statuses': _statuses(conn, cid), 'presets': STATUS_PRESETS,
+                        'stages': _stages(), 'digest_off': _prefs(conn, uid, cid).get('digest_off', 0),
+                        'scheduled': _my_scheduled(conn, cid, uid)})
     finally:
         conn.close()
 
@@ -450,6 +507,7 @@ def chat_poll():
     _seen[uid] = now
     conn = get_db()
     try:
+        _housekeeping(conn, cid, uid)
         ids = _visible_channel_ids(conn, cid, uid)
         msgs = []
         if ids and since:
@@ -465,8 +523,348 @@ def chat_poll():
                 typing[chid] = names
         online = [u for u, t in _seen.items() if now - t < 45]
         out.update({'ok': True, 'channels': _channel_summaries(conn, cid, uid), 'typing': typing,
-                    'online': online, 'rev': _last_rev[0]})
+                    'online': online, 'rev': _last_rev[0], 'statuses': _statuses(conn, cid),
+                    'scheduled': _my_scheduled(conn, cid, uid)})
         return jsonify(out)
+    finally:
+        conn.close()
+
+
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  STATUS, STAGES, PREFS
+# ══════════════════════════════════════════════════════════════════════════
+def _prefs(conn, uid, cid):
+    r = conn.execute('SELECT * FROM chat_prefs WHERE user_id=?', (uid,)).fetchone()
+    if not r:
+        conn.execute('INSERT OR IGNORE INTO chat_prefs (user_id, company_id) VALUES (?,?)', (uid, cid))
+        conn.commit()
+        return {'user_id': uid, 'company_id': cid, 'status_emoji': '', 'status_text': '', 'status_until': '',
+                'digest_date': '', 'digest_off': 0}
+    return dict(r)
+
+
+def _statuses(conn, cid):
+    now = ts()
+    out = {}
+    for r in conn.execute("SELECT user_id, status_emoji, status_text, status_until FROM chat_prefs WHERE company_id=? "
+                          "AND (status_emoji!='' OR status_text!='')", (cid,)):
+        if r['status_until'] and r['status_until'] <= now:
+            continue
+        out[r['user_id']] = {'emoji': r['status_emoji'], 'text': r['status_text'], 'until': r['status_until']}
+    return out
+
+
+def _stages():
+    try:
+        raw = _core().get_setting('pipeline_stages')
+        lst = json.loads(raw) if raw else None
+        if isinstance(lst, list) and lst:
+            st = [(x.get('id') if isinstance(x, dict) else str(x)) for x in lst]
+            st = [x for x in st if x and x not in ('Placed', 'Joined')]
+            if st:
+                return st + ['Placed', 'Joined']
+    except Exception:
+        pass
+    return DEFAULT_STAGES + ['Placed', 'Joined']
+
+
+@bp.route('/status', methods=['POST'])
+@login_required
+def set_status():
+    uid, cid = _me()
+    d = request.get_json(silent=True) or {}
+    emoji = str(d.get('emoji') or '')[:16]
+    text = str(d.get('text') or '').strip()[:80]
+    until = ''
+    if d.get('until'):
+        until = to_ist(d.get('until'), d.get('tz'))
+        if not until:
+            return _err('Pick when the status should clear.')
+    conn = get_db()
+    try:
+        _prefs(conn, uid, cid)
+        conn.execute('UPDATE chat_prefs SET status_emoji=?, status_text=?, status_until=?, company_id=? WHERE user_id=?',
+                     (emoji, text, until if (emoji or text) else '', cid, uid))
+        conn.commit()
+        return jsonify({'ok': True, 'statuses': _statuses(conn, cid)})
+    finally:
+        conn.close()
+
+
+@bp.route('/prefs', methods=['POST'])
+@login_required
+def set_prefs():
+    uid, cid = _me()
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    try:
+        _prefs(conn, uid, cid)
+        if 'digest_off' in d:
+            conn.execute('UPDATE chat_prefs SET digest_off=? WHERE user_id=?', (1 if d.get('digest_off') else 0, uid))
+        conn.commit()
+        return jsonify({'ok': True, 'digest_off': _prefs(conn, uid, cid)['digest_off']})
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  HIRELAB AI
+# ══════════════════════════════════════════════════════════════════════════
+AI_WELCOME = ("👋 Hi! I am **HireLab AI**. Ask me about your work in HireLab - I read the ATS with your access.\n"
+              "Try: *aaj kitne interviews hain?*, *which offers are pending?*, *Asha Verma ka status kya hai?*\n"
+              "In any channel or DM, write *@AI* and your question - I answer in a thread.\n"
+              "Every morning I also post a short summary here: what happened yesterday and what is pending today.")
+
+
+def _ensure_ai(conn, cid, uid):
+    """Everyone has a private 'HireLab AI' chat (kind 'ai')."""
+    key = 'ai:%d' % uid
+    r = conn.execute("SELECT * FROM chat_channels WHERE company_id=? AND kind='ai' AND dm_key=?", (cid, key)).fetchone()
+    if r:
+        return dict(r)
+    chid = conn.execute("INSERT INTO chat_channels (company_id, kind, name, dm_key, is_private, created_by, created_at) "
+                        "VALUES (?, 'ai', 'HireLab AI', ?, 1, ?, ?)", (cid, key, uid, ts())).lastrowid
+    conn.execute('INSERT OR IGNORE INTO chat_members (channel_id, company_id, user_id, joined_at) VALUES (?,?,?,?)',
+                 (chid, cid, uid, ts()))
+    conn.execute('INSERT INTO chat_messages (company_id, channel_id, user_id, body, created_at, rev) VALUES (?,?,?,?,?,?)',
+                 (cid, chid, BOT_ID, AI_WELCOME, ts(), next_rev()))
+    conn.commit()
+    return _channel(conn, chid, cid)
+
+
+def _ai_rate_ok(uid, limit=30, window=600):
+    now = time.time()
+    lst = [t for t in _ai_calls.get(uid, []) if now - t < window]
+    if len(lst) >= limit:
+        _ai_calls[uid] = lst
+        return False
+    lst.append(now)
+    _ai_calls[uid] = lst
+    return True
+
+
+def _maybe_ai(conn, ch, uid, cid, mid, body, parent_id):
+    """Answer when the message is for HireLab AI: anything in your AI chat, or '@AI ...' elsewhere."""
+    if ch['kind'] != 'ai' and not _AI_RX.search(body or ''):
+        return
+    question = _AI_RX.sub(' ', body or '').strip()
+    names = {u['id']: u['name'] for u in _users(conn, cid)}
+    question = _MENTION.sub(lambda m: '@' + names.get(int(m.group(1)), 'someone'), question)
+    if not question:
+        question = 'Give me a quick update on my work today.'
+    reply_to = 0 if ch['kind'] == 'ai' else (parent_id or mid)
+    # earlier turns: the AI chat's last messages, or the thread so far
+    if ch['kind'] == 'ai':
+        rows = conn.execute('SELECT user_id, body FROM chat_messages WHERE channel_id=? AND id<? AND deleted=0 '
+                            'ORDER BY id DESC LIMIT 6', (ch['id'], mid)).fetchall()[::-1]
+    else:
+        root = reply_to
+        rows = conn.execute('SELECT user_id, body FROM chat_messages WHERE (id=? OR parent_id=?) AND id<? AND deleted=0 '
+                            'ORDER BY id LIMIT 12', (root, root, mid)).fetchall()
+        rows = [r for r in rows if r['user_id'] == BOT_ID or _AI_RX.search(r['body'] or '')]
+    history = [('assistant' if r['user_id'] == BOT_ID else 'user', r['body'] or '') for r in rows]
+    if not _ai_rate_ok(uid):
+        _bot_say(conn, ch, cid, 'You have asked a lot in the last 10 minutes - give me a minute and ask again.', reply_to)
+        return
+    core = _core()
+
+    def work():
+        c2 = get_db()
+        try:
+            _typing.setdefault(ch['id'], {})[BOT_ID] = time.time() + 60
+            from modules import chat_ai
+            text = chat_ai.answer(core, c2, cid, uid, question, history)
+            _bot_say(c2, ch, cid, text, reply_to)
+        except Exception as exc:
+            print('[team-chat] AI answer failed: %s: %s' % (type(exc).__name__, exc))
+            try:
+                _bot_say(c2, ch, cid, 'Sorry, something went wrong while I was looking that up.', reply_to)
+            except Exception:
+                pass
+        finally:
+            _typing.get(ch['id'], {}).pop(BOT_ID, None)
+            c2.close()
+    if AI_SYNC:
+        work()
+        return
+    try:
+        from flask import copy_current_request_context, has_request_context
+        job = copy_current_request_context(work) if has_request_context() else work
+    except Exception:
+        job = work
+    threading.Thread(target=job, daemon=True).start()
+
+
+def _bot_say(conn, ch, cid, text, parent_id=0):
+    msg, _e = _post(conn, ch, BOT_ID, cid, _clean_body(text), parent_id)
+    return msg
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  MORNING SUMMARY + SCHEDULED MESSAGES (both also run from the background loop)
+# ══════════════════════════════════════════════════════════════════════════
+def to_ist(local, tz_offset=None):
+    """A browser time 'YYYY-MM-DDTHH:MM' + its getTimezoneOffset() (minutes, UTC - local)
+    -> the same moment in IST ('YYYY-MM-DDTHH:MM'), which is how the server stores times."""
+    import datetime
+    local = str(local or '').strip().replace(' ', 'T')[:16]
+    if not re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$', local):
+        return ''
+    try:
+        off = int(tz_offset)
+    except (TypeError, ValueError):
+        return local                                  # no zone given: already IST
+    if not -900 <= off <= 900:
+        return local
+    d = datetime.datetime.fromisoformat(local) + datetime.timedelta(minutes=off + 330)
+    return d.isoformat()[:16]
+
+
+def _ist():
+    try:
+        return _core()._ist_now()
+    except Exception:
+        import datetime
+        return datetime.datetime.utcnow() + datetime.timedelta(hours=5, minutes=30)
+
+
+def maybe_digest(conn, cid, uid):
+    now = _ist()
+    if (now.hour, now.minute) < DIGEST_AT:
+        return False
+    p = _prefs(conn, uid, cid)
+    today = now.date().isoformat()
+    if p.get('digest_off') or p.get('digest_date') == today:
+        return False
+    cur = conn.execute("UPDATE chat_prefs SET digest_date=? WHERE user_id=? AND COALESCE(digest_date,'')!=?", (today, uid, today))
+    conn.commit()
+    if not getattr(cur, 'rowcount', 0):
+        return False                                   # another request is sending it
+    try:
+        from modules import chat_ai
+        text = chat_ai.digest(_core(), conn, cid, uid)
+        _bot_say(conn, _ensure_ai(conn, cid, uid), cid, text, 0)
+        return True
+    except Exception as exc:
+        print('[team-chat] morning summary failed for %s: %s: %s' % (uid, type(exc).__name__, exc))
+        return False
+
+
+def run_due(conn, cid=None):
+    """Send the scheduled messages whose time has come. Returns how many."""
+    now = ts()
+    sql = "SELECT * FROM chat_scheduled WHERE status='pending' AND send_at<=?" + (' AND company_id=?' if cid else '') + ' ORDER BY send_at LIMIT 50'
+    rows = conn.execute(sql, (now, cid) if cid else (now,)).fetchall()
+    n = 0
+    for r in rows:
+        cur = conn.execute("UPDATE chat_scheduled SET status='sending' WHERE id=? AND status='pending'", (r['id'],))
+        conn.commit()
+        if not getattr(cur, 'rowcount', 0):
+            continue
+        ch = _channel(conn, r['channel_id'], r['company_id'])
+        if not ch or ch['archived'] or not _is_member(conn, ch['id'], r['user_id']):
+            conn.execute("UPDATE chat_scheduled SET status='failed', error=? WHERE id=?",
+                         ('The channel is archived or you are no longer in it.', r['id']))
+            conn.commit()
+            continue
+        msg, e = _post(conn, ch, r['user_id'], r['company_id'], r['body'], r['parent_id'] or 0)
+        conn.execute('UPDATE chat_scheduled SET status=?, message_id=?, error=? WHERE id=?',
+                     ('failed' if e else 'sent', (msg or {}).get('id', 0), e or '', r['id']))
+        conn.commit()
+        n += 0 if e else 1
+    return n
+
+
+def run_background(conn):
+    """Called every minute by server.py's background loop: scheduled messages only.
+    The morning summary is made when the person first opens HireLab after 08:30
+    (every ATS page polls the chat), so nobody's rows change while they are away
+    and an account that is never used gets no summaries."""
+    try:
+        run_due(conn)
+    except Exception as exc:
+        print('[team-chat] scheduled messages: %s' % exc)
+
+
+def _housekeeping(conn, cid, uid):
+    """On each page load / poll: send due scheduled messages + today's summary (fallback for the loop)."""
+    try:
+        run_due(conn, cid)
+        maybe_digest(conn, cid, uid)
+    except Exception as exc:
+        print('[team-chat] housekeeping: %s' % exc)
+
+
+def _my_scheduled(conn, cid, uid):
+    rows = conn.execute("SELECT id, channel_id, parent_id, body, send_at, status, error FROM chat_scheduled WHERE company_id=? "
+                        "AND user_id=? AND (status='pending' OR (status='failed' AND send_at>=?)) ORDER BY send_at LIMIT 50",
+                        (cid, uid, ts()[:10])).fetchall()
+    return [dict(r) for r in rows]
+
+
+@bp.route('/channels/<int:chid>/schedule', methods=['POST'])
+@login_required
+def schedule(chid):
+    uid, cid = _me()
+    d = request.get_json(silent=True) or {}
+    body = _clean_body(d.get('body'))
+    when = to_ist(d.get('send_at'), d.get('tz'))
+    if not body:
+        return _err('Write a message first.')
+    if not re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$', when):
+        return _err('Pick a date and time.')
+    now = ts()[:16]
+    if when <= now:
+        return _err('Pick a time in the future.')
+    import datetime
+    if when > (_ist() + datetime.timedelta(days=60)).isoformat()[:16]:
+        return _err('You can schedule up to 60 days ahead.')
+    conn = get_db()
+    try:
+        ch = _channel(conn, chid, cid)
+        if not _can_read(conn, ch, uid):
+            return _err('Not found', 404)
+        if not _can_post(conn, ch, uid):
+            return _err('Join the channel to post here.', 403)
+        try:
+            parent = int(d.get('parent_id') or 0)
+        except (TypeError, ValueError):
+            parent = 0
+        sid = conn.execute('INSERT INTO chat_scheduled (company_id, channel_id, user_id, parent_id, body, send_at, created_at) '
+                           'VALUES (?,?,?,?,?,?,?)', (cid, chid, uid, parent, body, when + ':00', ts())).lastrowid
+        conn.commit()
+        return jsonify({'ok': True, 'id': sid, 'scheduled': _my_scheduled(conn, cid, uid)})
+    finally:
+        conn.close()
+
+
+@bp.route('/scheduled/<int:sid>', methods=['DELETE', 'PATCH'])
+@login_required
+def scheduled_edit(sid):
+    uid, cid = _me()
+    conn = get_db()
+    try:
+        r = conn.execute("SELECT * FROM chat_scheduled WHERE id=? AND company_id=? AND user_id=?", (sid, cid, uid)).fetchone()
+        if not r:
+            return _err('Not found', 404)
+        if request.method == 'DELETE':
+            conn.execute("UPDATE chat_scheduled SET status='cancelled' WHERE id=? AND status IN ('pending','failed')", (sid,))
+        else:
+            d = request.get_json(silent=True) or {}
+            if r['status'] != 'pending':
+                return _err('This message was already sent.')
+            if 'send_now' in d:
+                conn.execute("UPDATE chat_scheduled SET send_at=? WHERE id=?", (ts(), sid))
+            if 'body' in d:
+                b = _clean_body(d.get('body'))
+                if not b:
+                    return _err('Write a message first.')
+                conn.execute('UPDATE chat_scheduled SET body=? WHERE id=?', (b, sid))
+        conn.commit()
+        run_due(conn, cid)
+        return jsonify({'ok': True, 'scheduled': _my_scheduled(conn, cid, uid)})
     finally:
         conn.close()
 
@@ -744,12 +1142,12 @@ def _post(conn, ch, uid, cid, body, parent_id, file_info=None):
     else:
         conn.execute('UPDATE chat_members SET last_read_id=MAX(COALESCE(last_read_id,0), ?) WHERE channel_id=? AND user_id=?',
                      (mid, ch['id'], uid))
-    if ch['kind'] == 'dm':                       # a DM shows up for the other person even if they "left" it
-        pass
     _typing.get(ch['id'], {}).pop(uid, None)
     _notify(conn, cid, uid, ch, mid, body, parent_id)
     conn.commit()
     row = conn.execute('SELECT * FROM chat_messages WHERE id=?', (mid,)).fetchone()
+    if uid != BOT_ID:
+        _maybe_ai(conn, ch, uid, cid, mid, body, parent_id)
     return _ser([row], conn)[0], None
 
 

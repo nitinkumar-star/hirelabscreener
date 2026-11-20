@@ -31,13 +31,15 @@
       return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; }).then(function(j){ j = j || {}; j._status = r.status; return j; });
     }).catch(function(){ return {ok:false, error:'Network error', _status:0}; });
   }
-  function uname(id){ var u = S.users[id]; return u ? u.name : 'Someone'; }
+  function uname(id){ if (+id === 0) return 'HireLab AI'; var u = S.users[id]; return u ? u.name : 'Someone'; }
+  function stEmoji(id){ var x = (S.statuses || {})[id]; return x && (x.emoji || x.text) ? ' <span title="'+esc((x.emoji||'')+' '+(x.text||''))+'">'+esc(x.emoji || '💬')+'</span>' : ''; }
   function initials(n){ return String(n||'?').split(/\s+/).filter(Boolean).slice(0,2).map(function(w){ return w.charAt(0).toUpperCase(); }).join('') || '?'; }
   function color(id){ return COLORS[Math.abs(+id||0) % COLORS.length]; }
-  function av(id, size){ return '<span class="av" style="background:'+color(id)+';width:'+size+'px;height:'+size+'px;font-size:'+Math.round(size*.4)+'px">'+esc(initials(uname(id)))+'</span>'; }
+  function av(id, size){ if (+id === 0) return '<span class="av" style="background:linear-gradient(135deg,#7A5AF8,#0F6E56);width:'+size+'px;height:'+size+'px;font-size:'+Math.round(size*.5)+'px">✨</span>';
+    return '<span class="av" style="background:'+color(id)+';width:'+size+'px;height:'+size+'px;font-size:'+Math.round(size*.4)+'px">'+esc(initials(uname(id)))+'</span>'; }
   function chan(id){ for (var i = 0; i < S.channels.length; i++) if (S.channels[i].id === id) return S.channels[i]; return null; }
   function dmOther(c){ var o = (c.members||[]).filter(function(x){ return x !== S.me; })[0]; return o || S.me; }
-  function title(c){ return !c ? '' : c.kind === 'dm' ? uname(dmOther(c)) + (dmOther(c) === S.me ? ' (you)' : '') : '#' + c.name; }
+  function title(c){ return !c ? '' : c.kind === 'ai' ? 'HireLab AI' : c.kind === 'dm' ? uname(dmOther(c)) + (dmOther(c) === S.me ? ' (you)' : '') : '#' + c.name; }
   function parseTs(s){ if (!s) return null; var d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? null : d; }
   function tm(s){ var d = parseTs(s); if (!d) return ''; var t = new Date(); return d.toDateString() === t.toDateString() ? d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}) : d.toLocaleDateString([], {day:'numeric', month:'short'}) + ' ' + d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}); }
   function muted(){ try { return JSON.parse(localStorage.getItem('tc_muted') || '{}'); } catch(e){ return {}; } }
@@ -154,7 +156,7 @@
   /* ---------- render ---------- */
   function unreadTotal(){
     var m = muted();
-    return S.channels.reduce(function(a, c){ return a + (m[c.id] ? 0 : (c.kind === 'dm' ? (c.unread||0) : (c.mentions||0))); }, 0);
+    return S.channels.reduce(function(a, c){ return a + (m[c.id] ? 0 : (c.kind !== 'channel' ? (c.unread||0) : (c.mentions||0))); }, 0);
   }
   function render(){
     if (!S.ready) { dock.innerHTML = ''; return; }
@@ -189,13 +191,13 @@
       + '<div class="srch"><input type="search" placeholder="Find a person or channel" aria-label="Find a person or channel" value="'+esc(S.q)+'"></div><div class="list">';
     var conv = recent.slice(0, 30);
     if (conv.length) h += '<div class="sec">Conversations</div>' + conv.map(function(c){
-      var un = !m[c.id] && c.unread > 0, badge = m[c.id] ? '' : (c.kind === 'dm' ? c.unread : c.mentions);
-      var icon = c.kind === 'dm' ? '<span style="position:relative;display:inline-flex">'+av(dmOther(c), 28)+(S.online.indexOf(dmOther(c))>=0?'<span class="on-dot"></span>':'')+'</span>' : '<span class="hash">'+(c.is_private?'🔒':'#')+'</span>';
-      return '<button class="row'+(un?' un':'')+'" data-open="'+c.id+'">'+icon+'<span class="nm">'+esc(title(c))+(c.kind==='channel'&&c.topic?'<span class="sub">'+esc(c.topic)+'</span>':'')+'</span>'+(badge?'<span class="badge">'+badge+'</span>':(un?'<span class="badge" style="background:#98A2B3">'+c.unread+'</span>':''))+'</button>';
+      var un = !m[c.id] && c.unread > 0, badge = m[c.id] ? '' : (c.kind !== 'channel' ? c.unread : c.mentions);
+      var icon = c.kind === 'ai' ? av(0, 28) : c.kind === 'dm' ? '<span style="position:relative;display:inline-flex">'+av(dmOther(c), 28)+(S.online.indexOf(dmOther(c))>=0?'<span class="on-dot"></span>':'')+'</span>' : '<span class="hash">'+(c.is_private?'🔒':'#')+'</span>';
+      return '<button class="row'+(un?' un':'')+'" data-open="'+c.id+'">'+icon+'<span class="nm">'+esc(title(c))+(c.kind==='dm'?stEmoji(dmOther(c)):'')+(c.kind==='channel'&&c.topic?'<span class="sub">'+esc(c.topic)+'</span>':'')+'</span>'+(badge?'<span class="badge">'+badge+'</span>':(un?'<span class="badge" style="background:#98A2B3">'+c.unread+'</span>':''))+'</button>';
     }).join('');
     var people = S.ulist.filter(function(u){ return u.id !== S.me && !dms[u.id] && (!q || u.name.toLowerCase().indexOf(q) >= 0); });
     if (people.length) h += '<div class="sec">Start a chat</div>' + people.map(function(u){
-      return '<button class="row" data-dm="'+u.id+'"><span style="position:relative;display:inline-flex">'+av(u.id, 28)+(S.online.indexOf(u.id)>=0?'<span class="on-dot"></span>':'')+'</span><span class="nm">'+esc(u.name)+'</span></button>';
+      return '<button class="row" data-dm="'+u.id+'"><span style="position:relative;display:inline-flex">'+av(u.id, 28)+(S.online.indexOf(u.id)>=0?'<span class="on-dot"></span>':'')+'</span><span class="nm">'+esc(u.name)+stEmoji(u.id)+'</span></button>';
     }).join('');
     if (!conv.length && !people.length) h += '<div class="empty">Nothing matches “'+esc(S.q)+'”.</div>';
     h += '</div><div class="foot"><span style="color:#667085">'+S.online.filter(function(x){ return x !== S.me; }).length+' online</span><a href="/team-chat">Open full chat ↗</a></div></div>';
@@ -204,10 +206,10 @@
   function winHtml(w){
     var c = chan(w.id), list = S.msgs[w.id], member = S.member[w.id] !== false;
     var dot = c.kind === 'dm' && S.online.indexOf(dmOther(c)) >= 0 ? ' 🟢' : '';
-    var un = !muted()[c.id] && (c.kind === 'dm' ? c.unread : c.mentions);
+    var un = !muted()[c.id] && (c.kind !== 'channel' ? c.unread : c.mentions);
     var h = '<section class="win'+(w.min?' min':'')+(S.flash[w.id]?' alert':'')+'" aria-label="'+esc(title(c))+'">'
-      + '<div class="wh" data-a="toggle" data-w="'+w.id+'">'+(c.kind==='dm'?av(dmOther(c), 26):'<span class="hash" style="width:26px;height:26px;flex-basis:26px">#</span>')
-      + '<span class="t">'+esc(title(c))+dot+'</span>'+(w.min && un ? '<span class="badge">'+un+'</span>' : '')
+      + '<div class="wh" data-a="toggle" data-w="'+w.id+'">'+(c.kind==='ai'?av(0, 26):c.kind==='dm'?av(dmOther(c), 26):'<span class="hash" style="width:26px;height:26px;flex-basis:26px">#</span>')
+      + '<span class="t">'+esc(title(c))+dot+(c.kind==='dm'?stEmoji(dmOther(c)):'')+'</span>'+(w.min && un ? '<span class="badge">'+un+'</span>' : '')
       + '<button class="ib" data-a="toggle" data-w="'+w.id+'" title="'+(w.min?'Open':'Minimise')+'" aria-label="'+(w.min?'Open':'Minimise')+'">'+(w.min?'▴':'▁')+'</button>'
       + '<a class="ib" href="/team-chat#c'+w.id+'" title="Open in full Team Chat" aria-label="Open in full Team Chat">↗</a>'
       + '<button class="ib" data-a="close" data-w="'+w.id+'" title="Close" aria-label="Close">✕</button></div>';
@@ -216,14 +218,14 @@
     if (!list) h += '<div class="empty">Loading…</div>';
     else {
       if (S.more[w.id]) h += '<button class="more" data-a="older" data-w="'+w.id+'">Earlier messages</button>';
-      if (!list.length) h += '<div class="empty">'+(c.kind==='dm' ? 'Say hello to '+esc(title(c))+' 👋' : 'No messages in '+esc(title(c))+' yet.')+'</div>';
+      if (!list.length) h += '<div class="empty">'+(c.kind==='ai' ? 'Ask HireLab AI anything, e.g. “aaj kitne interviews hain?”' : c.kind==='dm' ? 'Say hello to '+esc(title(c))+' 👋' : 'No messages in '+esc(title(c))+' yet.')+'</div>';
       var prev = null;
       list.forEach(function(m){
         var d1 = (parseTs(m.created_at)||new Date()).toDateString();
         if (!prev || d1 !== (parseTs(prev.created_at)||new Date()).toDateString()) { h += '<div class="day">'+esc(new Date(d1).toLocaleDateString([], {weekday:'short', day:'numeric', month:'short'}))+'</div>'; prev = null; }
         var grp = prev && prev.user_id === m.user_id && (parseTs(m.created_at) - parseTs(prev.created_at)) < 5*60e3;
         h += '<div class="m'+(m.user_id===S.me?' mine':'')+(m.user_id!==S.me&&mentionsMe(m.body)&&!m.deleted?' ment':'')+'">';
-        if (!grp) h += '<div class="h"><b>'+esc(m.user_id===S.me?'You':uname(m.user_id))+'</b><span class="tm">'+esc(tm(m.created_at))+'</span></div>';
+        if (!grp) h += '<div class="h"><b>'+esc(m.user_id===S.me?'You':uname(m.user_id))+'</b>'+(m.user_id!==S.me?stEmoji(m.user_id):'')+'<span class="tm">'+esc(tm(m.created_at))+'</span></div>';
         if (m.deleted) h += '<div class="tx del">Message deleted</div>';
         else {
           if (m.body) h += '<div class="tx">'+fmt(m.body)+(m.edited_at?' <span class="del" style="font-size:11px">(edited)</span>':'')+'</div>';
@@ -316,6 +318,7 @@
     acClose(); if (!m) return;
     var q = m[2].toLowerCase().trim();
     var opts = S.ulist.filter(function(u){ return !q || u.name.toLowerCase().indexOf(q) >= 0; }).slice(0, 6);
+    if ('ai'.indexOf(q) === 0) opts.unshift({id: 0, name: 'AI', bot: true});
     if (!opts.length) return;
     ac = {t: t, start: pos - m[2].length - 1, opts: opts, i: 0};
     var el = document.createElement('div'); el.className = 'ac'; ac.el = el;
@@ -377,7 +380,7 @@
     return api('GET', '/state').then(function(r){
       if (!r.ok) return r;
       S.me = r.me; S.ulist = r.users; S.users = {}; r.users.forEach(function(u){ S.users[u.id] = u; });
-      S.channels = r.channels; S.emojis = r.emojis; if (!S.rev) S.rev = r.rev;
+      S.channels = r.channels; S.emojis = r.emojis; if (!S.rev) S.rev = r.rev; S.statuses = r.statuses || {};
       S.wins = S.wins.filter(function(w){ return chan(w.id); });
       if (!S.ready){ S.ready = true; document.body.appendChild(host); }
       render(); S.wins.forEach(function(w){ load(w.id); });
@@ -390,7 +393,7 @@
       if (r._status === 401 || r._status === 403){ stop(r._status); return; }
       if (r.ok){
         var known = {}; S.channels.forEach(function(c){ known[c.id] = 1; });
-        S.channels = r.channels; S.online = r.online || []; S.typing = r.typing || {};
+        S.channels = r.channels; S.online = r.online || []; S.typing = r.typing || {}; if (r.statuses) S.statuses = r.statuses;
         Object.assign(S.refs, r.refs || {});
         var fresh = [];
         (r.messages || []).forEach(function(m){
@@ -424,6 +427,7 @@
     var m = muted(), rang = false;
     fresh.forEach(function(msg){
       var c = chan(msg.channel_id); if (!c || m[c.id]) return;
+      if (c.kind === 'ai') return;                          // HireLab AI: just the count on the button
       var dm = c.kind === 'dm', men = mentionsMe(msg.body);
       if (!dm && !men) return;
       var w = S.wins.filter(function(x){ return x.id === c.id; })[0];

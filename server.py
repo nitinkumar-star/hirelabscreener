@@ -1662,6 +1662,11 @@ def _reminder_scheduler_loop():
                 run_auto_rules(_ac)
                 from modules.todo_ai import run_morning_push
                 run_morning_push(_ac)                # opt-in 09:30 summary on the phone
+                try:
+                    from modules.team_chat import run_background as _chat_bg
+                    _chat_bg(_ac)                    # Team Chat: scheduled messages + morning summaries
+                except Exception as _tc_err:
+                    print(f'[reminder-scheduler] team chat: {_tc_err}')
             finally:
                 _ac.close()
         except Exception as _ar_err:
