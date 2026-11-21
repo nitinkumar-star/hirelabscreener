@@ -1084,7 +1084,7 @@ function renderCand(){
    ${av(c.name,'big')}
    <div style="flex:1;min-width:160px"><h1>${esc(c.name||'—')}</h1><div class="caption">${esc(c.designation||'')}${c.company?' · '+esc(c.company):''}${c.is_mnc?' · MNC':''}</div></div>
    ${c.ai_score?`<span class="badge badge-ai">${esc(c.ai_score)}% fit</span>`:''}
-   <select class="input" style="width:auto" onchange="changeStage(${c.id},this.value)" title="Stage">
+   <select class="input" style="width:auto" onchange="changeStage(${c.id},this.value,this)" title="Stage">
      ${STAGES.map(s=>`<option ${s===c.stage?'selected':''}>${s}</option>`).join('')}${STAGES.includes(c.stage)?'':`<option selected>${esc(c.stage||'')}</option>`}
    </select>
    <button class="btn btn-ai btn-sm" onclick="aiRescore(${c.id})">${SP.replace('<svg','<svg style=\"width:14px;height:14px\"')}Re-score</button>
@@ -1239,8 +1239,12 @@ async function reqUpdate(cid){
 
 /* Wave 3: stage change · edit · re-score · delete (existing endpoints) */
 function closeModal(){document.getElementById('modal').classList.remove('open')}
-async function changeStage(cid,stage){
- try{await api('/api/candidates/'+cid+'/stage',{method:'POST',body:JSON.stringify({stage})});
+async function changeStage(cid,stage,sel){
+ // Insight Wave 1: a negative move asks for a reason first (/insight-capture.js)
+ let body={stage};
+ try{ if(window.ICap){ const lc0=STATE.candidates.find(x=>x.id===cid); body=await ICap.withReason(stage,body,{name:lc0?lc0.name:''}); } }catch(e){ body={stage}; }
+ if(!body){ const lc1=STATE.candidates.find(x=>x.id===cid)||(STATE.curCand&&STATE.curCand.id===cid?STATE.curCand:null); if(sel&&lc1) sel.value=lc1.stage; return; }
+ try{await api('/api/candidates/'+cid+'/stage',{method:'POST',body:JSON.stringify(body)});
   toast('Stage → '+stage,'success');
   if(STATE.curCand&&STATE.curCand.id===cid)STATE.curCand.stage=stage;
   const lc=STATE.candidates.find(x=>x.id===cid);if(lc)lc.stage=stage;
@@ -1285,5 +1289,6 @@ async function delCand(cid){
 
 boot();
 </script>
+<script src="/insight-capture.js"></script>
 </body>
 </html>

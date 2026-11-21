@@ -22252,10 +22252,33 @@ def move_stage(cid):
     # keep_stage=true means just add a note to history without changing stage
     keep_stage = d.get('keep_stage', False)
     new_stage = old_stage if keep_stage else d.get('stage', old_stage)
+    # Insight Wave 1 (modules/insight_capture.py): an OPTIONAL reason for a
+    # negative move. Callers that send no reason behave exactly as before; a bad
+    # reason is refused before anything is written.
+    _icap, _rsn = None, None
+    if not keep_stage and str(d.get('reason_code') or '').strip():
+        try:
+            from modules import insight_capture as _icap
+        except Exception:
+            _icap = None              # module rolled back: the move goes ahead without a reason
+        if _icap is not None:
+            try:
+                _icap.validate_reason(new_stage, d.get('reason_code'), d.get('client_feedback'))
+                _rsn = d
+            except ValueError as _e:
+                conn.close(); return jsonify({'error': str(_e)}), 400
+    _note = d.get('note', '')
+    if _rsn is not None:
+        _note = ((_note + ' · ') if _note else '') + _icap.reason_note(new_stage, d.get('reason_code'), d.get('reason_detail'))
     if not keep_stage:
         conn.execute('UPDATE candidates SET stage=?,updated_at=? WHERE id=?', (new_stage, ts(), cid))
     conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
-                 (cid, old_stage, new_stage, d.get('note',''), ts()))
+                 (cid, old_stage, new_stage, _note, ts()))
+    if _rsn is not None:
+        _m = conn.execute('SELECT mandate_id FROM candidates WHERE id=?', (cid,)).fetchone()
+        _icap.record_reason(conn, effective_company_id(), cid, _m['mandate_id'] if _m else 0, new_stage,
+                            d.get('reason_code'), d.get('reason_detail'), d.get('client_feedback'),
+                            'bulk' if d.get('reason_source') == 'bulk' else 'manual', real_user_id() or 0)
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
@@ -23298,6 +23321,12 @@ def analyse_call(cid):
             must = ''
 
     # ── Step 3: DeepSeek Analysis ─────────────────────────────────────────────
+    # Insight Wave 1: extra keys (reason for no, market notes, team, target).
+    try:
+        from modules import insight_capture as _icap_mod
+        _icap_prompt = _icap_mod.call_prompt_fields()
+    except Exception:
+        _icap_prompt = ''
     system_msg = (
         'You are an expert recruitment analyst. Analyse a recruiter-candidate call.\n'
         'Return ONLY valid JSON — no markdown, no explanation.\n\n'
@@ -23329,6 +23358,7 @@ def analyse_call(cid):
         '"call_evidence": "what the candidate said on the call, or \'not discussed\'", "status": "MET" | "PARTIAL" | "GAP" | "UNVERIFIED"} ],\n'
         '  "consistency": [ {"topic": "e.g. current CTC / role / team size / notice", "cv_says": "...", "call_says": "...", '
         '"status": "MATCH" | "MISMATCH" | "NEW_INFO"} ],\n'
+        + _icap_prompt +
         '  "pitch_followup": [ {"point": "an item from the pitch evaluation to_verify / gaps list", '
         '"outcome": "CONFIRMED" | "NOT_CONFIRMED" | "NOT_DISCUSSED", "note": "one line"} ]\n'
         '}\n\n'
@@ -23424,6 +23454,14 @@ def analyse_call(cid):
                 _same = False
         if not _same:
             proposed[_k] = {'current': _cur if _cur not in (None,) else '', 'proposed': _v}
+    # Insight Wave 1: the same approval list also carries reason for no, market
+    # notes, team size and yearly target (applied only when the recruiter ticks).
+    if _icap_prompt:
+        try:
+            from modules import insight_capture as _icap_mod
+            proposed.update(_icap_mod.call_proposals(conn, effective_company_id(), cand, analysis))
+        except Exception as _e:
+            print('[call-analysis] insight proposals skipped:', _e)
     conn.execute('UPDATE candidates SET updated_at=? WHERE id=?', (ts(), cid))
     conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
                  (cid, cand['stage'], cand['stage'],
