@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Academy · HireLab</title>
+<style>
+:root{--ink:#1F2328;--muted:#6B6F76;--line:#E3E1DA;--paper:#F7F6F2;--green:#0F6E56;--navy:#0E2A47;--blue:#1a73e8;--soft:#E6F4EE}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.55 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--paper)}
+button,input,textarea{font:inherit;color:inherit}
+a{color:var(--blue)}
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.top a.back{text-decoration:none;color:var(--muted);font-size:13px}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--green);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.top h1{font-size:17px;margin:0}
+.wrap{max-width:1040px;margin:0 auto;padding:18px 20px 60px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px;min-width:0}
+.h{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 4px}
+.sub{color:var(--muted);font-size:12.5px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 14px;font-weight:600;cursor:pointer;white-space:nowrap;text-decoration:none;color:var(--ink);display:inline-block}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.btn.sm{padding:5px 10px;font-size:12.5px}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.inp{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.inp:focus,.btn:focus-visible,.art:focus-visible{outline:2px solid var(--green);outline-offset:1px}
+.ask{border-top:3px solid var(--green)}
+.ans{margin-top:12px;background:#F4FAF7;border:1px solid #CFE7DC;border-radius:12px;padding:12px 14px;white-space:pre-wrap}
+.ans.warn{background:#FFF8EC;border-color:#F0D29A}
+.src{display:inline-block;margin:6px 6px 0 0;font-size:12.5px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:3px 10px;text-decoration:none;color:var(--green);font-weight:600}
+.fb{display:flex;gap:6px;align-items:center;margin-top:8px;font-size:12.5px;color:var(--muted)}
+.fb button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:3px 9px;cursor:pointer}
+.fb button.on{background:var(--soft);border-color:var(--green)}
+.sec{margin:22px 0 10px;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--green)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.art{display:block;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;text-decoration:none;color:var(--ink)}
+.art:hover{border-color:var(--green)}
+.art b{display:block;color:var(--navy);font-size:14px;margin-bottom:3px}
+.art span{font-size:12.5px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.who{display:inline-block;font-size:11px;font-weight:700;background:var(--soft);color:var(--green);border-radius:6px;padding:1px 7px;margin-right:5px}
+.where{background:#F3F2EE;border-radius:10px;padding:8px 12px;font-size:13px;margin:10px 0}
+.page h2{margin:4px 0 6px;color:var(--navy);font-size:24px}
+.page h3{margin:18px 0 6px;font-size:15px;color:var(--navy)}
+.page ol,.page ul{margin:6px 0 0;padding-left:22px}
+.page li{margin:6px 0}
+.note{background:#FFF8EC;border:1px solid #F0D29A;border-radius:12px;padding:10px 14px;margin-top:16px}
+.qrow{border-top:1px solid #EFEDE7;padding:10px 0}
+.qrow:first-of-type{border-top:0}
+.tag{display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:1px 7px;margin-right:5px;background:#FDECEC;color:#B42318}
+.empty{color:var(--muted);text-align:center;padding:24px}
+@media(max-width:600px){.wrap{padding:14px 12px 50px}.page h2{font-size:21px}}
+</style>
+</head>
+<body>
+<div class="top"><a class="back" href="/">← App</a><div class="logo">H</div><h1>Academy</h1></div>
+<div class="wrap">
+  <div class="card ask">
+    <div class="h">Ask a question</div>
+    <div class="sub">In English, Hindi or Hinglish. Answers come only from the Academy guides, with a link to the guide used.</div>
+    <div class="row" style="margin-top:10px;align-items:flex-start">
+      <textarea class="inp" id="q" rows="2" maxlength="500" placeholder="e.g. Client rejection ka feedback kahan likhun?  ·  How do I send the Talent Pulse?" style="flex:1;min-width:220px;resize:vertical"></textarea>
+      <button class="btn pri" id="ask">Ask</button>
+    </div>
+    <div id="answer"></div>
+  </div>
+  <div id="admin"></div>
+  <input class="inp" id="search" placeholder="Search the guides — e.g. invoice, call recording, profile group" aria-label="Search the guides" style="margin-bottom:6px">
+  <div id="app"><div class="card empty">Loading…</div></div>
+</div>
+<script>
+(function(){
+  'use strict';
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]; }); }
+  function md(s){ return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
+  function api(method, path, body){
+    var o = {method: method, credentials: 'same-origin', headers: {}};
+    if (body) { o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(body); }
+    return fetch('/api/academy' + path, o).then(function(r){ return r.json(); }).catch(function(e){ return {error: e.message}; });
+  }
+  var D = null, BY = {};
+
+  function card(a){ return '<a class="art" href="#' + esc(a.key) + '"><b>' + esc(a.title) + '</b><span>' + esc(a.summary) + '</span></a>'; }
+  function home(){
+    var q = $('search').value.trim().toLowerCase(), h = '';
+    var match = function(a){
+      if (!q) return true;
+      var t = (a.title + ' ' + a.summary + ' ' + (a.keywords || []).join(' ') + ' ' + (a.steps || []).join(' ')).toLowerCase();
+      return q.split(/\s+/).every(function(w){ return t.indexOf(w) >= 0; });
+    };
+    D.sections.forEach(function(s){
+      var list = D.articles.filter(function(a){ return a.section === s.key && match(a); });
+      if (list.length) h += '<div class="sec">' + esc(s.title) + '</div><div class="grid">' + list.map(card).join('') + '</div>';
+    });
+    $('app').innerHTML = h || '<div class="card empty">No guide matches “' + esc(q) + '”. Ask it as a question above.</div>';
+  }
+  function page(a){
+    var h = '<div class="card page"><a href="#" class="sub" style="text-decoration:none">← All guides</a>'
+      + '<h2>' + esc(a.title) + '</h2><div>' + a.who.map(function(w){ return '<span class="who">' + esc(w) + '</span>'; }).join('') + '</div>'
+      + '<div class="where"><b>Where:</b> ' + esc(a.where) + '</div><p>' + md(a.summary) + '</p>'
+      + (a.when ? '<h3>When to use it</h3><p style="margin:0">' + md(a.when) + '</p>' : '')
+      + (a.steps && a.steps.length ? '<h3>How to use it</h3><ol>' + a.steps.map(function(s){ return '<li>' + md(s) + '</li>'; }).join('') + '</ol>' : '')
+      + (a.tips && a.tips.length ? '<h3>Good to know</h3><ul>' + a.tips.map(function(s){ return '<li>' + md(s) + '</li>'; }).join('') + '</ul>' : '');
+    if (a.note || D.is_admin) {
+      h += '<div class="note"><b>Our agency’s note</b>'
+        + (a.note ? '<div style="white-space:pre-wrap;margin-top:4px">' + esc(a.note) + '</div>' : '<div class="sub">No note yet. Add how your team does this.</div>')
+        + (D.is_admin ? '<div id="ned" style="display:none;margin-top:8px"><textarea class="inp" id="ntext" rows="3" maxlength="2000">' + esc(a.note) + '</textarea>'
+            + '<div class="row" style="margin-top:6px"><button class="btn pri sm" id="nsave">Save note</button><button class="btn sm" id="ncancel">Cancel</button></div></div>'
+            + '<div style="margin-top:6px"><button class="btn sm" id="nedit">' + (a.note ? 'Edit note' : 'Add a note') + '</button></div>' : '')
+        + '</div>';
+    }
+    if (a.related && a.related.length) h += '<h3>Related guides</h3><div>' + a.related.map(function(k){ return BY[k] ? '<a class="src" href="#' + esc(k) + '">' + esc(BY[k].title) + '</a>' : ''; }).join('') + '</div>';
+    h += '<div class="row" style="margin-top:16px">' + (a.link ? '<a class="btn" href="' + esc(a.link) + '">Open this feature</a>' : '')
+      + '<button class="btn" id="askabout">Ask a question about this</button></div></div>';
+    $('app').innerHTML = h;
+    window.scrollTo(0, 0);
+    var e = $('nedit');
+    if (e) {
+      e.onclick = function(){ $('ned').style.display = ''; e.style.display = 'none'; $('ntext').focus(); };
+      $('ncancel').onclick = function(){ page(a); };
+      $('nsave').onclick = async function(){
+        this.disabled = true;
+        var r = await api('PUT', '/notes/' + encodeURIComponent(a.key), {note: $('ntext').value});
+        if (!r.ok) { alert(r.error || 'Could not save'); this.disabled = false; return; }
+        a.note = r.note; page(a);
+      };
+    }
+    $('askabout').onclick = function(){ $('q').value = a.title + ': '; $('q').focus(); window.scrollTo(0, 0); };
+  }
+  function route(){
+    if (!D) return;
+    var k = decodeURIComponent(location.hash.replace(/^#/, ''));
+    if (k && BY[k]) page(BY[k]); else home();
+  }
+
+  async function ask(){
+    var q = $('q').value.trim(); if (q.length < 3) { $('q').focus(); return; }
+    var b = $('ask'); b.disabled = true; b.textContent = 'Thinking…';
+    $('answer').innerHTML = '<div class="ans">Looking through the guides…</div>';
+    var r = await api('POST', '/ask', {question: q});
+    b.disabled = false; b.textContent = 'Ask';
+    if (!r.ok) { $('answer').innerHTML = '<div class="ans warn">' + esc(r.error || 'Something went wrong. Try again.') + '</div>'; return; }
+    var srcs = (r.sources || []).map(function(s){ return '<a class="src" href="#' + esc(s.key) + '">📖 ' + esc(s.title) + '</a>'; }).join('');
+    var h = r.ai
+      ? '<div class="ans' + (r.answered ? '' : ' warn') + '">' + md(r.answer) + '</div>'
+        + (srcs ? '<div style="margin-top:4px"><span class="sub">Read more: </span>' + srcs + '</div>' : '')
+        + '<div class="fb">Was this helpful? <button data-h="1" aria-label="Helpful">👍</button><button data-h="-1" aria-label="Not helpful">👎</button><span id="fbm"></span></div>'
+      : '<div class="ans warn">' + esc(r.message || '') + '</div>' + (srcs ? '<div style="margin-top:4px">' + srcs + '</div>' : '');
+    $('answer').innerHTML = h;
+    document.querySelectorAll('[data-h]').forEach(function(x){ x.onclick = async function(){
+      var v = +x.dataset.h, f = await api('POST', '/ask/' + r.id + '/feedback', {helpful: v});
+      if (f.ok) { document.querySelectorAll('[data-h]').forEach(function(y){ y.classList.toggle('on', y === x); }); $('fbm').textContent = v > 0 ? 'Thanks!' : 'Thanks — an admin will see this question.'; }
+    }; });
+  }
+
+  async function adminList(){
+    if (!D.is_admin) return;
+    var r = await api('GET', '/unanswered');
+    if (!r.ok || !r.questions.length) { $('admin').innerHTML = ''; return; }
+    $('admin').innerHTML = '<div class="card"><div class="row" style="justify-content:space-between"><div><div class="h">Questions to look at (' + r.questions.length + ')</div>'
+      + '<div class="sub">Questions the Academy could not answer, or answers marked 👎. Add an agency note to the right guide, then mark it handled.</div></div>'
+      + '<button class="btn sm" id="qtoggle">Show</button></div><div id="qlist" style="display:none;margin-top:8px">'
+      + r.questions.map(function(q){
+          return '<div class="qrow">' + (q.not_covered ? '<span class="tag">Not covered</span>' : '') + (q.thumbs_down ? '<span class="tag">👎</span>' : '')
+            + '<b>' + esc(q.question) + '</b><div class="sub">' + esc(q.by) + ' · ' + esc(q.date) + '</div>'
+            + (q.answer ? '<div class="sub" style="margin-top:4px;white-space:pre-wrap">' + esc(q.answer.slice(0, 300)) + '</div>' : '')
+            + '<button class="btn sm" data-done="' + q.id + '" style="margin-top:6px">Mark handled</button></div>';
+        }).join('') + '</div></div>';
+    $('qtoggle').onclick = function(){ var l = $('qlist'); var open = l.style.display === 'none'; l.style.display = open ? '' : 'none'; this.textContent = open ? 'Hide' : 'Show'; };
+    document.querySelectorAll('[data-done]').forEach(function(x){ x.onclick = async function(){
+      var f = await api('POST', '/unanswered/' + x.dataset.done + '/done'); if (f.ok) x.closest('.qrow').remove();
+    }; });
+  }
+
+  (async function(){
+    D = await api('GET', '/articles');
+    if (!D.ok) { $('app').innerHTML = '<div class="card empty">' + esc(D.error || 'Could not load the Academy') + '</div>'; return; }
+    D.articles.forEach(function(a){ BY[a.key] = a; });
+    $('ask').onclick = ask;
+    $('q').addEventListener('keydown', function(e){ if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } });
+    $('search').addEventListener('input', function(){ if (location.hash) location.hash = ''; home(); });
+    window.addEventListener('hashchange', route);
+    route();
+    adminList();
+  })();
+})();
+</script>
+<script src="/app-nav.js" defer></script>
+</body>
+</html>
