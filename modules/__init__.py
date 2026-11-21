@@ -77,6 +77,7 @@ _MODULE_NAMES = [
     'learning',        # Learning: Electrical Industry Explorer, edits saved per agency (/learning)
     'team_chat',       # Team Chat: channels, DMs, threads, @mentions, files, candidate/job cards (/team-chat)
     'chat_calls',      # Team Chat: audio / video calls + screen sharing (WebRTC, /call/<id>)
+    'bd_calling',      # BD workspace -> Calling: cold-calling sheet, understanding, AI e-mails, follow-ups (/api/bd/calling)
 ]
 
 _MIGRATIONS = []

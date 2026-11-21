@@ -104,6 +104,8 @@ _RULES = [(re.compile(p), t, c) for p, t, c in [
     (r'^/api/bd/clients/(\d+)(/|$)', 'crm_clients', 'company_id'),
     (r'^/api/crm-link/client/(\d+)(/|$)', 'crm_clients', 'company_id'),
     (r'^/api/bd/records/companies/(\d+)(/|$)', 'crm_clients', 'company_id'),
+    (r'^/api/bd/calling/companies/(\d+)(/|$)', 'crm_clients', 'company_id'),
+    (r'^/api/bd/calling/emails/(\d+)(/|$)', 'bd_outreach', 'company_id'),
     (r'^/api/crm/contacts?/(\d+)(/|$)', 'crm_contacts', 'company_id'),
     (r'^/api/bd/records/contacts/(\d+)(/|$)', 'crm_contacts', 'company_id'),
     (r'^/api/crm/attachments/(\d+)(/|$)', 'crm_attachments', 'company_id'),
