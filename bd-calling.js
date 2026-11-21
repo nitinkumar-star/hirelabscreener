@@ -41,6 +41,17 @@ var ST_COLORS = {'new':'#667085', no_answer:'#B54708', callback:'#3538CD', inter
 var OUTCOMES = [['no_answer','📵','No answer','1'],['callback','🔁','Callback','2'],['interested','👍','Interested','3'],
                 ['send_details','📧','Send details','4'],['meeting','🤝','Meeting','5'],['not_interested','❌','Not interested','6'],
                 ['wrong_number','🚫','Wrong number','7']];
+function lintText(t){
+  var low = ' ' + String(t || '').toLowerCase().replace(/\s+/g, ' ') + ' ', out = [], seen = {};
+  ((S.meta && S.meta.phrases) || []).forEach(function(p){ if (low.indexOf(p.phrase) >= 0 && !seen[p.tip]){ seen[p.tip] = 1; out.push(p); } });
+  return out;
+}
+function lintHtml(t){
+  var l = lintText(t);
+  if (!String(t || '').trim()) return '';
+  if (!l.length) return '<div class="bdc-lint ok">✓ Doesn\'t sound like a typical agency</div>';
+  return '<div class="bdc-lint">⚠ Sounds like every agency: ' + l.map(function(x){ return '<b>“' + esc(x.phrase) + '”</b> → ' + esc(x.tip); }).join(' · ') + '</div>';
+}
 function rowById(id){ for (var i = 0; i < S.rows.length; i++) if (S.rows[i].id === id) return S.rows[i]; return null; }
 
 /* ---------- styles ---------- */
@@ -124,6 +135,11 @@ var CSS = '#bdc-root{flex:1;display:flex;flex-direction:column;min-width:0;min-h
 + '.bdc-pop button{display:flex;width:100%;gap:8px;align-items:center;border:none;background:none;font:inherit;font-size:12.5px;padding:6px 8px;border-radius:6px;cursor:pointer;text-align:left}'
 + '.bdc-pop button:hover{background:#F2F4F7}.bdc-pop .s{color:#98A2B3;font-size:11px;margin-left:auto}'
 + '.bdc-keys{font-size:11px;color:#98A2B3;padding:6px 14px;border-top:.5px solid #EAECF0;flex-shrink:0}.bdc-keys kbd{font-family:inherit;background:#F2F4F7;border-radius:4px;padding:0 4px;color:#475467}'
++ '.bdc-otabs{display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap}'
++ '.bdc-lint{margin-top:6px;font-size:12px;color:#B54708;background:#FFFAEB;border:.5px solid #FEDF89;border-radius:8px;padding:6px 9px}'
++ '.bdc-lint b{color:#93370D}.bdc-lint.ok{color:#067647;background:#ECFDF3;border-color:#ABEFC6}'
++ '.bdc-ql{margin:4px 0 0;padding-left:18px;font-size:12.5px;line-height:1.55}.bdc-ql li{margin-bottom:2px}'
++ '.bdc-sub{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#667085;margin:9px 0 2px}'
 + '.bdc-rec{color:#B42318;font-weight:700;animation:bdcp 1s infinite}@keyframes bdcp{50%{opacity:.4}}'
 + '@media (max-width:900px){.bdc-panel{position:fixed;inset:0;width:auto;z-index:8000}.bdc-search{width:120px}.bdc-keys{display:none}}';
 
@@ -298,13 +314,21 @@ function renderPanel(){
     + '</div>';
 
   /* script */
-  var op = d.opener || {};
-  h += '<div class="bdc-sec"><h4>🎙 Call opener<span class="r">' + (S.meta && S.meta.ai ? '<button class="bdc-btn sm ai" data-act="opener">' + (op.opener ? '↻ Rewrite' : '✨ Write opener') + '</button>' : '') + '</span></h4>'
-    + (op.opener ? '<div class="bdc-script">' + esc(op.opener) + '</div>'
-      + (op.questions && op.questions.length ? '<div class="bdc-kv" style="margin-top:6px"><b>Ask:</b> ' + op.questions.map(esc).join(' · ') + '</div>' : '')
-      + (op.objections || []).map(function(o){ return '<div class="bdc-obj"><b>“' + esc(o.q) + '”</b>' + esc(o.a) + '</div>'; }).join('')
-      : '<div class="bdc-kv">A 30-second opener and answers to “we don’t use agencies”, “fee is high”, “no hiring” — written from the notes below.</div>')
-    + '</div>';
+  var op = d.opener || {}, ops = op.openers && op.openers.length ? op.openers : (op.opener ? [{label:'Opener', script: op.opener}] : []);
+  var oi = Math.min(S.openerTab || 0, Math.max(0, ops.length - 1));
+  h += '<div class="bdc-sec"><h4>🎙 Call plan<span class="r"><button class="bdc-btn sm" data-act="playbook" title="Your agency\'s calling method - the AI follows it">📘 Playbook</button>' + (S.meta && S.meta.ai ? '<button class="bdc-btn sm ai" data-act="opener">' + (ops.length ? '↻ Rewrite' : '✨ Write call plan') + '</button>' : '') + '</span></h4>';
+  if (ops.length){
+    h += (ops.length > 1 ? '<div class="bdc-otabs">' + ops.map(function(o, i){ return '<button class="bdc-chip' + (i === oi ? ' on' : '') + '" data-otab="' + i + '">' + esc(o.label || o.style) + '</button>'; }).join('') + '</div>' : '')
+      + '<div class="bdc-script">' + esc(ops[oi].script) + '</div>' + (ops[oi].flags && ops[oi].flags.length ? lintHtml(ops[oi].script) : '')
+      + (op.credibility ? '<div class="bdc-sub">Credibility line</div><div class="bdc-kv">' + esc(op.credibility) + '</div>' : '')
+      + (op.insight ? '<div class="bdc-sub">Give this insight first</div><div class="bdc-kv">💡 ' + esc(op.insight) + '</div>' : '')
+      + (op.questions && op.questions.length ? '<div class="bdc-sub">Discovery questions</div><ol class="bdc-ql">' + op.questions.map(function(q){ return '<li>' + esc(q) + '</li>'; }).join('') + '</ol>' : '')
+      + (op.listen_for && op.listen_for.length ? '<div class="bdc-sub">Listen for</div><div class="bdc-kv">' + op.listen_for.map(function(x){ return '👂 ' + esc(x); }).join('<br>') + '</div>' : '')
+      + ((op.objections || []).length ? '<div class="bdc-sub">If they say…</div>' + op.objections.map(function(o){ return '<div class="bdc-obj"><b>“' + esc(o.q) + '”</b>' + esc(o.a) + '</div>'; }).join('') : '')
+      + (op.next_step ? '<div class="bdc-sub">Close for</div><div class="bdc-kv">🎯 <b>' + esc(op.next_step) + '</b></div>' : '')
+      + (op.avoid && op.avoid.length ? '<div class="bdc-sub">Don\'t say</div><div class="bdc-kv" style="color:#B42318">' + op.avoid.map(function(x){ return '✕ ' + esc(x); }).join('<br>') + '</div>' : '');
+  } else h += '<div class="bdc-kv">3 ways to open (reason-for-calling, insight-led, candidate-led), a credibility line, discovery questions, answers to objections and the next step to close for — written from the notes below and your <b>📘 Playbook</b>, so you don\'t sound like every other agency.</div>';
+  h += '</div>';
 
   /* understanding */
   var u = d.understanding, fields = (S.meta && S.meta.u_fields) || [];
@@ -534,7 +558,7 @@ function writeOpener(){
   var b = $('[data-act=opener]'); if (b){ b.disabled = true; b.textContent = '✨ Writing…'; }
   api('POST', '/companies/' + d.company.id + '/opener').then(function(j){
     if (!j.ok){ toast(j.error, true); if (b){ b.disabled = false; b.textContent = '✨ Write opener'; } return; }
-    d.opener = j.opener; renderPanel();
+    d.opener = j.opener; S.openerTab = 0; renderPanel();
   });
 }
 
@@ -562,7 +586,7 @@ function compose(id, kind){
       + '<div class="bdc-row" style="margin-bottom:8px"><button class="bdc-btn ai" data-x="ai">✨ Write 3 versions</button><span id="bdc-aist" style="font-size:12px;color:#667085"></span></div>' : '')
     + '<div id="bdc-varsbox"></div>'
     + '<div class="bdc-f">Subject<input id="bdc-subj"></div><div id="bdc-subs" class="bdc-chips" style="margin:-4px 0 8px"></div>'
-    + '<div class="bdc-f">Message<textarea id="bdc-body" rows="10" placeholder="Hi …"></textarea></div>'
+    + '<div class="bdc-f">Message<textarea id="bdc-body" rows="10" placeholder="Hi …"></textarea><div id="bdc-lintbox"></div></div>'
     + '<label style="display:flex;gap:6px;align-items:center;font-size:12.5px"><input type="checkbox" id="bdc-fu" ' + (S.settings.fu_on !== 0 ? 'checked' : '') + '> Automatic follow-up if no reply (day ' + esc(fu.replace(/,/g, ' and ')) + ') — stops when they reply</label>'
     + '<div class="bdc-btns"><span style="flex:1;font-size:11.5px;color:#98A2B3;align-self:center">Sent from your own mailbox with your signature · opens are tracked</span><button class="bdc-btn" data-x="cancel">Cancel</button><button class="bdc-btn" data-x="queue" title="Send in the next sending slot">⏳ Queue</button><button class="bdc-btn p" data-x="send">Send now ➤</button></div>', function(ov){
     var vs = [];
@@ -571,8 +595,10 @@ function compose(id, kind){
       $$('.bdc-var', ov).forEach(function(b, k){ b.classList.toggle('on', k === i); });
       ov.querySelector('#bdc-subj').value = v.subjects[0] || ''; ov.querySelector('#bdc-body').value = v.body;
       ov.querySelector('#bdc-subs').innerHTML = v.subjects.map(function(s, k){ return '<button class="bdc-chip' + (k === 0 ? ' on' : '') + '" data-sub="' + k + '">' + esc(s) + '</button>'; }).join('');
-      ov.dataset.vi = i;
+      ov.dataset.vi = i; relint();
     }
+    function relint(){ var bx = ov.querySelector('#bdc-lintbox'); if (bx) bx.innerHTML = lintHtml(ov.querySelector('#bdc-subj').value + '\n' + ov.querySelector('#bdc-body').value); }
+    ov.addEventListener('input', function(e){ if (e.target.id === 'bdc-body' || e.target.id === 'bdc-subj'){ clearTimeout(ov._lt); ov._lt = setTimeout(relint, 250); } });
     function runAi(){
       var st = ov.querySelector('#bdc-aist'), b = ov.querySelector('[data-x=ai]'); b.disabled = true; st.textContent = 'Writing… (10-20 s)';
       api('POST', '/companies/' + id + '/draft', {kind: kind || 'cold', note: ov.querySelector('#bdc-intent').value}).then(function(j){
@@ -664,7 +690,7 @@ function review(){
     if (d.status === 'drafting'){ r.innerHTML = '<div class="bdc-empty">✨ Writing the e-mail for ' + esc(d.company) + '…</div>'; return; }
     r.innerHTML = '<div class="bdc-f">To — ' + esc(d.contact_name || '') + (d.designation ? ', ' + esc(d.designation) : '') + ' · ' + esc(d.company) + '<input id="rv-to" value="' + esc(d.to_addr) + '"></div>'
       + '<div class="bdc-f">Subject<input id="rv-subj" value="' + esc(d.subject) + '"></div>'
-      + '<div class="bdc-f">Message<textarea id="rv-body" rows="13">' + esc(d.body) + '</textarea></div>'
+      + '<div class="bdc-f">Message<textarea id="rv-body" rows="13">' + esc(d.body) + '</textarea>' + lintHtml(d.subject + '\n' + d.body) + '</div>'
       + (d.status === 'draft_failed' ? '<div style="color:#B42318;font-size:12px;margin-bottom:6px">The AI could not write this one (' + esc(d.error) + '). Write it yourself, or skip.</div>' : '')
       + '<div class="bdc-btns"><button class="bdc-btn" data-x="skip">Skip (Ctrl+S)</button><button class="bdc-btn p" data-x="approve">✓ Approve &amp; next (Ctrl+Enter)</button></div>';
   }
@@ -728,10 +754,11 @@ function settingsDlg(){
     + '<div class="bdc-row"><div class="bdc-f" style="flex:1">Send between (hour)<input type="number" id="st-sh" value="' + esc(s.start_hour) + '" min="0" max="23"></div><div class="bdc-f" style="flex:1">and (hour)<input type="number" id="st-eh" value="' + esc(s.end_hour) + '" min="1" max="24"></div></div>'
     + '<div class="bdc-f">Follow-up after (days, comma separated, up to 3)<input id="st-fu" value="' + esc(s.fu_days) + '"></div>'
     + '<label style="display:flex;gap:6px;align-items:center;font-size:12.5px"><input type="checkbox" id="st-fuon" ' + (s.fu_on ? 'checked' : '') + '> Follow-ups on by default</label>'
-    + '<div class="bdc-btns"><button class="bdc-btn" data-x="cancel">Cancel</button><button class="bdc-btn p" data-x="ok">Save</button></div>', function(ov){
+    + '<div class="bdc-btns"><button class="bdc-btn" data-x="playbook" style="margin-right:auto">📘 Call playbook…</button><button class="bdc-btn" data-x="cancel">Cancel</button><button class="bdc-btn p" data-x="ok">Save</button></div>', function(ov){
     ov.addEventListener('click', function(e){
       var x = e.target.closest('[data-x]'); if (!x) return;
       if (x.dataset.x === 'cancel'){ ov.remove(); return; }
+      if (x.dataset.x === 'playbook'){ ov.remove(); playbookDlg(); return; }
       var g = function(id){ return ov.querySelector(id).value; };
       api('PUT', '/settings', {calls_target: g('#st-calls'), emails_target: g('#st-emails'), gap_seconds: g('#st-gap'), daily_cap: g('#st-cap'),
                                start_hour: g('#st-sh'), end_hour: g('#st-eh'), fu_days: g('#st-fu'), fu_on: ov.querySelector('#st-fuon').checked ? 1 : 0}).then(function(j){
@@ -739,6 +766,29 @@ function settingsDlg(){
         S.settings = j.settings; ov.remove(); renderTop(); toast('Saved');
       });
     });
+  });
+}
+
+/* ---------- call playbook ---------- */
+function playbookDlg(){
+  api('GET', '/playbook').then(function(j){
+    if (!j.ok){ toast(j.error, true); return; }
+    dialog('<h2>📘 Call playbook</h2><p class="lead">How your agency opens calls and writes e-mails. The AI follows this for every call plan, e-mail and follow-up — so your team sounds like specialists, not like every other agency. '
+      + (j.custom ? 'This is your own version' + (j.updated_at ? ' (saved ' + esc(when(j.updated_at)) + ')' : '') + '.' : 'Starting point: consultative BD — discovery, credibility and consultative conversations (the pillars of Jay Tyler\'s <i>Business Development for Recruiters (Who Hate Selling)</i>) with insight-led, permission-based and candidate-led calling. Edit it to your style.') + '</p>'
+      + '<div class="bdc-f"><textarea id="pb-text" rows="18" style="font-size:12.5px;line-height:1.5">' + esc(j.text) + '</textarea></div>'
+      + '<details style="font-size:12px;color:#475467;margin-bottom:6px"><summary style="cursor:pointer">Words the e-mail checker flags (' + j.phrases.length + ')</summary><div style="margin-top:6px;columns:2">' + j.phrases.map(function(p){ return '<div>✕ <b>' + esc(p.phrase) + '</b> → ' + esc(p.tip) + '</div>'; }).join('') + '</div></details>'
+      + '<div class="bdc-btns"><button class="bdc-btn" data-x="reset" style="margin-right:auto">Reset to default</button><button class="bdc-btn" data-x="cancel">Cancel</button><button class="bdc-btn p" data-x="ok">Save playbook</button></div>', function(ov){
+      ov.addEventListener('click', function(e){
+        var x = e.target.closest('[data-x]'); if (!x) return;
+        if (x.dataset.x === 'cancel'){ ov.remove(); return; }
+        if (x.dataset.x === 'reset' && !confirm('Go back to the default playbook? Your edits are removed.')) return;
+        api('PUT', '/playbook', x.dataset.x === 'reset' ? {reset: true} : {text: ov.querySelector('#pb-text').value}).then(function(k){
+          if (!k.ok){ toast(k.error, true); return; }
+          if (x.dataset.x === 'reset'){ ov.querySelector('#pb-text').value = k.text; toast('Back to the default playbook'); return; }
+          ov.remove(); toast('📘 Playbook saved - new call plans and e-mails follow it');
+        });
+      });
+    }, true);
   });
 }
 
@@ -771,6 +821,7 @@ function wire(){
     var t = e.target, el;
     if ((el = t.closest('[data-view]'))){ S.view = el.dataset.view; S.sel = null; $('#bdc-panel').hidden = true; renderTop(); load(); return; }
     if ((el = t.closest('[data-out]'))){ if (S.detail) doOutcome(S.detail.company.id, el.dataset.out); return; }
+    if ((el = t.closest('[data-otab]'))){ S.openerTab = +el.dataset.otab; renderPanel(); return; }
     if ((el = t.closest('[data-act]'))){
       var a = el.dataset.act, id = +el.dataset.id || (S.detail ? S.detail.company.id : 0);
       if (a === 'check'){ S.checked[+el.dataset.id] = el.checked; renderTop(); return; }
@@ -795,6 +846,7 @@ function wire(){
       if (a === 'voicestop'){ stopRec(); return; }
       if (a === 'voicefill'){ voiceFill(); return; }
       if (a === 'opener'){ writeOpener(); return; }
+      if (a === 'playbook'){ playbookDlg(); return; }
       if (a === 'setsite'){ var w = prompt('Company website:', ''); if (w) api('PATCH', '/companies/' + id, {website: w.trim()}).then(function(j){ if (!j.ok) toast(j.error, true); else { replaceRow(j.row); loadDetail(id); } }); return; }
       if (a === 'addcontact'){
         dialog('<h2>+ Person at ' + esc(S.detail.company.name) + '</h2><div class="bdc-row"><div class="bdc-f" style="flex:1">Name<input id="nc-n" autofocus></div><div class="bdc-f" style="flex:1">Designation<input id="nc-d"></div></div><div class="bdc-row"><div class="bdc-f" style="flex:1">Phone<input id="nc-p"></div><div class="bdc-f" style="flex:1">E-mail<input id="nc-e"></div></div><div class="bdc-btns"><button class="bdc-btn" data-x="cancel">Cancel</button><button class="bdc-btn p" data-x="ok">Add &amp; call this person</button></div>', function(ov){

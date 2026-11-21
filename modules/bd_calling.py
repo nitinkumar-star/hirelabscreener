@@ -147,6 +147,12 @@ def _migrate_bd_calling(conn):
         created_at TEXT DEFAULT '',
         updated_at TEXT DEFAULT ''
     )''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS bd_playbook (
+        company_id INTEGER PRIMARY KEY,
+        text TEXT DEFAULT '',
+        updated_at TEXT DEFAULT '',
+        updated_by INTEGER DEFAULT 0
+    )''')
     conn.execute('''CREATE TABLE IF NOT EXISTS bd_call_settings (
         user_id INTEGER PRIMARY KEY,
         company_id INTEGER NOT NULL,
@@ -532,6 +538,7 @@ def meta():
         except Exception:
             pass
         return jsonify({'ok': True, 'statuses': STATUSES, 'reasons': NOT_INTERESTED_REASONS, 'u_fields': U_FIELDS,
+                        'phrases': [{'phrase': p, 'tip': t} for p, t in AGENCY_SPEAK],
                         'settings': s, 'today': _today_stats(conn, oid, uid), 'ai': bool(_ai_key()),
                         'mail': mail, 'me': uid})
     finally:
@@ -1095,6 +1102,154 @@ def _call_notes(conn, cid):
     return ['%s %s: %s' % ((r['created_at'] or '')[:10], r['outcome'] or '', (r['body'] or '')[:400]) for r in rows]
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  CALL PLAYBOOK — how this agency opens calls and writes e-mails
+#  Default: consultative BD (discovery -> credibility -> consultative conversation,
+#  the three pillars of "Business Development for Recruiters (Who Hate Selling)",
+#  Jay Tyler) plus well-known methods: insight-led selling, SPIN-style discovery,
+#  permission-based openers, "no"-oriented questions, MPC (candidate-led) calls.
+#  Written in our own words; each agency can edit it (Calling -> Settings -> Playbook).
+# ══════════════════════════════════════════════════════════════════════════
+DEFAULT_PLAYBOOK = """GOAL OF THE FIRST CALL
+- We are not selling a service. We are finding out if there is a real hiring problem we can help with, and earning a second conversation.
+- Success = they talk more than we do (70/30), we learn something real about their hiring, and they agree to one small next step.
+
+OPENING (first 15 seconds)
+- Name + agency in one short line. No "How are you today?", no "We are a leading recruitment agency".
+- Give ONE specific, researched reason for calling them, today: a new plant, expansion, roles they are advertising, a leadership change, something from the notes. If there is no trigger, say honestly that we specialise in their space and ask one sharp question.
+- Ask permission with a no-oriented question: "Is this a bad time for two minutes?" / "Would it be a terrible idea if I asked you one question about how you hire sales engineers?"
+
+CREDIBILITY (one line, never a list)
+- One specific proof that we know their world: the roles we fill, where that talent sits, a real placement type. Numbers ONLY from the agency facts. Never "huge database", "best talent", "end-to-end solutions".
+- Give before we ask: one useful market observation (where engineers are moving, notice periods, counter-offers, salary movement) - only if it is true from our notes.
+
+DISCOVERY (questions, then listen)
+- Which roles are hardest to fill right now, and why?
+- What happens to the business when that seat stays empty for 2-3 months?
+- How do you hire today - job boards, referrals, in-house team, agencies? What has worked and what has not?
+- Who is involved in the decision, and how fast do you usually move once you see the right profile?
+- What would a good agency do differently from the ones you have tried?
+- Summarise what you heard in one line and label it ("Sounds like the real issue is people leaving within a year...").
+
+OBJECTIONS = information, not rejection
+- "We don't use agencies": respect it; ask how they fill the hard roles when job boards don't work; offer something useful with no commitment (a market map, one anonymised profile).
+- "Fee is too high": don't discount on the first call; ask what an empty seat costs them per month; we are paid only on success.
+- "No hiring right now": ask about the next 6 months, attrition, replacements, new projects; ask permission to share a market update once a quarter.
+- "Send me your details": agree, but ask one question first so what we send is useful to them.
+
+CLOSE FOR A SMALL NEXT STEP (never "any vacancies?")
+- A 15-minute call to understand one role properly, OR we send 2 anonymised profiles for their hardest role, OR we share a short market map of where that talent sits.
+- Fix the date and time on the call.
+
+CANDIDATE-LED CALL (MPC)
+- When we have a strong, available candidate in their space: lead with the profile type (years, domain, achievement - no name, no CTC) and ask if that kind of person would interest them now or later.
+
+LANGUAGE
+- Short sentences, plain words, confident and curious. Hinglish is fine on the phone.
+- Never: "kindly", "do the needful", "revert", "touch base", "one-stop", "manpower", "pool of candidates", "quality candidates", "any requirements?", "hope this email finds you well".
+- Never badmouth other agencies. Never promise what our facts do not show.
+
+E-MAIL
+- Subject: specific to them (their plant, role or market), not "Recruitment services".
+- First line about THEM. One insight or one proof. One small ask. Under 120 words. No attachments, no CV dumps."""
+
+# phrases that make us sound like every other agency -> what to do instead
+AGENCY_SPEAK = [
+    ('leading recruitment', 'Say what you actually do: the roles and industry you fill.'),
+    ('leading staffing', 'Say what you actually do: the roles and industry you fill.'),
+    ('one-stop', 'Name the specific roles you fill instead.'),
+    ('one stop', 'Name the specific roles you fill instead.'),
+    ('end-to-end', 'Name the specific roles you fill instead.'),
+    ('end to end recruitment', 'Name the specific roles you fill instead.'),
+    ('manpower', 'Say "engineers", "sales team" - the real roles.'),
+    ('pool of candidates', 'Mention one relevant profile type instead.'),
+    ('huge database', 'Mention one relevant profile type instead.'),
+    ('vast database', 'Mention one relevant profile type instead.'),
+    ('quality candidates', 'Describe the candidate (years, domain, achievement).'),
+    ('best talent', 'Describe the candidate (years, domain, achievement).'),
+    ('top talent', 'Describe the candidate (years, domain, achievement).'),
+    ('any vacancies', 'Ask which role is hardest to fill right now.'),
+    ('any requirements', 'Ask which role is hardest to fill right now.'),
+    ('any requirement', 'Ask which role is hardest to fill right now.'),
+    ('any openings', 'Ask which role is hardest to fill right now.'),
+    ('introduce ourselves', 'Start with a reason about THEM, not about us.'),
+    ('introduce our company', 'Start with a reason about THEM, not about us.'),
+    ('our services', 'Talk about their problem, not our services.'),
+    ('hope this email finds you', 'Start with something about them.'),
+    ('hope you are doing well', 'Start with something about them.'),
+    ('i hope you are well', 'Start with something about them.'),
+    ('kindly', 'Use "please" or just ask.'),
+    ('do the needful', 'Say exactly what you want them to do.'),
+    ('revert', 'Use "reply".'),
+    ('touch base', 'Say what the call is for.'),
+    ('reach out', 'Say what you want to talk about.'),
+    ('synergy', 'Use plain words.'),
+    ('win-win', 'Use plain words.'),
+    ('cost-effective', 'Talk about the cost of an empty seat instead.'),
+    ('dedicated team of', 'Name one specific thing you do.'),
+    ('years of experience in recruitment', 'Show one specific proof instead.'),
+    ('partner with you', 'Offer one small concrete next step instead.'),
+    ('at the earliest', 'Give a day: "by Thursday?"'),
+    ('please find attached', 'No attachments in a first e-mail.'),
+]
+
+
+def lint_text(text):
+    """Agency clichés found in a text: [{phrase, tip}] (case-insensitive, each once)."""
+    low = ' ' + re.sub(r'\s+', ' ', (text or '').lower()) + ' '
+    out, seen = [], set()
+    for ph, tip in AGENCY_SPEAK:
+        if ph in low and tip not in seen:
+            out.append({'phrase': ph, 'tip': tip})
+            seen.add(tip)
+    return out
+
+
+def playbook(conn, oid):
+    r = conn.execute('SELECT text FROM bd_playbook WHERE company_id=?', (oid,)).fetchone()
+    return (r['text'] if r and (r['text'] or '').strip() else DEFAULT_PLAYBOOK)
+
+
+@bp.route('/playbook', methods=['GET'])
+@_api
+def playbook_get():
+    conn = get_db()
+    try:
+        oid = effective_company_id()
+        r = conn.execute('SELECT text, updated_at, updated_by FROM bd_playbook WHERE company_id=?', (oid,)).fetchone()
+        custom = bool(r and (r['text'] or '').strip())
+        return jsonify({'ok': True, 'text': playbook(conn, oid), 'custom': custom, 'default': DEFAULT_PLAYBOOK,
+                        'updated_at': r['updated_at'] if custom else '',
+                        'phrases': [{'phrase': p, 'tip': t} for p, t in AGENCY_SPEAK]})
+    finally:
+        conn.close()
+
+
+@bp.route('/playbook', methods=['PUT', 'POST'])
+@_api
+def playbook_put():
+    d = request.get_json(silent=True) or {}
+    text = '' if d.get('reset') else str(d.get('text') or '').strip()
+    if len(text) > 20000:
+        raise BDError('The playbook is too long (max 20,000 characters).')
+    conn = get_db()
+    try:
+        oid = effective_company_id()
+        conn.execute('INSERT OR REPLACE INTO bd_playbook (company_id, text, updated_at, updated_by) VALUES (?,?,?,?)',
+                     (oid, text, ts(), real_user_id()))
+        conn.commit()
+        return jsonify({'ok': True, 'text': playbook(conn, oid), 'custom': bool(text)})
+    finally:
+        conn.close()
+
+
+@bp.route('/lint', methods=['POST'])
+@_api
+def lint():
+    d = request.get_json(silent=True) or {}
+    return jsonify({'ok': True, 'issues': lint_text((d.get('subject') or '') + '\n' + (d.get('text') or ''))})
+
+
 DRAFT_PROMPT = """You write B2B cold e-mails for an Indian recruitment agency to a prospect company's hiring person.
 Rules:
 - Plain, warm, specific English. No buzzwords, no "I hope this email finds you well", no exaggeration.
@@ -1104,6 +1259,9 @@ Rules:
 - Short: {words} words max in the body. One clear ask (a 10-minute call, or "shall I share profiles?").
 - Sign off with the sender's first name only; no signature block (it is added automatically).
 - If WRITING STYLE samples are given, match their tone and length.
+- Follow the agency's PLAYBOOK (given below the facts): it decides tone, what to avoid and the kind of ask.
+- Must NOT sound like a typical agency: no "leading recruitment agency", "manpower", "pool of candidates",
+  "any requirements", "kindly", "revert", "touch base", "our services". Talk about THEIR situation.
 Return JSON: {{"variants": [
   {{"style": "short", "subjects": ["", "", ""], "body": ""}},
   {{"style": "value", "subjects": ["", "", ""], "body": ""}},
@@ -1113,7 +1271,8 @@ Return JSON: {{"variants": [
 - candidate: offer a kind of ready candidate for a role they hire (describe the profile type, no names, no CTC)."""
 
 FOLLOWUP_PROMPT = """Write a short follow-up (2-4 sentences, max 70 words) to a cold e-mail that got no reply, from an Indian
-recruitment agency. Add one new useful angle from the facts (never invent). Polite, no guilt-tripping.
+recruitment agency. Add one new useful angle from the facts (never invent): an insight, a candidate type, or a question
+about their hardest role. Polite, no guilt-tripping, no "just following up", no agency clichés. Follow the PLAYBOOK.
 Sign off with the sender's first name. Return JSON {"body": ""}."""
 
 
@@ -1139,19 +1298,30 @@ def _context(conn, oid, uid, cid, contact, kind='cold', note=''):
     st = style_samples(conn, oid, uid)
     if st:
         ctx += ['\nWRITING STYLE samples (the sender\'s past e-mails):'] + ['---\n' + x for x in st]
+    ctx += ['\nPLAYBOOK (how this agency sells - follow it):', playbook(conn, oid)[:9000]]
     return '\n'.join(ctx), facts
 
 
 def ai_variants(conn, oid, uid, cid, contact, kind='cold', note=''):
     ctx, facts = _context(conn, oid, uid, cid, contact, kind, note)
-    j = _ai_json(DRAFT_PROMPT.format(words=130 if kind == 'cold' else 170), ctx, 1400, 0.6, 'bd-email')
+    prompt = DRAFT_PROMPT.format(words=130 if kind == 'cold' else 170)
+    j = _ai_json(prompt, ctx, 1400, 0.6, 'bd-email')
+    bad = sorted({i['phrase'] for v in (j.get('variants') or []) if isinstance(v, dict)
+                  for i in lint_text(' '.join([str(v.get('body') or '')] + [str(x) for x in (v.get('subjects') or [])]))})
+    if bad:
+        # one correction pass: the draft used agency clichés
+        j2 = _ai_json(prompt, ctx + '\n\nYOUR LAST DRAFT USED THESE AGENCY CLICHES - rewrite all 3 without them: '
+                      + ', '.join(bad), 1400, 0.5, 'bd-email')
+        if j2.get('variants'):
+            j = j2
     out = []
     for v in (j.get('variants') or [])[:3]:
         if not isinstance(v, dict) or not str(v.get('body') or '').strip():
             continue
         subs = [str(s).strip() for s in (v.get('subjects') or []) if str(s).strip()][:3]
-        out.append({'style': str(v.get('style') or ''), 'subjects': subs or ['Hiring support for %s' % _company(conn, oid, cid)['name']],
-                    'body': str(v['body']).strip()})
+        body = str(v['body']).strip()
+        out.append({'style': str(v.get('style') or ''), 'subjects': subs or ['Hiring at %s' % _company(conn, oid, cid)['name']],
+                    'body': body, 'flags': lint_text(body + ' ' + ' '.join(subs))})
     if not out:
         raise BDError('The AI did not return an e-mail. Try again.', 502)
     return out, facts
@@ -1175,11 +1345,27 @@ def draft(cid):
         conn.close()
 
 
-OPENER_PROMPT = """Write a cold-call opener for an Indian recruitment agency calling this company, and answers to 3 objections.
-Natural spoken English that also works in Hinglish; short sentences; use the UNDERSTANDING; only AGENCY FACTS for numbers.
-Return JSON {"opener": "about 30 seconds of speech", "questions": ["2-3 discovery questions"],
-"objections": [{"q": "We don't use agencies", "a": ""}, {"q": "Your fee is too high", "a": ""},
-{"q": "No hiring right now", "a": ""}]}"""
+OPENER_PROMPT = """You prepare a recruiter for a cold call to this company. The recruiter must NOT sound like a typical
+recruitment agency. Follow the PLAYBOOK exactly (it is the agency's own method). Use the UNDERSTANDING and CALL NOTES
+for specifics; numbers only from AGENCY FACTS; never invent facts, names or achievements. Natural spoken English that
+also works in Hinglish, short sentences.
+Return JSON:
+{"openers": [
+  {"style": "trigger", "label": "Reason-for-calling", "script": "15-20 seconds: name + agency, a specific researched reason (from the notes), permission question"},
+  {"style": "insight", "label": "Insight-led", "script": "open with one useful market observation for their world, then a permission question"},
+  {"style": "candidate", "label": "Candidate-led", "script": "a ready profile type for a role they hire (no name, no CTC), then a question"}],
+ "credibility": "one line that shows we know their world (only true facts)",
+ "insight": "one market observation to give before asking (only if supported by notes; else empty)",
+ "discovery": ["5 open questions in the order to ask"],
+ "listen_for": ["3 signals of a real hiring pain"],
+ "objections": [{"q": "We don't use agencies", "a": ""}, {"q": "Your fee is too high", "a": ""},
+                {"q": "No hiring right now", "a": ""}, {"q": "Send me your details", "a": ""}],
+ "next_step": "the small next step to ask for at the end",
+ "avoid": ["3 things not to say on this call"]}"""
+
+
+def _strs(v, n):
+    return [str(x).strip() for x in (v or []) if str(x).strip()][:n]
 
 
 @bp.route('/companies/<int:cid>/opener', methods=['POST'])
@@ -1191,10 +1377,20 @@ def opener(cid):
         row = _call_row(conn, oid, cid)
         contact = _pick_contact(_contacts(conn, oid, cid), row.get('contact_id') or 0)
         ctx, _f = _context(conn, oid, uid, cid, contact)
-        j = _ai_json(OPENER_PROMPT, ctx, 900, 0.5, 'bd-opener')
-        op = {'opener': str(j.get('opener') or ''), 'questions': [str(x) for x in (j.get('questions') or [])][:3],
+        j = _ai_json(OPENER_PROMPT, ctx, 1600, 0.5, 'bd-opener')
+        ops = [{'style': str(o.get('style') or ''), 'label': str(o.get('label') or o.get('style') or 'Opener'),
+                'script': str(o.get('script') or '').strip()} for o in (j.get('openers') or [])
+               if isinstance(o, dict) and str(o.get('script') or '').strip()][:3]
+        if not ops and str(j.get('opener') or '').strip():
+            ops = [{'style': 'trigger', 'label': 'Opener', 'script': str(j['opener']).strip()}]
+        for o in ops:
+            o['flags'] = lint_text(o['script'])
+        op = {'openers': ops, 'opener': ops[0]['script'] if ops else '',
+              'credibility': str(j.get('credibility') or '').strip(), 'insight': str(j.get('insight') or '').strip(),
+              'questions': _strs(j.get('discovery') or j.get('questions'), 6), 'listen_for': _strs(j.get('listen_for'), 4),
               'objections': [{'q': str(o.get('q') or ''), 'a': str(o.get('a') or '')} for o in (j.get('objections') or [])
-                             if isinstance(o, dict)][:4], 'at': ts()}
+                             if isinstance(o, dict)][:5],
+              'next_step': str(j.get('next_step') or '').strip(), 'avoid': _strs(j.get('avoid'), 4), 'at': ts()}
         conn.execute('UPDATE bd_call SET opener=? WHERE client_id=?', (json.dumps(op), cid))
         conn.commit()
         return jsonify({'ok': True, 'opener': op})
