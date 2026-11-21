@@ -4,9 +4,9 @@
  *   ICap.withReason(stage, body, opts)  -> body + reason fields, or null when cancelled
  *                                          (returns body unchanged for a positive stage or when switched off)
  *   ICap.reasonOnly(cid, stage, opts)   -> reason for the CURRENT stage, without moving it
- *   ICap.mountCapture(cid)              -> the "Call capture" card into #icap-card-<cid>
- *                                          (team size, yearly target, market note; expected CTC and
- *                                          notice period stay in Key Facts)
+ *   ICap.mountCapture(cid)              -> the "Call capture" card into #icap-card-<cid>: the MARKET NOTE
+ *                                          (expected CTC / notice live in Key Facts; target, team and the
+ *                                          other role fields in the Profile card — they are not asked twice)
  *   ICap.openCapture(cid, opts)         -> the same card in a pop-up
  *   ICap.mountCheck630(wrap)            -> the "6:30 check" card on Home
  *   ICap.refreshBadge()                 -> red count on the Home menu item
@@ -199,7 +199,6 @@
   };
 
   /* ── 1b  Call capture card ─────────────────────────────────────────── */
-  function numVal(v) { return (v === null || v === undefined || v === '' || Number(v) === 0) ? '' : String(v); }
   function cardHTML(c) {
     var sig = (cfg.catalog.signals || []).map(function (s) { return '<option value="' + esc(s[0]) + '">' + esc(s[1]) + '</option>'; }).join('');
     var p = 'icap-' + c.id + '-';
@@ -210,50 +209,37 @@
       return '<div><span class="icap-tag">' + esc(sl ? sl[1] : n.signal_type) + '</span><b>' + esc(n.company_name) + '</b>: ' + esc(n.note) +
         ' <span style="color:#9A958A">' + esc(String(n.created_at || '').slice(0, 10)) + (n.source === 'call_ai' ? ' · from call' : '') + '</span></div>';
     }).join('') + '</div>' : '';
-    return '<div class="icap-h"><span class="icap-t">Call capture</span><span style="font-size:11.5px;color:#6B675E">about a minute per call</span>' +
+    return '<div class="icap-h"><span class="icap-t">Market note</span><span style="font-size:11.5px;color:#6B675E">news about a company from this call</span>' +
       '<span id="' + p + 'st" style="margin-left:auto;font-size:11.5px;color:#0F6E56"></span></div>' +
-      '<div class="icap-g">' +
-      '<div><label class="icap-lbl" for="' + p + 'td">Team: direct</label><input class="icap-in" id="' + p + 'td" inputmode="numeric" value="' + esc(numVal(c.team_direct)) + '"></div>' +
-      '<div><label class="icap-lbl" for="' + p + 'ti">Team: indirect</label><input class="icap-in" id="' + p + 'ti" inputmode="numeric" value="' + esc(numVal(c.team_indirect)) + '"></div>' +
-      '<div><label class="icap-lbl" for="' + p + 'yt">Yearly target (&#8377; Cr)</label><input class="icap-in" id="' + p + 'yt" inputmode="decimal" value="' + esc(numVal(c.yearly_target)) + '"></div>' +
-      '</div>' +
-      '<div style="margin-top:10px"><span class="icap-lbl">Market note</span><div class="icap-mn">' +
+      '<div><div class="icap-mn">' +
       '<input class="icap-in" id="' + p + 'mc" aria-label="Company the note is about" value="' + esc(c.company) + '" placeholder="Company">' +
       '<select class="icap-in" id="' + p + 'ms" aria-label="Signal type">' + sig + '</select>' +
       '<input class="icap-in icap-wide" id="' + p + 'mt" maxlength="600" aria-label="Market note" placeholder="e.g. Siemens Bangalore sales freeze till March">' +
       '</div></div>' +
       '<div class="icap-err" id="' + p + 'err" role="alert"></div>' +
-      '<div class="icap-act" style="margin-top:8px"><button type="button" class="icap-btn pri" id="' + p + 'save">Save</button></div>' +
+      '<div class="icap-act" style="margin-top:8px"><button type="button" class="icap-btn pri" id="' + p + 'save">Save note</button></div>' +
       rsn + notes;
   }
   function wireCard(el, c, opts) {
     var p = 'icap-' + c.id + '-', $ = function (id) { return el.querySelector('#' + p + id); };
-    $('save').addEventListener('click', function () {
+    function save() {
+      // only the market note: CTC / notice are in Key Facts, target / team in the Profile card
+      if (!$('mt').value.trim()) { $('err').textContent = 'Write the market note first.'; $('mt').focus(); return; }
       var b = $('save'); b.disabled = true; b.textContent = 'Saving…'; $('err').textContent = '';
-      // expected CTC and notice period live in Key Facts, not on this card
-      var body = {team_direct: $('td').value.trim(), team_indirect: $('ti').value.trim(), yearly_target: $('yt').value.trim()};
-      if ($('mt').value.trim()) body.market_note = {company: $('mc').value.trim(), signal_type: $('ms').value, note: $('mt').value.trim()};
+      var body = {market_note: {company: $('mc').value.trim(), signal_type: $('ms').value, note: $('mt').value.trim()}};
       api('PUT', '/api/candidates/' + c.id + '/capture', body).then(function (j) {
-        if (!j || !j.ok) { b.disabled = false; b.textContent = 'Save'; $('err').textContent = (j && j.error) || 'Save failed.'; return; }
-        syncProfile(c.id, j.capture);
+        if (!j || !j.ok) { b.disabled = false; b.textContent = 'Save note'; $('err').textContent = (j && j.error) || 'Save failed.'; return; }
         render(el, j.capture, opts);
         var st = el.querySelector('#' + p + 'st'); if (st) st.textContent = 'Saved ✓';
         ICap.refreshBadge();
         if (opts && opts.onSave) opts.onSave(j.capture);
       });
-    });
+    }
+    $('save').addEventListener('click', save);
+    // Enter saves; it must not also reach the app's own keyboard shortcuts
+    $('mt').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); save(); } });
   }
   function render(el, c, opts) { el.innerHTML = cardHTML(c); wireCard(el, c, opts); }
-  // keep the open profile form in step, so its own "Save" does not put old values back
-  function syncProfile(cid, c) {
-    try {
-      var S0 = window._sp && window._sp[cid];
-      if (S0 && S0.c) {
-        S0.c.team_direct = c.team_direct; S0.c.team_indirect = c.team_indirect; S0.c.yearly_target = c.yearly_target;
-        if (!S0.edit && typeof window._spPaint === 'function') window._spPaint(cid);
-      }
-    } catch (e) {}
-  }
 
   ICap.mountCapture = function (cid, el) {
     el = el || document.getElementById('icap-card-' + cid);

@@ -444,6 +444,15 @@ def build(conn, oid, key, client=False):
         'client': _client_branch(conn, oid, key, sc, sp, client),
         'quality': _quality(conn, oid, current, records, stages_now),
     }
+    # every profile group's own fields (Sales, Production, Tender, Design …), as aggregates only
+    try:
+        from modules import talent_map as tm
+        cur_pairs, _f = tm.company_people(conn, oid, key, want_former=False)
+        groups = tm.attach_profiles(conn, oid, cur_pairs)
+        data['profile_fields'] = tm.profile_summary(groups, [p for p, _r in cur_pairs], client, MIN_N)
+    except Exception as e:
+        print('[insight-company] profile fields skipped:', e)
+        data['profile_fields'] = []
     if not name and data['client'] is None and not data['notes']['n'] and not former:
         data['empty'] = True
     return data

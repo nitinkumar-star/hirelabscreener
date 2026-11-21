@@ -105,6 +105,7 @@ td .m{color:var(--muted);font-size:12px}
   function num(v, d){ v = Number(v) || 0; return v ? (Math.round(v * 10) / 10).toLocaleString('en-IN') : (d || '—'); }
   var D = null, OPT = {former: false, client: false, hideCtc: false, sort: 'target', dir: -1, product: '', geo: '', tab: 'people'};
   var INTEL_ON = false, IC = {}, SIGF = '';          // Wave 2: Intelligence tab
+  OPT.group = 'all';                                  // profile group shown on the People tab ('all' = today's view)
   try { if (new URLSearchParams(location.search).get('tab') === 'intel') OPT.tab = 'intel'; } catch(e) {}
   try { var s = JSON.parse(localStorage.getItem('tmap_opt') || '{}'); ['former', 'client', 'hideCtc'].forEach(function(k){ if (k in s) OPT[k] = !!s[k]; }); } catch(e) {}
   function saveOpt(){ try { localStorage.setItem('tmap_opt', JSON.stringify({former: OPT.former, client: OPT.client, hideCtc: OPT.hideCtc})); } catch(e) {} }
@@ -130,14 +131,21 @@ td .m{color:var(--muted);font-size:12px}
   async function show(name){
     name = String(name || '').trim(); if (!name) return;
     $('app').innerHTML = '<div class="card empty">Loading…</div>';
-    var r = await api('/company?former=1&name=' + encodeURIComponent(name));
+    var r = await api('/company?former=1&view=' + (OPT.client ? 'client' : 'internal') + '&name=' + encodeURIComponent(name));
     if (!r.ok) { $('app').innerHTML = '<div class="card"><div class="err">' + esc(r.error || 'Could not load') + '</div></div>'; return; }
     D = r; OPT.product = ''; OPT.geo = '';
+    D.groups = D.groups || [];
+    if (OPT.group !== 'all' && +OPT.group !== 0 && !D.groups.some(function(g){ return g.id === +OPT.group; })) OPT.group = 'all';
     try { history.replaceState(null, '', '?company=' + encodeURIComponent(r.company) + (OPT.tab === 'intel' ? '&tab=intel' : '')); } catch(e) {}
     paint();
   }
+  function inGroup(list){
+    if (OPT.group === 'all') return list;
+    var g = +OPT.group;
+    return list.filter(function(p){ return (p.pgroup || 0) === g; });
+  }
   function people(){
-    var list = D.people.concat(OPT.former ? D.former : []);
+    var list = inGroup(D.people.concat(OPT.former ? D.former : []));
     if (OPT.product) list = list.filter(function(p){ return p.products.indexOf(OPT.product) >= 0; });
     if (OPT.geo) list = list.filter(function(p){ return p.geography.indexOf(OPT.geo) >= 0; });
     var k = OPT.sort, dir = OPT.dir;
@@ -164,7 +172,7 @@ td .m{color:var(--muted);font-size:12px}
   }
   function band(e){ e = Number(e) || 0; return !e ? 'Not known' : e < 3 ? '0–3 yrs' : e < 6 ? '3–6 yrs' : e < 10 ? '6–10 yrs' : e < 15 ? '10–15 yrs' : '15+ yrs'; }
   function paint(){
-    var list = people(), all = D.people.concat(OPT.former ? D.former : []);
+    var list = people(), all = inGroup(D.people.concat(OPT.former ? D.former : []));
     var label = function(p, i){ return OPT.client ? 'Candidate ' + String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : '') : p.name; };
     var exps = all.map(function(p){ return Number(p.experience) || 0; }).filter(Boolean);
     var ctcs = all.map(function(p){ return Number(p.ctc_current) || 0; }).filter(Boolean);
@@ -186,6 +194,9 @@ td .m{color:var(--muted);font-size:12px}
     if (INTEL_ON) h += '<div class="tabs noprint" role="tablist"><button role="tab" data-tab="people" aria-selected="' + (OPT.tab !== 'intel') + '" class="' + (OPT.tab !== 'intel' ? 'on' : '') + '">People</button>'
       + '<button role="tab" data-tab="intel" aria-selected="' + (OPT.tab === 'intel') + '" class="' + (OPT.tab === 'intel' ? 'on' : '') + '">Intelligence</button></div>';
     if (INTEL_ON && OPT.tab === 'intel') { $('app').innerHTML = h + '<div id="intel"><div class="card empty">Loading company intelligence…</div></div>'; bind(); paintIntel(false); return; }
+    h += groupChips();
+    var gsel = OPT.group === 'all' ? null : (D.groups.filter(function(g){ return g.id === +OPT.group; })[0] || null);
+    if (OPT.group !== 'all' && !(gsel && gsel.is_sales)) { paintGroup(h, gsel); return; }
     if (!all.length) { $('app').innerHTML = h + '<div class="card empty">Nobody from this company in your database yet' + (D.former.length ? ' — tick “Include former employees”.' : '.') + '</div>'; bind(); return; }
     h += '<div class="kpis">' + kp.map(function(k){ return '<div class="kpi"><span>' + k[0] + '</span><b title="' + esc(k[1]) + '">' + esc(k[1]) + '</b><span>' + esc(k[2]) + '</span></div>'; }).join('') + '</div>';
     var withT = all.filter(function(p){ return Number(p.yearly_target) > 0; }).sort(function(a, b){ return b.yearly_target - a.yearly_target; });
@@ -225,6 +236,66 @@ td .m{color:var(--muted);font-size:12px}
       + '<div class="sub" style="margin-top:8px">Product handling, geography and yearly target come from each profile (Key Facts and the tag boxes). Empty cells mean it is not filled in yet.</div></div>';
     $('app').innerHTML = h; bind();
   }
+  // ── Profile groups on the People tab (Sales, Production, Tender, Design …) ─
+  var SYS_KEY = {yearly_target: 'yearly_target', team_direct: 'team_direct', team_indirect: 'team_indirect',
+                 product_handles: 'products', function_tags: 'functions', geography_tags: 'geography', gender: 'gender'};
+  function fval(p, f){ return f.type === 'system' ? p[SYS_KEY[f.sys]] : (p.pvals || {})[f.key]; }
+  function fshow(v, f){
+    if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) return '<span class="mu">—</span>';
+    if (Array.isArray(v)) return v.map(function(x){ return '<span class="tg">' + esc(x) + '</span>'; }).join('');
+    if (f.kind === 'number') return esc(num(v)) + (f.unit ? ' <span class="m">' + esc(f.unit) + '</span>' : '');
+    return esc(v);
+  }
+  function groupChips(){
+    if (!D.groups.length) return '';
+    var all = D.people.concat(OPT.former ? D.former : []), cnt = {};
+    all.forEach(function(p){ var g = p.pgroup || 0; cnt[g] = (cnt[g] || 0) + 1; });
+    var chip = function(v, label, n){ var on = String(OPT.group) === String(v);
+      return '<button class="chip' + (on ? ' on' : '') + '" data-grp="' + v + '" aria-pressed="' + on + '">' + esc(label) + '<b>' + n + '</b></button>'; };
+    return '<div class="chips noprint" style="margin:-4px 0 14px" role="group" aria-label="Profile group">'
+      + chip('all', 'All people', all.length)
+      + D.groups.map(function(g){ return cnt[g.id] ? chip(g.id, g.name, cnt[g.id]) : ''; }).join('')
+      + (cnt[0] ? chip(0, 'Not grouped', cnt[0]) : '') + '</div>';
+  }
+  function paintGroup(h, g){
+    var list = people().slice().sort(function(a, b){ return String(a.name || '').toLowerCase() < String(b.name || '').toLowerCase() ? -1 : 1; });
+    var idx = {}; D.people.concat(D.former).forEach(function(p, i){ idx[p.id] = i; });
+    var label = function(p){ var i = idx[p.id] || 0; return OPT.client ? 'Candidate ' + String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : '') : p.name; };
+    var fields = g ? g.fields : [];
+    var sum = g ? (D.group_summary || []).filter(function(x){ return x.group_id === g.id; })[0] : null;
+    h += '<div class="sub" style="margin:-6px 0 12px">' + (g ? '<b>' + esc(g.name) + '</b> profile: ' + list.length + ' ' + (list.length === 1 ? 'person' : 'people') + '. The fields are the ones set up for this group in Settings &rarr; Profile groups.'
+      : 'These people have no profile group yet. Pick one on their profile (Profile card) to see their role fields here.') + '</div>';
+    if (sum) {
+      var nums = sum.fields.filter(function(f){ return f.kind === 'number'; });
+      var cats = sum.fields.filter(function(f){ return f.kind === 'tags' || f.kind === 'choice'; });
+      var texts = sum.fields.filter(function(f){ return f.kind === 'text'; });
+      if (nums.length) h += '<div class="card"><div class="h">Numbers</div><div class="sub">Current employees · shown only when at least 3 people have the field filled in</div><div class="scroll"><table><thead><tr><th class="ns">Field</th><th class="ns">n</th><th class="ns">Median</th><th class="ns">Range</th>' + (OPT.client ? '' : '<th class="ns">Total</th>') + '</tr></thead><tbody>'
+        + nums.map(function(f){ var u = f.unit ? ' ' + esc(f.unit) : '';
+            return '<tr><td>' + esc(f.label) + '</td><td>' + f.n + '</td>' + (f.small ? '<td colspan="' + (OPT.client ? 2 : 3) + '"><span class="mu">n too small</span></td>'
+              : '<td><b>' + num(f.median) + u + '</b></td><td>' + num(f.min) + ' – ' + num(f.max) + u + '</td>' + (OPT.client ? '' : '<td>' + num(f.total) + u + '</td>')) + '</tr>'; }).join('')
+        + '</tbody></table></div></div>';
+      if (cats.length) h += '<div class="grid2">' + cats.map(function(f){
+          return '<div class="card"><div class="h">' + esc(f.label) + '</div><div class="sub">' + f.n + ' with it filled in</div>' + bars(f.top.slice(0, 10), f.top.length ? f.top[0][1] : 1) + '</div>'; }).join('') + '</div>';
+      if (texts.length) h += '<div class="card"><div class="h">Notes fields</div><div class="sub">' + texts.map(function(f){ return esc(f.label) + ': ' + f.n + ' filled'; }).join(' · ')
+        + (OPT.client ? ' (text is not shown in the client view)' : '') + '</div></div>';
+    }
+    var cols = fields.filter(function(f){ return !OPT.client || f.kind === 'tags' || f.kind === 'choice'; });
+    h += '<div class="card"><div class="row" style="justify-content:space-between"><div class="h">Side-by-side comparison</div><span class="sub">' + list.length + ' people</span></div><div class="scroll"><table><thead><tr>'
+      + '<th class="ns">' + (OPT.client ? 'Candidate' : 'Name') + '</th><th class="ns">Designation</th><th class="ns">Exp</th>'
+      + cols.map(function(f){ return '<th class="ns">' + esc(f.label) + (f.kind === 'number' && f.unit ? ' <span class="mu">(' + esc(f.unit) + ')</span>' : '') + '</th>'; }).join('')
+      + '<th class="ns">Location</th>' + (OPT.client ? '' : '<th class="ns noprint"></th>') + '</tr></thead><tbody>'
+      + list.map(function(p){
+          return '<tr><td><b>' + esc(label(p)) + '</b>' + (p.former ? '<span class="fm">Former</span>' : '') + '</td>'
+            + '<td>' + esc(p.designation || '—') + '</td><td>' + (p.experience ? num(p.experience) + ' y' : '<span class="mu">—</span>') + '</td>'
+            + cols.map(function(f){ return '<td>' + fshow(fval(p, f), f) + '</td>'; }).join('')
+            + '<td>' + esc(p.location || '—') + '</td>'
+            + (OPT.client ? '' : '<td class="noprint"><a href="/#mandate/' + p.mandate_id + '/profiles/' + p.id + '" target="_blank" rel="noopener">Profile ↗</a></td>') + '</tr>';
+        }).join('') + '</tbody></table></div>'
+      + (OPT.client && cols.length < fields.length ? '<div class="sub" style="margin-top:8px">Client view: number and text fields are not shown per person; numbers appear above as bands of 3 or more people.</div>' : '')
+      + '</div>';
+    $('app').innerHTML = h; bind();
+  }
+
   // ── Wave 2: Intelligence tab ────────────────────────────────────────────
   var SIG = {hiring: 'Hiring', freeze: 'Hiring freeze', exit: 'People leaving', join: 'People joining',
              new_order_project: 'New order / project', pay: 'Pay / increments', reorg: 'Re-org', other: 'Other'};
@@ -291,6 +362,22 @@ td .m{color:var(--muted);font-size:12px}
         + (cn.brand_signals && cn.brand_signals.length ? '<div class="sub" style="margin-top:6px">Employer-brand signals: ' + cn.brand_signals.map(function(t){ return esc(t.label) + ' ' + t.n; }).join(' · ') + '</div>' : '')
         + quotes(cn.recent) + '</div></div></div>';
     }
+    // every profile group's own fields (Sales, Production, Tender, Design …), aggregates only
+    (r.profile_fields || []).forEach(function(g){
+      var nums = g.fields.filter(function(f){ return f.kind === 'number'; });
+      var cats = g.fields.filter(function(f){ return (f.kind === 'tags' || f.kind === 'choice') && f.top && f.top.length; });
+      var texts = g.fields.filter(function(f){ return f.kind === 'text'; });
+      h += '<div class="card"><div class="h">' + esc(g.name) + ' profile fields</div><div class="sub">' + g.people + ' current ' + (g.people === 1 ? 'employee' : 'employees') + ' in this profile group · numbers need at least ' + r.min_n + ' people</div>'
+        + (nums.length ? '<div class="scroll" style="margin-top:8px"><table><thead><tr><th class="ns">Field</th><th class="ns">n</th><th class="ns">Median</th><th class="ns">Range</th>' + (OPT.client ? '' : '<th class="ns">Total</th>') + '</tr></thead><tbody>'
+          + nums.map(function(f){ var u = f.unit ? ' ' + esc(f.unit) : '';
+              return '<tr><td>' + esc(f.label) + '</td><td>' + f.n + '</td>' + (f.small ? '<td colspan="' + (OPT.client ? 2 : 3) + '"><span class="small">n too small</span></td>'
+                : '<td><b>' + num(f.median) + u + '</b></td><td>' + num(f.min) + ' – ' + num(f.max) + u + '</td>' + (OPT.client ? '' : '<td>' + num(f.total) + u + '</td>')) + '</tr>'; }).join('')
+          + '</tbody></table></div>' : '')
+        + (cats.length ? '<div class="grid2" style="margin-top:10px">' + cats.map(function(f){
+            return '<div><b style="font-size:13px">' + esc(f.label) + '</b> <span class="mu">(' + f.n + ')</span>' + bars(f.top.slice(0, 8), f.top[0][1]) + '</div>'; }).join('') + '</div>' : '')
+        + (texts.length ? '<div class="sub" style="margin-top:8px">' + texts.map(function(f){ return esc(f.label) + ': ' + f.n + ' filled'; }).join(' · ') + '</div>' : '')
+        + '</div>';
+    });
     // data quality
     h += '<div class="card"><div class="h">Data quality</div><div class="sub">How complete the data behind these numbers is</div><div class="ig" style="margin:10px 0 0">'
       + '<div class="kpi"><span>Expected CTC known</span><b>' + pc(q.expected_ctc_pct) + '</b><span>of ' + q.records + ' people</span></div>'
@@ -315,7 +402,10 @@ td .m{color:var(--muted);font-size:12px}
       paint(); }; });
     var f = $('o-former'), c = $('o-client'), x = $('o-ctc');
     if (f) f.onchange = function(){ OPT.former = this.checked; saveOpt(); paint(); };
-    if (c) c.onchange = function(){ OPT.client = this.checked; if (OPT.client) OPT.hideCtc = true; saveOpt(); paint(); };
+    // client view is fetched again from the server, which leaves out per-person numbers / text of the profile fields
+    if (c) c.onchange = function(){ OPT.client = this.checked; if (OPT.client) OPT.hideCtc = true; saveOpt(); show(D.company); };
+    document.querySelectorAll('[data-grp]').forEach(function(b){ b.onclick = function(){
+      OPT.group = b.dataset.grp === 'all' ? 'all' : +b.dataset.grp; OPT.product = ''; OPT.geo = ''; paint(); }; });
     if (x) x.onchange = function(){ OPT.hideCtc = this.checked; saveOpt(); paint(); };
     document.querySelectorAll('[data-s]').forEach(function(t){ t.onclick = function(){ var k = t.dataset.s; if (OPT.sort === k) OPT.dir = -OPT.dir; else { OPT.sort = k; OPT.dir = (k === 'name' || k === 'designation') ? 1 : -1; } paint(); }; });
     document.querySelectorAll('[data-p]').forEach(function(b){ b.onclick = function(){ OPT.product = b.dataset.p; paint(); }; });
