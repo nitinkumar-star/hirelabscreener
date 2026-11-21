@@ -81,6 +81,7 @@ _MODULE_NAMES = [
     'insight_capture', # Insight Wave 1: reasons for every "no", client feedback, market notes, call capture, auto-tags, 6:30 check
     'insight_company', # Insight Wave 2: Company Intelligence tab on the Talent Map (/api/talent-map/intel)
     'insight_market',  # Insight Wave 3: Market Intel page + Talent Pulse draft (/market-intel)
+    'academy',         # HireLab Academy: every feature explained + ask a question (/academy)
 ]
 
 _MIGRATIONS = []

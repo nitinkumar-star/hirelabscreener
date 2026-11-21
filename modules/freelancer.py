@@ -118,6 +118,8 @@ _FL_ALLOW = [
     (('POST',),         r'^/api/candidates/\d+/cv/?$'),                   # + own-candidate check below
     (('GET', 'POST'),   r'^/api/hotlist/mine(/outcome)?/?$'),           # Hot List calls assigned to this caller (checked in modules/hotlist.py)
     (('POST',),         r'^/api/presence/ping/?$'),                     # Team Activity heartbeat (writes only their own presence)
+    (('GET',),          r'^/api/academy/articles/?$'),                  # Academy: only the guides marked for freelancers
+    (('POST',),         r'^/api/academy/ask(/\d+/feedback)?/?$'),       # Academy questions (answered from those guides only)
 ]
 _FL_ALLOW = [(m, _re.compile(p)) for m, p in _FL_ALLOW]
 _CV_PATH = _re.compile(r'^/api/candidates/(\d+)/cv/?$')
