@@ -26323,24 +26323,33 @@ try:
         daily_backup()
     except Exception as _bk_err:
         print(f'[BACKUP] startup backup skipped: {_bk_err}')
-    # Start the reminder push-notification scheduler (background thread)
-    try:
-        _start_reminder_scheduler()
-    except Exception as _sched_err:
-        print(f'[reminder-scheduler] failed to start: {_sched_err}')
-    # Start the async embedding queue worker (background thread)
-    try:
-        _start_embedding_worker()
-    except Exception as _emb_err:
-        print(f'[embed-worker] failed to start: {_emb_err}')
-    try:
-        _start_email_agent()
-    except Exception as _ea_err:
-        print(f'[email-agent] failed to start: {_ea_err}')
-    try:
-        _start_campaign_worker()
-    except Exception as _cw_err:
-        print(f'[campaign] failed to start: {_cw_err}')
+    # The four long-running loops below are NOT started under the test runner
+    # (pytest) or when HIRELAB_NO_WORKERS is set — the same rule every module
+    # worker already follows. In tests they raced the suite for the database
+    # (test_isolation_deep swaps the DB file) and could stall a run for many
+    # minutes. Neither condition is ever true on the live server.
+    import sys as _sys
+    if 'pytest' in _sys.modules or os.environ.get('HIRELAB_NO_WORKERS'):
+        print('[workers] background loops not started (test run / HIRELAB_NO_WORKERS)')
+    else:
+        # Start the reminder push-notification scheduler (background thread)
+        try:
+            _start_reminder_scheduler()
+        except Exception as _sched_err:
+            print(f'[reminder-scheduler] failed to start: {_sched_err}')
+        # Start the async embedding queue worker (background thread)
+        try:
+            _start_embedding_worker()
+        except Exception as _emb_err:
+            print(f'[embed-worker] failed to start: {_emb_err}')
+        try:
+            _start_email_agent()
+        except Exception as _ea_err:
+            print(f'[email-agent] failed to start: {_ea_err}')
+        try:
+            _start_campaign_worker()
+        except Exception as _cw_err:
+            print(f'[campaign] failed to start: {_cw_err}')
     _ucount = _db_user_count(DB_PATH)
     print('\n' + '=' * 56)
     print('  HireLab Screener — startup')
