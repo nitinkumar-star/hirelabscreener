@@ -80,6 +80,7 @@ _MODULE_NAMES = [
     'bd_calling',      # BD workspace -> Calling: cold-calling sheet, understanding, AI e-mails, follow-ups (/api/bd/calling)
     'insight_capture', # Insight Wave 1: reasons for every "no", client feedback, market notes, call capture, auto-tags, 6:30 check
     'insight_company', # Insight Wave 2: Company Intelligence tab on the Talent Map (/api/talent-map/intel)
+    'insight_market',  # Insight Wave 3: Market Intel page + Talent Pulse draft (/market-intel)
 ]
 
 _MIGRATIONS = []

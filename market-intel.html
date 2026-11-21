@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Market Intel · HireLab</title>
+<style>
+:root{--ink:#1F2328;--muted:#6B6F76;--line:#E3E1DA;--paper:#F7F6F2;--green:#0F6E56;--navy:#0E2A47;--blue:#1a73e8;--soft:#E6F4EE;--red:#B42318;--redsoft:#FDECEC}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--paper)}
+button,input,select{font:inherit;color:inherit}
+a{color:var(--blue)}
+.top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.top a.back{text-decoration:none;color:var(--muted);font-size:13px}
+.logo{width:30px;height:30px;border-radius:8px;background:var(--green);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.top h1{font-size:17px;margin:0}
+.sp{flex:1}
+.wrap{max-width:1240px;margin:0 auto;padding:18px 20px 60px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px;min-width:0}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.h{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 4px}
+.sub{color:var(--muted);font-size:12.5px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 14px;font-weight:600;cursor:pointer;white-space:nowrap;text-decoration:none;color:var(--ink);display:inline-block}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.btn.sm{padding:5px 10px;font-size:12.5px}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff}
+.seg button{border:0;background:none;padding:7px 12px;cursor:pointer;font-size:13px;font-weight:600;color:var(--muted)}
+.seg button.on{background:var(--green);color:#fff}
+.inp{padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:#fff;min-width:0}
+.lbl{font-size:11.5px;color:var(--muted);font-weight:600;display:block;margin-bottom:3px}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px;min-width:0}
+.kpi b{display:block;font-size:24px;color:var(--navy);font-variant-numeric:tabular-nums}
+.kpi span{font-size:12px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11.5px;color:var(--muted);font-weight:600;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:8px;border-bottom:1px solid #EFEDE7;vertical-align:top}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.small{display:inline-block;font-size:11px;background:#FFF6E5;color:#9A6512;border-radius:6px;padding:1px 7px}
+.cl{display:inline-block;font-size:10.5px;font-weight:700;background:var(--soft);color:var(--green);border-radius:6px;padding:1px 6px;margin-left:6px}
+.up{color:var(--red);font-weight:700}.down{color:var(--green);font-weight:700}
+.segs{font-size:12px;color:#4A4740;margin-top:3px}
+.bars{display:flex;flex-direction:column;gap:7px;margin-top:8px}
+.br{display:grid;grid-template-columns:minmax(90px,180px) 1fr 70px;gap:8px;align-items:center;font-size:12.5px}
+.br .l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.br .t{background:#EFEDE7;border-radius:6px;height:12px;overflow:hidden}
+.br .t i{display:block;height:100%;background:var(--green);border-radius:6px}
+.br .v{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.pts{margin:8px 0 0;padding-left:20px}.pts li{margin:6px 0}
+.err{background:#FBE9E7;color:#B3261E;border-radius:10px;padding:10px 12px;font-size:13px}
+.empty{color:var(--muted);text-align:center;padding:30px}
+.mu{color:var(--muted)}
+.ph{display:none}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.grid2{grid-template-columns:1fr}}
+@media(max-width:600px){.top .btn{display:none}.wrap{padding:14px 12px 50px}}
+@media print{body{background:#fff}.top,.noprint,#hln-btn{display:none!important}.wrap{max-width:none;padding:0}.card,.kpi{break-inside:avoid;border-color:#ddd}.ph{display:block}a{color:inherit;text-decoration:none}}
+</style>
+</head>
+<body>
+<div class="top noprint"><a class="back" href="/">← App</a><div class="logo">H</div><h1>Market Intel</h1><div class="sp"></div>
+  <a class="btn sm" href="/talent-map">Company Talent Map</a></div>
+<div class="wrap"><div id="app"><div class="card empty">Loading…</div></div></div>
+<script>
+(function(){
+  'use strict';
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]; }); }
+  function num(v){ return v === null || v === undefined ? '—' : (Math.round(Number(v) * 10) / 10).toLocaleString('en-IN'); }
+  function pc(v){ return v === null || v === undefined ? '—' : num(v) + '%'; }
+  function api(method, path, body){
+    var o = {method: method, credentials: 'same-origin', headers: {}};
+    if (body) { o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(body); }
+    return fetch('/api/market-intel' + path, o).then(function(r){ return r.json(); }).catch(function(e){ return {error: e.message}; });
+  }
+  var P = new URLSearchParams(location.search);
+  var F = {period: +(P.get('period') || 6), domain: P.get('domain') || '', companies: P.get('companies') || 'all'};
+  var D = null, GF = {family: '', city: ''}, PULSE = null;
+  function qs(){ return 'period=' + F.period + '&domain=' + encodeURIComponent(F.domain) + '&companies=' + F.companies; }
+  function bars(rows, max){
+    if (!rows.length) return '<div class="sub" style="margin-top:8px">Nothing in this period yet.</div>';
+    return '<div class="bars">' + rows.map(function(r){
+      return '<div class="br"><span class="l" title="' + esc(r[0]) + '">' + esc(r[0]) + '</span><span class="t"><i style="width:' + Math.max(3, Math.round(100 * r[1] / (max || 1))) + '%"></i></span><span class="v">' + esc(r[2] || r[1]) + '</span></div>';
+    }).join('') + '</div>';
+  }
+
+  async function load(refresh){
+    var r = await api('GET', '/data?' + qs() + (refresh ? '&refresh=1' : ''));
+    if (!r.ok) { $('app').innerHTML = '<div class="card"><div class="err">' + esc(r.error || 'Could not load') + '</div></div>'; return; }
+    D = r; PULSE = null;
+    try { history.replaceState(null, '', '?' + qs()); } catch(e) {}
+    paint();
+  }
+
+  function filtersHTML(){
+    var seg = function(name, opts){ return '<div class="seg" role="group">' + opts.map(function(o){ return '<button data-f="' + name + '" data-v="' + o[0] + '" class="' + (String(F[name]) === String(o[0]) ? 'on' : '') + '" aria-pressed="' + (String(F[name]) === String(o[0])) + '">' + o[1] + '</button>'; }).join('') + '</div>'; };
+    return '<div class="card noprint"><div class="row" style="gap:16px;align-items:flex-end">'
+      + '<div><span class="lbl">Period (real activity)</span>' + seg('period', [[3, '3 months'], [6, '6 months'], [12, '12 months']]) + '</div>'
+      + '<div><span class="lbl">Domain</span><select class="inp" id="f-dom"><option value="">All domains</option>' + D.domains.map(function(d){ return '<option' + (F.domain === d ? ' selected' : '') + '>' + esc(d) + '</option>'; }).join('') + '</select></div>'
+      + '<div><span class="lbl">Companies</span>' + seg('companies', [['all', 'All'], ['clients', 'Clients'], ['others', 'Non-clients']]) + '</div>'
+      + '<div class="sp"></div><div class="row"><button class="btn sm" id="b-ref">&#8635; Refresh</button><a class="btn sm" href="/api/market-intel/grid.csv?' + qs() + '">&#8595; Salary grid CSV</a><button class="btn sm" onclick="window.print()">&#128424; Print</button></div></div>'
+      + '<div class="sub" style="margin-top:8px">' + esc(D.window.from) + ' → ' + esc(D.window.to) + ' (previous: ' + esc(D.window.prev_from) + ' → ' + esc(D.window.prev_to) + '). A person counts only if something really happened on their record in the period: added, stage move, reason, call, market note or a field edit. Numbers need at least ' + D.min_n + ' people.' + (D.cached ? ' (cached)' : '') + '</div></div>';
+  }
+
+  function paint(){
+    var m = D.market, h = '<div class="ph sub">Market Intel · HireLab · ' + new Date().toLocaleDateString('en-IN', {day: 'numeric', month: 'short', year: 'numeric'}) + ' · last ' + F.period + ' months' + (F.domain ? ' · ' + esc(F.domain) : '') + '</div>';
+    h += filtersHTML();
+    var delta = function(now, prev){ if (now === null || prev === null || prev === undefined) return ''; var d = Math.round((now - prev) * 10) / 10; return d ? ' <span class="' + (d > 0 ? 'up' : 'down') + '">' + (d > 0 ? '▲' : '▼') + Math.abs(d) + ' pts</span>' : ''; };
+    h += '<div class="kpis">'
+      + '<div class="kpi"><span>People with activity</span><b>' + D.people + '</b><span>across ' + D.companies + ' companies</span></div>'
+      + '<div class="kpi"><span>Contacted</span><b>' + m.contacted + '</b><span>previous period: ' + m.prev.contacted + '</span></div>'
+      + '<div class="kpi"><span>Open to a move</span><b>' + pc(m.openness_pct) + '</b><span>' + m.interested_or_later + ' reached Interested+' + (m.prev.contacted >= D.min_n ? ' · was ' + pc(m.prev.openness_pct) : '') + '</span></div>'
+      + '<div class="kpi"><span>Said no</span><b>' + pc(m.no_pct) + delta(m.no_pct, m.prev.contacted >= D.min_n ? m.prev.no_pct : null) + '</b><span>' + m.said_no + ' of ' + m.contacted + ' contacted</span></div></div>';
+
+    // Talent Pulse
+    h += '<div class="card noprint" style="border-top:3px solid var(--green)"><div class="row" style="justify-content:space-between"><div><div class="h">Talent Pulse</div><div class="sub">4–5 points built from these numbers, each with its n. You edit and approve it in Market Pulse. Nothing is sent automatically.</div></div>'
+      + '<button class="btn pri" id="b-pulse">Draft this month&rsquo;s Talent Pulse</button></div><div id="pulse"></div></div>';
+
+    // grid
+    var fams = {}, cities = {};
+    D.grid.forEach(function(c){ fams[c.family] = 1; cities[c.city] = 1; });
+    var rows = D.grid.filter(function(c){ return (!GF.family || c.family === GF.family) && (!GF.city || c.city === GF.city); });
+    h += '<div class="card"><div class="row" style="justify-content:space-between"><div><div class="h">Salary benchmark</div><div class="sub">Role family × level × city · current and expected CTC in ₹ lakh · hike ask = expected vs current where both are known</div></div>'
+      + '<div class="row noprint"><select class="inp" id="g-fam"><option value="">All role families</option>' + Object.keys(fams).sort().map(function(f){ return '<option' + (GF.family === f ? ' selected' : '') + '>' + esc(f) + '</option>'; }).join('') + '</select>'
+      + '<select class="inp" id="g-city"><option value="">All cities</option>' + Object.keys(cities).sort().map(function(c){ return '<option' + (GF.city === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select></div></div>'
+      + (rows.length ? '<div class="scroll"><table><thead><tr><th>Role family</th><th>Level</th><th>City</th><th class="num">n</th><th class="num">Median current</th><th class="num">Median expected</th><th class="num">Median hike ask</th><th>Companies in the sample</th></tr></thead><tbody>'
+        + rows.map(function(c){
+            return '<tr><td>' + esc(c.family) + '</td><td>' + esc(c.band) + '</td><td>' + esc(c.city) + '</td><td class="num">' + c.n + '</td>'
+              + (c.small ? '<td colspan="4"><span class="small">n too small</span></td>'
+                : '<td class="num"><b>' + num(c.median) + ' L</b></td><td class="num">' + (c.median_expected === null ? '<span class="small">n too small</span>' : num(c.median_expected) + ' L') + '</td>'
+                  + '<td class="num">' + (c.median_hike_pct === null ? '<span class="small">n too small</span>' : '<b>' + num(c.median_hike_pct) + '%</b> <span class="mu">(n ' + c.n_hike + ')</span>') + '</td>'
+                  + '<td class="sub">' + c.companies.map(function(x){ return esc(x.name) + ' ' + x.n; }).join(' · ') + '</td>')
+              + '</tr>'; }).join('') + '</tbody></table></div>' : '<div class="sub" style="margin-top:8px">No CTCs for people with activity in this period.</div>') + '</div>';
+
+    // movement
+    h += '<div class="card"><div class="h">Market movement</div><div class="sub">Of the people we contacted in the period (reached Called or later): who was open and who said no, by company, vs the previous period</div>'
+      + (D.movement.length ? '<div class="scroll"><table><thead><tr><th>Company</th><th class="num">Contacted</th><th class="num">Interested+</th><th class="num">Said no</th><th class="num">Said no %</th><th class="num">Previous</th><th class="num">Change</th></tr></thead><tbody>'
+        + D.movement.slice(0, 40).map(function(r){
+            var ch = r.no_change_pts === undefined ? '<span class="mu">—</span>' : (r.no_change_pts ? '<span class="' + (r.no_change_pts > 0 ? 'up' : 'down') + '">' + (r.no_change_pts > 0 ? '▲ ' : '▼ ') + Math.abs(r.no_change_pts) + ' pts</span>' : '0');
+            return '<tr><td><b>' + esc(r.company) + '</b>' + (r.client ? '<span class="cl">client</span>' : '')
+              + r.segments.map(function(s){ return '<div class="segs">' + esc(s.city) + ' · ' + esc(s.family) + ': ' + s.said_no + ' of ' + s.contacted + ' said no' + (s.prev_contacted ? ' (before: ' + s.prev_said_no + ' of ' + s.prev_contacted + ')' : '') + '</div>'; }).join('') + '</td>'
+              + '<td class="num">' + r.contacted + '</td><td class="num">' + r.interested_or_later + '</td><td class="num">' + r.said_no + '</td>'
+              + '<td class="num">' + (r.small ? '<span class="small">n too small</span>' : pc(r.no_pct)) + '</td>'
+              + '<td class="num">' + (r.prev.contacted ? r.prev.said_no + ' of ' + r.prev.contacted : '<span class="mu">—</span>') + '</td><td class="num">' + ch + '</td></tr>';
+          }).join('') + '</tbody></table></div>' : '<div class="sub" style="margin-top:8px">Nobody contacted in this period.</div>') + '</div>';
+
+    // reasons + signals
+    var prevR = {}; (D.reasons_prev.top || []).forEach(function(t){ prevR[t.code] = t.n; });
+    h += '<div class="grid2"><div class="card"><div class="h">Why people said no</div><div class="sub">' + D.reasons.n + ' people with a reason this period · previous period in brackets</div>'
+      + bars(D.reasons.top.slice(0, 10).map(function(t){ return [t.label, t.n, t.n + ' (' + (prevR[t.code] || 0) + ')']; }), D.reasons.top[0] ? D.reasons.top[0].n : 1) + '</div>'
+      + '<div class="card"><div class="h">Market signals</div><div class="sub">Market notes recorded in the period</div>'
+      + bars(D.signals.map(function(s){ return [s.label, s.n]; }), D.signals[0] ? D.signals[0].n : 1)
+      + D.signals.slice(0, 5).map(function(s){ return '<div class="segs"><b>' + esc(s.label) + ':</b> ' + esc(s.companies.join(', ')) + '</div>'; }).join('') + '</div></div>';
+    $('app').innerHTML = h; bind();
+  }
+
+  function bind(){
+    document.querySelectorAll('[data-f]').forEach(function(b){ b.onclick = function(){ var k = b.dataset.f; F[k] = k === 'period' ? +b.dataset.v : b.dataset.v; load(false); }; });
+    $('f-dom').onchange = function(){ F.domain = this.value; load(false); };
+    $('b-ref').onclick = function(){ this.disabled = true; load(true); };
+    $('g-fam').onchange = function(){ GF.family = this.value; paint(); };
+    $('g-city').onchange = function(){ GF.city = this.value; paint(); };
+    $('b-pulse').onclick = showPulse;
+    if (PULSE) renderPulse();
+  }
+
+  async function showPulse(){
+    $('pulse').innerHTML = '<div class="sub" style="margin-top:10px">Working out the points…</div>';
+    var r = await api('GET', '/pulse?' + qs());
+    if (!r.ok) { $('pulse').innerHTML = '<div class="err" style="margin-top:10px">' + esc(r.error || 'Failed') + '</div>'; return; }
+    PULSE = r; renderPulse();
+  }
+  function renderPulse(){
+    var r = PULSE, box = $('pulse'); if (!box) return;
+    if (!r.points.length) { box.innerHTML = '<div class="sub" style="margin-top:10px">Not enough data in this period. Every point needs at least ' + D.min_n + ' people. Try 12 months.</div>'; return; }
+    box.innerHTML = '<ol class="pts">' + r.points.map(function(p){ return '<li>' + esc(p.text) + '</li>'; }).join('') + '</ol>'
+      + '<div class="row" style="margin-top:10px">'
+      + (r.can_draft ? '<button class="btn pri" id="b-draft">Open in Market Pulse as a draft</button>' : '<span class="sub">Only an admin can turn this into a newsletter draft.</span>')
+      + '<a class="btn" target="_blank" rel="noopener" href="/market-intel?print=pulse&' + qs() + '">Client version (print / PDF)</a></div>';
+    var b = $('b-draft');
+    if (b) b.onclick = async function(){
+      b.disabled = true; b.textContent = 'Creating draft…';
+      var d = await api('POST', '/pulse/draft', F);
+      if (!d.ok) { b.disabled = false; b.textContent = 'Open in Market Pulse as a draft'; alert(d.error || 'Failed'); return; }
+      location.href = d.url;
+    };
+  }
+
+  // Client version: the points + the benchmark bands (n >= 3), printable
+  async function printPulse(){
+    document.querySelector('.top').style.display = 'none';
+    var r = await api('GET', '/pulse?' + qs());
+    if (!r.ok) { $('app').innerHTML = '<div class="card"><div class="err">' + esc(r.error || 'Could not load') + '</div></div>'; return; }
+    var month = new Date().toLocaleDateString('en-IN', {month: 'long', year: 'numeric'});
+    var h = '<div class="row noprint" style="justify-content:flex-end;margin-bottom:10px"><button class="btn pri" onclick="window.print()">&#128424; Print / Save PDF</button></div>'
+      + '<div class="card"><div class="sub">Talent Pulse · prepared by HireLab · ' + esc(month) + '</div><h2 style="margin:4px 0 2px;color:var(--navy)">Electrical &amp; power talent market' + (r.filters.domain ? ': ' + esc(r.filters.domain) : '') + '</h2>'
+      + '<div class="sub">Based on candidates we were actively in touch with in the last ' + r.filters.period + ' months (' + esc(r.window.from) + ' → ' + esc(r.window.to) + '). Every figure shows how many people it is based on (n).</div>'
+      + (r.points.length ? '<ol class="pts">' + r.points.map(function(p){ return '<li>' + esc(p.text) + '</li>'; }).join('') + '</ol>' : '<div class="sub" style="margin-top:10px">Not enough data in this period.</div>') + '</div>';
+    if (r.grid.length) h += '<div class="card"><div class="h">Salary benchmark</div><div class="sub">Medians in ₹ lakh per annum; only groups of ' + 3 + ' or more people</div><div class="scroll"><table><thead><tr><th>Role family</th><th>Level</th><th>City</th><th class="num">n</th><th class="num">Median current</th><th class="num">Median expected</th><th class="num">Median hike ask</th></tr></thead><tbody>'
+      + r.grid.map(function(c){ return '<tr><td>' + esc(c.family) + '</td><td>' + esc(c.band) + '</td><td>' + esc(c.city) + '</td><td class="num">' + c.n + '</td><td class="num">' + num(c.median) + ' L</td><td class="num">' + (c.median_expected === null ? '—' : num(c.median_expected) + ' L') + '</td><td class="num">' + (c.median_hike_pct === null ? '—' : num(c.median_hike_pct) + '%') + '</td></tr>'; }).join('')
+      + '</tbody></table></div></div>';
+    $('app').innerHTML = h;
+  }
+
+  if (P.get('print') === 'pulse') printPulse(); else load(false);
+})();
+</script>
+<script src="/app-nav.js" defer></script>
+</body>
+</html>

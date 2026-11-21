@@ -800,6 +800,19 @@ def issues_list():
         conn.close()
 
 
+def create_draft(conn, oid, title, points, user_id=0):
+    """A NEW draft issue with the points filled in (used by Insight Wave 3,
+    "Draft this month's Talent Pulse"). It stays a draft: nothing is queued or
+    sent until an admin approves it here as usual. The caller commits."""
+    vals = {'company_id': oid, 'title': str(title or '')[:140] or 'Market Pulse — %s' % now_ist().strftime('%B %Y'),
+            'status': 'draft', 'audience': json.dumps(DEFAULT_AUDIENCE), 'points': str(points or '')[:4000],
+            'subject': '', 'preheader': '', 'intro': '', 'sections': '[]', 'closing': '', 'body_html': '', 'cv_box': 1,
+            'created_by': int(user_id or 0), 'created_at': ts(), 'updated_at': ts()}
+    cur = conn.execute('INSERT INTO newsletter_issues (%s) VALUES (%s)' % (','.join(vals), ','.join('?' * len(vals))),
+                       list(vals.values()))
+    return cur.lastrowid
+
+
 @bp.route('/issues', methods=['POST'])
 @login_required
 def issue_create():
