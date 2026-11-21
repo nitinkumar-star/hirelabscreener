@@ -269,6 +269,7 @@ mark{background:#FDE68A;color:inherit;border-radius:3px;padding:0 1px}
   <aside class="thread" id="thread" hidden aria-label="Thread"></aside>
 </div>
 <script src="/chat-ring.js"></script>
+<script src="/insight-capture.js"></script>
 <script>
 (function(){
 'use strict';
@@ -1112,10 +1113,15 @@ function cardAction(el){
     p.addEventListener('click', function(e){
       var o = e.target.closest('[data-st]'); if (!o) return; closePop();
       var st = o.dataset.st; if (st === r.stage) return;
-      ats('/candidates/' + cid + '/stage', {stage: st, note: 'Changed from Team Chat'}).then(function(j){
-        if (!j.ok){ toast(j.error || 'Could not change the stage'); return; }
-        r.stage = st; toast('🔁 ' + r.name + ' → ' + st); afterChange(false);
-        note(m, '🔁 Stage changed: <c:' + cid + '> → **' + st + '**');
+      // Insight Wave 1: a negative move asks for a reason first (/insight-capture.js)
+      var body0 = {stage: st, note: 'Changed from Team Chat'};
+      (window.ICap ? ICap.withReason(st, body0, {name: r.name}).catch(function(){ return body0; }) : Promise.resolve(body0)).then(function(body){
+        if (!body) return;                                     // cancelled: no move
+        ats('/candidates/' + cid + '/stage', body).then(function(j){
+          if (!j.ok){ toast(j.error || 'Could not change the stage'); return; }
+          r.stage = st; toast('🔁 ' + r.name + ' → ' + st); afterChange(false);
+          note(m, '🔁 Stage changed: <c:' + cid + '> → **' + st + '**');
+        });
       });
     });
   }

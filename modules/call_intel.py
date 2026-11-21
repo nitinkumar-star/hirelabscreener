@@ -152,6 +152,22 @@ APPLY_FIELDS = {'ctc_current': 'Current CTC', 'ctc_expected': 'Expected CTC',
                 'company': 'Current company', 'notice_period': 'Notice period'}
 
 
+def _insight_fields():
+    """Extra approvable fields from Insight Wave 1 (empty when rolled back)."""
+    try:
+        from modules import insight_capture as _ic
+        return _ic.CALL_FIELDS
+    except Exception:
+        return {}
+
+
+def _request_uid():
+    try:
+        return int(_core().real_user_id() or 0)
+    except Exception:
+        return 0
+
+
 def _own_record(conn, cid, aid):
     """The analysis row if candidate + record belong to the caller's tenant."""
     oid = effective_company_id()
@@ -167,7 +183,8 @@ def _own_record(conn, cid, aid):
 @login_required
 def apply_call_details(cid, aid):
     body = _request.get_json(silent=True) or {}
-    fields = [f for f in (body.get('fields') or []) if f in APPLY_FIELDS]
+    extra_fields = _insight_fields()
+    fields = [f for f in (body.get('fields') or []) if f in APPLY_FIELDS or f in extra_fields]
     conn = get_db()
     cand, rec = _own_record(conn, cid, aid)
     if not rec:
@@ -179,11 +196,26 @@ def apply_call_details(cid, aid):
     if not upd:
         conn.close(); return jsonify({'ok': True, 'applied': [], 'applied_fields': done})
     before = dict(cand)
-    conn.execute('UPDATE candidates SET ' + ', '.join(f'{k}=?' for k in upd) + ', updated_at=? WHERE id=?',
-                 tuple(upd.values()) + (ts(), cid))
+    plain = {k: v for k, v in upd.items() if k in APPLY_FIELDS}
+    if plain:
+        conn.execute('UPDATE candidates SET ' + ', '.join(f'{k}=?' for k in plain) + ', updated_at=? WHERE id=?',
+                     tuple(plain.values()) + (ts(), cid))
+    parts = [f'{APPLY_FIELDS[k]} {before.get(k) or "—"} → {v}' for k, v in plain.items()]
+    # Insight Wave 1: reason for no, market notes, team size, yearly target
+    for k in [k for k in upd if k not in APPLY_FIELDS]:
+        try:
+            from modules import insight_capture as _ic
+            parts.append(_ic.apply_call_proposal(conn, cand['owner_id'], cand, k, proposed[k],
+                                                 _request_uid()))
+        except Exception as e:
+            print('[call-analysis] could not apply', k, e)
+            upd.pop(k, None)
+    if not upd:
+        conn.rollback(); conn.close()
+        return jsonify({'error': 'Could not apply the selected details.'}), 400
     done = done + [f for f in upd if f not in done]
     conn.execute(f'UPDATE {TABLE} SET applied_fields=? WHERE id=?', (json.dumps(done), aid))
-    summary = ', '.join(f'{APPLY_FIELDS[k]} {before.get(k) or "—"} → {v}' for k, v in upd.items())
+    summary = ', '.join(parts)
     conn.execute('INSERT INTO stage_history (candidate_id,from_stage,to_stage,note,created_at) VALUES (?,?,?,?,?)',
                  (cid, cand['stage'], cand['stage'], 'Updated from call: ' + summary, ts()))
     conn.commit(); conn.close()
@@ -193,7 +225,7 @@ def apply_call_details(cid, aid):
     except Exception:
         pass
     try:
-        for k, v in upd.items():
+        for k, v in plain.items():
             core.log_audit('candidate', cid, k, before.get(k), v)
     except Exception:
         pass
