@@ -248,6 +248,11 @@ def _invalidate(oid, key=None):
         insight_company.invalidate(oid, key)
     except Exception:
         pass
+    try:
+        from modules import insight_market
+        insight_market.invalidate(oid)
+    except Exception:
+        pass
 
 
 def family_for(stage):

@@ -410,6 +410,25 @@
           });
         });
       });
+      // Wave 3 switch (only when that module is installed)
+      api('GET', '/api/market-intel/config').then(function (j) {
+        if (!j || !j.ok) return;
+        var card = el.querySelector('.icap-card'); if (!card) return;
+        var d = document.createElement('div');
+        d.style.cssText = 'border-top:1px solid #F0ECE2;margin-top:12px;padding-top:12px';
+        d.innerHTML = '<label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" id="icap-market"' +
+          ' style="width:18px;height:18px;margin-top:2px;accent-color:#0F6E56"' + (j.on ? ' checked' : '') + '>' +
+          '<span><b>Market intelligence</b><span style="display:block;font-size:12.5px;color:#6B675E">The Market Intel page (salary benchmark, ' +
+          'market movement, Talent Pulse) and its menu item.</span></span></label>';
+        card.appendChild(d);
+        d.querySelector('#icap-market').addEventListener('change', function (e) {
+          api('POST', '/api/market-intel/config', {on: e.target.checked}).then(function (r) {
+            if (!r || !r.ok) { note('err', (r && r.error) || 'Could not save'); e.target.checked = !e.target.checked; return; }
+            note('ok', 'Market intelligence ' + (r.on ? 'on' : 'off'));
+            var a = document.getElementById('sb-marketintel'); if (a) a.style.display = r.on ? '' : 'none';
+          });
+        });
+      });
     });
   };
   function bf(box, data) {
