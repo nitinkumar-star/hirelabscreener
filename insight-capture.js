@@ -5,6 +5,8 @@
  *                                          (returns body unchanged for a positive stage or when switched off)
  *   ICap.reasonOnly(cid, stage, opts)   -> reason for the CURRENT stage, without moving it
  *   ICap.mountCapture(cid)              -> the "Call capture" card into #icap-card-<cid>
+ *                                          (team size, yearly target, market note; expected CTC and
+ *                                          notice period stay in Key Facts)
  *   ICap.openCapture(cid, opts)         -> the same card in a pop-up
  *   ICap.mountCheck630(wrap)            -> the "6:30 check" card on Home
  *   ICap.refreshBadge()                 -> red count on the Home menu item
@@ -201,7 +203,6 @@
   function cardHTML(c) {
     var sig = (cfg.catalog.signals || []).map(function (s) { return '<option value="' + esc(s[0]) + '">' + esc(s[1]) + '</option>'; }).join('');
     var p = 'icap-' + c.id + '-';
-    var zero = !(Number(c.ctc_expected) > 0);
     var rsn = c.reason ? '<div class="icap-notes"><div><span class="icap-tag amb">Reason</span>' + esc(c.reason.label) +
       ' <span style="color:#6B675E">(' + esc(c.reason.stage) + ')</span>' + (c.reason.detail ? ' &mdash; ' + esc(c.reason.detail) : '') + '</div></div>' : '';
     var notes = (c.notes || []).length ? '<div class="icap-notes">' + c.notes.map(function (n) {
@@ -212,9 +213,6 @@
     return '<div class="icap-h"><span class="icap-t">Call capture</span><span style="font-size:11.5px;color:#6B675E">about a minute per call</span>' +
       '<span id="' + p + 'st" style="margin-left:auto;font-size:11.5px;color:#0F6E56"></span></div>' +
       '<div class="icap-g">' +
-      '<div><label class="icap-lbl" for="' + p + 'ectc">Expected CTC (LPA)</label><input class="icap-in" id="' + p + 'ectc" inputmode="decimal" value="' + esc(numVal(c.ctc_expected)) + '" placeholder="e.g. 18">' +
-        (zero ? '<div class="icap-warn" id="' + p + 'warn">&#8377;0: ask on the call</div>' : '') + '</div>' +
-      '<div><label class="icap-lbl" for="' + p + 'np">Notice (days)</label><input class="icap-in" id="' + p + 'np" inputmode="numeric" value="' + esc(numVal(c.notice_period)) + '" placeholder="e.g. 60"></div>' +
       '<div><label class="icap-lbl" for="' + p + 'td">Team: direct</label><input class="icap-in" id="' + p + 'td" inputmode="numeric" value="' + esc(numVal(c.team_direct)) + '"></div>' +
       '<div><label class="icap-lbl" for="' + p + 'ti">Team: indirect</label><input class="icap-in" id="' + p + 'ti" inputmode="numeric" value="' + esc(numVal(c.team_indirect)) + '"></div>' +
       '<div><label class="icap-lbl" for="' + p + 'yt">Yearly target (&#8377; Cr)</label><input class="icap-in" id="' + p + 'yt" inputmode="decimal" value="' + esc(numVal(c.yearly_target)) + '"></div>' +
@@ -230,12 +228,10 @@
   }
   function wireCard(el, c, opts) {
     var p = 'icap-' + c.id + '-', $ = function (id) { return el.querySelector('#' + p + id); };
-    var e = $('ectc');
-    if (e && $('warn')) e.addEventListener('input', function () { $('warn').style.display = Number(e.value) > 0 ? 'none' : ''; });
     $('save').addEventListener('click', function () {
       var b = $('save'); b.disabled = true; b.textContent = 'Saving…'; $('err').textContent = '';
-      var body = {ctc_expected: $('ectc').value.trim(), notice_period: $('np').value.trim(),
-        team_direct: $('td').value.trim(), team_indirect: $('ti').value.trim(), yearly_target: $('yt').value.trim()};
+      // expected CTC and notice period live in Key Facts, not on this card
+      var body = {team_direct: $('td').value.trim(), team_indirect: $('ti').value.trim(), yearly_target: $('yt').value.trim()};
       if ($('mt').value.trim()) body.market_note = {company: $('mc').value.trim(), signal_type: $('ms').value, note: $('mt').value.trim()};
       api('PUT', '/api/candidates/' + c.id + '/capture', body).then(function (j) {
         if (!j || !j.ok) { b.disabled = false; b.textContent = 'Save'; $('err').textContent = (j && j.error) || 'Save failed.'; return; }
@@ -250,13 +246,10 @@
   function render(el, c, opts) { el.innerHTML = cardHTML(c); wireCard(el, c, opts); }
   // keep the open profile form in step, so its own "Save" does not put old values back
   function syncProfile(cid, c) {
-    var set = function (id, v) { var x = document.getElementById(id); if (x) x.value = (v === null || v === undefined) ? '' : v; };
-    set('pf-ectc', c.ctc_expected || ''); set('pf-notice', c.notice_period || '');
     try {
       var S0 = window._sp && window._sp[cid];
       if (S0 && S0.c) {
         S0.c.team_direct = c.team_direct; S0.c.team_indirect = c.team_indirect; S0.c.yearly_target = c.yearly_target;
-        S0.c.ctc_expected = c.ctc_expected; S0.c.notice_period = c.notice_period;
         if (!S0.edit && typeof window._spPaint === 'function') window._spPaint(cid);
       }
     } catch (e) {}
@@ -297,6 +290,21 @@
   };
 
   /* ── 1e  the 6:30 check ────────────────────────────────────────────── */
+  // Expected CTC is edited in the profile's Key Facts: open the profile there,
+  // in edit mode, with the cursor in Expected CTC.
+  function openKeyFacts(cid, mid) {
+    if (typeof window.openProfileById !== 'function') return;
+    Promise.resolve(window.openProfileById(cid, mid)).then(function () {
+      setTimeout(function () {
+        try {
+          var ed = document.getElementById('pd-edit');
+          if (ed && ed.style.display === 'none' && typeof window.toggleEdit === 'function') window.toggleEdit('pd');
+          var f = document.getElementById('pf-ectc');
+          if (f) { f.scrollIntoView({block: 'center'}); f.focus(); f.select && f.select(); }
+        } catch (e) {}
+      }, 400);
+    });
+  }
   var ISSUE = {missing_reason: ['No reason', 'amb'], missing_feedback: ['No client feedback', 'red'], ctc_zero: ['Expected CTC 0', 'red']};
   ICap.refreshBadge = function () {
     return ICap.load().then(function () {
@@ -334,11 +342,11 @@
           [['missing_reason', 'without a reason'], ['missing_feedback', 'without client feedback'], ['ctc_zero', 'with expected CTC 0']]
             .filter(function (x) { return cnt[x[0]]; }).map(function (x) { return cnt[x[0]] + ' ' + x[1]; }).join(' &middot; ') + '</div>' +
           j.rows.slice(0, 25).map(function (r) {
-            var fix = r.issues.indexOf('ctc_zero') >= 0 && r.issues.length === 1 ? 'capture' : 'reason';
+            var fix = r.issues.indexOf('ctc_zero') >= 0 && r.issues.length === 1 ? 'ctc' : 'reason';
             return '<div class="icap-r"><div class="icap-nm"><b data-open="' + r.id + '" data-mid="' + (r.mandate_id || '') + '" role="link" tabindex="0">' + esc(r.name) + '</b>' +
               '<span>' + esc([r.designation, r.company].filter(Boolean).join(' · ')) + ' &middot; ' + esc(r.stage) + (r.job ? ' &middot; ' + esc(r.job) : '') + '</span></div>' +
               r.issues.map(function (i) { return '<span class="icap-tag ' + ISSUE[i][1] + '">' + ISSUE[i][0] + '</span>'; }).join('') +
-              '<button type="button" class="icap-btn pri" style="padding:5px 12px;font-size:12px" data-fix="' + fix + '" data-cid="' + r.id + '" data-stage="' + esc(r.stage) + '" data-name="' + esc(r.name) + '">Fix</button></div>';
+              '<button type="button" class="icap-btn pri" style="padding:5px 12px;font-size:12px" data-fix="' + fix + '" data-cid="' + r.id + '" data-mid="' + (r.mandate_id || '') + '" data-stage="' + esc(r.stage) + '" data-name="' + esc(r.name) + '">Fix</button></div>';
           }).join('') + (j.rows.length > 25 ? '<div style="font-size:12px;color:#6B675E;padding-top:6px">Showing 25 of ' + j.rows.length + '</div>' : ''))
           : '<div class="hm-empty">All captured today &mdash; every &ldquo;no&rdquo; has a reason. &#10003;</div>';
         sec.innerHTML = head + body;
@@ -350,7 +358,7 @@
             var again = function () { ICap.mountCheck630(wrap); ICap.refreshBadge(); };
             if (f) {
               var cid = +f.getAttribute('data-cid'), nm = f.getAttribute('data-name');
-              if (f.getAttribute('data-fix') === 'capture') ICap.openCapture(cid, {name: nm, onSave: again});
+              if (f.getAttribute('data-fix') === 'ctc') openKeyFacts(cid, +f.getAttribute('data-mid') || null);
               else ICap.reasonOnly(cid, f.getAttribute('data-stage'), {name: nm}).then(function (x) { if (x) again(); });
               return;
             }
