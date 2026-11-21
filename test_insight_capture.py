@@ -28,8 +28,8 @@ sys.path.insert(0, ROOT)
 CO, OTHER = 94101, 94102
 ADMIN, OADMIN, RIYA, FL = 9410101, 9410201, 9410102, 9410103
 M1, M2, M_OTHER = 9410301, 9410302, 9410303
-# candidates (ids high so the newest-first order is predictable)
-C_MOVE, C_REJ, C_INT, C_DONE, C_RIYA, C_SECRET, C_FOREIGN, C_CAP, C_CAP_COPY = range(99410001, 99410010)
+# candidate ids (kept well below the auto-numbered range other test files rely on)
+C_MOVE, C_REJ, C_INT, C_DONE, C_RIYA, C_SECRET, C_FOREIGN, C_CAP, C_CAP_COPY = range(9941001, 9941010)
 
 
 def ago(days):
@@ -268,31 +268,31 @@ def test_tagging_never_overwrites_human_values(srv):
     now = srv.ts()
     conn.execute("INSERT OR REPLACE INTO candidates (id, mandate_id, name, company, designation, stage, owner_id, "
                  "function_tags, domain_tags, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                 (99410050, M1, 'Tag Human', 'Havells', 'Area Sales Manager', 'Screening', CO,
+                 (9941050, M1, 'Tag Human', 'Havells', 'Area Sales Manager', 'Screening', CO,
                   json.dumps(['Channel Sales']), json.dumps(['Switchgear']), ago(300), ago(300)))
     conn.execute("INSERT OR REPLACE INTO candidates (id, mandate_id, name, company, designation, stage, owner_id, "
                  "copied_from, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                 (99410051, M2, 'Tag Human', 'Havells', 'Area Sales Manager', 'Screening', CO, 99410050, ago(300), ago(300)))
+                 (9941051, M2, 'Tag Human', 'Havells', 'Area Sales Manager', 'Screening', CO, 9941050, ago(300), ago(300)))
     conn.commit()
     calls = []
 
     def fake(text):
         calls.append(text)
         return {'role_family': 'Product Management', 'domains': ['MV', 'Nonsense'], 'level_band': 'Manager'}
-    status, used = m.tag_person(conn, CO, 99410050, fake)
+    status, used = m.tag_person(conn, CO, 9941050, fake)
     conn.commit()
     assert status == 'done' and used and 'Area Sales Manager' in calls[0]
-    a = conn.execute('SELECT * FROM candidates WHERE id=99410050').fetchone()
+    a = conn.execute('SELECT * FROM candidates WHERE id=9941050').fetchone()
     assert json.loads(a['function_tags']) == ['Channel Sales']          # human value kept
     assert json.loads(a['domain_tags']) == ['Switchgear']               # human value kept
     assert a['role_family'] == 'Channel Sales'                          # derived from the human tag, not the AI
     assert a['level_band'] == 'Manager'
-    b = conn.execute('SELECT * FROM candidates WHERE id=99410051').fetchone()   # the linked copy had nothing
+    b = conn.execute('SELECT * FROM candidates WHERE id=9941051').fetchone()   # the linked copy had nothing
     assert json.loads(b['function_tags']) == ['Product Management'] and json.loads(b['domain_tags']) == ['MV']
     assert b['role_family'] == 'Channel Sales' and b['level_band'] == 'Manager'
-    assert {r['candidate_id'] for r in conn.execute('SELECT candidate_id FROM insight_tag_log WHERE candidate_id IN (99410050,99410051)')} == {99410050, 99410051}
+    assert {r['candidate_id'] for r in conn.execute('SELECT candidate_id FROM insight_tag_log WHERE candidate_id IN (9941050,9941051)')} == {9941050, 9941051}
     # a second run changes nothing and calls no AI
-    status, used = m.tag_person(conn, CO, 99410050, fake)
+    status, used = m.tag_person(conn, CO, 9941050, fake)
     assert not used and len(calls) == 1
     conn.close()
     # support family -> the sub-function tag
@@ -306,14 +306,14 @@ def test_backfill_resumable_newest_first_and_stoppable(srv, monkeypatch):
     monkeypatch.setattr(m, 'NEW_WINDOW_HOURS', 0)          # no "new candidate" work in this test
     conn = srv.get_db()
     # the other agency has untagged people too: they must not be touched
-    ids = [99410101, 99410102, 99410103, 99410104]
+    ids = [9941101, 9941102, 9941103, 9941104]
     for i, cid in enumerate(ids):
         conn.execute("INSERT OR REPLACE INTO candidates (id, mandate_id, name, designation, career_summary, stage, owner_id, "
                      "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
                      (cid, M1, 'BF %d' % i, 'Service Engineer', 'Field service of MV switchgear', 'Screening', CO,
-                      ago(400), ago(400 - i)))                     # 99410104 is the most recently updated
+                      ago(400), ago(400 - i)))                     # 9941104 is the most recently updated
     conn.execute("INSERT OR REPLACE INTO candidates (id, mandate_id, name, designation, stage, owner_id, created_at, updated_at) "
-                 "VALUES (?,?,?,?,?,?,?,?)", (99410199, M_OTHER, 'Foreign BF', 'Engineer', 'Screening', OTHER, ago(400), ago(1)))
+                 "VALUES (?,?,?,?,?,?,?,?)", (9941199, M_OTHER, 'Foreign BF', 'Engineer', 'Screening', OTHER, ago(400), ago(1)))
     # everything else of this agency counts as already processed for this test
     conn.execute("INSERT OR IGNORE INTO insight_tag_log (candidate_id, owner_id, status, tried_at) "
                  "SELECT id, owner_id, 'done', '' FROM candidates WHERE owner_id=? AND id NOT IN (%s)" % ','.join('?' * len(ids)),
@@ -348,10 +348,10 @@ def test_backfill_resumable_newest_first_and_stoppable(srv, monkeypatch):
     m.tick(fake)                                                   # nothing left -> finished
     s = a.get('/api/insight/backfill/status').get_json()['backfill']
     assert s['status'] == 'done' and s['remaining'] == 0
-    r = one(srv, 'SELECT role_family, level_band, function_tags FROM candidates WHERE id=?', 99410101)
+    r = one(srv, 'SELECT role_family, level_band, function_tags FROM candidates WHERE id=?', 9941101)
     assert r['role_family'] == 'Service / Field' and json.loads(r['function_tags']) == ['Service & Support']
     # the other agency was not touched and has its own (idle) status
-    assert one(srv, 'SELECT role_family FROM candidates WHERE id=99410199')['role_family'] in ('', None)
+    assert one(srv, 'SELECT role_family FROM candidates WHERE id=9941199')['role_family'] in ('', None)
     assert cl(srv, OADMIN).get('/api/insight/backfill/status').get_json()['backfill']['status'] == 'idle'
 
 
@@ -360,7 +360,7 @@ def test_backfill_error_is_retried_on_next_start(srv, monkeypatch):
     monkeypatch.setattr(m, 'NEW_WINDOW_HOURS', 0)
     conn = srv.get_db()
     conn.execute("INSERT OR REPLACE INTO candidates (id, mandate_id, name, designation, stage, owner_id, created_at, updated_at) "
-                 "VALUES (?,?,?,?,?,?,?,?)", (99410120, M1, 'Err Cand', 'Engineer', 'Screening', CO, ago(400), ago(0)))
+                 "VALUES (?,?,?,?,?,?,?,?)", (9941120, M1, 'Err Cand', 'Engineer', 'Screening', CO, ago(400), ago(0)))
     conn.commit(); conn.close()
     a = cl(srv, ADMIN)
     a.post('/api/insight/backfill/start')
@@ -368,21 +368,25 @@ def test_backfill_error_is_retried_on_next_start(srv, monkeypatch):
     def boom(text):
         raise RuntimeError('DeepSeek HTTP 500')
     m.tick(boom)
-    assert one(srv, 'SELECT status FROM insight_tag_log WHERE candidate_id=99410120')['status'] == 'error'
+    assert one(srv, 'SELECT status FROM insight_tag_log WHERE candidate_id=9941120')['status'] == 'error'
     s = a.post('/api/insight/backfill/start').get_json()['backfill']   # failed ones get another try
     assert s['remaining'] >= 1
     m.tick(lambda t: {'role_family': 'Project Execution', 'level_band': 'Manager', 'domains': ['LV']})
-    assert one(srv, 'SELECT status FROM insight_tag_log WHERE candidate_id=99410120')['status'] == 'done'
+    assert one(srv, 'SELECT status FROM insight_tag_log WHERE candidate_id=9941120')['status'] == 'done'
 
 
 def test_new_candidates_are_tagged_by_the_sweeper(srv):
     m = ic()
     conn = srv.get_db()
     conn.execute("INSERT OR REPLACE INTO candidates (id, mandate_id, name, designation, stage, owner_id, created_at, updated_at) "
-                 "VALUES (?,?,?,?,?,?,?,?)", (99999990, M1, 'Fresh Cand', 'Project Manager', 'Screening', CO, srv.ts(), srv.ts()))
+                 "VALUES (?,?,?,?,?,?,?,?)", (9941990, M1, 'Fresh Cand', 'Project Manager', 'Screening', CO, srv.ts(), srv.ts()))
     conn.commit(); conn.close()
-    m.tick(lambda t: {'role_family': 'Project Execution', 'domains': ['Solar / Renewables'], 'level_band': 'Manager'})
-    r = one(srv, 'SELECT role_family, domain_tags FROM candidates WHERE id=99999990')
+    fake = lambda t: {'role_family': 'Project Execution', 'domains': ['Solar / Renewables'], 'level_band': 'Manager'}
+    for _ in range(200):            # other test modules may have fresh candidates queued too
+        if one(srv, 'SELECT 1 FROM insight_tag_log WHERE candidate_id=9941990'):
+            break
+        m.tick(fake)
+    r = one(srv, 'SELECT role_family, domain_tags FROM candidates WHERE id=9941990')
     assert r['role_family'] == 'Project Execution' and json.loads(r['domain_tags']) == ['Solar / Renewables']
 
 
@@ -390,33 +394,33 @@ def test_new_candidates_are_tagged_by_the_sweeper(srv):
 def test_check_630_counts_and_fix(srv):
     a = cl(srv, ADMIN)
     conn = srv.get_db()
-    for cid, stage in ((99410201, 'Called'), (99410202, 'Shared with Client'), (99410203, 'Called'), (99410204, 'Called')):
+    for cid, stage in ((9941201, 'Called'), (9941202, 'Shared with Client'), (9941203, 'Called'), (9941204, 'Called')):
         conn.execute("INSERT OR REPLACE INTO candidates (id, mandate_id, name, company, stage, owner_id, ctc_expected, "
                      "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
                      (cid, M1, 'Panel %d' % cid, 'Siemens', stage, CO, 0, ago(50), ago(50)))
     conn.commit(); conn.close()
-    a.post('/api/candidates/99410201/stage', json={'stage': 'Not Interested'})                    # no reason
-    a.post('/api/candidates/99410202/stage', json={'stage': 'Client Rejected After Interview'})    # no reason, no feedback
-    a.post('/api/candidates/99410203/stage', json={'stage': 'Interested'})                        # expected CTC 0
-    a.post('/api/candidates/99410204/stage', json={'stage': 'Not Interested', 'reason_code': 'location'})   # complete
+    a.post('/api/candidates/9941201/stage', json={'stage': 'Not Interested'})                    # no reason
+    a.post('/api/candidates/9941202/stage', json={'stage': 'Client Rejected After Interview'})    # no reason, no feedback
+    a.post('/api/candidates/9941203/stage', json={'stage': 'Interested'})                        # expected CTC 0
+    a.post('/api/candidates/9941204/stage', json={'stage': 'Not Interested', 'reason_code': 'location'})   # complete
     j = a.get('/api/insight/check-630').get_json()
-    mine = {r['id']: r['issues'] for r in j['rows'] if r['id'] in (99410201, 99410202, 99410203, 99410204)}
-    assert mine[99410201] == ['missing_reason']
-    assert mine[99410202] == ['missing_reason', 'missing_feedback']
-    assert mine[99410203] == ['ctc_zero']
-    assert 99410204 not in mine
+    mine = {r['id']: r['issues'] for r in j['rows'] if r['id'] in (9941201, 9941202, 9941203, 9941204)}
+    assert mine[9941201] == ['missing_reason']
+    assert mine[9941202] == ['missing_reason', 'missing_feedback']
+    assert mine[9941203] == ['ctc_zero']
+    assert 9941204 not in mine
     assert j['counts']['missing_reason'] >= 2 and j['counts']['missing_feedback'] >= 1 and j['counts']['ctc_zero'] >= 1
     total = j['total']
     # one-click fix: a reason for the current stage
-    assert a.post('/api/candidates/99410201/reasons', json={'reason_code': 'other_offer'}).status_code == 200
-    a.post('/api/candidates/99410202/reasons', json={'reason_code': 'technical_depth', 'client_feedback': 'Weak on protection relays'})
-    a.put('/api/candidates/99410203/capture', json={'ctc_expected': 15})
+    assert a.post('/api/candidates/9941201/reasons', json={'reason_code': 'other_offer'}).status_code == 200
+    a.post('/api/candidates/9941202/reasons', json={'reason_code': 'technical_depth', 'client_feedback': 'Weak on protection relays'})
+    a.put('/api/candidates/9941203/capture', json={'ctc_expected': 15})
     j = a.get('/api/insight/check-630').get_json()
-    assert not {r['id'] for r in j['rows']} & {99410201, 99410202, 99410203}
+    assert not {r['id'] for r in j['rows']} & {9941201, 9941202, 9941203}
     assert j['total'] == total - 3
     # other people's records are not "mine"
     other = cl(srv, OADMIN).get('/api/insight/check-630').get_json()
-    assert not {r['id'] for r in other['rows']} & {99410201, 99410202, 99410203}
+    assert not {r['id'] for r in other['rows']} & {9941201, 9941202, 9941203}
 
 
 def test_switch_off_hides_and_only_admin_can_change(srv):
