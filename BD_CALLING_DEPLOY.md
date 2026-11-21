@@ -26,6 +26,22 @@ business, note it, e-mail, follow up.
 | Import | Paste rows from Excel or Google Sheets, or a CSV. Headings are optional. Check shows new rows, rows for an existing prospect, and rows for an existing client (skipped). Prospects and contacts are created in the open workspace. |
 | ✨ E-mail guess | The likely address from the contact's name and the company website. If a colleague at that company already has an address, their pattern is used first (⭐). Guesses are not verified. |
 
+## Call playbook and "don't sound like an agency" (Nov 2026, second step)
+
+- **📘 Call playbook** (open it from ⚙ Settings or from the Call plan box). This is the agency's own calling method, one per agency and editable, with a Reset button. The default playbook is built on consultative BD: discovery, credibility and consultative conversations, the three pillars named in Jay Tyler's *Business Development for Recruiters (Who Hate Selling)*. It adds insight-led, permission-based ("is this a bad time?") and candidate-led (MPC) calling. It is written in our own words; the book's text is not copied.
+- **🎙 Call plan** (it was "Call opener"):
+  - 3 ways to open: reason-for-calling, insight-led and candidate-led;
+  - a credibility line and an insight to give first;
+  - 5 discovery questions and what to listen for;
+  - answers to 4 objections;
+  - the small next step to close for, and what not to say.
+  Everything follows the playbook.
+- **E-mails and follow-ups** follow the playbook too.
+- **Agency-speak checker:** about 35 phrases that make an agency sound like every other one, for example "leading recruitment agency", "manpower", "any requirements", "kindly revert" and "hope this email finds you well". Each phrase has a better alternative:
+  - They are flagged live in the e-mail window and in Review.
+  - If an AI draft uses one, the AI rewrites the draft once without them.
+- **New table:** `bd_playbook` (one row per agency). **New routes:** `GET/PUT /api/bd/calling/playbook`, `POST /api/bd/calling/lint`.
+
 ## Next-step rules
 
 | Outcome | Next step |
@@ -73,7 +89,7 @@ A new outcome closes the previous open callback task.
 - `modules/__init__.py`
 - `modules/tenant_guard.py`
 - `index.html`: Calling page in the BD navigation, `bd_reply` bell
-- `test_bd_calling.py` (new, 10 tests)
+- `test_bd_calling.py` (new, 12 tests)
 
 **Public URL:** `/bdm/o/<token>.gif`, the open pixel (signed token).
 

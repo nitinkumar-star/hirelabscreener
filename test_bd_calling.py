@@ -36,6 +36,12 @@ def ai(srv, monkeypatch):
         if 'wrote or said' in sysmsg:
             return FakeResp({'hiring_pain': 'Sales engineers leave in 1 year', 'decision_maker': 'Priya, HR head',
                              'current_agency': 'Naukri only', 'contact_name': 'Priya'})
+        if 'prepare a recruiter for a cold call' in sysmsg:
+            return FakeResp({'openers': [{'style': 'trigger', 'label': 'Reason-for-calling', 'script': 'Hi Priya, Nitin here - saw the new Pune plant. Is this a bad time?'},
+                                         {'style': 'insight', 'label': 'Insight-led', 'script': 'We are a leading recruitment agency with a huge database.'}],
+                             'credibility': 'We fill sales engineer roles in switchgear.', 'discovery': ['Which role is hardest?', 'What happens when it stays empty?'],
+                             'objections': [{'q': 'We do not use agencies', 'a': 'Fair.'}], 'next_step': '15-minute intake call',
+                             'avoid': ['any vacancies?']})
         if 'cold-call opener' in sysmsg:
             return FakeResp({'opener': 'Hi Priya, this is Nitin...', 'questions': ['How many sales engineers?'],
                              'objections': [{'q': 'We do not use agencies', 'a': 'Fair - one profile, no commitment.'}]})
@@ -139,7 +145,10 @@ def test_understanding_research_voice_and_opener(srv, ai, monkeypatch):
                json={'text': 'Priya HR head bol rahi thi sales engineers 1 saal mein chhod dete hain, Naukri use karte hain'}).get_json()
     assert r['ok'] and 'hiring_pain' in r['changed'] and r['contact_hint']['name'] == 'Priya'
     op = a.post('/api/bd/calling/companies/%d/opener' % pid).get_json()
-    assert op['opener']['opener'].startswith('Hi Priya')
+    assert op['opener']['opener'].startswith('Hi Priya') and len(op['opener']['openers']) == 2
+    assert op['opener']['openers'][1]['flags'] and not op['opener']['openers'][0]['flags']     # agency-speak flagged
+    assert op['opener']['next_step'] == '15-minute intake call' and op['opener']['questions'][0] == 'Which role is hardest?'
+    assert 'PLAYBOOK' in ai[-1]['user'] and 'DISCOVERY' in ai[-1]['user']                   # the call plan follows the playbook
     assert a.get('/api/bd/calling/companies/%d' % pid).get_json()['opener']['objections']
 
 
@@ -282,3 +291,41 @@ def test_settings_and_access(srv):
     assert 'Calltest Private Co' not in [r['name'] for r in _rows(o, 'all', 'calltest')['rows']]
     assert cl(srv, RIYA).get('/api/bd/calling/list').status_code == 403      # BD stays admin-only for recruiters
     assert srv.app.test_client().get('/bd-calling.js').status_code == 200
+
+
+def test_playbook_edit_reset_and_used_by_the_ai(srv, ai):
+    a = cl(srv, ADMIN)
+    j = a.get('/api/bd/calling/playbook').get_json()
+    assert j['ok'] and not j['custom'] and 'DISCOVERY' in j['text'] and j['phrases']
+    a.put('/api/bd/calling/playbook', json={'text': 'OUR WAY: always open with the plant expansion. Never say agency.'})
+    j = a.get('/api/bd/calling/playbook').get_json()
+    assert j['custom'] and j['text'].startswith('OUR WAY')
+    assert cl(srv, OADMIN).get('/api/bd/calling/playbook').get_json()['custom'] is False      # per agency
+    pid = _prospect(a, 'Calltest Playbook Co')
+    a.post('/api/bd/calling/companies/%d/draft' % pid, json={})
+    assert 'OUR WAY: always open with the plant expansion' in ai[-1]['user']
+    j = a.put('/api/bd/calling/playbook', json={'reset': True}).get_json()
+    assert not j['custom'] and 'DISCOVERY' in j['text']
+
+
+def test_agency_speak_is_flagged_and_rewritten(srv, monkeypatch):
+    from modules.bd_calling import lint_text
+    assert {i['phrase'] for i in lint_text('Kindly revert if you have any requirements. We are a leading recruitment firm.')} >= \
+        {'kindly', 'revert', 'any requirements', 'leading recruitment'}
+    assert lint_text('Saw the new Pune plant - which sales role is hardest to fill?') == []
+    a = cl(srv, ADMIN)
+    assert a.post('/api/bd/calling/lint', json={'text': 'Hope this email finds you well'}).get_json()['issues']
+    calls = []
+
+    def fake(key, payload, timeout=60, endpoint=''):
+        calls.append(payload['messages'][1]['content'])
+        bad = len(calls) == 1
+        body = 'Kindly revert with any requirements.' if bad else 'Saw the Pune plant news - which role is hardest to fill?'
+        return FakeResp({'variants': [{'style': 'short', 'subjects': ['Pune plant hiring'], 'body': body}]})
+    monkeypatch.setattr(srv, 'call_deepseek', fake)
+    real = srv.get_setting
+    monkeypatch.setattr(srv, 'get_setting', lambda k, default='': 'test-key' if k == 'deepseek_api_key' else real(k, default))
+    pid = _prospect(a, 'Calltest Cliche Co')
+    j = a.post('/api/bd/calling/companies/%d/draft' % pid, json={}).get_json()
+    assert len(calls) == 2 and 'AGENCY CLICHES' in calls[1]
+    assert j['variants'][0]['body'].startswith('Saw the Pune plant') and j['variants'][0]['flags'] == []
