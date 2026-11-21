@@ -1254,6 +1254,7 @@ body{font-size:14px !important; line-height:1.5}
       <nav id="bdw-nav"></nav>
       <div id="bd-body" style="flex:1;overflow:auto;background:#FAFAF9;padding:20px"></div>
       <div id="bdw-grid" style="display:none"></div>
+      <div id="bdc-root" style="display:none"></div>
     </div>
   </div>
 
@@ -3013,6 +3014,7 @@ async function ntfEnableDesktop(){
 function _ntfMeta(n){
   if (n.kind === 'chat_mention') return { icon:'\uD83D\uDCAC', label:'Team Chat \u00B7 you were mentioned', color:'#0F6E56', bg:'#ECFDF3' };
   if (n.kind === 'chat_dm') return { icon:'\uD83D\uDCAC', label:'Team Chat \u00B7 direct message', color:'#0F6E56', bg:'#ECFDF3' };
+  if (n.kind === 'bd_reply') return { icon:'\u21A9', label:'BD \u00B7 a prospect replied', color:'#067647', bg:'#ECFDF3' };
   if (n.kind === 'chat_thread') return { icon:'\uD83E\uDDF5', label:'Team Chat \u00B7 new thread replies', color:'#0F6E56', bg:'#ECFDF3' };
   if (n.kind === 'fl_upload') return { icon:'\uD83D\uDCE5', label:'New CV from freelancer', color:'#0F6E56', bg:'#ECFDF3' };
   if (n.kind === 'mandate_assigned') return { icon:'\uD83D\uDCBC', label:'New position assigned to you', color:'#3538CD', bg:'#EEF0FF' };
@@ -3115,6 +3117,7 @@ async function ntfOpen(id){
   var n = _ntfFind(id);
   ntfAck([id]);
   ntfTogglePanel(false);
+  if (n && n.kind === 'bd_reply') { if (typeof openBd === 'function') openBd('calling'); return; }
   if (n && String(n.kind||'').indexOf('chat_') === 0) { location.href = n.kind === 'chat_mention' ? '/team-chat?mentions=1' : n.kind === 'chat_thread' ? '/team-chat?threads=1' : '/team-chat'; return; }
   if (!n || !n.candidate_id) return;
   var isFl = S.currentUser && S.currentUser.role === 'freelancer_sourcer';
@@ -21457,6 +21460,7 @@ var BDW = { meta:null, page:'home', obj:null, st:{}, seq:0, pop:null, popCtx:nul
 
 var _BDW_IC = {
   home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>',
+  calling:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>',
   companies:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M5 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16M15 9h3a1 1 0 0 1 1 1v11M8 8h4M8 12h4M8 16h4"/></svg>',
   people:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/></svg>',
   opportunities:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></svg>',
@@ -21465,6 +21469,7 @@ var _BDW_IC = {
 };
 var _BDW_PAGES = [
   {k:'home', label:'Home', sub:"Today's follow-ups, meetings, stale clients & requirements", bg:'#EAE6FB'},
+  {k:'calling', label:'Calling', sub:'Cold-calling sheet: call, note the business, e-mail, follow up', bg:'#E3F8EC'},
   {k:'companies', label:'Companies', sub:'Every company you sell to \u2014 prospects and clients', bg:'#E3EEFB'},
   {k:'people', label:'People', sub:'Contacts across all companies', bg:'#E7F3EE'},
   {k:'opportunities', label:'Opportunities', sub:'BD deals and pipeline value', bg:'#FDF6E9'},
@@ -21781,14 +21786,28 @@ async function bdwShow(page, rid){
   document.getElementById('bd-head-sub').textContent = pg.sub;
   var ic=document.getElementById('bd-head-ic'); ic.style.background=pg.bg;
   ic.innerHTML = page==='home' ? '&#128188;' : '<span style="width:16px;height:16px;display:inline-flex;color:#344054">'+_BDW_IC[page]+'</span>';
-  var home=(page==='home');
+  var home=(page==='home'), calling=(page==='calling');
   document.getElementById('bd-body').style.display = home ? '' : 'none';
-  document.getElementById('bdw-grid').style.display = home ? 'none' : 'flex';
+  document.getElementById('bdw-grid').style.display = (home||calling) ? 'none' : 'flex';
+  document.getElementById('bdc-root').style.display = calling ? 'flex' : 'none';
   document.getElementById('bd-home-ctl').style.display = home ? 'flex' : 'none';
   try { history.replaceState(null, '', '#bd'+(home?'':'/'+page+(rid?'/'+rid:''))); } catch(e) {}
+  if(!calling && window.BDCalling) BDCalling.close();
+  if(calling){ _bdwOpenCalling(); return; }
   if(home){ renderBd(); return; }
   await bdwOpenObject(page);
   if(rid && BDW.page===page) bdwPanelOpen(page, rid);
+}
+
+// BD Calling mode (Nov 2026): the cold-calling sheet lives in /bd-calling.js (modules/bd_calling.py)
+function _bdwOpenCalling(){
+  var el=document.getElementById('bdc-root');
+  var go=function(){ if(BDW.page==='calling' && window.BDCalling) BDCalling.open(el, BDW.ws||0); };
+  if(window.BDCalling) return go();
+  el.innerHTML='<div class="bdw-state"><div class="spinner" style="margin:0 auto 10px"></div>Loading\u2026</div>';
+  var sc=document.createElement('script'); sc.src='/bd-calling.js?v=1'; sc.onload=go;
+  sc.onerror=function(){ el.innerHTML='<div class="bdw-state" style="color:#D92D20">Could not load the calling sheet. Please refresh.</div>'; };
+  document.head.appendChild(sc);
 }
 
 async function _bdwEnsureMeta(){
