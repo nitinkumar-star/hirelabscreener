@@ -7,8 +7,9 @@ Wave 1 makes the ATS keep the insight it used to throw away, at the moment it is
   optional line of detail. Cancel means the candidate stays in the stage they were in.
 * **Every client rejection gets the client's feedback.** It's required in the picker, stored with the reason
   and **added** to the candidate's Client Feedback with the date. Nothing already written there is replaced.
-* **Call capture card** on the candidate profile (Overview, under Profile): expected CTC (red warning at ₹0),
-  notice, team size (direct / indirect), yearly target (₹ Cr) and a **market note** about a company.
+* **Call capture card** on the candidate profile (Overview, under Profile): team size (direct / indirect),
+  yearly target (₹ Cr) and a **market note** about a company. Expected CTC and notice period stay where they
+  already are, in **Key Facts**.
 * **Call analysis proposes the same data.** After a recording is analysed, the "AI ko call mein ye details mili"
   box can also show *Reason for no*, *Market notes*, *Direct reports*, *Indirect team* and *Yearly target*.
   Nothing is saved until the recruiter ticks it and presses **Update selected**.
@@ -16,7 +17,8 @@ Wave 1 makes the ATS keep the insight it used to throw away, at the moment it is
   the profile / CV within a few minutes. Only empty fields are filled, never what a person typed.
   **Settings → My Account → Insight capture → Start tagging** does the existing database, newest first.
 * **6:30 check** on Home, plus a red count on the Home menu item: records *you* touched today that are missing
-  a reason, missing client feedback, or have expected CTC 0 at Interested or later. Each row has a **Fix** button.
+  a reason, missing client feedback, or have expected CTC 0 at Interested or later. Each row has a **Fix** button
+  (for expected CTC 0 it opens the profile with Key Facts in edit mode, cursor in Expected CTC).
 
 Everything is additive: new tables, two new columns, one new module. No column is renamed, dropped or changed,
 no route is removed, and stage moves without a reason (bulk moves, WhatsApp, AI follow-ups, reminders …)
@@ -100,8 +102,9 @@ tokens per call.
    feedback box has text. Afterwards, the candidate's Client Feedback shows the old text, then `---`, then
    today's date and the new feedback.
 3. **Existing moves untouched.** Move someone to *Interested* or *Shared with Client*: no picker, same as before.
-4. **Call capture.** Open a candidate profile → Overview: the *Call capture* card is under Profile. Expected CTC
-   0 shows "₹0: ask on the call". Fill it in with a market note → **Save** → "Saved ✓" and the note appears below.
+4. **Call capture.** Open a candidate profile → Overview: the *Call capture* card is under Profile, with team
+   size, yearly target and a market note (no expected CTC / notice: those are in Key Facts). Fill it in with a
+   market note → **Save** → "Saved ✓" and the note appears below.
 5. **Call analysis.** Analyse a call where the candidate says no. The proposal box can show *Reason for no* and
    *Market notes*. They are only saved after **Update selected**.
 6. **6:30 check.** Go to Home. The *6:30 check* card is under the greeting. The Home menu item shows a red count
