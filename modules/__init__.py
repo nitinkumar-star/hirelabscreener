@@ -79,6 +79,7 @@ _MODULE_NAMES = [
     'chat_calls',      # Team Chat: audio / video calls + screen sharing (WebRTC, /call/<id>)
     'bd_calling',      # BD workspace -> Calling: cold-calling sheet, understanding, AI e-mails, follow-ups (/api/bd/calling)
     'insight_capture', # Insight Wave 1: reasons for every "no", client feedback, market notes, call capture, auto-tags, 6:30 check
+    'insight_company', # Insight Wave 2: Company Intelligence tab on the Talent Map (/api/talent-map/intel)
 ]
 
 _MIGRATIONS = []

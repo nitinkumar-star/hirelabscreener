@@ -392,6 +392,24 @@
         });
       });
       bf(el.querySelector('#icap-bf'));
+      // Wave 2 switch (only when that module is installed)
+      api('GET', '/api/talent-map/intel/config').then(function (j) {
+        if (!j || !j.ok) return;
+        var card = el.querySelector('.icap-card'); if (!card) return;
+        var d = document.createElement('div');
+        d.style.cssText = 'border-top:1px solid #F0ECE2;margin-top:12px;padding-top:12px';
+        d.innerHTML = '<label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" id="icap-intel"' +
+          ' style="width:18px;height:18px;margin-top:2px;accent-color:#0F6E56"' + (j.on ? ' checked' : '') + '>' +
+          '<span><b>Company intelligence</b><span style="display:block;font-size:12.5px;color:#6B675E">The Intelligence tab on the Company Talent Map and the ' +
+          '&ldquo;Company intel&rdquo; links on profiles and jobs.</span></span></label>';
+        card.appendChild(d);
+        d.querySelector('#icap-intel').addEventListener('change', function (e) {
+          api('POST', '/api/talent-map/intel/config', {on: e.target.checked}).then(function (r) {
+            if (!r || !r.ok) { note('err', (r && r.error) || 'Could not save'); e.target.checked = !e.target.checked; return; }
+            note('ok', 'Company intelligence ' + (r.on ? 'on' : 'off'));
+          });
+        });
+      });
     });
   };
   function bf(box, data) {

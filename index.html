@@ -3906,6 +3906,20 @@ async function selectMandate(id){
   document.getElementById('tabs').style.display='flex';
   await renderContent();
 }
+// Insight Wave 2: "Company intel" links to the Talent Map's Intelligence tab.
+// Rendered hidden; shown once the agency's switch is known to be on.
+var _intelCfgP=null;
+function _intelLink(name){
+  if(!name) return '';
+  return '<a class="intel-lnk" href="/talent-map?tab=intel&company='+encodeURIComponent(name)+'" target="_blank" rel="noopener" title="What we know about this company" style="display:none;margin-left:8px;font-size:11.5px;font-weight:600;color:#0F6E56;text-decoration:none;white-space:nowrap">Company intel &#8599;</a>';
+}
+function _intelShow(){
+  if(!_intelCfgP) _intelCfgP=fetch('/api/talent-map/intel/config',{credentials:'include'}).then(function(r){ return r.json(); }).catch(function(){ return {}; });
+  _intelCfgP.then(function(j){
+    if(!(j&&j.ok)){ _intelCfgP=null; return; }
+    document.querySelectorAll('.intel-lnk').forEach(function(a){ a.style.display=j.on?'':'none'; });
+  });
+}
 function updateTopbar(){
   const m=S.activeMandate;
   var crumb=document.getElementById('topbar-crumb'), stb=document.getElementById('topbar-status');
@@ -3916,8 +3930,9 @@ function updateTopbar(){
     if(m){
       crumb.innerHTML=m._central
         ? '<a href="#central" onclick="return navClick(event,openCentralDB)">Talent</a><span>/</span><span>Central Database</span>'
-        : '<a href="#jobs" onclick="return navClick(event,openJobs)">Jobs</a><span>/</span><span>'+esc(m.client||'')+'</span>';
+        : '<a href="#jobs" onclick="return navClick(event,openJobs)">Jobs</a><span>/</span><span>'+esc(m.client||'')+'</span>'+_intelLink(m.client);
       crumb.style.display='';
+      _intelShow();
     } else { crumb.innerHTML=''; crumb.style.display='none'; }
   }
   if(stb && m && m._central){ stb.style.display='none'; stb=null; }
@@ -7773,7 +7788,7 @@ function keyFactsCardHTML(c){
     : '';
   var keyFacts='<div class="cp-card2" id="cp-keyfacts"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div class="cp-lbl2" style="margin:0;display:flex;align-items:center">Key Facts</div><button class="edit-pencil" onclick="toggleEdit(&#39;pd&#39;)" title="Edit">&#9998;</button></div>'
     +'<div id="pd-view" class="info-grid">'
-    + infoRow('Company', c.company) + infoRow('Designation', c.designation)
+    + infoRow('Company', c.company ? '<span>' + esc(c.company) + '</span>' + _intelLink(c.company) : c.company) + infoRow('Designation', c.designation)
     + infoRow('Experience', c.experience?(c.experience+' yrs'):'') + infoRow('Current CTC', c.ctc_current?('\u20B9'+c.ctc_current+' LPA'):'')
     + infoRow('Expected CTC', c.ctc_expected?('\u20B9'+c.ctc_expected+' LPA'):'') + infoRow('Notice', c.notice_period?(/^\d+$/.test(String(c.notice_period).trim())?(c.notice_period+' days'):String(c.notice_period)):'')
     + (c.ctc_offered?infoRow('Offered CTC','\u20B9'+c.ctc_offered+' LPA'+(c.offer_date?(' \u00b7 '+esc(c.offer_date)):'')):'')
@@ -7976,6 +7991,7 @@ function renderProfileDetail(c){
   if(_tbar){ _tbar.addEventListener('click', function(ev){ var b=ev.target.closest('[data-cptab]'); if(b){ ev.preventDefault(); cpTab(b.getAttribute('data-cptab')); } }); }
   attachStageDropdown();
   try{ if(window.ICap) ICap.mountCapture(c.id); }catch(e){}
+  _intelShow();
   try{ var _ss=document.getElementById('prof-stage-sel'); if(_ss) _ss.addEventListener('change', function(){ setTimeout(function(){ var n=document.getElementById('w1-next-'+c.id); if(n) n.innerHTML=w1NextStageBtn(c.id, _ss.value); }, 0); }); }catch(e){}
   loadCandidateReminders(c.id);
   attachWAHandlers(c);

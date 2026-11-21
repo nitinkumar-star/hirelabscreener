@@ -57,6 +57,18 @@ td .m{color:var(--muted);font-size:12px}
 .fm{font-size:10.5px;background:#FFF6E5;color:#9A6512;border-radius:6px;padding:1px 6px;margin-left:5px}
 .mu{color:var(--muted)}
 .printhead{display:none}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:-4px 0 16px}
+.tabs button{border:0;background:none;padding:9px 14px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button.on{color:var(--green);border-bottom-color:var(--green)}
+.ig{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.big{font-size:30px;font-weight:700;color:var(--navy);font-variant-numeric:tabular-nums;line-height:1.1}
+.small{display:inline-block;font-size:11px;background:#FFF6E5;color:#9A6512;border-radius:6px;padding:1px 7px}
+.mx td,.mx th{text-align:center}.mx td:first-child,.mx th:first-child{text-align:left}
+.mx td.z{color:#C9C6BD}
+.tl{border-top:1px solid #EFEDE7;padding:8px 0;font-size:13px}.tl:first-child{border-top:0}
+.sig{display:inline-block;font-size:11px;font-weight:700;background:var(--soft);color:var(--green);border-radius:6px;padding:1px 7px;margin-right:6px}
+.qt{font-size:12.5px;color:#4A4740;border-left:3px solid var(--line);padding:2px 0 2px 9px;margin-top:6px}
+@media(max-width:900px){.ig{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.grid2{grid-template-columns:1fr}}
 @media print{
   body{background:#fff}
@@ -91,7 +103,9 @@ td .m{color:var(--muted);font-size:12px}
   function api(p){ return fetch('/api/talent-map' + p, {credentials: 'same-origin'}).then(function(r){ return r.json(); }).catch(function(e){ return {error: e.message}; }); }
   function ppl(n){ return n + (n === 1 ? ' person' : ' people'); }
   function num(v, d){ v = Number(v) || 0; return v ? (Math.round(v * 10) / 10).toLocaleString('en-IN') : (d || '—'); }
-  var D = null, OPT = {former: false, client: false, hideCtc: false, sort: 'target', dir: -1, product: '', geo: ''};
+  var D = null, OPT = {former: false, client: false, hideCtc: false, sort: 'target', dir: -1, product: '', geo: '', tab: 'people'};
+  var INTEL_ON = false, IC = {}, SIGF = '';          // Wave 2: Intelligence tab
+  try { if (new URLSearchParams(location.search).get('tab') === 'intel') OPT.tab = 'intel'; } catch(e) {}
   try { var s = JSON.parse(localStorage.getItem('tmap_opt') || '{}'); ['former', 'client', 'hideCtc'].forEach(function(k){ if (k in s) OPT[k] = !!s[k]; }); } catch(e) {}
   function saveOpt(){ try { localStorage.setItem('tmap_opt', JSON.stringify({former: OPT.former, client: OPT.client, hideCtc: OPT.hideCtc})); } catch(e) {} }
 
@@ -102,6 +116,8 @@ td .m{color:var(--muted);font-size:12px}
     return r.companies;
   }
   async function init(){
+    try { var ic = await fetch('/api/talent-map/intel/config', {credentials: 'same-origin'}).then(function(r){ return r.json(); }); INTEL_ON = !!(ic && ic.ok && ic.on); } catch(e) { INTEL_ON = false; }
+    if (!INTEL_ON) OPT.tab = 'people';
     var cs = await loadCompanies('');
     $('top').innerHTML = cs.slice(0, 16).map(function(c){ return '<button class="chip" data-n="' + esc(c.name) + '">' + esc(c.name) + '<b>' + c.count + '</b></button>'; }).join('');
     $('top').onclick = function(e){ var b = e.target.closest('[data-n]'); if (b) { $('q').value = b.dataset.n; show(b.dataset.n); } };
@@ -117,7 +133,7 @@ td .m{color:var(--muted);font-size:12px}
     var r = await api('/company?former=1&name=' + encodeURIComponent(name));
     if (!r.ok) { $('app').innerHTML = '<div class="card"><div class="err">' + esc(r.error || 'Could not load') + '</div></div>'; return; }
     D = r; OPT.product = ''; OPT.geo = '';
-    try { history.replaceState(null, '', '?company=' + encodeURIComponent(r.company)); } catch(e) {}
+    try { history.replaceState(null, '', '?company=' + encodeURIComponent(r.company) + (OPT.tab === 'intel' ? '&tab=intel' : '')); } catch(e) {}
     paint();
   }
   function people(){
@@ -167,6 +183,9 @@ td .m{color:var(--muted);font-size:12px}
       + '<label class="opt"><input type="checkbox" id="o-client"' + (OPT.client ? ' checked' : '') + '> Client view (hide names &amp; contacts)</label>'
       + '<label class="opt"><input type="checkbox" id="o-ctc"' + (OPT.hideCtc ? ' checked' : '') + '> Hide CTC</label>'
       + '<button class="btn sm" onclick="window.print()">&#128424; Print / Save PDF</button></div></div>';
+    if (INTEL_ON) h += '<div class="tabs noprint" role="tablist"><button role="tab" data-tab="people" aria-selected="' + (OPT.tab !== 'intel') + '" class="' + (OPT.tab !== 'intel' ? 'on' : '') + '">People</button>'
+      + '<button role="tab" data-tab="intel" aria-selected="' + (OPT.tab === 'intel') + '" class="' + (OPT.tab === 'intel' ? 'on' : '') + '">Intelligence</button></div>';
+    if (INTEL_ON && OPT.tab === 'intel') { $('app').innerHTML = h + '<div id="intel"><div class="card empty">Loading company intelligence…</div></div>'; bind(); paintIntel(false); return; }
     if (!all.length) { $('app').innerHTML = h + '<div class="card empty">Nobody from this company in your database yet' + (D.former.length ? ' — tick “Include former employees”.' : '.') + '</div>'; bind(); return; }
     h += '<div class="kpis">' + kp.map(function(k){ return '<div class="kpi"><span>' + k[0] + '</span><b title="' + esc(k[1]) + '">' + esc(k[1]) + '</b><span>' + esc(k[2]) + '</span></div>'; }).join('') + '</div>';
     var withT = all.filter(function(p){ return Number(p.yearly_target) > 0; }).sort(function(a, b){ return b.yearly_target - a.yearly_target; });
@@ -206,7 +225,94 @@ td .m{color:var(--muted);font-size:12px}
       + '<div class="sub" style="margin-top:8px">Product handling, geography and yearly target come from each profile (Key Facts and the tag boxes). Empty cells mean it is not filled in yet.</div></div>';
     $('app').innerHTML = h; bind();
   }
+  // ── Wave 2: Intelligence tab ────────────────────────────────────────────
+  var SIG = {hiring: 'Hiring', freeze: 'Hiring freeze', exit: 'People leaving', join: 'People joining',
+             new_order_project: 'New order / project', pay: 'Pay / increments', reorg: 'Re-org', other: 'Other'};
+  function pc(v){ return v === null || v === undefined ? '—' : num(v, '0') + '%'; }
+  function lakh(v){ return v === null || v === undefined ? '—' : num(v) + ' L'; }
+  async function paintIntel(refresh){
+    var box = $('intel'); if (!box) return;
+    var view = OPT.client ? 'client' : 'internal', ck = D.company + '|' + view;
+    var r = (!refresh && IC[ck]) || await api('/intel?view=' + view + '&name=' + encodeURIComponent(D.company) + (refresh ? '&refresh=1' : ''));
+    if (!$('intel')) return;
+    if (!r.ok) { box.innerHTML = '<div class="card"><div class="err">' + esc(r.error || 'Could not load') + '</div></div>'; return; }
+    IC[ck] = r;
+    box.innerHTML = intelHTML(r); bindIntel();
+  }
+  function intelHTML(r){
+    var op = r.openness, q = r.quality, P = r.people;
+    var h = '<div class="row noprint" style="justify-content:space-between;margin-bottom:10px"><span class="sub">' + (OPT.client ? 'Client view: counts and pay bands only. No names, no individual CTCs, no notes.' : 'Internal view') + ' · bands need at least ' + r.min_n + ' people · computed ' + esc(String(r.generated_at || '').replace('T', ' ').slice(0, 16)) + (r.cached ? ' (cached)' : '') + '</span>'
+      + '<button class="btn sm" id="i-refresh">&#8635; Refresh</button></div>';
+    h += '<div class="ig">'
+      + '<div class="kpi"><span>People known</span><b>' + P.current + '</b><span>current · ' + P.former + ' former</span></div>'
+      + '<div class="kpi"><span>Openness</span><b>' + (op.contacted ? pc(op.openness_pct) : '—') + '</b><span>' + op.interested_or_later + ' of ' + op.contacted + ' contacted reached Interested+' + (op.small && op.contacted ? ' · n small' : '') + '</span></div>'
+      + '<div class="kpi"><span>Said no</span><b>' + (op.contacted ? pc(op.no_pct) : '—') + '</b><span>' + op.said_no + ' of ' + op.contacted + ' contacted</span></div>'
+      + '<div class="kpi"><span>Market notes</span><b>' + r.notes.n + '</b><span>' + (r.notes.by_signal[0] ? 'mostly ' + esc(SIG[r.notes.by_signal[0].signal_type] || r.notes.by_signal[0].signal_type) : 'none yet') + '</span></div></div>';
+    // people grid
+    var g = P.current_grid;
+    h += '<div class="card"><div class="h">People known: role family × level</div><div class="sub">Current employees (' + P.current + ')' + (P.former ? '; ' + P.former + ' former employees are counted separately' : '') + '</div>'
+      + (g.families.length ? '<div class="scroll"><table class="mx"><thead><tr><th class="ns">Role family</th>' + g.bands.map(function(b){ return '<th class="ns">' + esc(b) + '</th>'; }).join('') + '<th class="ns">Total</th></tr></thead><tbody>'
+        + g.families.map(function(f){ var row = g.cells[f] || {}, t = 0;
+            return '<tr><td>' + esc(f) + '</td>' + g.bands.map(function(b){ var n = row[b] || 0; t += n; return '<td class="' + (n ? '' : 'z') + '">' + (n || '·') + '</td>'; }).join('') + '<td><b>' + t + '</b></td></tr>'; }).join('')
+        + '</tbody></table></div>' : '<div class="sub" style="margin-top:8px">No current employees of this company in your database.</div>') + '</div>';
+    // pay
+    if (OPT.hideCtc) h += '<div class="card"><div class="h">Pay</div><div class="sub">Hidden (untick “Hide CTC” to show pay bands).</div></div>';
+    else h += '<div class="card"><div class="h">Pay by role family × level</div><div class="sub">Current CTC in ₹ lakh per annum. A band is shown only for ' + r.min_n + ' or more people; hike ask = expected vs current, where both are known.</div>'
+      + (r.pay.length ? '<div class="scroll"><table><thead><tr><th class="ns">Role family</th><th class="ns">Level</th><th class="ns">n</th><th class="ns">Current CTC (min · median · max)</th><th class="ns">Median expected</th><th class="ns">Median hike ask</th></tr></thead><tbody>'
+        + r.pay.map(function(p){
+            return '<tr><td>' + esc(p.family) + '</td><td>' + esc(p.band) + '</td><td>' + p.n + '</td>'
+              + (p.small ? '<td colspan="3"><span class="small">n too small</span></td>'
+                 : '<td>' + lakh(p.min) + ' · <b>' + lakh(p.median) + '</b> · ' + lakh(p.max) + '</td><td>' + (p.median_expected === null ? '<span class="small">n too small</span>' : lakh(p.median_expected)) + '</td><td>' + (p.median_hike_pct === null ? '<span class="small">n too small</span>' : '<b>' + num(p.median_hike_pct, '0') + '%</b> <span class="mu">(n ' + p.n_hike + ')</span>') + '</td>')
+              + '</tr>'; }).join('') + '</tbody></table></div>' : '<div class="sub" style="margin-top:8px">No CTCs recorded yet.</div>') + '</div>';
+    // notice + openness
+    var nb = r.notice.buckets, nmax = Math.max.apply(null, nb.map(function(b){ return b.n; }).concat([1]));
+    h += '<div class="grid2"><div class="card"><div class="h">Notice period</div><div class="sub">' + r.notice.known + ' people with a known notice period</div>' + bars(nb.filter(function(b){ return b.n; }).map(function(b){ return [b.bucket, b.n]; }), nmax) + '</div>'
+      + '<div class="card"><div class="h">Openness</div><div class="sub">People we contacted (reached Called or any later stage). n = ' + op.contacted + (op.small && op.contacted ? ' · <span class="small">n small, read with care</span>' : '') + '</div>'
+      + (op.contacted ? bars([['Interested or later', op.interested_or_later], ['Said no', op.said_no], ['No answer yet', op.undecided]].filter(function(x){ return x[1]; }), op.contacted) : '<div class="sub" style="margin-top:8px">Nobody from this company contacted yet.</div>') + '</div></div>';
+    // reasons + notes
+    h += '<div class="grid2"><div class="card"><div class="h">Why people said no</div><div class="sub">Latest reason per person · ' + r.reasons.n + ' with a reason</div>'
+      + bars(r.reasons.top.slice(0, 8).map(function(t){ return [t.label, t.n]; }), r.reasons.top[0] ? r.reasons.top[0].n : 1)
+      + quotes(r.reasons.recent) + '</div>';
+    var sigs = r.notes.by_signal;
+    h += '<div class="card"><div class="h">Market notes</div><div class="sub">' + r.notes.n + ' signals about this company' + (OPT.client ? ' (counts only)' : ', newest first') + '</div>'
+      + (sigs.length ? '<div class="chips noprint">' + (OPT.client ? '' : '<button class="chip' + (SIGF ? '' : ' on') + '" data-sig="">All</button>') + sigs.map(function(x){ return '<button class="chip' + (SIGF === x.signal_type ? ' on' : '') + '" data-sig="' + esc(x.signal_type) + '">' + esc(SIG[x.signal_type] || x.signal_type) + '<b>' + x.n + '</b></button>'; }).join('') + '</div>' : '<div class="sub" style="margin-top:8px">No market notes yet. Add them from the Call capture card on a profile.</div>')
+      + (OPT.client && sigs.length ? bars(sigs.map(function(x){ return [SIG[x.signal_type] || x.signal_type, x.n]; }), sigs[0].n) : '')
+      + (r.notes.timeline ? '<div style="margin-top:8px">' + r.notes.timeline.filter(function(n){ return !SIGF || n.signal_type === SIGF; }).slice(0, 30).map(function(n){
+          return '<div class="tl"><span class="sig">' + esc(SIG[n.signal_type] || n.signal_type) + '</span>' + esc(n.note) + ' <span class="mu">' + esc(n.date) + (n.source === 'call_ai' ? ' · from a call' : '') + '</span></div>'; }).join('') + '</div>' : '')
+      + '</div></div>';
+    // client branch
+    if (r.client) {
+      var cr = r.client.client_rejections, cn = r.client.candidate_no_to_client;
+      h += '<div class="card" style="border-top:3px solid var(--green)"><div class="h">' + esc(r.company) + ' as our client</div><div class="sub">Across ' + r.client.jobs + ' job' + (r.client.jobs === 1 ? '' : 's') + ' for this client</div>'
+        + '<div class="grid2" style="margin-top:10px"><div><b style="font-size:13px">Why the client rejected candidates</b> <span class="mu">(' + cr.n + ')</span>'
+        + bars(cr.top.slice(0, 8).map(function(t){ return [t.label, t.n]; }), cr.top[0] ? cr.top[0].n : 1) + quotes(cr.recent, true) + '</div>'
+        + '<div><b style="font-size:13px">Why candidates said no to this client</b> <span class="mu">(' + cn.n + ')</span>'
+        + bars(cn.top.slice(0, 8).map(function(t){ return [t.label, t.n]; }), cn.top[0] ? cn.top[0].n : 1)
+        + (cn.brand_signals && cn.brand_signals.length ? '<div class="sub" style="margin-top:6px">Employer-brand signals: ' + cn.brand_signals.map(function(t){ return esc(t.label) + ' ' + t.n; }).join(' · ') + '</div>' : '')
+        + quotes(cn.recent) + '</div></div></div>';
+    }
+    // data quality
+    h += '<div class="card"><div class="h">Data quality</div><div class="sub">How complete the data behind these numbers is</div><div class="ig" style="margin:10px 0 0">'
+      + '<div class="kpi"><span>Expected CTC known</span><b>' + pc(q.expected_ctc_pct) + '</b><span>of ' + q.records + ' people</span></div>'
+      + '<div class="kpi"><span>Role family known</span><b>' + pc(q.role_family_pct) + '</b><span>of ' + q.records + ' people</span></div>'
+      + '<div class="kpi"><span>“No”s with a reason</span><b>' + pc(q.negatives_with_reason_pct) + '</b><span>of ' + q.negatives + ' negative outcomes</span></div>'
+      + '<div class="kpi"><span>Former employees</span><b>' + P.former + '</b><span>from work history</span></div></div></div>';
+    return h;
+  }
+  function quotes(list, fb){
+    if (!list || !list.length) return '';
+    return list.map(function(x){ return '<div class="qt"><b>' + esc(x.label) + '</b>' + (x.detail ? ': ' + esc(x.detail) : '') + (fb && x.feedback ? '<div>“' + esc(x.feedback) + '”</div>' : '') + ' <span class="mu">' + esc(x.date) + '</span></div>'; }).join('');
+  }
+  function bindIntel(){
+    var rf = $('i-refresh'); if (rf) rf.onclick = function(){ rf.disabled = true; paintIntel(true); };
+    document.querySelectorAll('[data-sig]').forEach(function(b){ b.onclick = function(){ if (OPT.client) return; SIGF = b.dataset.sig; paintIntel(false); }; });
+  }
+
   function bind(){
+    document.querySelectorAll('[data-tab]').forEach(function(t){ t.onclick = function(){
+      OPT.tab = t.dataset.tab;
+      try { history.replaceState(null, '', '?company=' + encodeURIComponent(D.company) + (OPT.tab === 'intel' ? '&tab=intel' : '')); } catch(e) {}
+      paint(); }; });
     var f = $('o-former'), c = $('o-client'), x = $('o-ctc');
     if (f) f.onchange = function(){ OPT.former = this.checked; saveOpt(); paint(); };
     if (c) c.onchange = function(){ OPT.client = this.checked; if (OPT.client) OPT.hideCtc = true; saveOpt(); paint(); };
