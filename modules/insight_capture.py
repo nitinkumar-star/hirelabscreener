@@ -241,6 +241,20 @@ def company_key(name):
         return ' '.join(str(name or '').lower().split())
 
 
+def _invalidate(oid, key=None):
+    """Clear Wave 2's cached company answers (no-op when that module is off)."""
+    try:
+        from modules import insight_company
+        insight_company.invalidate(oid, key)
+    except Exception:
+        pass
+    try:
+        from modules import insight_market
+        insight_market.invalidate(oid)
+    except Exception:
+        pass
+
+
 def family_for(stage):
     s = ' '.join(str(stage or '').lower().split())
     for fam, names in FAMILY_STAGES.items():
@@ -345,6 +359,7 @@ def record_reason(conn, oid, cid, mandate_id, stage, code, detail='', client_fee
                         int(user_id or 0), ts()))
     if fb:
         _append_client_feedback(conn, oid, cid, stage, fb)
+    _invalidate(oid)
     return cur.lastrowid
 
 
@@ -384,6 +399,7 @@ def add_market_note(conn, oid, cid, mandate_id, company, signal_type, note, sour
                        'signal_type, note, source, user_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
                        (oid, int(cid or 0), int(mandate_id or 0), company, company_key(company), st, note,
                         source if source in ('manual', 'call_ai') else 'manual', int(user_id or 0), ts()))
+    _invalidate(oid, company_key(company))
     return cur.lastrowid
 
 
