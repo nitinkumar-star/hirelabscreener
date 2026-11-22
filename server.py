@@ -8203,6 +8203,13 @@ def _vec_to_blob(vec):
 CV_EMBED_MAX_CHARS = 5000
 
 
+import threading as _cvp_threading
+# One CV parse at a time across the process (embedding worker, skill engine,
+# tagging). PDF parsing is memory-heavy; parallel parses can exhaust a small
+# instance. Shared with modules.skill_engine.
+_CV_PARSE_LOCK = _cvp_threading.Lock()
+
+
 def _candidate_cv_text(c, max_chars=CV_EMBED_MAX_CHARS):
     """Return plain text extracted from the candidate's stored CV file (Word or
     PDF), or '' if there is no file / it can't be read. Reuses the existing
@@ -8221,9 +8228,11 @@ def _candidate_cv_text(c, max_chars=CV_EMBED_MAX_CHARS):
         # Prefer the original filename's extension (tells us pdf vs docx);
         # fall back to the stored name.
         name = str(_row_get(c, 'cv_original_name')).strip() or rel
-        with open(fp, 'rb') as fh:
-            data = fh.read()
-        text, err = extract_text_from_file(data, name)
+        with _CV_PARSE_LOCK:
+            with open(fp, 'rb') as fh:
+                data = fh.read()
+            text, err = extract_text_from_file(data, name)
+            del data
         if err or not text:
             return ''
         text = ' '.join(text.split())  # collapse whitespace/newlines
