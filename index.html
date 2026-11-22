@@ -12,6 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="HireLab">
 <link rel="apple-touch-icon" href="/icon-192.png">
 <script src="/insight-capture.js"></script>
+<script src="/skill-engine.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function(){
@@ -7885,7 +7886,8 @@ function renderProfileDetail(c){
 
   // Tags (product / function)
   // Sales profile (view / edit) — see salesCardHTML()
-  var tagsCard=salesCardHTML(c)+'<div id="icap-card-'+c.id+'" style="display:none"></div>';   // Insight Wave 1: Call capture
+  var tagsCard=salesCardHTML(c)+'<div id="icap-card-'+c.id+'" style="display:none"></div>'   // Insight Wave 1: Call capture
+    +'<div id="sk-depth-'+c.id+'" style="display:none"></div>';                                  // Skill Engine: skill depth
 
   // Work Experience
   var wh=c.work_history||[];
@@ -8003,6 +8005,7 @@ function renderProfileDetail(c){
   if(_tbar){ _tbar.addEventListener('click', function(ev){ var b=ev.target.closest('[data-cptab]'); if(b){ ev.preventDefault(); cpTab(b.getAttribute('data-cptab')); } }); }
   attachStageDropdown();
   try{ if(window.ICap) ICap.mountCapture(c.id); }catch(e){}
+  try{ if(window.SkillEngine) SkillEngine.mountDepth(c.id); }catch(e){}
   _intelShow();
   try{ var _ss=document.getElementById('prof-stage-sel'); if(_ss) _ss.addEventListener('change', function(){ setTimeout(function(){ var n=document.getElementById('w1-next-'+c.id); if(n) n.innerHTML=w1NextStageBtn(c.id, _ss.value); }, 0); }); }catch(e){}
   loadCandidateReminders(c.id);
@@ -9445,6 +9448,8 @@ function renderSettings(){
              '<div id="pg-settings"></div>')
       + _sec('sec-insight', 'account', 'Insight capture', 'insight reasons not interested rejection feedback market notes call capture tagging backfill 6:30 check',
              '<div id="icap-settings"></div>')
+      + _sec('sec-skills', 'account', 'Skill Engine', 'skill engine dictionary skill depth skill spec synonyms brands approve suggestions analyse candidates',
+             '<div id="sk-settings"></div>')
       + _sec('sec-tour', 'account', 'Product tour', 'tour help intro guide walkthrough tabs',
              '<div class="card" style="margin-bottom:14px"><div class="card-body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:200px;font-size:12.5px;color:var(--muted)">A 2-minute walk through every tab: what it is for and when to use it.</div><button class="btn btn-g" onclick="startTour()">&#9654; Take the tour</button></div></div>')
       + _sec('sec-profile', 'account', 'My Profile &amp; Email Signature', 'name designation phone email signature',
@@ -10002,6 +10007,7 @@ async function loadMyBillingCard(){
   loadMailSyncStrips();
   loadProfileGroupsSettings();
   try{ if(window.ICap) ICap.mountSettings(document.getElementById('icap-settings')); }catch(e){}
+  try{ if(window.SkillEngine) SkillEngine.mountSettings(document.getElementById('sk-settings')); }catch(e){}
   if (_isRecruiterScoped()) { box.innerHTML=''; return; }      // subscription is the admin's
   var r = await req('GET', '/billing/me');
   if (!r || !r.ok || !r.bill) { box.innerHTML=''; return; }
@@ -25904,18 +25910,21 @@ async function _bdhDone(id, box){
       + '<div class="jb-ctl">' + ctl + '</div></div>';
   }
 
+  // Skill Engine: the skill spec shows under the breakdown in every state (also when the breakdown failed)
+  function skillSpec(el, m){ try { if (window.SkillEngine) SkillEngine.mountSpec(m.id, el.querySelector('.jb-wrap') || el); } catch (e) {} }
+
   function paint(el, m, st){
     var d = st.data || {};
     var h = '<div class="jb-wrap">' + header(m, d, false);
     if (d.ok === false || d.error) {
       h += '<div class="jb-empty"><b>Could not load the breakdown</b>' + esc(d.error || '') + '<br><br><button class="btn btn-o" data-jb="retry">Try again</button></div></div>';
-      el.innerHTML = h; bind(el, m, st); return;
+      el.innerHTML = h; bind(el, m, st); skillSpec(el, m); return;
     }
     if (!d.profile) {
       h += d.has_job_content === false
         ? '<div class="jb-empty"><b>Nothing to break down yet</b>Add a JD, a boolean or must-have skills in Mandate Setup, then come back.<br><br><button class="btn btn-o" data-jb="setup">Open Mandate Setup</button></div>'
         : '<div class="jb-empty"><b>No breakdown yet</b>' + (d.ai_available === false ? 'Add the DeepSeek API key in Settings to let the AI read the JD.' : '') + '<br><br><button class="btn" data-jb="regen">Generate with AI</button></div>';
-      el.innerHTML = h + '</div>'; bind(el, m, st); return;
+      el.innerHTML = h + '</div>'; bind(el, m, st); skillSpec(el, m); return;
     }
     var p = d.profile;
     if (d.stale) h += '<div class="jb-warn">The job text changed after this breakdown was edited. Your version is still being used.'
@@ -25954,7 +25963,7 @@ async function _bdhDone(id, box){
       + '<div class="jb-box"><h4>Designations that fit</h4>' + chips(p.titles, 'ti')
       + '<div class="jb-note" style="margin-top:8px">The Screener gives extra points to a card whose current employer is a target company, and skips a card whose current employer is on the avoid list.</div></div></div>';
     h += '</div>';
-    el.innerHTML = h; bind(el, m, st);
+    el.innerHTML = h; bind(el, m, st); skillSpec(el, m);
   }
 
   function edRow(tier, it){

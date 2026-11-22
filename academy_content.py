@@ -187,7 +187,7 @@ ARTICLES = [
             'If the JD changes later, an edited breakdown is kept and marked "JD changed" so you can review it.',
         ],
         'tips': ['The Assistant\'s Naukri screener and the candidate explanations use this breakdown.'],
-        'related': ['assistant', 'mandate-setup', 'pitch'],
+        'related': ['assistant', 'mandate-setup', 'pitch', 'skill-engine'],
         'keywords': ['breakdown', 'core skills', 'must have', 'target companies'],
     },
     {
@@ -343,7 +343,7 @@ ARTICLES = [
             'Expected CTC and notice live only in Key Facts; target and team only in the Profile card. Nothing is asked twice.',
             '"Company intel ↗" next to the company opens what you know about that company.',
         ],
-        'related': ['profile-groups', 'market-note', 'call-analysis', 'ai-agent', 'pitch'],
+        'related': ['profile-groups', 'market-note', 'call-analysis', 'ai-agent', 'pitch', 'skill-engine'],
         'keywords': ['profile', 'key facts', 'expected ctc', 'notice period', 'journey', 'candidate page'],
     },
     {
@@ -401,6 +401,32 @@ ARTICLES = [
     },
 
     # ── Calls & AI ──────────────────────────────────────────────────────────
+    {
+        'key': 'skill-engine', 'title': 'Skill Engine: skill spec and skill depth', 'section': 'ai', 'roles': STAFF,
+        'where': 'Job → Job Breakdown tab (Skill spec); candidate profile → Overview (Skill depth); admins: Settings → My Account → Skill Engine',
+        'summary': 'A skill dictionary for electrical, automation, solar and data-center roles (standard names, brands and '
+                   'other names, nearby skills), a skill spec for every job, and the skill depth of every candidate: '
+                   'years, how deeply they were involved and the CV line that shows it.',
+        'when': 'When you set up a new job, and when you want to know how deep a candidate\'s skills really are.',
+        'steps': [
+            'Open a job → **Job Breakdown**. Under the breakdown, the **Skill spec** lists each skill the job needs with '
+            'importance, minimum years, involvement (Led / Did it / Supported / Any), how recent, and which nearby skills also count.',
+            'Press **Edit** to change it, or **Rebuild with AI** after the job text changed.',
+            'Open a candidate: the **Skill depth** card shows each skill with years (from dated roles), current or last used, '
+            'involvement and the CV quote. Press **Analyse skills** if it has not run yet.',
+            'Admins: in Settings → Skill Engine, approve or reject the AI\'s suggestions (new skills, other names, nearby skills) '
+            'and analyse existing candidates.',
+        ],
+        'tips': [
+            'Phase 1 shows the data only; scores do not use it yet.',
+            '"Masterpact", "Emax" and "ACB" count as the same skill; LV switchgear counts partly for an MV switchgear job.',
+            'Years are calculated from work-history dates, never guessed. "years unknown" means the roles have no dates.',
+            'A skill marked "AI" was suggested for this job; it works here at once and for every job after an admin approves it.',
+        ],
+        'related': ['job-breakdown', 'candidate-profile', 'assistant'],
+        'keywords': ['skill', 'skills', 'skill depth', 'skill spec', 'dictionary', 'synonym', 'brand', 'years of experience',
+                     'involvement', 'led', 'supported', 'skill engine'],
+    },
     {
         'key': 'pitch', 'title': 'Recruiter Pitch and Final Result', 'section': 'ai', 'roles': STAFF,
         'where': 'Candidate profile → Pitch tab (or the job\'s Recruiter Pitch tab)',
