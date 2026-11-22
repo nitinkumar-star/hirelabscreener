@@ -323,10 +323,77 @@ def _months(spans, idxs):
     return total, hi
 
 
-def _input_hash(c, spans, cv_text):
+# Only one CV is parsed at a time in the whole process (request threads and
+# background workers alike). PDF parsing is the biggest memory user in the app,
+# and several at once can push a 512 MB instance over its limit.
+_cv_parse_lock = threading.Lock()
+CV_PDF_PAGES = 4
+
+
+def _cv_file(c):
+    try:
+        rel = str(c['cv_path'] or '').strip()
+        if not rel:
+            return ''
+        fp = os.path.join(_core().CV_DIR, rel)
+        return fp if os.path.exists(fp) else ''
+    except Exception:
+        return ''
+
+
+def _cv_size(c):
+    fp = _cv_file(c)
+    try:
+        return os.path.getsize(fp) if fp else 0
+    except Exception:
+        return 0
+
+
+def cv_text_light(c, max_chars=CV_CHARS):
+    """CV text with bounded memory: a PDF is read only for its first pages,
+    one page at a time with its cache dropped, stopping once there is enough
+    text. Other formats go through the shared extractor. Never raises."""
+    fp = _cv_file(c)
+    if not fp:
+        return ''
+    name = (str(c['cv_original_name'] or '') if 'cv_original_name' in c.keys() else '') or fp
+    with (getattr(_core(), '_CV_PARSE_LOCK', None) or _cv_parse_lock):
+        try:
+            if name.lower().endswith('.pdf') or fp.lower().endswith('.pdf'):
+                import pdfplumber
+                parts, n = [], 0
+                with pdfplumber.open(fp) as pdf:
+                    for page in pdf.pages[:CV_PDF_PAGES]:
+                        try:
+                            t = page.extract_text() or ''
+                        finally:
+                            try:
+                                page.flush_cache()
+                                page.close()
+                            except Exception:
+                                pass
+                        parts.append(t)
+                        n += len(t)
+                        if n >= max_chars:
+                            break
+                text = '\n'.join(parts)
+            else:
+                with open(fp, 'rb') as fh:
+                    data = fh.read()
+                text, err = _core().extract_text_from_file(data, name)
+                if err or not text:
+                    return ''
+            return ' '.join(text.split())[:max_chars]
+        except Exception:
+            return ''
+
+
+def _input_hash(c, spans, cv_text=None):
+    # The CV is represented by its file and size, so checking for changes
+    # never has to open and parse it.
     raw = json.dumps([c['designation'], c['key_skills'], c['secondary_skills'] if 'secondary_skills' in c.keys() else '',
                       c['career_summary'], c['cv_path'], [(s['designation'], s['dates'], s['text']) for s in spans],
-                      len(cv_text or '')], default=str)
+                      _cv_size(c)], default=str)
     return hashlib.sha1(raw.encode('utf-8')).hexdigest()
 
 
@@ -363,11 +430,7 @@ def compute_depth(conn, oid, cid, use_ai=True, classify=None):
         return None
     lex = lexicon(conn, oid)
     spans, now_m = _spans(conn, cid)
-    cv = ''
-    try:
-        cv = core._candidate_cv_text(c, CV_CHARS) or ''
-    except Exception:
-        cv = ''
+    cv = cv_text_light(c, CV_CHARS)
     profile = ' '.join([c['designation'] or '', ' '.join(_jl(c['key_skills'])),
                         ' '.join(_jl(c['secondary_skills'])) if 'secondary_skills' in c.keys() else '',
                         c['career_summary'] or '', c['industry_background'] or ''])
@@ -460,7 +523,7 @@ def compute_depth(conn, oid, cid, use_ai=True, classify=None):
     out.sort(key=lambda x: (-(x['years'] or 0), rank[x['level']], x['name'].lower()))
     data = {'skills': out, 'ai': ai_used, 'cv': bool(cv.strip()), 'roles': len(spans),
             'dated_roles': sum(1 for s in spans if s['start'] is not None), 'computed_at': ts()}
-    h = _input_hash(c, spans, cv)
+    h = _input_hash(c, spans)
     root = int(c['copied_from'] or 0) or int(c['id'])
     ids = [r[0] for r in conn.execute('SELECT id FROM candidates WHERE owner_id=? AND (id=? OR copied_from=?)', (oid, root, root))] or [cid]
     for i in ids:
@@ -803,12 +866,7 @@ def get_depth(cid):
         if not r or r['status'] != 'done':
             return jsonify({'ok': True, 'data': None, 'error': (r['error'] if r else '')})
         spans, _n = _spans(conn, cid)
-        cv = ''
-        try:
-            cv = _core()._candidate_cv_text(c, CV_CHARS) or ''
-        except Exception:
-            pass
-        stale = r['input_hash'] != _input_hash(c, spans, cv)
+        stale = r['input_hash'] != _input_hash(c, spans)
         return jsonify({'ok': True, 'data': json.loads(r['data'] or '{}'), 'stale': stale, 'computed_at': r['computed_at']})
     finally:
         conn.close()

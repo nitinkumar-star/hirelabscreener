@@ -301,3 +301,36 @@ def test_no_score_changes_and_ui_wired(srv):
     assert cl(srv, ADMIN).get('/skill-engine.js').status_code == 200
     import academy_content
     assert 'skill-engine' in {x['key'] for x in academy_content.ARTICLES}
+
+
+# ── memory safety (live 502 / instance restarts, Nov 2026) ──────────────────
+def test_profile_view_never_parses_cv_and_reader_is_bounded(srv, no_ai, monkeypatch):
+    canvas = pytest.importorskip('reportlab.pdfgen.canvas')
+    m = se()
+    os.makedirs(srv.CV_DIR, exist_ok=True)
+    fp = os.path.join(srv.CV_DIR, 'skill_mem_test.pdf')
+    pdf = canvas.Canvas(fp)
+    for i in range(10):
+        pdf.drawString(72, 720, 'PAGE%02d Headed channel sales of MCCB through dealers.' % i)
+        pdf.showPage()
+    pdf.save()
+    conn = srv.get_db()
+    conn.execute("UPDATE candidates SET cv_path='skill_mem_test.pdf', cv_original_name='cv.pdf' WHERE id=?", (C2,))
+    conn.commit()
+    c = conn.execute('SELECT * FROM candidates WHERE id=?', (C2,)).fetchone()
+    txt = m.cv_text_light(c, 7000)
+    assert 'PAGE00' in txt and 'PAGE03' in txt and 'PAGE04' not in txt      # first pages only
+    assert len(m.cv_text_light(c, 60)) <= 60
+    m.compute_depth(conn, CO, C2, use_ai=False)
+    conn.commit(); conn.close()
+    # Opening the profile reads the stored result only: no CV parsing at all.
+    import pdfplumber
+    calls = []
+    monkeypatch.setattr(pdfplumber, 'open', lambda *a, **k: calls.append(1) or (_ for _ in ()).throw(AssertionError('parsed')))
+    monkeypatch.setattr(srv, 'extract_text_from_file', lambda *a, **k: calls.append(1) or (None, 'x'))
+    r = cl(srv, ADMIN).get('/api/candidates/%d/skill-depth' % C2).get_json()
+    assert r['data'] is not None and r['stale'] is False and calls == []
+    # A new CV file (different size) marks the result as out of date, still without parsing.
+    with open(fp, 'ab') as fh:
+        fh.write(b'\n% extra')
+    assert cl(srv, ADMIN).get('/api/candidates/%d/skill-depth' % C2).get_json()['stale'] is True and calls == []

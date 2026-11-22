@@ -112,3 +112,19 @@ python -m pytest -q
 3. Or revert the PR.
 
 No score uses the Skill Engine yet, so nothing else changes. The new tables can stay.
+
+## Fix: 502 / "Instance restarted" after Phase 1 (Nov 2026)
+**Cause:** opening a profile made the Skill depth card read the whole CV PDF just to check whether the result was out
+of date. The skill worker, the tagging worker and the search-embedding worker also read CVs, sometimes at the same time.
+PDF reading uses a lot of memory, and on the 512 MB instance Render restarted the app (the 502s).
+
+**Fix:**
+- Opening a profile no longer reads the CV. "Out of date" is now based on the CV file and its size.
+- The Skill Engine and the tagger read only the first 4 pages of a PDF, one page at a time.
+- Only one CV is read at a time in the whole app (shared lock with the embedding worker).
+
+Results already analysed show **Refresh** once (the out-of-date check changed). Nothing is re-analysed automatically,
+so there is no extra AI cost.
+
+Files: `modules/skill_engine.py`, `modules/insight_capture.py`, `server.py` (lock around `_candidate_cv_text` only),
+`test_skill_engine.py` (+1 test).

@@ -549,7 +549,8 @@ def _profile_text(conn, c):
     text = '\n'.join(lines)
     if len(_clean(c['career_summary'], 2000)) + len(' '.join(_jl(c['key_skills']))) < 300 and c['cv_path']:
         try:
-            cv = _core()._candidate_cv_text(c, 3000)
+            from modules.skill_engine import cv_text_light
+            cv = cv_text_light(c, 3000)
             if cv:
                 text += '\nCV extract: ' + cv
         except Exception:
