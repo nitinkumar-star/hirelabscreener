@@ -270,7 +270,7 @@ def test_switch_and_admin_only_settings(srv):
 
 def test_backfill_resumable(srv, monkeypatch):
     m = se()
-    monkeypatch.setattr(m, 'NEW_WINDOW_HOURS', 0)
+    monkeypatch.setattr(m, 'NEW_WINDOW_HOURS', -1)
     a = cl(srv, ADMIN)
     s = a.post('/api/skills/backfill/start').get_json()['backfill']
     assert s['status'] == 'running' and s['remaining'] >= 1
