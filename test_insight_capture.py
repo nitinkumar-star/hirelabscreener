@@ -303,7 +303,7 @@ def test_tagging_never_overwrites_human_values(srv):
 
 def test_backfill_resumable_newest_first_and_stoppable(srv, monkeypatch):
     m = ic()
-    monkeypatch.setattr(m, 'NEW_WINDOW_HOURS', 0)          # no "new candidate" work in this test
+    monkeypatch.setattr(m, 'NEW_WINDOW_HOURS', -1)          # no "new candidate" work in this test (-1: window starts in the future, so even a candidate made this same second is skipped)
     conn = srv.get_db()
     # the other agency has untagged people too: they must not be touched
     ids = [9941101, 9941102, 9941103, 9941104]
@@ -357,7 +357,7 @@ def test_backfill_resumable_newest_first_and_stoppable(srv, monkeypatch):
 
 def test_backfill_error_is_retried_on_next_start(srv, monkeypatch):
     m = ic()
-    monkeypatch.setattr(m, 'NEW_WINDOW_HOURS', 0)
+    monkeypatch.setattr(m, 'NEW_WINDOW_HOURS', -1)
     conn = srv.get_db()
     conn.execute("INSERT OR REPLACE INTO candidates (id, mandate_id, name, designation, stage, owner_id, created_at, updated_at) "
                  "VALUES (?,?,?,?,?,?,?,?)", (9941120, M1, 'Err Cand', 'Engineer', 'Screening', CO, ago(400), ago(0)))

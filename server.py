@@ -2620,8 +2620,82 @@ CLAUDE_MODEL_FALLBACKS = ['claude-sonnet-4-6', 'claude-sonnet-5']
 for d in [DATA_DIR, CV_DIR, BAK_DIR, CRM_FILES_DIR, EMAIL_ATTACH_DIR]:
     os.makedirs(d, exist_ok=True)
 
+# ── Connection reuse (Nov 2026 speed fix) ────────────────────────────────
+# The schema is large (150+ tables, 230+ indexes, ~100 KB of SQL). SQLite
+# parses the whole schema on the FIRST statement of every NEW connection, and
+# one request used to open 5–12 connections (route + login/tenant checks +
+# get_setting ...). On Render's small shared CPU that parsing made every click
+# slow. Now close() hands the connection back to a small per-thread pool and
+# the next get_db() on that thread reuses it (schema already parsed, PRAGMAs
+# already set).
+#   * Safety: close() first rolls back anything left uncommitted — exactly
+#     what a real close did — so the next user starts clean. A connection that
+#     is still in use is never handed out twice (nested get_db() calls get
+#     their own connection).
+#   * Memory: PRAGMA shrink_memory empties the page cache of a parked
+#     connection, so idle connections hold about what a closed one did.
+#   * Off switch: set env DB_POOL=0 to go back to one fresh connection per call.
+import threading as _dbpool_threading
+_DB_POOL_ON = (os.environ.get('DB_POOL', '1').strip().lower() not in ('0', 'off', 'false', 'no'))
+_DB_POOL_MAX_IDLE = 2                 # parked connections per thread
+_db_pool_local = _dbpool_threading.local()
+
+
+class _PooledConnection(sqlite3.Connection):
+    """sqlite3.Connection whose close() parks it for reuse on this thread."""
+    _hl_path = None
+    _hl_parked = False
+    _hl_actor_ok = False
+
+    def close(self):
+        if self._hl_parked:
+            return                    # double close: already parked
+        try:
+            if not _DB_POOL_ON or self._hl_path != DB_PATH:
+                raise RuntimeError('no pool')
+            if self.in_transaction:
+                self.rollback()       # same effect as closing without commit
+            self.row_factory = sqlite3.Row
+            self.execute('PRAGMA shrink_memory')
+            idle = getattr(_db_pool_local, 'idle', None)
+            if idle is None:
+                idle = _db_pool_local.idle = []
+            if len(idle) >= _DB_POOL_MAX_IDLE:
+                raise RuntimeError('pool full')
+            self._hl_parked = True
+            idle.append(self)
+        except Exception:
+            self._hl_parked = False
+            sqlite3.Connection.close(self)
+
+
+def _db_pool_take():
+    idle = getattr(_db_pool_local, 'idle', None)
+    while idle:
+        conn = idle.pop()
+        conn._hl_parked = False
+        if conn._hl_path == DB_PATH:
+            try:
+                conn.execute('SELECT 1').fetchone()
+                return conn
+            except Exception:
+                pass
+        try:
+            sqlite3.Connection.close(conn)
+        except Exception:
+            pass
+    return None
+
+
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=60, check_same_thread=False)
+    if _DB_POOL_ON:
+        conn = _db_pool_take()
+        if conn is not None:
+            if not conn._hl_actor_ok:
+                _db_attach_actor(conn)   # e.g. made before the actor_id migration ran
+            return conn
+    conn = sqlite3.connect(DB_PATH, timeout=60, check_same_thread=False, factory=_PooledConnection)
+    conn._hl_path = DB_PATH
     conn.row_factory = sqlite3.Row
     # IMPORTANT: DELETE journal mode + FULL sync (not WAL+NORMAL).
     # WAL keeps recent writes in a separate -wal file that can fail to flush
@@ -2640,13 +2714,24 @@ def get_db():
     # memory with 8 busy users rose past Render Starter's 512 MB.)
     conn.execute('PRAGMA temp_store=MEMORY')
     conn.execute('PRAGMA cache_size=-4000')
+    _db_attach_actor(conn)
+    return conn
+
+
+def _db_attach_actor(conn):
     # Team Activity: stamp the logged-in user on new stage_history rows
-    # (per-connection TEMP trigger — see modules/team_activity.py).
+    # (per-connection TEMP trigger — see modules/team_activity.py). A reused
+    # connection keeps its trigger; one made before the module/migration was
+    # ready is tried again when it is next handed out.
     import sys as _sys
     _ta = _sys.modules.get('modules.team_activity')
     if _ta is not None:
         _ta.attach_actor(conn)
-    return conn
+        if getattr(_ta, 'ACTOR_COL_OK', None) is True:
+            try:
+                conn._hl_actor_ok = True
+            except Exception:
+                pass
 
 def esc_html(s):
     """Escape a string for safe inclusion in HTML email bodies."""
