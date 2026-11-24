@@ -6731,7 +6731,7 @@ function _ebThreadHtml(tr, inPane){
         +'<div class="gm-ameta">'+_gmFileIco(x.filename)+'<span class="gm-aname">'+esc(x.filename)+'</span></div><div class="gm-asize">'+_ebSize(x.size)+'</div></a>'
         +((_ebIsCv(x.filename)&&m.folder==='Inbox')?'<button class="eb2-addc gm-aadd" onclick="ebAddCand('+m.id+','+x.id+',this)" title="Read this CV and add the person as a candidate">+ Add as candidate</button>':'')+'</div>';
     }).join('');
-    var nm=m.from_name||m.from_addr||'';
+    var isDr=!!(m.is_draft||m.folder==='Drafts'), nm=isDr?'Draft':(m.from_name||m.from_addr||'');
     var det='<div class="gm-det" id="gm-det'+m.id+'" hidden><table>'
       +'<tr><td>from:</td><td><b>'+esc(nm)+'</b> &lt;'+esc(m.from_addr||'')+'&gt;</td></tr>'
       +'<tr><td>to:</td><td>'+esc(m.to_addr||'')+'</td></tr>'+(m.cc?'<tr><td>cc:</td><td>'+esc(m.cc)+'</td></tr>':'')
@@ -6744,7 +6744,8 @@ function _ebThreadHtml(tr, inPane){
       +'<span class="gm-menu" role="menu">'+mi('ebReply('+m.id+',false)','Reply')+mi('ebReply('+m.id+',true)','Reply all')+mi('ebForward('+m.id+')','Forward')+'</span></span></span>';
     return '<article class="eb2-msg'+(m.folder==='Sent'?' sent':'')+(collapsed?' collapsed':'')+'" id="eb2-m'+m.id+'">'
       +'<header onclick="this.parentElement.classList.toggle(\'collapsed\')"><span class="eb2-av" style="background:'+_gmAvCol(nm)+'">'+esc(nm.charAt(0).toUpperCase()||'?')+'</span>'
-      +'<div class="eb2-mh"><div><b class="gm-from">'+esc(nm)+'</b> <span class="eb2-addr">&lt;'+esc(m.from_addr||'')+'&gt;</span></div>'
+      +'<div class="eb2-mh"><div><b class="gm-from'+(isDr?' gm-draft':'')+'">'+esc(nm)+'</b>'+(m.from_addr&&!isDr?' <span class="eb2-addr">&lt;'+esc(m.from_addr)+'&gt;</span>':'')
+      +(isDr?' <button class="gm-detb" style="color:#0b57d0;font-size:12.5px" onclick="event.stopPropagation();openDraft('+m.id+')">Edit draft</button>':'')+'</div>'
       +'<div class="eb2-to">to '+toWho(m)+' <button class="gm-detb" title="Show details" aria-label="Show details" onclick="event.stopPropagation();var x=document.getElementById(\'gm-det'+m.id+'\');x.hidden=!x.hidden">'+_gmIco('down')+'</button></div>'
       +'<div class="eb2-sn">'+esc(m.snippet||'')+'</div></div>'
       +'<span class="eb2-md">'+esc(d)+' <span class="gm-ago">('+_gmAgo(m.date_ts)+')</span></span>'+acts+'</header>'
@@ -6823,18 +6824,40 @@ function ebReply(id, all){
     var rest=_ebAddrs((e.folder==='Sent'?'':e.to_addr||'')+','+(e.cc||'')).filter(function(a){ var k=a.toLowerCase(); if(seen[k]||mine.indexOf(k)>=0) return false; seen[k]=1; return true; });
     cc=rest.join(', ');
   }
-  var qd=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB'):'';
-  var quoted='\n\n--- On '+qd+', '+(e.from_name||e.from_addr||'')+' wrote ---\n'+((e.body||e.snippet||'').split('\n').map(function(l){return '> '+l;}).join('\n'));
+  // Like Gmail: the reply box starts empty; the earlier mail is quoted by the server
+  // (as a proper quote, below your signature). "•••" in the compose window shows it.
   var cand=window._eb.thread&&window._eb.thread.candidate;
   _ebClosePane();
-  openCompose(to,rSub,quoted,{in_reply_to:(e.msg_id||''),references:((e.refs||'')+' '+(e.msg_id||'')).trim(),thread_id:(e.thread_id||''),cc:cc,candidate_id:cand?cand.id:null,reply_eid:e.id});
+  openCompose(to,rSub,'',{html:'',quote_html:_ebQuoteHtml(e),in_reply_to:(e.msg_id||''),references:((e.refs||'')+' '+(e.msg_id||'')).trim(),thread_id:(e.thread_id||''),cc:cc,candidate_id:cand?cand.id:null,reply_eid:e.id});
 }
 function ebForward(id){
   var e=_ebMsg(id), subject=e.subject||'';
   var qd=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB'):'';
-  var fwdBody='\n\n---------- Forwarded message ----------\nFrom: '+(e.from_name||e.from_addr||'')+'\nTo: '+(e.to_addr||'')+(e.cc?('\nCc: '+e.cc):'')+'\nSubject: '+subject+'\nDate: '+qd+'\n\n'+(e.body||e.snippet||'');
+  var H=function(x){ return esc(x||''); };
+  var fwdHtml='<div><br></div><div class="gmail_quote"><div>---------- Forwarded message ---------<br>From: <b>'+H(e.from_name||'')+'</b> &lt;'+H(e.from_addr||'')+'&gt;<br>Date: '+H(qd)
+    +'<br>Subject: '+H(subject)+'<br>To: '+H(e.to_addr||'')+(e.cc?('<br>Cc: '+H(e.cc)):'')+'<br></div><br>'+_ebBodyHtml(e)+'</div>';
   _ebClosePane();
-  openCompose('',(/^fwd:/i.test(subject)?subject:('Fwd: '+subject)),fwdBody,{forward_from_email_id:e.id});
+  openCompose('',(/^fwd:/i.test(subject)?subject:('Fwd: '+subject)),'',{html:fwdHtml,forward_from_email_id:e.id});
+}
+// A received mail's HTML made safe to show or put in the editor: body content only,
+// no scripts / styles / frames / event handlers / javascript: links.
+function _ebSafeHtml(html){
+  try{
+    var doc=new DOMParser().parseFromString(String(html||''),'text/html');
+    doc.querySelectorAll('script,style,link,meta,title,iframe,frame,object,embed,form,input,button,textarea,select,base').forEach(function(n){ n.remove(); });
+    doc.querySelectorAll('*').forEach(function(n){ Array.prototype.slice.call(n.attributes).forEach(function(a){
+      var k=a.name.toLowerCase(), v=String(a.value||'');
+      if(/^on/.test(k) || ((k==='href'||k==='src'||k==='action'||k==='xlink:href') && /^\s*(javascript|vbscript|data:text)/i.test(v)) || k==='contenteditable') n.removeAttribute(a.name); }); });
+    return doc.body?doc.body.innerHTML:'';
+  }catch(err){ return ''; }
+}
+function _ebBodyHtml(e){
+  if(e.body_html && e.body_html.length>15){ var h=_ebSafeHtml(e.body_html); if(h.trim()) return h; }
+  return '<div style="white-space:pre-wrap">'+esc(e.body||e.snippet||'')+'</div>';
+}
+function _ebQuoteHtml(e){
+  var qd=e.date_ts?new Date(e.date_ts*1000).toLocaleString('en-GB',{weekday:'short',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+  return '<div class="gc-qattr">On '+esc(qd)+', '+esc(e.from_name||'')+' &lt;'+esc(e.from_addr||'')+'&gt; wrote:</div><blockquote class="gc-qbody">'+_ebBodyHtml(e)+'</blockquote>';
 }
 // kept for older callers
 function replyFromEmail(){ var t=window._eb.thread&&window._eb.thread.thread; if(t&&t.length) ebReply(t[t.length-1].id,false); }
@@ -7068,6 +7091,8 @@ function openCompose(to, subject, body, meta){
     +'<button type="button" class="gc-chip" id="cmp-ai-undo" style="display:none" onclick="cmpAiUndo()">&#8630; Undo</button></div>'
     +'<div id="cmp-ai-st" class="gc-ai-st" role="status"></div></div>'
     +'<div id="cmp-editor" class="gc-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message body" onkeyup="cmpSaveRange()" onmouseup="cmpSaveRange()">'+initHtml+'</div>'
+    +(meta.quote_html?'<button type="button" class="gc-trim" title="Show trimmed content" aria-label="Show trimmed content" aria-expanded="false" onclick="var q=document.getElementById(\'cmp-quote\');q.hidden=!q.hidden;this.setAttribute(\'aria-expanded\',!q.hidden)">&#8226;&#8226;&#8226;</button>'
+      +'<div id="cmp-quote" class="gc-quote" hidden>'+meta.quote_html+'<div class="gc-qnote">This earlier mail is added below your signature when you send.</div></div>':'')
     +'<div id="cmp-attach-list" class="gc-atts"></div>'
     +'<input type="file" id="cmp-file" multiple style="display:none" onchange="ebUploadAttach(this)">'
     +'</div>'
@@ -27547,7 +27572,7 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
 .gm .eb2-candbox{margin-left:46px}
 .gm .eb2-msg header{align-items:flex-start}
 .gm .eb2-av{color:#fff}
-.gm-from{font-size:14px;color:#1f1f1f}
+.gm-from{font-size:14px;color:#1f1f1f}.gm-from.gm-draft{color:#d93025}
 .gm .eb2-addr{font-size:12px}
 .gm .eb2-to{display:flex;align-items:center;gap:2px}
 .gm-detb{border:0;background:none;color:#5f6368;cursor:pointer;padding:0 2px;display:inline-flex;border-radius:4px}
@@ -27706,6 +27731,13 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
 .eb2-aci span{color:#475063;font-size:12px}.eb2-aci em{display:block;font-style:normal;font-size:11px;color:#98a2b3}
 .eb2-aci:hover,.eb2-aci.on{background:#f0fdfa}
 /* compose — Gmail-style floating window */
+.gc-trim{margin:2px 16px 6px;border:0;background:#e8eaed;color:#444746;border-radius:8px;padding:0 8px;height:16px;line-height:14px;font-size:11px;letter-spacing:1px;cursor:pointer;align-self:flex-start}
+.gc-trim:hover{background:#dadce0}
+.gc-quote{margin:0 16px 10px;color:#5f6368;font-size:13px;overflow:auto;max-height:260px}
+.gc-qattr{margin-bottom:6px}
+.gc-qbody{margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex}
+.gc-qbody img{max-width:100%;height:auto}
+.gc-qnote{font-size:11.5px;color:#80868b;margin-top:8px;font-style:italic}
 .gc-win{position:fixed;right:24px;bottom:0;z-index:9000;width:560px;max-width:calc(100vw - 32px);height:min(620px,calc(100vh - 60px));display:flex;flex-direction:column;background:#fff;border-radius:10px 10px 0 0;box-shadow:0 8px 10px 1px rgba(0,0,0,.14),0 3px 14px 2px rgba(0,0,0,.12),0 5px 5px -3px rgba(0,0,0,.2);font-family:Arial,Helvetica,sans-serif;overflow:hidden}
 .gc-win.min{height:auto;width:300px}.gc-win.min>:not(.gc-head){display:none !important}
 .gc-win.max{right:50%;bottom:50%;transform:translate(50%,50%);width:min(1100px,calc(100vw - 80px));height:calc(100vh - 80px);border-radius:10px;box-shadow:0 0 0 100vmax rgba(0,0,0,.45),0 12px 40px rgba(0,0,0,.3)}
