@@ -5194,7 +5194,11 @@ def get_setting(key, default=''):
 
 @app.route('/')
 def index():
-    return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html'))
+    # no-cache: the browser must check for a new index.html on every visit, so a
+    # deploy shows up at once (without it, browsers may reuse an old copy for hours).
+    resp = send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html'))
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
 @app.route('/v2')
 def recruitos_v2():
     return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'recruitos-live.html'))
