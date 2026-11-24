@@ -181,9 +181,39 @@ def tool_get_candidate_cv(candidate_id: int, max_chars: int = 15000):
     return data
 
 
-def tool_get_today_tasks():
+_TASK_KEEP = ("id", "type", "title", "subtitle", "section", "due_at", "candidate_id", "mandate_id", "phone")
+_SECTION_ORDER = {"overdue": 0, "today": 1, "tomorrow": 2, "upcoming": 3}
+
+
+def tool_get_today_tasks(section: str = "", type: str = "", stale_limit: int = 20):
+    """Tasks page, compact. Reminders, interviews, promised call-backs and updated CVs
+    come in full; the long list of auto "stale candidate" follow-ups is cut to
+    stale_limit (the ones that went quiet most recently first), with the total."""
     # Command Center was retired (Oct 2026); action items live on the Tasks page.
-    return ats.get("/api/tasks")
+    data = ats.get("/api/tasks")
+    tasks = data.get("tasks") if isinstance(data, dict) else None
+    if not isinstance(tasks, list):
+        return data
+    sec, typ = (section or "").strip().lower(), (type or "").strip().lower()
+    rows = [{k: t.get(k) for k in _TASK_KEEP if k in t} for t in tasks
+            if (not sec or (t.get("section") or "") == sec) and (not typ or (t.get("type") or "") == typ)]
+    stale = [t for t in rows if t.get("type") == "stale"]
+    main = [t for t in rows if t.get("type") != "stale"]
+    main.sort(key=lambda t: (_SECTION_ORDER.get(t.get("section"), 9), str(t.get("due_at") or "")))
+    stale.sort(key=lambda t: str(t.get("due_at") or ""), reverse=True)     # went quiet most recently = still warm
+    lim = max(0, min(int(stale_limit if stale_limit is not None else 20), 500))
+    by_type = {}
+    for t in rows:
+        by_type[t.get("type") or "other"] = by_type.get(t.get("type") or "other", 0) + 1
+    return {
+        "counts": data.get("counts"), "by_type": by_type,
+        "tasks": main,
+        "stale_candidates": stale[:lim],
+        "stale_total": len(stale),
+        "note": ("tasks = reminders, interviews, promised call-backs, updated CVs, new applications (all of them). "
+                 "stale_candidates = candidates with no recent activity, %d of %d shown; ask with type='stale' "
+                 "and a bigger stale_limit for more." % (min(lim, len(stale)), len(stale))),
+    }
 
 
 def tool_get_overview():
@@ -406,10 +436,16 @@ TOOLS = [
     },
     {
         "name": "get_today_tasks",
-        "description": ("The recruiter's current action items / to-dos from the Tasks page (reminders, "
-                        "follow-ups, stale candidates, interviews). Source: GET /api/tasks."),
+        "description": ("The recruiter's action items from the Tasks page: reminders, interviews, promised "
+                        "call-backs, updated CVs and new applications (all), plus candidates gone quiet "
+                        "(stale; the 20 most recent by default, with the total). Filter with section "
+                        "(overdue / today / tomorrow / upcoming) or type (reminder / interview / promise / "
+                        "updated / submission / stale). Source: GET /api/tasks."),
         "handler": tool_get_today_tasks,
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {"type": "object", "properties": {
+            "section": {"type": "string", "description": "overdue, today, tomorrow or upcoming (default: all)."},
+            "type": {"type": "string", "description": "reminder, interview, promise, updated, submission or stale (default: all)."},
+            "stale_limit": {"type": "integer", "description": "How many stale candidates to list (default 20, max 500).", "default": 20}}},
     },
     {
         "name": "get_overview",
