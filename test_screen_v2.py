@@ -484,3 +484,46 @@ def test_all_chunks_failing_is_still_an_error(srv, ds):
     ds.answer = ans
     r = cl(srv, ADMIN).post('/api/extension/screen', json={'mandate_id': M_A, 'profiles': _cards(10)})
     assert r.status_code == 502 and 'TimeoutError' in r.get_json()['error']
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  analyses kept for export / checking with Claude (modules/screen_runs.py)
+# ══════════════════════════════════════════════════════════════════════════
+def test_analysis_is_kept_and_exported(srv, ds):
+    _save_breakdown(srv)
+    ds.answer = rubric
+    c = cl(srv, ADMIN)
+    cards = [dict(CARDS[0], text=CARDS[0]['text'] + '\nCall 98100 12345, amit@mail.com')] + CARDS[1:]
+    j1 = c.post('/api/extension/screen', json={'mandate_id': M_A, 'profiles': cards}).get_json()
+    j2 = c.post('/api/extension/screen', json={'mandate_id': M_A, 'profiles': [dict(x, key=x['key'] + '2') for x in CARDS]}).get_json()
+    assert j1['analysis_id'] and j1['analysis_id'] == j2['analysis_id']          # same page, two batches = one analysis
+    assert j1['export_url'].endswith('/api/screen-runs/%d?format=md&download=1' % j1['analysis_id'])
+    gid = j1['analysis_id']
+
+    lst = c.get('/api/screen-runs?mandate_id=%d' % M_A).get_json()
+    a = [x for x in lst['analyses'] if x['analysis_id'] == gid][0]
+    assert a['n_cards'] >= 8 and a['role'] == 'LV Switchgear Sales Engineer' and a['by'] == 'sv2_admin'
+
+    js = c.get('/api/screen-runs/%d' % gid).get_json()
+    by = {x['key']: x for x in js['cards']}
+    assert by['a']['verdict'] == 'open' and by['a']['parts']['role'] == 4 and by['a']['facts']['company'] == 'target'
+    assert '98100' not in by['a']['card'] and 'amit@mail.com' not in by['a']['card']     # redacted
+    assert js['thresholds'] == {'open_at': 68, 'maybe_at': 45} and js['instructions_to_ai']
+
+    md = c.get('/api/screen-runs/%d?format=md&download=1' % gid)
+    assert 'attachment' in md.headers['Content-Disposition'] and md.headers['Content-Disposition'].endswith('.md"')
+    t = md.get_data(as_text=True)
+    for s in ('# Naukri Screener analysis — LV Switchgear Sales Engineer', '## How the screener scores a card',
+              '## The exact instructions the AI got', 'role_fit (0-4)', '### 1. Amit — OPEN 100',
+              'Facts read by the program: experience 6.2', '## What to check (Claude: please do this)'):
+        assert s in t, s
+    csvt = c.get('/api/screen-runs/%d?format=csv' % gid).get_data(as_text=True)
+    assert csvt.lstrip('﻿').startswith('#,name,verdict,score,reason') and 'your_verdict' in csvt.splitlines()[0]
+    last = c.get('/api/screen-runs/last?mandate_id=%d&format=json' % M_A).get_json()
+    assert last['analysis_id'] == gid
+
+    # other company / a recruiter not on this job: nothing
+    assert cl(srv, OADMIN).get('/api/screen-runs/%d' % gid).status_code == 404
+    assert gid not in [x['analysis_id'] for x in cl(srv, OADMIN).get('/api/screen-runs').get_json()['analyses']]
+    assert cl(srv, RIYA).get('/api/screen-runs/%d' % gid).status_code in (403, 404)
+    assert gid not in [x['analysis_id'] for x in cl(srv, RIYA).get('/api/screen-runs').get_json()['analyses']]

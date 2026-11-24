@@ -28,6 +28,7 @@ _MODULE_NAMES = [
     'mail_identity',   # per-recruiter Gmail + signature
     'google_mail',     # "Connect with Google": user's Gmail without an App Password
     'mcp_catalog',     # read-only API catalogue for the Claude connector (mcp_server.py)
+    'screen_runs',     # Naukri Screener analyses kept for export / checking with Claude
     'mail_guard',      # per-job switch: automated e-mails OFF for that job's candidates
     'user_templates',  # per-recruiter email / WhatsApp templates
     'call_intel',      # saved call analyses (report + recording)
