@@ -335,3 +335,22 @@ def test_sync_now_all_starts_every_mailbox(srv, monkeypatch):
     r = client(server, ids['boss']).post('/api/mail/sync-now', json={'box': 'all'}).get_json()
     assert r['ok'] and r['boxes'] == 2
     assert sorted(started) == sorted([(ids['co'], ids['boss']), (ids['co'], 0)])
+
+
+def test_inbox_tabs_total_and_attachment_names(srv):
+    """Gmail look (Nov 2026): Primary / Updates / Promotions tabs, "1–50 of N", attachment chips."""
+    server, ids = srv
+    c = client(server, ids['boss'])
+    allin = c.get('/api/emailbox/list?folder=Inbox').get_json()
+    assert allin['total'] == len(allin['emails'])
+    prim = c.get('/api/emailbox/list?folder=Inbox&category=primary').get_json()
+    promo = c.get('/api/emailbox/list?folder=Inbox&category=promotions').get_json()
+    subj = lambda r: {e['subject'] for e in r['emails']}
+    assert 'Market newsletter' in subj(promo) and 'Market newsletter' not in subj(prim)
+    assert 'Offer letter for Rahul' in subj(prim)
+    assert set(prim['counts']['cat_unread']) == {'primary', 'updates', 'promotions'}
+    offer = [e for e in prim['emails'] if e['subject'] == 'Offer letter for Rahul'][0]
+    assert offer['attach_names'] == 'Offer_Rahul.pdf'
+    # a search ignores the tab, like Gmail
+    s = c.get('/api/emailbox/list?folder=Inbox&category=primary&q=newsletter').get_json()
+    assert 'Market newsletter' in subj(s)
