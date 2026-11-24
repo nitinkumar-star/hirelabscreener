@@ -349,7 +349,7 @@ def _cv_size(c):
         return 0
 
 
-def cv_text_light(c, max_chars=CV_CHARS):
+def cv_text_light(c, max_chars=CV_CHARS, pages=CV_PDF_PAGES, keep_lines=False):
     """CV text with bounded memory: a PDF is read only for its first pages,
     one page at a time with its cache dropped, stopping once there is enough
     text. Other formats go through the shared extractor. Never raises."""
@@ -363,7 +363,7 @@ def cv_text_light(c, max_chars=CV_CHARS):
                 import pdfplumber
                 parts, n = [], 0
                 with pdfplumber.open(fp) as pdf:
-                    for page in pdf.pages[:CV_PDF_PAGES]:
+                    for page in pdf.pages[:pages]:
                         try:
                             t = page.extract_text() or ''
                         finally:
@@ -383,6 +383,8 @@ def cv_text_light(c, max_chars=CV_CHARS):
                 text, err = _core().extract_text_from_file(data, name)
                 if err or not text:
                     return ''
+            if keep_lines:      # keep the CV's lines (sections, roles, dates) for reading
+                return '\n'.join(' '.join(ln.split()) for ln in text.splitlines() if ln.strip())[:max_chars]
             return ' '.join(text.split())[:max_chars]
         except Exception:
             return ''

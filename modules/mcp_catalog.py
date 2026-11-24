@@ -24,7 +24,7 @@ import inspect
 
 from flask import Blueprint, jsonify, request, current_app
 
-from modules.shared import login_required
+from modules.shared import login_required, get_db, effective_company_id
 
 bp = Blueprint('mcp_catalog', __name__)
 
@@ -87,3 +87,42 @@ def catalog():
         words = q.split()
         rs = [r for r in rs if all(w in (r['path'] + ' ' + r['doc']).lower() for w in words)]
     return jsonify({'ok': True, 'count': len(rs), 'routes': rs, 'deny': MCP_DENY.pattern})
+
+
+# ── The CV itself, as text (for Claude to read and analyse) ─────────────────
+# The connector cannot use the CV file download (binary, and kept out of the
+# catalog). This gives the text of the candidate's stored CV instead. The URL is
+# under /api/candidates/<id>/, so the access guard (modules/access.py) applies
+# the same recruiter rules as opening the profile.
+CV_TEXT_MAX = 30000
+
+
+@bp.route('/api/candidates/<int:cid>/cv-text')
+@login_required
+def candidate_cv_text(cid):
+    """Text of the candidate's CV (PDF / Word), for reading and analysis. ?max_chars= (default 15000, max 30000)."""
+    try:
+        mx = max(1000, min(int(request.args.get('max_chars') or 15000), CV_TEXT_MAX))
+    except ValueError:
+        mx = 15000
+    conn = get_db()
+    try:
+        c = conn.execute('SELECT * FROM candidates WHERE id=? AND owner_id=?', (cid, effective_company_id())).fetchone()
+    finally:
+        conn.close()
+    if not c:
+        return jsonify({'error': 'Not found'}), 404
+    out = {'ok': True, 'candidate_id': cid, 'name': c['name'] or '',
+           'cv_file': (c['cv_original_name'] if 'cv_original_name' in c.keys() else '') or '',
+           'has_cv': bool((c['cv_path'] or '').strip())}
+    if not out['has_cv']:
+        out.update(text='', note='No CV file is stored for this candidate. Use get_candidate for the parsed profile.')
+        return jsonify(out)
+    from modules.skill_engine import cv_text_light
+    text = cv_text_light(c, max_chars=mx + 1, pages=12, keep_lines=True)     # bounded memory: page by page, one CV at a time
+    out['truncated'] = len(text) > mx
+    out['text'] = text[:mx]
+    out['chars'] = len(out['text'])
+    if not text:
+        out['note'] = 'The CV file could not be read as text (scanned image, or an unsupported format).'
+    return jsonify(out)
