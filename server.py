@@ -19430,6 +19430,40 @@ def _has_signature(text):
            (get_setting('sig_name', '').lower() in tail or (get_setting('company_name', '') or 'hirelab').lower() in tail)
 
 
+def _quote_safe_html(html):
+    """The quoted mail's HTML, made safe to sit inside our reply: only the
+    <body> content, without <style>/<script>/<head> (a full document or a
+    style sheet pasted into a reply restyles the WHOLE reply in Gmail/Outlook)
+    and without event handlers."""
+    h = html or ''
+    m = re.search(r'<body\b[^>]*>(.*?)(?:</body>|$)', h, flags=re.I | re.S)
+    if m:
+        h = m.group(1)
+    h = re.sub(r'<(script|style|head|title|xml)\b.*?</\1\s*>', '', h, flags=re.I | re.S)
+    h = re.sub(r'<(?:/?(?:html|body|meta|link|base|o:p)\b)[^>]*>', '', h, flags=re.I)
+    h = re.sub(r'<!--.*?-->', '', h, flags=re.S)
+    h = re.sub(r'\son[a-z]+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)', '', h, flags=re.I)
+    return h.strip()
+
+
+# Reply quotes made by older pages put "--- On <date>, <name> wrote ---" and
+# "> " lines into the message itself. The server quotes the original properly
+# now, so that text is cut off the reply.
+_OLD_QUOTE_RX = re.compile(r'\n*-{3} On .{0,200}? wrote -{3}', re.S)
+
+
+def _strip_old_quote(text, html):
+    m = _OLD_QUOTE_RX.search(text or '')
+    if not m:
+        return text, html, False
+    text = text[:m.start()].rstrip()
+    if html:
+        hm = re.search(r'(?:<br\s*/?>|<div>|\s)*-{3} On ', html)
+        if hm:
+            html = html[:hm.start()]
+    return text, html, True
+
+
 def _text_to_html(text):
     safe = (text or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     return ('<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;line-height:1.6">'
@@ -19471,6 +19505,8 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
         return False, 'To, subject and message are required.', '', ''
 
     sig_plain, sig_html = _build_signature()
+    if in_reply_to:
+        body_text, body_html, _ = _strip_old_quote(body_text, body_html)
     text = (body_text or '').rstrip()
     if append_signature and sig_plain and not _has_signature(text):
         text = text + '\n\n' + sig_plain
@@ -19558,11 +19594,13 @@ def email_service_send(to, subject, body_text, body_html=None, cc='', bcc='',
                 _obody = ((_orig['body'] or '') or html_to_text(_orig['body_html'] or '')).strip()
                 if _obody:
                     text = text + '\n\n' + _hdr + '\n' + '\n'.join('> ' + ln for ln in _obody.splitlines())
-                    html = html + ('<div style="margin-top:14px;padding-left:12px;border-left:2px solid #ccc;'
-                                   'color:#555">'
-                                   '<div style="font-size:12px;color:#888;margin-bottom:6px">'
-                                   + esc_html(_hdr) + '</div>'
-                                   + (_orig['body_html'] or _text_to_html(_obody)) + '</div>')
+                    # Gmail's own quote markup, so Gmail folds it under "•••" like its own replies.
+                    _qh = _quote_safe_html(_orig['body_html'] or '') or _text_to_html(_obody)
+                    html = html + ('<br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">'
+                                   + esc_html(_hdr) + '<br></div>'
+                                   '<blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;'
+                                   'border-left:1px solid rgb(204,204,204);padding-left:1ex">'
+                                   + _qh + '</blockquote></div>')
         except Exception as _qe:
             print('[email-service] quote error:', _qe)
 

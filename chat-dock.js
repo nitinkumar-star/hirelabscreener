@@ -491,8 +491,8 @@
     if (!S.ready) return;
     var wide = window.innerWidth >= 700;
     var r = 16, g = document.querySelector('.gc-win'), p = document.getElementById('hl-pill');
-    if (g && g.offsetParent !== null && wide) r = Math.max(r, window.innerWidth - g.getBoundingClientRect().left + 12);
-    if (p && p.offsetParent !== null && wide) r = Math.max(r, window.innerWidth - p.getBoundingClientRect().left + 12);
+    if (g && shown(g) && wide) r = Math.max(r, window.innerWidth - g.getBoundingClientRect().left + 12);   // fixed: offsetParent is null
+    if (p && shown(p) && wide) r = Math.max(r, window.innerWidth - p.getBoundingClientRect().left + 12);
     var want = wide ? r + 'px' : '';
     if (dock.style.right !== want) dock.style.right = want;
     var modal = false;
