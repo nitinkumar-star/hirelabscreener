@@ -6234,7 +6234,32 @@ window._emailFolder = window._emailFolder || 'Inbox';
 window._eb = window._eb || {q:'', box:'', emails:[], offset:0, more:false, sel:{}, openId:null, me:null, counts:{}};
 function _ebIsRec(){ return _isRecruiterScoped(); }
 function _ebBoxQ(sep){ return (window._eb.box==='me' && !_ebIsRec()) ? (sep+'box=me') : ''; }
-function _ebSplit(){ return window.innerWidth >= 1100; }
+// Gmail-style reading pane: 'none' (default, like Gmail: the conversation opens in place
+// of the list) or 'right' (list + conversation side by side, on wide screens).
+function _ebPaneMode(){ try{ return localStorage.getItem('eb_pane')==='right'?'right':'none'; }catch(e){ return 'none'; } }
+function ebSetPane(m){ try{ localStorage.setItem('eb_pane',m); }catch(e){} window._eb.reading=false; renderEmailBox(); }
+function _ebSplit(){ return window.innerWidth >= 1100 && _ebPaneMode()==='right'; }
+function _gmIco(n){
+  var P={inbox:'<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+    star:'<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+    mail:'<rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,6 12,13 2,6"/>',
+    open:'<path d="M21.2 8.4c.5.38.8.97.8 1.6v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10a2 2 0 0 1 .8-1.6l8-6a2 2 0 0 1 2.4 0l8 6Z"/><path d="m22 10-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 10"/>',
+    send:'<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
+    draft:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+    user:'<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+    all:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+    archive:'<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>',
+    trash:'<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+    pen:'<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
+    refresh:'<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+    back:'<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>',
+    search:'<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+    tune:'<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+    pane:'<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/>',
+    inboxin:'<polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/>',
+    restore:'<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>'};
+  return '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(P[n]||'')+'</svg>';
+}
 function _ebHeader(active){
   var rec=_ebIsRec(), me=window._eb.me||{};
   var t=function(k,l,f){ return '<button role="tab" aria-selected="'+(active===k)+'" class="'+(active===k?'on':'')+'" onclick="window._emailFolder=\''+f+'\';renderEmailBox()">'+l+'</button>'; };
@@ -6294,26 +6319,32 @@ async function renderEmailBox(){
   var me=window._eb.me||{};
   var needMail=(_ebIsRec() || window._eb.box==='me') && !me.own_mailbox;
   var f=window._emailFolder||'Inbox';
-  function tab(id,label,n){ var on=f===id; return '<button class="w1-chip'+(on?' on':'')+'" aria-pressed="'+on+'" onclick="ebFolder(\''+id+'\')">'+label+(n?' <span class="eb2-n">'+n+'</span>':'')+'</button>'; }
+  // Gmail layout: Compose + folders on the left, a pill search on top, then the list.
+  function tab(id,label,ico,n){ var on=f===id; return '<button class="w1-chip gm-f'+(on?' on':'')+'" aria-current="'+(on?'page':'false')+'" onclick="ebFolder(\''+id+'\')">'+_gmIco(ico)+'<span class="gm-fl">'+label+'</span>'+(n?' <span class="eb2-n">'+n+'</span>':'')+'</button>'; }
   var c=window._eb.counts||{};
+  window._eb.reading=false;
   el.innerHTML=_ebHeader('mail')
     +(needMail?'<div class="eb2-banner" role="status"><b>Connect your Gmail to get your own inbox.</b> Mail you send and receive there will show up here &mdash; only you can see it. '
       +'<button class="w1-btn pri" onclick="openGmailWizard(\'me\')">Connect Gmail (1 minute)</button></div>':'')
-    +'<div class="w2-ebbar">'
-    +'<div class="eb2-chips" id="eb2-chips">'+tab('Inbox','Inbox',c.unread)+tab('Unread','Unread')+tab('Starred','Starred')+tab('Sent','Sent')+tab('Drafts','Drafts',c.drafts)+tab('Candidates','Candidates')+tab('Archived','Archived')+tab('','All mail')+tab('Trash','Trash')+'</div>'
-    +'<div class="eb2-sbox"><input class="inp" id="eb-search" type="search" placeholder="Search mail  (from:  subject:  has:attachment …)" aria-label="Search mail" value="'+esc(window._eb.q||'')+'" oninput="ebSearchDebounced()" onkeydown="if(event.key===\'Enter\'){clearTimeout(_ebSearchT);window._eb.q=this.value.trim();window._eb.sel={};ebLoadList(false);}">'
-    +'<button class="w1-btn ic" title="Advanced search" aria-label="Advanced search" aria-haspopup="dialog" onclick="ebAdvSearch()">&#9881;</button></div>'
-    +'<button class="w1-btn pri" onclick="openCompose()">Compose</button></div>'
-    +'<div class="eb2-wrap'+(_ebSplit()?' split':'')+'" id="eb2-wrap">'
+    +'<div class="gm">'
+    +'<nav class="gm-nav" aria-label="Mail folders"><button class="gm-compose" onclick="openCompose()" title="Compose (c)">'+_gmIco('pen')+'<span>Compose</span></button>'
+    +'<div class="eb2-chips gm-folders" id="eb2-chips">'+tab('Inbox','Inbox','inbox',c.unread)+tab('Starred','Starred','star')+tab('Unread','Unread','mail')+tab('Sent','Sent','send')+tab('Drafts','Drafts','draft',c.drafts)
+      +tab('Candidates','Candidates','user')+tab('','All mail','all')+tab('Archived','Archived','archive')+tab('Trash','Trash','trash')+'</div></nav>'
+    +'<div class="gm-main">'
+    +'<div class="gm-top"><div class="eb2-sbox gm-search"><span class="gm-sico">'+_gmIco('search')+'</span><input id="eb-search" type="search" placeholder="Search mail" aria-label="Search mail" title="Operators: from: to: subject: has:attachment is:unread newer_than:7d" value="'+esc(window._eb.q||'')+'" oninput="ebSearchDebounced()" onkeydown="if(event.key===\'Enter\'){clearTimeout(_ebSearchT);window._eb.q=this.value.trim();window._eb.sel={};ebLoadList(false);}">'
+    +'<button class="gm-ib" title="Show search options" aria-label="Show search options" aria-haspopup="dialog" onclick="ebAdvSearch()">'+_gmIco('tune')+'</button></div>'
+    +'<button class="gm-ib gm-panebtn" title="Reading pane: '+(_ebPaneMode()==='right'?'right of the list':'no split')+' (click to switch)" aria-label="Switch reading pane" onclick="ebSetPane(\''+(_ebPaneMode()==='right'?'none':'right')+'\')">'+_gmIco('pane')+'</button></div>'
+    +'<div class="eb2-wrap'+(_ebSplit()?' split':' gm-full')+'" id="eb2-wrap">'
     +'<div class="eb2-listcol"><div class="eb2-bulk" id="eb2-bulk"></div><div class="w2-eblist" id="eb-list"><div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div></div><div id="eb2-more"></div></div>'
-    +(_ebSplit()?'<div class="eb2-pane" id="eb2-pane" aria-live="polite"><div class="eb2-pane-empty">Select a conversation to read it here.</div></div>':'')
-    +'</div>';
+    +(_ebSplit()?'<div class="eb2-pane" id="eb2-pane" aria-live="polite"><div class="eb2-pane-empty">Select a conversation to read it here.</div></div>'
+      :'<div class="eb2-read" id="eb2-read" aria-live="polite"></div>')
+    +'</div></div></div>';
   loadMailSyncStrips();
   _ebAutoSync();
   await ebLoadList(false);
   if(window._eb.openId && _ebSplit()) openEmail(window._eb.openId, true);
 }
-function ebFolder(id){ window._emailFolder=id; window._eb.sel={}; window._eb.openId=null; renderEmailBox(); }
+function ebFolder(id){ window._emailFolder=id; window._eb.sel={}; window._eb.openId=null; window._eb.q=''; renderEmailBox(); }
 function ebClearSearch(){ window._eb.q=''; var i=document.getElementById('eb-search'); if(i) i.value=''; window._eb.sel={}; ebLoadList(false); }
 // Gmail-style advanced search: fills the search box with operators.
 function ebAdvSearch(){
@@ -6386,7 +6417,7 @@ function _ebPaintCounts(){
     var on=b.getAttribute('onclick')||'';
     var n=/'Inbox'/.test(on)?c.unread:(/'Drafts'/.test(on)?c.drafts:0);
     var s=b.querySelector('.eb2-n');
-    if(n){ if(!s){ s=document.createElement('span'); s.className='eb2-n'; b.appendChild(document.createTextNode(' ')); b.appendChild(s);} s.textContent=n; }
+    if(n){ if(!s){ s=document.createElement('span'); s.className='eb2-n'; b.appendChild(s);} s.textContent=n>9999?'9999+':n; }
     else if(s) s.remove();
   }); }
 }
@@ -6418,12 +6449,19 @@ function _ebRow(e, g){
   var open=String(window._eb.openId)===String(e.id) || (g.ids||[]).some(function(i){return String(i)===String(window._eb.openId);});
   var cand=g.cand?('<span class="eb2-cand" title="Linked candidate">&#128100; '+esc(g.cand)+'</span>'):'';
   var att=g.attach?'<span class="eb2-att" title="Has attachments">&#128206;</span>':'';
+  var trash=(window._emailFolder==='Trash'), arch=(window._emailFolder==='Archived');
+  var hov=isDraft?'':('<div class="eb2-hov" onclick="event.stopPropagation()">'
+    +(trash?'<button class="gm-ib" title="Restore" aria-label="Restore" onclick="ebRowAct(\''+key+'\',\'restore\')">'+_gmIco('restore')+'</button>'
+      :'<button class="gm-ib" title="'+(arch?'Move to inbox':'Archive')+'" aria-label="'+(arch?'Move to inbox':'Archive')+'" onclick="ebRowAct(\''+key+'\',\''+(arch?'unarchive':'archive')+'\')">'+_gmIco(arch?'inboxin':'archive')+'</button>'
+       +'<button class="gm-ib" title="Delete" aria-label="Delete" onclick="ebRowAct(\''+key+'\',\'delete\')">'+_gmIco('trash')+'</button>')
+    +'<button class="gm-ib" title="'+(anyUnread?'Mark as read':'Mark as unread')+'" aria-label="'+(anyUnread?'Mark as read':'Mark as unread')+'" onclick="ebRowAct(\''+key+'\',\''+(anyUnread?'read':'unread')+'\')">'+_gmIco(anyUnread?'open':'mail')+'</button></div>');
   return '<div class="eb2-row'+(anyUnread?' unread':'')+(sel?' sel':'')+(open?' open':'')+'" role="button" tabindex="0" data-key="'+key+'" data-id="'+e.id+'"'
     +' onclick="ebRowClick(event,'+e.id+','+(isDraft?1:0)+')" onkeydown="if(event.key===\'Enter\')ebRowClick(event,'+e.id+','+(isDraft?1:0)+')">'
     +'<label class="eb2-cb" onclick="event.stopPropagation()"><input type="checkbox" aria-label="Select"'+(sel?' checked':'')+' onchange="ebSel(\''+key+'\',this.checked)"></label>'
     +'<button class="eb2-star'+(g.starred?' on':'')+'" aria-label="'+(g.starred?'Unstar':'Star')+'" aria-pressed="'+(!!g.starred)+'" onclick="event.stopPropagation();ebStarKey(\''+key+'\')">'+(g.starred?'&#9733;':'&#9734;')+'</button>'
-    +'<div class="eb2-main"><div class="eb2-l1"><span class="eb2-who">'+who+cnt+'</span>'+cand+'<span class="eb2-date">'+att+_ebWhen(e.date_ts)+'</span></div>'
-    +'<div class="eb2-l2"><span class="eb2-sub">'+_ebHl(e.subject||'(no subject)')+'</span><span class="eb2-snip"> &ndash; '+_ebHl(e.snippet||'')+'</span></div></div></div>';
+    +'<div class="eb2-main"><span class="eb2-who">'+who+cnt+'</span>'
+    +'<span class="eb2-l2">'+cand+'<span class="eb2-sub">'+_ebHl(e.subject||'(no subject)')+'</span><span class="eb2-snip"> &ndash; '+_ebHl(e.snippet||'')+'</span></span>'
+    +'<span class="eb2-date">'+att+_ebWhen(e.date_ts)+'</span></div>'+hov+'</div>';
 }
 function _ebGroups(){
   var groups={}, order=[];
@@ -6465,16 +6503,20 @@ function _ebPaintBulk(){
   var n=Object.keys(window._eb.sel||{}).length;
   var allKeys=Object.keys(window._eb.groups||{});
   var arch=(window._emailFolder==='Archived'), trash=(window._emailFolder==='Trash');
-  if(!n){ bar.innerHTML=allKeys.length?'<label class="eb2-all"><input type="checkbox" aria-label="Select all" onchange="ebSelAll(this.checked)"> Select all</label>':''; bar.classList.remove('on'); return; }
+  var shown=allKeys.length, range=shown?('<span class="gm-range">1&ndash;'+shown+(window._eb.more?' of many':' of '+shown)+'</span>'):'';
+  var ib=function(act,ico,t){ return '<button class="gm-ib" title="'+t+'" aria-label="'+t+'" onclick="ebBulk(\''+act+'\')">'+_gmIco(ico)+'</button>'; };
+  if(!n){ bar.innerHTML=(shown?'<label class="eb2-all" title="Select all"><input type="checkbox" aria-label="Select all" onchange="ebSelAll(this.checked)"></label>':'')
+      +'<button class="gm-ib" title="Refresh" aria-label="Refresh" onclick="ebRefreshNow(this)">'+_gmIco('refresh')+'</button>'+range;
+    bar.classList.remove('on'); return; }
   bar.classList.add('on');
-  if(trash){ bar.innerHTML='<label class="eb2-all"><input type="checkbox" checked aria-label="Clear selection" onchange="ebSelAll(this.checked)"> '+n+' selected</label>'
-    +'<button class="w1-btn pri" onclick="ebBulk(\'restore\')">&#8630; Restore</button>'; return; }
-  bar.innerHTML='<label class="eb2-all"><input type="checkbox" checked aria-label="Clear selection" onchange="ebSelAll(this.checked)"> '+n+' selected</label>'
-    +'<button class="w1-btn" onclick="ebBulk(\'read\')">Mark read</button>'
-    +'<button class="w1-btn" onclick="ebBulk(\'unread\')">Mark unread</button>'
-    +'<button class="w1-btn" onclick="ebBulk(\'star\')">&#9733; Star</button>'
-    +'<button class="w1-btn" onclick="ebBulk(\''+(arch?'unarchive':'archive')+'\')">'+(arch?'Move to inbox':'Archive')+'</button>'
-    +'<button class="w1-btn dang" onclick="ebBulk(\'delete\')">Delete</button>';
+  var head='<label class="eb2-all"><input type="checkbox" checked aria-label="Clear selection" onchange="ebSelAll(this.checked)"> <span>'+n+' selected</span></label>';
+  if(trash){ bar.innerHTML=head+ib('restore','restore','Restore')+range; return; }
+  bar.innerHTML=head
+    +ib(arch?'unarchive':'archive',arch?'inboxin':'archive',arch?'Move to inbox':'Archive')
+    +ib('delete','trash','Delete')
+    +'<span class="gm-sep"></span>'
+    +ib('read','open','Mark as read')+ib('unread','mail','Mark as unread')+ib('star','star','Star')
+    +range;
 }
 function ebSelAll(on){
   window._eb.sel={};
@@ -6495,6 +6537,9 @@ async function ebBulk(action, ids){
   await ebLoadList(false);
 }
 function ebStarKey(key){ var g=(window._eb.groups||{})[key]; if(g) ebBulk(g.starred?'unstar':'star', g.ids); }
+function ebRowAct(key, act){ var g=(window._eb.groups||{})[key]; if(g) ebBulk(act, g.ids); }
+async function ebRefreshNow(btn){ if(btn) btn.classList.add('spin'); _ebLastAutoReset(); _ebAutoSync(); await ebLoadList(false); if(btn) btn.classList.remove('spin'); }
+function _ebLastAutoReset(){ window._ebLastAuto=0; }
 function _ebPaneEmpty(){ var p=document.getElementById('eb2-pane'); if(p) p.innerHTML='<div class="eb2-pane-empty">Select a conversation to read it here.</div>'; }
 function ebRowClick(ev,id,isDraft){
   if(isDraft){ openDraft(id); return; }
@@ -6574,11 +6619,11 @@ function _ebThreadHtml(tr, inPane){
     +'<button class="w1-btn" onclick="ebReply('+lastIn.id+',true)">Reply all</button>'
     +'<button class="w1-btn" onclick="ebForward('+lastIn.id+')">&#10150; Forward</button>'
     +'<span class="eb2-sp"></span>'
-    +'<button class="w1-btn ic" title="'+(starred?'Unstar':'Star')+'" aria-label="'+(starred?'Unstar':'Star')+'" onclick="ebThreadAct(\''+(starred?'unstar':'star')+'\')">'+(starred?'&#9733;':'&#9734;')+'</button>'
-    +'<button class="w1-btn ic" title="Mark unread" aria-label="Mark unread" onclick="ebThreadAct(\'unread\')">&#9993;</button>'
-    +'<button class="w1-btn ic" title="'+(archived?'Move to inbox':'Archive')+'" aria-label="'+(archived?'Move to inbox':'Archive')+'" onclick="ebThreadAct(\''+(archived?'unarchive':'archive')+'\')">&#128229;</button>'
+    +'<button class="gm-ib'+(starred?' gm-on':'')+'" title="'+(starred?'Unstar':'Star')+' (s)" aria-label="'+(starred?'Unstar':'Star')+'" onclick="ebThreadAct(\''+(starred?'unstar':'star')+'\')">'+_gmIco('star')+'</button>'
+    +'<button class="gm-ib" title="Mark as unread" aria-label="Mark as unread" onclick="ebThreadAct(\'unread\')">'+_gmIco('mail')+'</button>'
+    +'<button class="gm-ib" title="'+(archived?'Move to inbox':'Archive')+' (e)" aria-label="'+(archived?'Move to inbox':'Archive')+'" onclick="ebThreadAct(\''+(archived?'unarchive':'archive')+'\')">'+_gmIco(archived?'inboxin':'archive')+'</button>'
     +(window._emailFolder==='Trash'?'<button class="w1-btn" title="Restore (here and in Gmail)" onclick="ebThreadAct(\'restore\')">&#8630; Restore</button>'
-      :'<button class="w1-btn ic dang" title="Delete (moves to Trash here and in Gmail)" aria-label="Delete" onclick="ebThreadAct(\'delete\')">&#128465;</button>')
+      :'<button class="gm-ib" title="Delete (#) — moves to Trash here and in Gmail" aria-label="Delete" onclick="ebThreadAct(\'delete\')">'+_gmIco('trash')+'</button>')
     +(inPane?'':'<button class="w1-btn ic" aria-label="Close" onclick="var m=document.getElementById(\'modal-email\');if(m)m.remove()">&#10005;</button>')+'</div>';
   var body=msgs.map(function(m,i){
     var d=m.date_ts?new Date(m.date_ts*1000).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
@@ -6613,6 +6658,9 @@ async function openEmail(id, quiet){
   if(pane && _ebSplit()){ pane.innerHTML=_ebThreadHtml(tr,true); pane.scrollTop=0;
     var lastMsg=pane.querySelector('.eb2-msg:last-of-type'); if(lastMsg && tr.thread.length>2) lastMsg.scrollIntoView({block:'nearest'});
     return; }
+  var rd=document.getElementById('eb2-read'), wrap=document.getElementById('eb2-wrap');
+  if(rd && wrap){ rd.innerHTML=_ebReaderHtml(tr); wrap.classList.add('reading'); window._eb.reading=true;
+    var sc=document.getElementById('emailbox-body'); if(sc) sc.scrollTop=0; return; }
   var ex=document.getElementById('modal-email'); if(ex) ex.remove();
   var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-email';
   bg.onclick=function(ev){ if(ev.target===bg) bg.remove(); };
@@ -6620,6 +6668,17 @@ async function openEmail(id, quiet){
   document.body.appendChild(bg);
 }
 function _ebClosePane(){ var m=document.getElementById('modal-email'); if(m) m.remove(); }
+function _ebReaderHtml(tr){
+  var fl={'':'All mail'}[window._emailFolder||'']||(window._emailFolder||'Inbox');
+  return '<div class="gm-readbar"><button class="gm-ib" title="Back to '+esc(fl)+' (u)" aria-label="Back to '+esc(fl)+'" onclick="_ebBack()">'+_gmIco('back')+'</button><span class="gm-readf">'+esc(fl)+'</span></div>'+_ebThreadHtml(tr,true);
+}
+// Leave the in-place conversation and show the list again (Gmail's back arrow / "u").
+function _ebBack(){
+  var wrap=document.getElementById('eb2-wrap'); if(wrap) wrap.classList.remove('reading');
+  var rd=document.getElementById('eb2-read'); if(rd) rd.innerHTML='';
+  window._eb.reading=false; window._eb.openId=null;
+  document.querySelectorAll('.eb2-row.open').forEach(function(r){ r.classList.remove('open'); });
+}
 function _ebMsg(id){ var t=(window._eb.thread&&window._eb.thread.thread)||[]; return t.find(function(m){return String(m.id)===String(id);})||t[t.length-1]||{}; }
 function ebReply(id, all){
   var e=_ebMsg(id), mine=_ebMine();
@@ -6653,13 +6712,14 @@ async function ebThreadAct(action){
   var ids=t.map(function(m){return m.id;});
   await ebBulk(action, ids);
   if(/^(star|unstar)$/.test(action)){ t.forEach(function(m){ m.is_starred=(action==='star')?1:0; }); _ebRepaintThread(); }
-  if(action==='unread'){ window._eb.openId=null; _ebClosePane(); _ebPaneEmpty(); }
-  if(/^(archive|unarchive|delete|restore)$/.test(action)) _ebClosePane();
+  if(action==='unread'){ window._eb.openId=null; _ebClosePane(); _ebPaneEmpty(); _ebBack(); }
+  if(/^(archive|unarchive|delete|restore)$/.test(action)){ _ebClosePane(); _ebBack(); }
 }
 function _ebRepaintThread(){
   var tr=window._eb.thread; if(!tr) return;
   var pane=document.getElementById('eb2-pane');
   if(pane && _ebSplit() && document.getElementById('eb2-wrap')){ pane.innerHTML=_ebThreadHtml(tr,true); return; }
+  var rd=document.getElementById('eb2-read'); if(rd && window._eb.reading){ rd.innerHTML=_ebReaderHtml(tr); return; }
   var m=document.querySelector('#modal-email .modal-body'); if(m) m.innerHTML=_ebThreadHtml(tr,false);
 }
 function ebOpenCand(cid, mid){ _ebClosePane(); openCandidateInNewTab(cid, mid||null); }
@@ -6721,6 +6781,27 @@ async function _ebAddGo(eid, aid, btn){
 window.addEventListener('resize', function(){
   var w=document.getElementById('eb2-wrap'); if(!w) return;
   var want=_ebSplit(); if(want!==w.classList.contains('split')){ var keep=window._eb.openId; renderEmailBox().then(function(){ if(keep&&!want) {} }); }
+});
+// Gmail keyboard shortcuts in the Email Box: c compose, u / Esc back to the list,
+// r reply, a reply all, f forward, e archive, # delete, s star.
+document.addEventListener('keydown', function(e){
+  if(e.ctrlKey||e.metaKey||e.altKey) return;
+  var v=document.getElementById('email-view'); if(!v || v.style.display==='none' || !document.getElementById('eb-list')) return;
+  var t=e.target, tag=(t&&t.tagName)||'';
+  if(/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || (t&&t.isContentEditable) || document.querySelector('.modal-bg.open,.gc-win:not(.min) :focus')) return;
+  var th=window._eb.thread&&window._eb.thread.thread, open=!!(window._eb.openId&&th&&th.length);
+  var lastIn=open?(th.slice().reverse().find(function(m){ return m.folder==='Inbox'; })||th[th.length-1]):null;
+  var k=e.key, done=true;
+  if(k==='c') openCompose();
+  else if((k==='u'||k==='Escape') && window._eb.reading) _ebBack();
+  else if(k==='r' && open) ebReply(lastIn.id,false);
+  else if(k==='a' && open) ebReply(lastIn.id,true);
+  else if(k==='f' && open) ebForward(lastIn.id);
+  else if(k==='e' && open) ebThreadAct(window._emailFolder==='Archived'?'unarchive':'archive');
+  else if(k==='#' && open) ebThreadAct('delete');
+  else if(k==='s' && open) ebThreadAct(th.some(function(m){return m.is_starred;})?'unstar':'star');
+  else done=false;
+  if(done) e.preventDefault();
 });
 // Unread badge in the sidebar, refreshed in the background.
 setTimeout(function(){ if(S.currentUser && S.currentUser.role!=='freelancer_sourcer') ebRefreshCounts(); }, 4000);
@@ -7127,17 +7208,22 @@ function _invPaint(){
     if(q && ((v.invoice_no||'')+' '+(v.buyer_name||'')+' '+(v.candidate_name||'')).toLowerCase().indexOf(q)<0) return false;
     return true;
   });
-  var cards='<div class="w3-kpis">'
-    +_invCard('Total invoiced',_invRup(sum.invoiced),'',(sum.count||0)+' tax invoice'+((sum.count||0)!==1?'s':''))
+  // Billing amount (taxable value) and GST are shown apart; the total incl. GST is the sub-line.
+  var _tx=(sum.invoiced_taxable!=null)?sum.invoiced_taxable:invs.filter(function(v){return v.doc_type!=='proforma';}).reduce(function(a,v){return a+(+v.amount||0);},0);
+  var _gs=(sum.invoiced_gst!=null)?sum.invoiced_gst:Math.max(0,(sum.invoiced||0)-_tx);
+  var cards='<div class="w3-kpis w3-kpis5">'
+    +_invCard('Billing amount',_invRup(_tx),'',(sum.count||0)+' tax invoice'+((sum.count||0)!==1?'s':'')+' &middot; excl. GST')
+    +_invCard('GST',_invRup(_gs),'#175cd3','Total incl. GST '+_invRup(sum.invoiced))
     +_invCard('Received',_invRup(sum.received),'#027a48',(sum.n_paid||0)+' paid')
-    +_invCard('Outstanding',_invRup(sum.outstanding),'#b54708',(sum.unpaid_count||0)+' unpaid'+(sum.overdue_count?' &middot; '+sum.overdue_count+' overdue':''))
-    +((sum.proforma_count||0)>0?_invCard('Projected (proforma)',_invRup(sum.proforma_projected),'#c2410c',sum.proforma_count+' estimate'+(sum.proforma_count!==1?'s':'')):_invCard('Invoices',(sum.count||0),'',''))
+    +_invCard('Outstanding',_invRup(sum.outstanding),'#b54708',(sum.unpaid_count||0)+' unpaid'+(sum.overdue_count?' &middot; '+sum.overdue_count+' overdue':'')+(sum.outstanding_gst?' &middot; GST part '+_invRup(sum.outstanding_gst):''))
+    +((sum.proforma_count||0)>0?_invCard('Projected (proforma)',_invRup(sum.proforma_projected),'#c2410c',sum.proforma_count+' estimate'+(sum.proforma_count!==1?'s':'')):'')
     +'</div>';
   var chip=function(k,l){ var on=f===k; return '<button class="w1-chip'+(on?' on':'')+'" aria-pressed="'+on+'" onclick="_invSetF(\''+k+'\')">'+l+' <b>'+cnt[k]+'</b></button>'; };
   var bar='<div class="w3-tb"><div class="w3-chips" role="group" aria-label="Status">'+chip('all','All')+chip('unpaid','Unpaid')+chip('overdue','Overdue')+chip('paid','Paid')+chip('proforma','Proforma')+'</div>'
     +'<label class="w3-q" style="margin-left:auto;max-width:320px"><span aria-hidden="true">&#9906;</span><input id="inv-q" aria-label="Search invoices" placeholder="Search invoice no, client, candidate" value="'+esc(q)+'" oninput="_invPaint()"></label></div>';
   var rows=show.map(function(v){
     var gross=v.total!=null?v.total:Math.round((v.amount||0)*(1+(v.gst_rate||18)/100));
+    var base=+v.amount||0, gstAmt=Math.max(0,gross-base);
     var isPro=(v.doc_type==='proforma');
     var due=v.due_date?_invFmtDate(v.due_date):'<span class="dim">—</span>';
     var prim=isPro?'<button class="w1-btn" style="color:#c2410c" onclick="convertProforma('+v.id+')">Convert to tax</button>'
@@ -7146,6 +7232,8 @@ function _invPaint(){
       +'<td class="nw"><a href="#invoicing" onclick="event.preventDefault();openInvoiceForm('+v.id+')" style="font-weight:600;color:var(--ink);text-decoration:none">'+esc(v.invoice_no||'')+'</a></td>'
       +'<td class="mu nw">'+_invFmtDate(v.invoice_date)+'</td>'
       +'<td><div style="font-weight:600">'+esc(v.buyer_name||'')+'</div>'+(v.candidate_name?'<div class="sub">'+esc(v.candidate_name)+'</div>':'')+'</td>'
+      +'<td class="r nw">'+_invRup(base)+'</td>'
+      +'<td class="r nw mu">'+_invRup(gstAmt)+'<div class="sub">'+(v.gst_rate!=null?esc(String(v.gst_rate)):'18')+'%</div></td>'
       +'<td class="r nw" style="font-weight:600">'+_invRup(gross)+'</td>'
       +'<td>'+_invStatusPill(v)+'</td>'
       +'<td class="nw'+(v.is_overdue?' late':' mu')+'">'+due+'</td>'
@@ -7160,8 +7248,8 @@ function _invPaint(){
   var empty=invs.length?'No invoices match this filter.':'No invoices yet — click “New invoice”.';
   var focus=document.activeElement&&document.activeElement.id==='inv-q';
   el.innerHTML=_invHeader('invoices')+'<div class="w3-inv">'+cards+bar
-    +'<div class="w3-card"><div style="overflow-x:auto"><table class="w3-table"><thead><tr><th>Invoice no</th><th>Date</th><th>Client &middot; candidate</th><th class="r">Amount (incl. GST)</th><th>Status</th><th>Due</th><th></th></tr></thead>'
-    +'<tbody>'+(rows||'<tr><td colspan="7" class="w3-none">'+empty+'</td></tr>')+'</tbody></table></div></div></div>';
+    +'<div class="w3-card"><div style="overflow-x:auto"><table class="w3-table"><thead><tr><th>Invoice no</th><th>Date</th><th>Client &middot; candidate</th><th class="r">Billing amount</th><th class="r">GST</th><th class="r">Total (incl. GST)</th><th>Status</th><th>Due</th><th></th></tr></thead>'
+    +'<tbody>'+(rows||'<tr><td colspan="9" class="w3-none">'+empty+'</td></tr>')+'</tbody></table></div></div></div>';
   if(focus){ var qi=document.getElementById('inv-q'); if(qi){ qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); } }
 }
 function _w3Menu(btn){
@@ -7250,6 +7338,8 @@ function _invRoPaint(){
       +'<td class="nw" style="font-weight:600">'+esc(v.invoice_no||'')+'</td>'
       +'<td class="mu nw">'+_invFmtDate(v.invoice_date)+'</td>'
       +'<td><div style="font-weight:600">'+esc(v.buyer_name||'')+'</div>'+(v.candidate_name?'<div class="sub">'+esc(v.candidate_name)+'</div>':'')+'</td>'
+      +'<td class="r nw">'+_invRup(+v.amount||0)+'</td>'
+      +'<td class="r nw mu">'+_invRup(Math.max(0,gross-(+v.amount||0)))+'</td>'
       +'<td class="r nw" style="font-weight:600">'+_invRup(gross)+'</td>'
       +'<td>'+_invStatusPill(v)+'</td>'
       +'<td class="r"><button class="w1-btn" onclick="printInvoice('+v.id+')">&#128424; View / print</button></td></tr>';
@@ -7257,8 +7347,8 @@ function _invRoPaint(){
   el.innerHTML=cards
     +'<div class="w3-tb"><select id="inv-ro-month" class="w3-sel" aria-label="Month" onchange="_invRoPaint()">'+mopts+'</select>'
     +'<button class="w1-btn" onclick="_invRoCsv()">Download list (CSV)</button><span class="mu" style="font-size:13px">'+invs.length+' invoice'+(invs.length!==1?'s':'')+'</span></div>'
-    +'<div class="w3-card"><div style="overflow-x:auto"><table class="w3-table"><thead><tr><th>Invoice no</th><th>Date</th><th>Client &middot; candidate</th><th class="r">Amount (incl. GST)</th><th>Status</th><th></th></tr></thead>'
-    +'<tbody>'+(rows||'<tr><td colspan="6" class="w3-none">No invoices'+(mon?' in this month':' yet')+'.</td></tr>')+'</tbody></table></div></div>';
+    +'<div class="w3-card"><div style="overflow-x:auto"><table class="w3-table"><thead><tr><th>Invoice no</th><th>Date</th><th>Client &middot; candidate</th><th class="r">Billing amount</th><th class="r">GST</th><th class="r">Total (incl. GST)</th><th>Status</th><th></th></tr></thead>'
+    +'<tbody>'+(rows||'<tr><td colspan="8" class="w3-none">No invoices'+(mon?' in this month':' yet')+'.</td></tr>')+'</tbody></table></div></div>';
 }
 function _invRoCsv(){
   var mon=window._invRoMon||'', all=window._invRoList||[];
@@ -26609,6 +26699,7 @@ document.addEventListener('mousedown',function(e){
 .w3-lnk{border:0;background:none;padding:0;color:#0f766e;font-size:13px;font-weight:600;cursor:pointer}
 .w3-icb{border:0;background:none;color:#b42318;cursor:pointer;font-size:13px;padding:4px;flex:none}
 .w3-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.w3-kpis.w3-kpis5{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
 .w3-kpi{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 16px;min-width:0}
 .w3-kpi .l{font-size:12.5px;color:#475063;font-weight:500}
 .w3-kpi .v{font-size:23px;font-weight:700;margin-top:3px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -27226,6 +27317,106 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
 .eb2-l2{font-size:12.5px;color:#475063;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .eb2-sub{color:#1f2937}.eb2-snip{color:#667085}
 .eb2-draft{font-size:10.5px;background:#fef3f2;color:#b42318;padding:1px 6px;border-radius:6px;font-weight:600}
+/* ── Email Box: Gmail look (Nov 2026) — folder rail + Compose, pill search, one-line rows ── */
+#emailbox-body:has(> .gm), #emailbox-body:has(.gm){padding:0 !important;background:#f6f8fc}
+#emailbox-body:has(.gm) .w2-ebhead{background:#f6f8fc;border-bottom:0}
+.gm{display:flex;gap:8px;padding:4px 16px 16px 4px;background:#f6f8fc;font-family:inherit}
+.gm-nav{flex:0 0 236px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;align-self:flex-start}
+.gm-compose{display:inline-flex;align-items:center;gap:12px;height:56px;padding:0 26px 0 18px;margin:6px 0 10px 8px;border:0;border-radius:16px;background:#c2e7ff;color:#001d35;font-size:14.5px;font-weight:600;cursor:pointer;align-self:flex-start;transition:box-shadow .15s}
+.gm-compose:hover{box-shadow:0 1px 3px rgba(60,64,67,.3),0 4px 8px 3px rgba(60,64,67,.15)}
+.gm-compose:focus-visible{outline:2px solid #0b57d0;outline-offset:2px}
+.gm-folders{display:flex;flex-direction:column;flex-wrap:nowrap !important;gap:0 !important}
+.gm-nav .w1-chip.gm-f{display:flex;align-items:center;gap:16px;width:100%;height:32px;padding:0 14px 0 22px;margin:0;border:0 !important;border-radius:0 16px 16px 0;background:transparent !important;color:#202124 !important;font-size:14px;font-weight:400;box-shadow:none !important;text-align:left;justify-content:flex-start;cursor:pointer}
+.gm-nav .w1-chip.gm-f svg{color:#444746;flex:0 0 auto}
+.gm-nav .w1-chip.gm-f:hover{background:#e8eaed !important}
+.gm-nav .w1-chip.gm-f.on{background:#d3e3fd !important;color:#001d35 !important;font-weight:700}
+.gm-nav .w1-chip.gm-f.on svg{color:#001d35}
+.gm-fl{flex:1;white-space:nowrap}
+.gm-nav .eb2-n{background:none;color:inherit;font-weight:700;font-size:12.5px;min-width:0;padding:0}
+.gm-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.gm-top{display:flex;align-items:center;gap:8px;padding-top:8px}
+.gm-search{flex:1;max-width:740px;display:flex;align-items:center;height:48px;background:#eaf1fb;border-radius:24px;padding:0 6px 0 4px;position:relative;transition:background .15s,box-shadow .15s}
+.gm-search:focus-within{background:#fff;box-shadow:0 1px 1px rgba(0,0,0,.1),0 1px 3px 1px rgba(60,64,67,.15)}
+.gm-search input{flex:1;border:0;background:transparent;outline:0;font-size:15.5px;color:#202124;height:100%;padding:0 6px;min-width:0;box-shadow:none}
+.gm-search input::placeholder{color:#444746}
+.gm-search #eb-search{order:0 !important;width:auto !important}
+.gm-sico{display:inline-flex;width:44px;justify-content:center;color:#444746}
+.gm-ib{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border:0;border-radius:50%;background:transparent;color:#444746;cursor:pointer;flex:0 0 auto;padding:0}
+.gm-ib:hover{background:rgba(68,71,70,.08);color:#1f1f1f}
+.gm-ib:focus-visible{outline:2px solid #0b57d0;outline-offset:1px}
+.gm-ib.spin svg{animation:gmspin .8s linear infinite}
+.gm-ib.gm-on{color:#f4b400}.gm-ib.gm-on svg{fill:#f4b400}
+@keyframes gmspin{to{transform:rotate(360deg)}}
+.gm .eb2-wrap{margin:0;min-height:0}
+.gm .eb2-wrap.gm-full .eb2-listcol{background:#fff;border-radius:16px;overflow:hidden;min-height:calc(100vh - 215px)}
+.gm .eb2-wrap.split{height:calc(100vh - 200px);gap:8px}
+.gm .eb2-wrap.split .eb2-listcol,.gm .eb2-pane{border:0;border-radius:16px}
+.gm .w2-eblist{border:0 !important;border-radius:0 !important;margin:0 !important}
+.gm .eb2-bulk{border:0 !important;border-radius:0 !important;background:#fff;min-height:48px;padding:4px 10px 4px 12px;gap:2px;border-bottom:1px solid #f1f3f4 !important;font-size:13px}
+.gm .eb2-bulk.on{background:#fff}
+.gm-range{margin-left:auto;font-size:12.5px;color:#5f6368;padding-right:6px;white-space:nowrap}
+.gm-sep{width:1px;height:20px;background:#dadce0;margin:0 6px}
+.gm .eb2-all{margin:0 2px 0 0;padding:0 8px;height:38px;color:#444746}
+.gm .eb2-all input{width:16px;height:16px;accent-color:#0b57d0}
+.gm .eb2-scope{padding:8px 16px;font-size:13px;color:#5f6368;border-bottom:1px solid #f1f3f4}
+.gm .eb2-row{display:flex;align-items:center;gap:2px;padding:0 12px 0 12px;border-bottom:1px solid #f1f3f4;background:#f2f6fc}
+.gm .eb2-row.unread{background:#fff}
+.gm .eb2-row:hover{box-shadow:inset 1px 0 0 #dadce0,inset -1px 0 0 #dadce0,0 1px 2px 0 rgba(60,64,67,.3),0 1px 3px 1px rgba(60,64,67,.15);z-index:1}
+.gm .eb2-row.sel{background:#c2dbff}
+.gm .eb2-row.open{background:#e8f0fe;box-shadow:inset 3px 0 0 #0b57d0}
+.gm .eb2-row.unread::before{display:none}
+.gm .eb2-row:focus-visible{outline:2px solid #0b57d0;outline-offset:-2px}
+.gm .eb2-cb{padding:0 6px 0 2px}
+.gm .eb2-cb input{accent-color:#0b57d0;width:16px;height:16px}
+.gm .eb2-star{font-size:19px;color:#c4c7c5;padding:0 8px 0 4px}
+.gm .eb2-star.on{color:#f4b400}
+.gm .eb2-main{display:flex;align-items:center;min-width:0;height:40px}
+.gm .eb2-who{flex:0 0 190px;width:190px;padding-right:22px;font-size:14px;color:#202124}
+.gm .eb2-l2{flex:1;min-width:0;margin:0;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#5f6368}
+.gm .eb2-sub{color:#202124}
+.gm .eb2-snip{color:#5f6368}
+.gm .eb2-row.unread .eb2-who,.gm .eb2-row.unread .eb2-sub,.gm .eb2-row.unread .eb2-date{font-weight:700;color:#202124}
+.gm .eb2-date{flex:0 0 auto;margin-left:16px;font-size:12.5px;color:#5f6368;min-width:52px;justify-content:flex-end}
+.gm .eb2-cand{margin-right:6px;font-size:11.5px;vertical-align:1px;display:inline-block}
+.eb2-hov{display:none;align-items:center;gap:0;margin-left:10px}
+.gm .eb2-wrap:not(.split) .eb2-row:hover .eb2-hov{display:flex}
+.gm .eb2-wrap:not(.split) .eb2-row:hover .eb2-date{display:none}
+.gm .eb2-hov .gm-ib{width:34px;height:34px}
+.gm .split .eb2-main{flex-wrap:wrap;height:auto;padding:9px 0;row-gap:2px}
+.gm .split .eb2-who{flex:1 1 auto;width:auto;padding-right:8px}
+.gm .split .eb2-date{order:2}
+.gm .split .eb2-l2{order:3;flex:1 0 100%;font-size:13px}
+.eb2-read{display:none}
+.gm .eb2-wrap.reading .eb2-listcol{display:none}
+.gm .eb2-wrap.reading .eb2-read{display:block;background:#fff;border-radius:16px;min-height:calc(100vh - 215px)}
+.gm-readbar{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid #f1f3f4;position:sticky;top:0;background:#fff;border-radius:16px 16px 0 0;z-index:2}
+.gm-readf{font-size:13px;color:#5f6368}
+.gm .eb2-thread{padding:18px 26px 30px 26px}
+.gm .eb2-th-head h2{font-size:22px;font-weight:400;color:#1f1f1f}
+.gm .eb2-msg{border:0;border-bottom:1px solid #f1f3f4;border-radius:0;margin:0}
+.gm .eb2-msg.sent{border-color:#f1f3f4}
+.gm .eb2-msg header{padding:14px 4px}
+.gm .eb2-av{width:40px;height:40px;font-size:16px}
+.gm .eb2-mb{padding:2px 8px 20px 54px}
+.gm .eb2-replybar{margin-top:18px}
+.gm .eb2-replybar .w1-btn{border-radius:18px;height:36px;padding:0 18px}
+@media (max-width: 900px){
+  .gm{flex-direction:column;padding:4px 8px 8px}
+  .gm-nav{position:static;flex:none;width:100%;flex-direction:row;align-items:center;gap:8px}
+  .gm-compose{height:44px;margin:0;padding:0 16px 0 12px;flex:0 0 auto}
+  .gm-folders{flex-direction:row !important;overflow-x:auto;gap:4px !important;padding:4px 0;flex:1;min-width:0}
+  .gm-nav .w1-chip.gm-f{width:auto;flex:0 0 auto;border-radius:16px;padding:0 12px;gap:6px;border:1px solid #dadce0 !important}
+  .gm-nav .w1-chip.gm-f svg{display:none}
+  .gm .eb2-main{flex-wrap:wrap;height:auto;padding:10px 0;row-gap:2px}
+  .gm .eb2-who{flex:1 1 auto;width:auto}
+  .gm .eb2-date{order:2}
+  .gm .eb2-l2{order:3;flex:1 0 100%}
+  .gm .eb2-wrap:not(.split) .eb2-row:hover .eb2-hov{display:none}
+  .gm .eb2-wrap:not(.split) .eb2-row:hover .eb2-date{display:flex}
+  .gm-panebtn{display:none}
+  .gm .eb2-thread{padding:12px}
+  .gm .eb2-mb{padding:4px 6px 14px 6px}
+}
 .eb2-thread{padding:18px 20px 24px}
 .eb2-th-head{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
 .eb2-th-head h2{margin:0;font-size:18px;line-height:1.35;color:#0f172a;overflow-wrap:anywhere}

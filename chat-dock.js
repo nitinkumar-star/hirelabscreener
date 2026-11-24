@@ -14,6 +14,10 @@
   'use strict';
   if (window.__hlChatDock) return; window.__hlChatDock = true;
   if (/^\/team-chat\/?$/.test(location.pathname)) return;          // the full page has it all
+  // A page shown INSIDE the app (e.g. Profit & Cash in Invoicing -> Expenses & profit,
+  // /finance?embed=1 in an iframe) must not draw a second chat button: the app has one.
+  try { if (window.self !== window.top) return; } catch(e){ return; }
+  if (/[?&]embed=1\b/.test(location.search)) return;
 
   var LS = 'hlcd_v1', COLORS = ['#0F6E56','#2D6FB3','#B54708','#7A5AF8','#C01048','#027A48','#155EEF','#DC6803','#6941C6','#0E9384'];
   var S = {me:0, users:{}, ulist:[], channels:[], rev:0, refs:{}, msgs:{}, more:{}, member:{}, wins:[], roster:false,
@@ -410,7 +414,7 @@
       S.me = r.me; S.ulist = r.users; S.users = {}; r.users.forEach(function(u){ S.users[u.id] = u; });
       S.channels = r.channels; S.emojis = r.emojis; if (!S.rev) S.rev = r.rev; S.statuses = r.statuses || {}; S.threadsU = r.threads || {};
       S.wins = S.wins.filter(function(w){ return chan(w.id); });
-      if (!S.ready){ S.ready = true; document.body.appendChild(host); loadRing(); }
+      if (!S.ready){ S.ready = true; document.body.appendChild(host); loadRing(); setTimeout(avoid, 0); }
       render(); S.wins.forEach(function(w){ load(w.id); });
       return r;
     });
@@ -477,15 +481,35 @@
     });
   }
   // keep clear of the page's own bottom-right things: the e-mail compose window, the "calls to make" pill
+  // and Save / Create buttons. While a form pop-up is open (e.g. Create Mandate) the dock steps
+  // aside completely; a sticky save bar at the bottom (e.g. the job's Setup "Save") lifts it above.
+  var MODAL_SEL = '.modal-bg.open,.tv2-modal,[aria-modal="true"]';
+  var BAR_SEL = '.w1-savebar,.modal-foot,.savebar,[data-chat-avoid]';
+  function shown(el){ if (!el || el.offsetParent === null && getComputedStyle(el).position !== 'fixed') return false;
+    var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; }
   function avoid(){
     if (!S.ready) return;
+    var wide = window.innerWidth >= 700;
     var r = 16, g = document.querySelector('.gc-win'), p = document.getElementById('hl-pill');
-    if (g && g.offsetParent !== null && window.innerWidth >= 700) r = Math.max(r, window.innerWidth - g.getBoundingClientRect().left + 12);
-    if (p && p.offsetParent !== null && window.innerWidth >= 700) r = Math.max(r, window.innerWidth - p.getBoundingClientRect().left + 12);
-    var want = window.innerWidth >= 700 ? r + 'px' : '';
+    if (g && g.offsetParent !== null && wide) r = Math.max(r, window.innerWidth - g.getBoundingClientRect().left + 12);
+    if (p && p.offsetParent !== null && wide) r = Math.max(r, window.innerWidth - p.getBoundingClientRect().left + 12);
+    var want = wide ? r + 'px' : '';
     if (dock.style.right !== want) dock.style.right = want;
+    var modal = false;
+    document.querySelectorAll(MODAL_SEL).forEach(function(m){ if (!modal && shown(m)) modal = true; });
+    var hide = modal ? 'none' : '';
+    if (dock.style.display !== hide) dock.style.display = hide;
+    var lift = 0, H = window.innerHeight, W = window.innerWidth;
+    if (!modal) document.querySelectorAll(BAR_SEL).forEach(function(b){
+      if (!shown(b)) return;
+      var q = b.getBoundingClientRect();
+      if (q.bottom > H - 90 && q.top < H && q.right > W - 420) lift = Math.max(lift, Math.ceil(H - q.top));
+    });
+    var wb = lift ? lift + 'px' : '';
+    if (dock.style.bottom !== wb) dock.style.bottom = wb;
   }
-  setInterval(avoid, 1500);
+  setInterval(avoid, 400);
+  window.addEventListener('scroll', function(){ avoid(); }, {passive: true, capture: true});
   document.addEventListener('visibilitychange', function(){ if (!document.hidden && S.ready && !stopped){ poll(); } });
   window.addEventListener('resize', function(){ if (S.ready) render(); });
   window.addEventListener('storage', function(e){       // the same windows in another tab

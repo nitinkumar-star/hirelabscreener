@@ -510,7 +510,15 @@ def test_auto_task_rules(srv):
     assert riya.get('/api/todo/auto-rules').status_code == 403
     rules = a.get('/api/todo/auto-rules').get_json()['rules']
     assert {r['stage'] for r in rules} == {'Shared with Client', 'Placed', 'Joined'}
+    assert not any(r['is_active'] for r in rules)                       # Nov 2026: off by default
     conn = srv.get_db(); todo.run_auto_rules(conn); conn.close()      # make sure the watermark exists
+    # switched off: a stage move makes no task
+    _stage(srv, C_RIYA, 'Shared with Client')
+    conn = srv.get_db(); todo.run_auto_rules(conn); conn.close()
+    assert _auto_tasks(srv, C_RIYA) == []
+    _stage(srv, C_RIYA, 'Interview Inprocess')
+    for r in rules:                                                       # an admin switches them on
+        assert a.patch(f"/api/todo/auto-rules/{r['id']}", json={'is_active': True}).status_code == 200
 
     # a real stage move by the recruiter through the normal ATS route
     assert riya.post(f'/api/candidates/{C_RIYA}/stage', json={'stage': 'Shared with Client'}).status_code == 200
