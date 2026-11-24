@@ -172,6 +172,18 @@ def _migrate_todo(conn):
             c.execute(sql)
         except Exception:
             pass
+    # Nov 2026: auto-tasks are OFF by default (they filled task lists with work
+    # nobody needed). Once per database: switch every existing rule off and
+    # mark the open tasks the rules made as done (nothing is deleted; they stay
+    # in Completed). Admins can switch a rule back on in Tasks -> Auto-task rules.
+    try:
+        if not c.execute("SELECT 1 FROM todo_auto_state WHERE key='auto_off_v1'").fetchone():
+            c.execute('UPDATE todo_auto_rules SET is_active=0')
+            n = c.execute("UPDATE reminders SET done=1, stage='done', completed_at=?, updated_at=? "
+                          "WHERE COALESCE(auto_rule,'')!='' AND done=0", (ts(), ts())).rowcount
+            c.execute("INSERT OR REPLACE INTO todo_auto_state (key, value) VALUES ('auto_off_v1', ?)", (str(n),))
+    except Exception as e:
+        print('[todo] auto-task switch-off skipped: %s' % e)
     conn.commit()
 
 
@@ -1553,22 +1565,24 @@ AUTO_MAX_AGE_H = 48            # stage changes older than this (e.g. imports) ne
 
 
 def _rules_for(conn, company_id):
-    """Active rules for a company. A company that never edited its rules uses
-    the defaults; once edited, its own rows (deleted ones soft-deleted) rule."""
+    """Active rules for a company. A company that never edited its rules has
+    none running (the defaults are only suggestions, switched off); once
+    edited, its own rows (deleted ones soft-deleted) rule."""
     rows = conn.execute('SELECT * FROM todo_auto_rules WHERE company_id=?', (company_id,)).fetchall()
     if not rows:
-        return [dict(r, id=0, is_active=1, assign_to=0) for r in DEFAULT_AUTO_RULES]
+        return []                      # Nov 2026: off until an admin switches a rule on
     return [dict(r) for r in rows if r['is_active'] and not r['is_deleted']]
 
 
 def _materialize_rules(conn, company_id):
-    """First edit: copy the defaults into rows so they can be changed."""
+    """First look: copy the defaults into rows, switched OFF, so an admin can
+    turn on the ones they want."""
     n = conn.execute('SELECT COUNT(*) FROM todo_auto_rules WHERE company_id=?', (company_id,)).fetchone()[0]
     if n:
         return
     for r in DEFAULT_AUTO_RULES:
         conn.execute('INSERT INTO todo_auto_rules (company_id, stage, title, due_days, due_time, priority, assign_to, '
-                     'is_active, is_deleted, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,0,1,0,0,?,?)',
+                     'is_active, is_deleted, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,0,0,0,0,?,?)',
                      (company_id, r['stage'], r['title'], r['due_days'], r['due_time'], r['priority'], ts(), ts()))
 
 

@@ -9759,11 +9759,16 @@ def _reconcile_missing_embeddings(conn, cap):
     import, public apply) without touching each endpoint — and it re-queues
     nothing that already failed permanently, so it can't loop."""
     try:
+        # A failed job blocks a re-queue for EMBED_FAILED_RETRY_H hours only, so
+        # a passing outage (provider down, key changed, quota) heals by itself
+        # instead of leaving candidates un-indexed for good.
+        cutoff = (_ist_now() - datetime.timedelta(hours=EMBED_FAILED_RETRY_H)).isoformat(timespec='seconds')
         rows = conn.execute(
             "SELECT id FROM candidates WHERE (embedding='' OR embedding IS NULL) "
             "AND id NOT IN (SELECT candidate_id FROM embedding_jobs "
-            "               WHERE status IN ('pending','processing','retrying','failed')) "
-            "ORDER BY id LIMIT ?", (cap,)).fetchall()
+            "               WHERE status IN ('pending','processing','retrying') "
+            "                  OR (status='failed' AND COALESCE(completed_at,'')>=?)) "
+            "ORDER BY id LIMIT ?", (cutoff, cap)).fetchall()
         n = 0
         for r in rows:
             if queue_embedding_job(r['id'], conn):
@@ -9773,6 +9778,29 @@ def _reconcile_missing_embeddings(conn, cap):
         return n
     except Exception as e:
         print(f'[embed-queue] reconcile error: {e}')
+        return 0
+
+
+EMBED_FAILED_RETRY_H = 6
+
+
+def _any_embedding_key(conn):
+    """True if ANY workspace can embed: the global key / JINA_API_KEY env, or a
+    company's own key (Settings saves the Jina key per company)."""
+    if get_setting('embedding_api_key'):
+        return True
+    try:
+        return bool(conn.execute("SELECT 1 FROM tenant_settings WHERE key='embedding_api_key' "
+                                 "AND COALESCE(value,'')!='' LIMIT 1").fetchone())
+    except sqlite3.OperationalError:
+        return False
+
+
+def _job_company(conn, job):
+    try:
+        r = conn.execute('SELECT owner_id FROM candidates WHERE id=?', (job['candidate_id'],)).fetchone()
+        return int(r['owner_id'] or 0) if r else 0
+    except Exception:
         return 0
 
 
@@ -9799,20 +9827,28 @@ def _embedding_worker_loop():
     while True:
         cycle += 1
         try:
+            # ROOT CAUSE (Nov 2026) of "candidates are not being indexed": the
+            # Jina key is a PER-COMPANY setting (Settings saves it for the
+            # company), but this thread has no logged-in company, so it read
+            # only the GLOBAL row — empty, or an old key — and either slept
+            # forever or failed every job. Each job now runs pinned to the
+            # candidate's company, so it uses that company's own key/model.
             api_key = get_setting('embedding_api_key')
-            if not api_key:
+            conn = get_db()
+            if not _any_embedding_key(conn):
+                conn.close()
                 _time.sleep(30)  # nothing to do without a key
                 continue
 
             interval = max(0, _embed_cfg('embed_interval_ms')) / 1000.0
-            conn = get_db()
             processed = 0
             for _ in range(_embed_cfg('embed_batch_per_cycle')):
                 job = _claim_next_job(conn)
                 if not job:
                     break
                 try:
-                    _process_job(conn, job, api_key)
+                    with tenant_pin(_job_company(conn, job) or None):
+                        _process_job(conn, job, get_setting('embedding_api_key') or api_key)
                 except Exception as je:
                     # never let one bad job kill the worker
                     try:
@@ -16284,11 +16320,15 @@ def invoicing_summary():
         proforma_projected += round((r['amount'] or 0) * (1 + (r['gst_rate'] or 18) / 100)); proforma_count += 1
     exps = conn.execute('SELECT category, amount FROM expenses WHERE owner_id=?', (oid,)).fetchall()
     invoiced = received = outstanding = overdue_amt = 0.0
+    taxable = gst_total = out_taxable = out_gst = 0.0      # billing amount and GST, shown apart
     n_paid = unpaid_count = overdue_count = 0
     outstanding_list = []
     for r in invs:
         gross = round((r['amount'] or 0) * (1 + (r['gst_rate'] or 18) / 100))
         invoiced += gross
+        taxable += (r['amount'] or 0); gst_total += gross - (r['amount'] or 0)
+        if (r['status'] or '').lower() != 'paid':
+            out_taxable += (r['amount'] or 0); out_gst += gross - (r['amount'] or 0)
         if (r['status'] or '').lower() == 'paid':
             received += (r['received_amount'] or gross); n_paid += 1
         else:
@@ -16328,6 +16368,8 @@ def invoicing_summary():
         pass
     conn.close()
     return jsonify({'ok': True, 'invoiced': round(invoiced), 'received': round(received),
+                    'invoiced_taxable': round(taxable), 'invoiced_gst': round(gst_total),
+                    'outstanding_taxable': round(out_taxable), 'outstanding_gst': round(out_gst),
                     'outstanding': round(outstanding), 'overdue_amount': round(overdue_amt),
                     'proforma_projected': round(proforma_projected), 'proforma_count': proforma_count,
                     'count': len(invs), 'n_paid': n_paid, 'unpaid_count': unpaid_count, 'overdue_count': overdue_count,
