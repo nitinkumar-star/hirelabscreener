@@ -26,6 +26,7 @@ _MODULE_NAMES = [
     'access',          # recruiter access guard + multi-recruiter assignment (load first)
     'tenant_guard',    # company guard: an id in the URL must belong to the caller's company (+ suspended agencies)
     'mail_identity',   # per-recruiter Gmail + signature
+    'google_mail',     # "Connect with Google": user's Gmail without an App Password
     'mail_guard',      # per-job switch: automated e-mails OFF for that job's candidates
     'user_templates',  # per-recruiter email / WhatsApp templates
     'call_intel',      # saved call analyses (report + recording)

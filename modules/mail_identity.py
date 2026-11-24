@@ -109,6 +109,8 @@ def _public(conn, uid):
     return {
         'smtp_email': r.get('smtp_email', '') or '',
         'has_password': bool((r.get('smtp_app_password') or '').strip()),
+        # connected with "Connect with Google" (modules/google_mail.py): no App Password
+        'google': (r.get('oauth_provider') == 'google' and (r.get('smtp_app_password') or '').strip() == 'oauth2:google'),
         'smtp_display_name': r.get('smtp_display_name', '') or '',
         'verified_at': r.get('verified_at', '') or '',
         'updated_at': r.get('updated_at', '') or '',
@@ -152,6 +154,11 @@ def _save_identity(conn, uid, company_id, d, actor):
                  'smtp_display_name=excluded.smtp_display_name, verified_at=excluded.verified_at, '
                  'updated_at=excluded.updated_at, updated_by=excluded.updated_by',
                  (uid, company_id or 0, em, _core().seal_secret(pw), dn, verified or '', ts(), actor or 0))
+    if pw.strip() != 'oauth2:google':
+        try:      # an App Password (or nothing) replaces a Google connection
+            conn.execute("UPDATE user_mail_identity SET oauth_provider='', oauth_refresh='' WHERE user_id=?", (uid,))
+        except Exception:
+            pass
     return None
 
 

@@ -258,7 +258,7 @@ def _imap_login():
         return None, 'Email not configured'
     host = core.get_setting('imap_host', '') or core._imap_host_for(user)
     M = imaplib.IMAP4_SSL(host, 993, timeout=25)
-    M.login(user, pw)
+    core.imap_login(M, user, pw)
     return M, ''
 
 

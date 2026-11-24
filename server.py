@@ -15759,7 +15759,7 @@ def _send_submission_email(to_list, cc_list, subject, html_body, attach_cids, co
     try:
         server = smtplib.SMTP(smtp_host, smtp_port, timeout=30)
         server.starttls()
-        server.login(smtp_email, smtp_pass)
+        _smtp_login_once(server, smtp_email, smtp_pass)
         server.sendmail(smtp_email, all_rcpts, msg.as_string())
         server.quit()
         return True, ''
@@ -16538,7 +16538,7 @@ def _sync_mailbox_impl(oid, box_uid=0):
     since = (_dt.date.today() - _dt.timedelta(days=_days)).strftime('%d-%b-%Y')
     _SYNC_MORE[(oid, box_uid)] = False
     try:
-        M = imaplib.IMAP4_SSL(host, timeout=20); M.login(user, pw)
+        M = imaplib.IMAP4_SSL(host, timeout=20); imap_login(M, user, pw)
     except imaplib.IMAP4.error as e:
         return 0, f'IMAP login failed: {e}. Enable IMAP in Gmail and check the app password.'
     except Exception as e:
@@ -16811,7 +16811,7 @@ def email_selftest():
     if email_addr and pw:
         try:
             s = smtplib.SMTP(host, port, timeout=15)
-            s.starttls(); s.login(email_addr, pw); s.quit()
+            s.starttls(); _smtp_login_once(s, email_addr, pw); s.quit()
             add('SMTP login', True, 'Authenticated OK')
         except smtplib.SMTPAuthenticationError:
             add('SMTP login', False, 'Auth failed — check the app password (not your normal password)')
@@ -16820,7 +16820,7 @@ def email_selftest():
 
         ihost = get_setting('imap_host', 'imap.gmail.com') or 'imap.gmail.com'
         try:
-            M = imaplib.IMAP4_SSL(ihost, timeout=15); M.login(email_addr, pw.replace(' ', ''))
+            M = imaplib.IMAP4_SSL(ihost, timeout=15); imap_login(M, email_addr, pw.replace(' ', ''))
             try:
                 sent = _find_sent_folder(M)
                 add('IMAP login', True, 'Connected to ' + ihost)
@@ -19243,7 +19243,7 @@ def email_diagnose():
 
     # Try login
     try:
-        M.login(smtp_email, smtp_pass)
+        imap_login(M, smtp_email, smtp_pass)
         steps.append({'step': 'Login', 'ok': True, 'detail': 'Login successful'})
     except imaplib.IMAP4.error as e:
         msg = str(e)
@@ -19324,11 +19324,40 @@ class SmtpStepError(Exception):
         self.step, self.detail = step, detail
 
 
+def _google_xoauth2(user):
+    """XOAUTH2 string for a mailbox connected with "Connect with Google"
+    (its password is the marker 'oauth2:google', see modules/google_mail.py)."""
+    from modules import google_mail as _gm
+    try:
+        return _gm.xoauth2_for_email(user)
+    except _gm.GoogleAuthError as e:
+        raise smtplib.SMTPAuthenticationError(535, str(e).encode('utf-8', 'replace'))
+
+
+def imap_login(M, user, pw):
+    """IMAP login: App Password as before, or XOAUTH2 for a Google-connected mailbox."""
+    if str(pw or '').strip() == 'oauth2:google':
+        import imaplib as _il
+        try:
+            auth = _google_xoauth2(user)
+        except smtplib.SMTPAuthenticationError as e:
+            raise _il.IMAP4.error(e.smtp_error.decode('utf-8', 'replace'))
+        return M.authenticate('XOAUTH2', lambda _c: auth.encode('utf-8'))
+    return M.login(user, pw)
+
+
 def _smtp_login_once(srv, user, pw):
     """Log in with ONE auth method. smtplib.login() tries PLAIN, then LOGIN;
     Gmail hangs up after rejecting the first try, so the second try fails
     with 'Connection unexpectedly closed' and Gmail's real reason (wrong
-    password, sign-in blocked, ...) is lost. Asking once keeps the reason."""
+    password, sign-in blocked, ...) is lost. Asking once keeps the reason.
+    A Google-connected mailbox logs in with XOAUTH2 (no App Password)."""
+    if str(pw or '').strip() == 'oauth2:google':
+        auth = _google_xoauth2(user)
+        if not hasattr(srv, 'ehlo_or_helo_if_needed'):
+            return srv.login(user, pw)      # test doubles
+        srv.ehlo_or_helo_if_needed()
+        return srv.auth('XOAUTH2', lambda challenge=None: auth if challenge is None else '')
     if not hasattr(srv, 'ehlo_or_helo_if_needed') or not hasattr(srv, 'auth_plain'):
         return srv.login(user, pw)          # test doubles
     srv.ehlo_or_helo_if_needed()
@@ -20953,7 +20982,7 @@ def _smtp_send(to_email, subject, plain_body, html_body=None):
     try:
         server = smtplib.SMTP(host, port, timeout=15)
         server.starttls()
-        server.login(smtp_email, smtp_pass)
+        _smtp_login_once(server, smtp_email, smtp_pass)
         server.sendmail(smtp_email, [to_email], msg.as_string())
         server.quit()
         return True, None
@@ -21005,7 +21034,7 @@ def _platform_smtp_send(to_email, subject, plain_body, html_body=None):
     try:
         server = smtplib.SMTP(host, port, timeout=15)
         server.starttls()
-        server.login(smtp_email, smtp_pass)
+        _smtp_login_once(server, smtp_email, smtp_pass)
         server.sendmail(smtp_email, [to_email], msg.as_string())
         server.quit()
         return True, None
@@ -26013,7 +26042,7 @@ def _send_tenant_email(company_id, to_email, subject, html_body):
         srv = smtplib.SMTP(host, 587, timeout=20)
         try:
             srv.starttls()
-            srv.login(smtp_email, smtp_pass)
+            _smtp_login_once(srv, smtp_email, smtp_pass)
             srv.sendmail(smtp_email, [to_email], msg.as_string())
         finally:
             try: srv.quit()
