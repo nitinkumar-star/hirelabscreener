@@ -5194,7 +5194,11 @@ def get_setting(key, default=''):
 
 @app.route('/')
 def index():
-    return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html'))
+    # no-cache: the browser must check for a new index.html on every visit, so a
+    # deploy shows up at once (without it, browsers may reuse an old copy for hours).
+    resp = send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html'))
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
 @app.route('/v2')
 def recruitos_v2():
     return send_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'recruitos-live.html'))
@@ -16929,7 +16933,37 @@ _EB_LIST_COLS = ('e.id,e.folder,e.from_addr,e.from_name,e.to_addr,e.cc,e.subject
                  # whole-conversation size (incl. your sent replies), like Gmail's "(3)"
                  "CASE WHEN COALESCE(e.thread_id,'')='' THEN 1 ELSE (SELECT COUNT(*) FROM emails t WHERE t.owner_id=e.owner_id "
                  "AND COALESCE(t.user_id,0)=COALESCE(e.user_id,0) AND t.thread_id=e.thread_id AND COALESCE(t.is_deleted,0)=0 "
-                 "AND COALESCE(t.is_draft,0)=0) END AS thread_n")
+                 "AND COALESCE(t.is_draft,0)=0) END AS thread_n,"
+                 # names of the attachments, for Gmail's attachment chips under a row
+                 "(SELECT GROUP_CONCAT(a.filename, '|') FROM email_attachments a WHERE a.email_id=e.id "
+                 "AND a.owner_id=e.owner_id) AS attach_names")
+
+# Gmail-style Inbox tabs (Primary / Updates / Promotions), decided from the sender.
+# Updates: job portals, notifications and no-reply senders. Promotions: newsletters
+# and marketing mail (or mail with an unsubscribe link). Everything else: Primary.
+_EB_UPDATES = ('noreply', 'no-reply', 'no_reply', 'donotreply', 'do-not-reply', 'notification', 'alert',
+               'naukri', 'linkedin', 'indeed', 'foundit', 'monster', 'shine.com', 'instahyre', 'iimjobs',
+               'hirist', 'apna.co', 'workindia', 'calendar-notification', 'accounts.google', 'mailer-daemon',
+               'postmaster', 'github.com', 'billing@', 'invoice@', 'receipts@', 'updates@')
+_EB_PROMOS = ('newsletter', 'news@', 'marketing', 'offers', 'offer@', 'promo', 'deals', 'mailchimp',
+              'campaign', 'digest', 'webinar', 'events@', 'hello@', 'team@')
+
+
+def _eb_like_any(col, words):
+    return '(' + ' OR '.join("%s LIKE '%%%s%%'" % (col, w.replace("'", '')) for w in words) + ')'
+
+
+def _eb_category_sql(cat):
+    frm = "LOWER(COALESCE(e.from_addr,''))"
+    upd = _eb_like_any(frm, _EB_UPDATES)
+    promo = '(' + _eb_like_any(frm, _EB_PROMOS) + " OR LOWER(COALESCE(e.body,'')) LIKE '%unsubscribe%')"
+    if cat == 'updates':
+        return ' AND ' + upd
+    if cat == 'promotions':
+        return ' AND NOT ' + upd + ' AND ' + promo
+    if cat == 'primary':
+        return ' AND NOT ' + upd + ' AND NOT ' + promo
+    return ''
 
 
 def _eb_search_sql(q):
@@ -17005,6 +17039,14 @@ def emailbox_list():
             elif folder in ('Candidate', 'Candidates'):
                 q += ' AND e.candidate_id IS NOT NULL'
     q += sf; p += sp
+    cat = (request.args.get('category', '') or '').strip().lower()
+    if folder == 'Inbox' and not raw_q and cat in ('primary', 'updates', 'promotions'):
+        q += _eb_category_sql(cat)
+    total = None
+    try:                                             # "1–50 of 234", like Gmail
+        total = conn.execute('SELECT COUNT(*) FROM (' + q + ')', p).fetchone()[0]
+    except sqlite3.OperationalError:
+        total = None
     q += ' ORDER BY e.date_ts DESC LIMIT ? OFFSET ?'
     try:
         rows = conn.execute(q, p + [limit + 1, offset]).fetchall()
@@ -17012,9 +17054,18 @@ def emailbox_list():
         conn.close()
         return jsonify({'error': 'Search could not run: %s' % e}), 400
     counts = _eb_counts(conn, where, params)
+    if folder == 'Inbox' and not raw_q:              # unread per Inbox tab
+        try:
+            base = ('SELECT COUNT(*) FROM emails e WHERE ' + where + " AND COALESCE(e.is_deleted,0)=0 "
+                    "AND COALESCE(e.is_archived,0)=0 AND e.folder='Inbox' AND e.is_read=0")
+            counts['cat_unread'] = {c: conn.execute(base + _eb_category_sql(c), params).fetchone()[0]
+                                    for c in ('primary', 'updates', 'promotions')}
+        except sqlite3.OperationalError:
+            pass
     conn.close()
     more = len(rows) > limit
     return jsonify({'ok': True, 'emails': [dict(r) for r in rows[:limit]], 'unread': counts['unread'],
+                    'total': total, 'category': cat,
                     'counts': counts, 'has_more': more, 'offset': offset, 'limit': limit,
                     'box': 'me' if params[1] else 'company', 'terms': terms[:12] if raw_q else [],
                     'scope': scope or ''})

@@ -901,7 +901,7 @@ body{font-size:14px !important; line-height:1.5}
   <div class="sb-logo" style="display:flex;align-items:center;gap:11px">
     <button onclick="toggleSidebar()" title="Collapse sidebar" style="background:none;border:none;color:#9C988D;font-size:17px;cursor:pointer;padding:0;line-height:1;flex-shrink:0">&#9776;</button>
     <div class="sb-logo-box"><span></span></div>
-    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab<span class="w1-only"> Screener</span></div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J34</div></div>
+    <div onclick="goHome()" style="cursor:pointer;flex:1"><div class="sb-logo-t">HireLab<span class="w1-only"> Screener</span></div><div class="sb-logo-s">SCREENER · BUILD&nbsp;J35</div></div>
     <button class="w1-sb-collapse" onclick="toggleSidebar()" title="Collapse sidebar (drag the edge to resize)" aria-label="Collapse sidebar"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4h16v16H4zM9 4v16"/></svg></button>
   </div>
   <button class="w1-sb-search" type="button" onclick="w1FocusSearch()" title="Search candidates by name, email or phone (press /)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span style="flex:1">Search everything</span><kbd>/</kbd></button>
@@ -6257,7 +6257,18 @@ function _gmIco(n){
     tune:'<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
     pane:'<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/>',
     inboxin:'<polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/>',
-    restore:'<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>'};
+    restore:'<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
+    reply:'<polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>',
+    more:'<circle cx="12" cy="5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="19" r="1.3"/>',
+    down:'<polyline points="6 9 12 15 18 9"/>',
+    left:'<polyline points="15 18 9 12 15 6"/>', right:'<polyline points="9 18 15 12 9 6"/>',
+    gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+    tag:'<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>',
+    info:'<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+    megaphone:'<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+    bot:'<rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/>',
+    print:'<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
+    fwd:'<polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/>'};
   return '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(P[n]||'')+'</svg>';
 }
 function _ebHeader(active){
@@ -6323,19 +6334,20 @@ async function renderEmailBox(){
   function tab(id,label,ico,n){ var on=f===id; return '<button class="w1-chip gm-f'+(on?' on':'')+'" aria-current="'+(on?'page':'false')+'" onclick="ebFolder(\''+id+'\')">'+_gmIco(ico)+'<span class="gm-fl">'+label+'</span>'+(n?' <span class="eb2-n">'+n+'</span>':'')+'</button>'; }
   var c=window._eb.counts||{};
   window._eb.reading=false;
-  el.innerHTML=_ebHeader('mail')
+  el.innerHTML=_gmTopbar()
     +(needMail?'<div class="eb2-banner" role="status"><b>Connect your Gmail to get your own inbox.</b> Mail you send and receive there will show up here &mdash; only you can see it. '
       +'<button class="w1-btn pri" onclick="openGmailWizard(\'me\')">Connect Gmail (1 minute)</button></div>':'')
     +'<div class="gm">'
     +'<nav class="gm-nav" aria-label="Mail folders"><button class="gm-compose" onclick="openCompose()" title="Compose (c)">'+_gmIco('pen')+'<span>Compose</span></button>'
     +'<div class="eb2-chips gm-folders" id="eb2-chips">'+tab('Inbox','Inbox','inbox',c.unread)+tab('Starred','Starred','star')+tab('Unread','Unread','mail')+tab('Sent','Sent','send')+tab('Drafts','Drafts','draft',c.drafts)
-      +tab('Candidates','Candidates','user')+tab('','All mail','all')+tab('Archived','Archived','archive')+tab('Trash','Trash','trash')+'</div></nav>'
+      +tab('Candidates','Candidates','user')+tab('','All mail','all')+tab('Archived','Archived','archive')+tab('Trash','Trash','trash')+'</div>'
+    +(_ebIsRec()?'':'<div class="gm-navh">Tools</div><div class="gm-folders">'
+      +'<button class="w1-chip gm-f" onclick="window._emailFolder=\'__campaigns\';renderEmailBox()">'+_gmIco('megaphone')+'<span class="gm-fl">Campaigns</span></button>'
+      +'<button class="w1-chip gm-f" onclick="window._emailFolder=\'__agent\';renderEmailBox()">'+_gmIco('bot')+'<span class="gm-fl">Email Agent</span></button></div>')
+    +'</nav>'
     +'<div class="gm-main">'
-    +'<div class="gm-top"><div class="eb2-sbox gm-search"><span class="gm-sico">'+_gmIco('search')+'</span><input id="eb-search" type="search" placeholder="Search mail" aria-label="Search mail" title="Operators: from: to: subject: has:attachment is:unread newer_than:7d" value="'+esc(window._eb.q||'')+'" oninput="ebSearchDebounced()" onkeydown="if(event.key===\'Enter\'){clearTimeout(_ebSearchT);window._eb.q=this.value.trim();window._eb.sel={};ebLoadList(false);}">'
-    +'<button class="gm-ib" title="Show search options" aria-label="Show search options" aria-haspopup="dialog" onclick="ebAdvSearch()">'+_gmIco('tune')+'</button></div>'
-    +'<button class="gm-ib gm-panebtn" title="Reading pane: '+(_ebPaneMode()==='right'?'right of the list':'no split')+' (click to switch)" aria-label="Switch reading pane" onclick="ebSetPane(\''+(_ebPaneMode()==='right'?'none':'right')+'\')">'+_gmIco('pane')+'</button></div>'
     +'<div class="eb2-wrap'+(_ebSplit()?' split':' gm-full')+'" id="eb2-wrap">'
-    +'<div class="eb2-listcol"><div class="eb2-bulk" id="eb2-bulk"></div><div class="w2-eblist" id="eb-list"><div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div></div><div id="eb2-more"></div></div>'
+    +'<div class="eb2-listcol"><div class="eb2-bulk" id="eb2-bulk"></div><div id="gm-cats"></div><div class="w2-eblist" id="eb-list"><div class="loading" style="padding:24px"><div class="spinner"></div>Loading…</div></div><div id="eb2-more"></div></div>'
     +(_ebSplit()?'<div class="eb2-pane" id="eb2-pane" aria-live="polite"><div class="eb2-pane-empty">Select a conversation to read it here.</div></div>'
       :'<div class="eb2-read" id="eb2-read" aria-live="polite"></div>')
     +'</div></div></div>';
@@ -6344,8 +6356,78 @@ async function renderEmailBox(){
   await ebLoadList(false);
   if(window._eb.openId && _ebSplit()) openEmail(window._eb.openId, true);
 }
-function ebFolder(id){ window._emailFolder=id; window._eb.sel={}; window._eb.openId=null; window._eb.q=''; renderEmailBox(); }
-function ebClearSearch(){ window._eb.q=''; var i=document.getElementById('eb-search'); if(i) i.value=''; window._eb.sel={}; ebLoadList(false); }
+function ebFolder(id){ window._emailFolder=id; window._eb.sel={}; window._eb.openId=null; window._eb.q=''; window._eb.pg=0; renderEmailBox(); }
+// Gmail's top bar: search in the middle, mailbox / sync / settings on the right.
+function _gmTopbar(){
+  var rec=_ebIsRec(), me=window._eb.me||{};
+  var who=rec?(me.own_mailbox?esc(me.own_email):'Your inbox'):(window._eb.box==='me'?esc(me.own_email||'My mailbox'):(me.company_email?esc(me.company_email):'Company mailbox'));
+  var boxSw=(!rec && me.own_mailbox)?('<select class="gm-boxsel" aria-label="Mailbox" onchange="ebSwitchBox(this.value)">'
+      +'<option value=""'+(window._eb.box!=='me'?' selected':'')+'>Company mailbox</option>'
+      +'<option value="me"'+(window._eb.box==='me'?' selected':'')+'>My mailbox</option></select>'):'';
+  var mi=function(fn,l){ return '<button role="menuitem" onclick="_gmMenuClose();'+fn+'">'+l+'</button>'; };
+  return '<div class="gm-bar"><div class="gm-brand"><span class="gm-logo">'+_gmIco('mail')+'</span><span class="gm-bt">Mail</span><span class="gm-who" title="'+who+'">'+who+'</span></div>'
+    +'<div class="eb2-sbox gm-search"><span class="gm-sico">'+_gmIco('search')+'</span><input id="eb-search" type="search" placeholder="Search mail" aria-label="Search mail" title="Operators: from: to: subject: has:attachment is:unread newer_than:7d  ( / to focus)" value="'+esc(window._eb.q||'')+'" oninput="ebSearchDebounced()" onkeydown="if(event.key===\'Enter\'){clearTimeout(_ebSearchT);window._eb.q=this.value.trim();window._eb.sel={};window._eb.pg=0;ebLoadList(false);}else if(event.key===\'Escape\'){this.blur();}">'
+    +'<button class="gm-ib" title="Show search options" aria-label="Show search options" aria-haspopup="dialog" onclick="ebAdvSearch()">'+_gmIco('tune')+'</button></div>'
+    +'<div class="gm-barr"><span id="eb-sync-pill"></span>'+boxSw
+    +'<button class="gm-ib" title="Sync now — pull new mail" aria-label="Sync now" onclick="syncEmail(this)">'+_gmIco('refresh')+'</button>'
+    +'<div class="gm-mwrap"><button class="gm-ib" title="Settings" aria-label="Mail settings" aria-haspopup="menu" onclick="event.stopPropagation();_gmMenu(this)">'+_gmIco('gear')+'</button>'
+    +'<div class="gm-menu" role="menu"><div class="gm-mh">Reading pane</div>'
+      +mi("ebSetPane('none')",(_ebPaneMode()==='none'?'&#10003; ':'')+'No split')+mi("ebSetPane('right')",(_ebPaneMode()==='right'?'&#10003; ':'')+'Right of inbox')
+      +'<div class="gm-mh">Inbox</div>'+mi('ebToggleTabs()',(_gmTabsOn()?'&#10003; ':'')+'Primary / Updates / Promotions tabs')
+      +mi('_gmShortcuts()','Keyboard shortcuts')
+      +(rec?'':'<div class="gm-mh">Account</div>'+mi('openSignatureEditor()','Signature')+mi('openEmailSelfTest()','Self-Test')+mi('ebRethread(null)','Fix threads'))
+    +'</div></div></div></div>';
+}
+function _gmMenu(btn){ var m=btn.nextElementSibling, o=m.classList.contains('open'); _gmMenuClose(); if(!o) m.classList.add('open'); }
+function _gmMenuClose(){ document.querySelectorAll('.gm-menu.open').forEach(function(m){ m.classList.remove('open'); }); var c=document.getElementById('gm-ctx'); if(c) c.remove(); }
+document.addEventListener('click', function(e){ if(!e.target.closest || !e.target.closest('.gm-menu,#gm-ctx')) _gmMenuClose(); });
+function _gmTabsOn(){ try{ return localStorage.getItem('eb_tabs')!=='0'; }catch(e){ return true; } }
+function ebToggleTabs(){ try{ localStorage.setItem('eb_tabs',_gmTabsOn()?'0':'1'); }catch(e){} window._eb.cat='primary'; window._eb.pg=0; renderEmailBox(); }
+function _gmCatOn(){ return (window._emailFolder||'')==='Inbox' && !window._eb.q && _gmTabsOn(); }
+function ebCat(c){ window._eb.cat=c; window._eb.pg=0; window._eb.sel={}; ebLoadList(false); }
+function _gmCatsHtml(){
+  if(!_gmCatOn()) return '';
+  var cur=window._eb.cat||'primary', cu=(window._eb.counts||{}).cat_unread||{};
+  var t=function(k,l,ico,sub){ var n=cu[k]||0;
+    return '<button role="tab" aria-selected="'+(cur===k)+'" class="gm-cat gm-cat-'+k+(cur===k?' on':'')+'" onclick="ebCat(\''+k+'\')">'+_gmIco(ico)
+      +'<span class="gm-catl">'+l+'</span>'+(k!=='primary'&&n?'<span class="gm-catn">'+n+' new</span>':'')+'</button>'; };
+  return '<div class="gm-cats" role="tablist" aria-label="Inbox categories">'+t('primary','Primary','inbox')+t('updates','Updates','info')+t('promotions','Promotions','tag')+'</div>';
+}
+function ebPage(dir){ var E=window._eb; E.pg=Math.max(0,(E.pg||0)+dir*50); E.sel={}; ebLoadList(false); var b=document.getElementById('eb-list'); if(b) b.scrollTop=0; }
+function ebSelBy(kind){
+  var G=window._eb.groups||{}; window._eb.sel={};
+  Object.keys(G).forEach(function(k){ var g=G[k], ok=kind==='all'||(kind==='read'&&!g.unread)||(kind==='unread'&&g.unread)||(kind==='starred'&&g.starred)||(kind==='unstarred'&&!g.starred);
+    if(ok) window._eb.sel[k]=1; });
+  _gmMenuClose(); renderEmailList();
+}
+function ebMarkPageRead(){ var G=window._eb.groups||{}, ids=[]; Object.keys(G).forEach(function(k){ if(G[k].unread) ids=ids.concat(G[k].ids); }); _gmMenuClose(); if(ids.length) ebBulk('read',ids); else toast('OK','Nothing unread here'); }
+// Right-click on a row: Gmail's context menu.
+function ebCtx(ev,key){
+  var g=(window._eb.groups||{})[key]; if(!g) return; ev.preventDefault(); _gmMenuClose();
+  var tr=window._emailFolder==='Trash', ar=window._emailFolder==='Archived', id=g.latest.id;
+  var it=function(fn,ico,l){ return '<button role="menuitem" onclick="_gmMenuClose();'+fn+'">'+_gmIco(ico)+'<span>'+l+'</span></button>'; };
+  var m=document.createElement('div'); m.id='gm-ctx'; m.className='gm-menu open gm-ctx'; m.setAttribute('role','menu');
+  m.innerHTML=it('openEmail('+id+')','mail','Open')
+    +it('ebCtxReply('+id+',0)','reply','Reply')+it('ebCtxReply('+id+',1)','fwd','Forward')+'<div class="gm-msep"></div>'
+    +(tr?it("ebRowAct('"+key+"','restore')",'restore','Restore'):it("ebRowAct('"+key+"','"+(ar?'unarchive':'archive')+"')",ar?'inboxin':'archive',ar?'Move to inbox':'Archive')+it("ebRowAct('"+key+"','delete')",'trash','Delete'))
+    +it("ebRowAct('"+key+"','"+(g.unread?'read':'unread')+"')",g.unread?'open':'mail',g.unread?'Mark as read':'Mark as unread')
+    +it("ebRowAct('"+key+"','"+(g.starred?'unstar':'star')+"')",'star',g.starred?'Remove star':'Add star');
+  document.body.appendChild(m);
+  var w=m.offsetWidth, h=m.offsetHeight;
+  m.style.left=Math.min(ev.clientX, window.innerWidth-w-8)+'px'; m.style.top=Math.min(ev.clientY, window.innerHeight-h-8)+'px';
+}
+async function ebCtxReply(id, fwd){ await openEmail(id, true); var th=window._eb.thread&&window._eb.thread.thread; if(!th||!th.length) return;
+  var li=th.slice().reverse().find(function(m){ return m.folder==='Inbox'; })||th[th.length-1]; if(fwd) ebForward(li.id); else ebReply(li.id,false); }
+function _gmShortcuts(){
+  var rows=[['c','Compose'],['/','Search mail'],['j / k','Next / previous conversation'],['o or Enter','Open conversation'],['u or Esc','Back to the list'],['x','Select conversation'],
+    ['s','Star / unstar'],['e','Archive'],['#','Delete'],['Shift + i','Mark as read'],['Shift + u','Mark as unread'],['r','Reply'],['a','Reply all'],['f','Forward'],['?','This list']];
+  var ex=document.getElementById('modal-gmkeys'); if(ex){ ex.remove(); return; }
+  var bg=document.createElement('div'); bg.className='modal-bg open'; bg.id='modal-gmkeys'; bg.onclick=function(e){ if(e.target===bg) bg.remove(); };
+  bg.innerHTML='<div class="modal" style="max-width:440px;width:94%" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts"><div class="modal-head"><span class="modal-title">Keyboard shortcuts</span><button class="modal-x" aria-label="Close" onclick="document.getElementById(\'modal-gmkeys\').remove()">&#10005;</button></div>'
+    +'<div class="modal-body"><table class="gm-keys">'+rows.map(function(r){ return '<tr><td><kbd>'+r[0]+'</kbd></td><td>'+r[1]+'</td></tr>'; }).join('')+'</table></div></div>';
+  document.body.appendChild(bg);
+}
+function ebClearSearch(){ window._eb.q=''; var i=document.getElementById('eb-search'); if(i) i.value=''; window._eb.sel={}; window._eb.pg=0; ebLoadList(false); }
 // Gmail-style advanced search: fills the search box with operators.
 function ebAdvSearch(){
   var ex=document.getElementById('eb2-adv'); if(ex){ ex.remove(); return; }
@@ -6377,7 +6459,7 @@ function ebAdvGo(){
   if(g('unread')) parts.push('is:unread');
   var q=parts.join(' '); var a=document.getElementById('eb2-adv'); if(a) a.remove();
   var i=document.getElementById('eb-search'); if(i) i.value=q;
-  window._eb.q=q; window._eb.sel={}; ebLoadList(false);
+  window._eb.q=q; window._eb.sel={}; window._eb.pg=0; ebLoadList(false);
 }
 // Fresh mail without pressing Sync: every mailbox syncs in the background when
 // the Email Box opens, and the list refreshes itself while you look at it.
@@ -6394,18 +6476,21 @@ setInterval(function(){ if(document.visibilityState==='visible' && document.getE
 var _ebSearchT=null;
 function ebSearchDebounced(){
   clearTimeout(_ebSearchT);
-  _ebSearchT=setTimeout(function(){ var q=document.getElementById('eb-search'); window._eb.q=q?q.value.trim():''; window._eb.sel={}; ebLoadList(false); },300);
+  _ebSearchT=setTimeout(function(){ var q=document.getElementById('eb-search'); window._eb.q=q?q.value.trim():''; window._eb.sel={}; window._eb.pg=0; ebLoadList(false); },300);
 }
 async function ebLoadList(append){
-  var E=window._eb, f=window._emailFolder||'';
-  var off=append?E.offset+100:0;
-  var qs='?limit=100&offset='+off+(f?('&folder='+encodeURIComponent(f)):'')+(E.q?('&q='+encodeURIComponent(E.q)):'')+_ebBoxQ('&');
+  var E=window._eb, f=window._emailFolder||'', PG=50;
+  if(append===true) E.pg=(E.pg||0)+PG;
+  var off=E.pg||0, cat=_gmCatOn()?(E.cat||'primary'):'';
+  append=false;
+  var qs='?limit='+PG+'&offset='+off+(f?('&folder='+encodeURIComponent(f)):'')+(E.q?('&q='+encodeURIComponent(E.q)):'')+(cat?('&category='+cat):'')+_ebBoxQ('&');
   var r={}; try{ r=await req('GET','/emailbox/list'+qs); }catch(e){}
   if(r&&r.error){ var b=document.getElementById('eb-list'); if(b) b.innerHTML='<div class="w3-empty" style="padding:30px">'+esc(r.error)+'</div>'; return; }
   var rows=(r&&r.emails)||[];
   E.emails=append?(E.emails||[]).concat(rows):rows; E.offset=off; E.more=!!(r&&r.has_more);
-  window._ebEmails=E.emails; E.terms=(r&&r.terms)||[]; E.scope=(r&&r.scope)||'';
+  window._ebEmails=E.emails; E.terms=(r&&r.terms)||[]; E.scope=(r&&r.scope)||''; E.total=(r&&r.total!=null)?r.total:null;
   if(r&&r.counts){ E.counts=r.counts; _ebPaintCounts(); }
+  if(!rows.length && off>0){ E.pg=Math.max(0,off-PG); return ebLoadList(false); }
   renderEmailList();
 }
 function _ebPaintCounts(){
@@ -6456,12 +6541,21 @@ function _ebRow(e, g){
        +'<button class="gm-ib" title="Delete" aria-label="Delete" onclick="ebRowAct(\''+key+'\',\'delete\')">'+_gmIco('trash')+'</button>')
     +'<button class="gm-ib" title="'+(anyUnread?'Mark as read':'Mark as unread')+'" aria-label="'+(anyUnread?'Mark as read':'Mark as unread')+'" onclick="ebRowAct(\''+key+'\',\''+(anyUnread?'read':'unread')+'\')">'+_gmIco(anyUnread?'open':'mail')+'</button></div>');
   return '<div class="eb2-row'+(anyUnread?' unread':'')+(sel?' sel':'')+(open?' open':'')+'" role="button" tabindex="0" data-key="'+key+'" data-id="'+e.id+'"'
-    +' onclick="ebRowClick(event,'+e.id+','+(isDraft?1:0)+')" onkeydown="if(event.key===\'Enter\')ebRowClick(event,'+e.id+','+(isDraft?1:0)+')">'
+    +' onclick="ebRowClick(event,'+e.id+','+(isDraft?1:0)+')" oncontextmenu="ebCtx(event,\''+key+'\')" onkeydown="if(event.key===\'Enter\')ebRowClick(event,'+e.id+','+(isDraft?1:0)+')">'
     +'<label class="eb2-cb" onclick="event.stopPropagation()"><input type="checkbox" aria-label="Select"'+(sel?' checked':'')+' onchange="ebSel(\''+key+'\',this.checked)"></label>'
     +'<button class="eb2-star'+(g.starred?' on':'')+'" aria-label="'+(g.starred?'Unstar':'Star')+'" aria-pressed="'+(!!g.starred)+'" onclick="event.stopPropagation();ebStarKey(\''+key+'\')">'+(g.starred?'&#9733;':'&#9734;')+'</button>'
     +'<div class="eb2-main"><span class="eb2-who">'+who+cnt+'</span>'
     +'<span class="eb2-l2">'+cand+'<span class="eb2-sub">'+_ebHl(e.subject||'(no subject)')+'</span><span class="eb2-snip"> &ndash; '+_ebHl(e.snippet||'')+'</span></span>'
-    +'<span class="eb2-date">'+att+_ebWhen(e.date_ts)+'</span></div>'+hov+'</div>';
+    +'<span class="eb2-date">'+att+_ebWhen(e.date_ts)+'</span></div>'+hov+_gmChips(g.anames)+'</div>';
+}
+function _gmFileIco(n){ var x=(String(n).split('.').pop()||'').toLowerCase();
+  var c=x==='pdf'?'#d93025':(/^(docx?|rtf)$/.test(x)?'#1a73e8':(/^(xlsx?|csv)$/.test(x)?'#188038':(/^(png|jpe?g|gif|webp)$/.test(x)?'#e37400':'#5f6368')));
+  var t=x==='pdf'?'PDF':(/^docx?$/.test(x)?'W':(/^(xlsx?|csv)$/.test(x)?'X':(/^(png|jpe?g|gif|webp)$/.test(x)?'IMG':'FILE')));
+  return '<span class="gm-fico" style="background:'+c+'">'+t+'</span>'; }
+function _gmChips(names){
+  if(!names||!names.length) return '';
+  return '<div class="eb2-achips">'+names.slice(0,3).map(function(n){ return '<span class="gm-achip" title="'+esc(n)+'">'+_gmFileIco(n)+'<span class="gm-an">'+esc(n)+'</span></span>'; }).join('')
+    +(names.length>3?'<span class="gm-amore">+'+(names.length-3)+'</span>':'')+'</div>';
 }
 function _ebGroups(){
   var groups={}, order=[];
@@ -6473,6 +6567,7 @@ function _ebGroups(){
     if(!e.is_read&&e.folder==='Inbox') g.unread++;
     if(e.is_starred) g.starred=1;
     if(e.n_attach) g.attach+=e.n_attach;
+    if(e.attach_names){ g.anames=(g.anames||[]); String(e.attach_names).split('|').forEach(function(n){ if(n && g.anames.indexOf(n)<0) g.anames.push(n); }); }
     if(e.candidate_name&&!g.cand) g.cand=e.candidate_name;
     if((e.date_ts||0)>(g.latest.date_ts||0)) g.latest=e;
   });
@@ -6485,10 +6580,11 @@ function renderEmailList(){
   var scope=E.q?('<div class="eb2-scope">'+(E.scope==='trash'?'Searching Trash':(E.scope==='anywhere'?'Searching all mail':'Searching '+esc(window._emailFolder||'all mail')))
       +' for <b>'+esc(E.q)+'</b> &middot; '+list.length+(E.more?'+':'')+' conversation'+(list.length===1?'':'s')+' &middot; <a href="#" onclick="event.preventDefault();ebClearSearch()">Clear</a></div>'):'';
   var trashNote=(window._emailFolder==='Trash'&&!E.q&&list.length)?'<div class="eb2-scope">Mail you delete here is also moved to Gmail&rsquo;s Trash. Select mail and press <b>Restore</b> to bring it back (in Gmail too).</div>':'';
+  var cats=document.getElementById('gm-cats'); if(cats) cats.innerHTML=_gmCatsHtml();
   box.innerHTML=scope+trashNote+(list.map(function(g){ return _ebRow(g.latest,g); }).join('')
     || '<div class="w3-empty" style="padding:30px;text-align:center">'+(E.q?'No mail matches <b>'+esc(E.q)+'</b>. Try fewer words, or <code>in:anywhere</code>.':(window._emailFolder==='Trash'?'Trash is empty.':'No emails here yet. Click <b>Sync</b> to pull your inbox and sent mail.'))+'</div>');
   var more=document.getElementById('eb2-more');
-  if(more) more.innerHTML=E.more?'<div style="text-align:center;margin:-12px 0 20px"><button class="w1-btn" onclick="this.disabled=true;ebLoadList(true)">Load older mail</button></div>':'';
+  if(more) more.innerHTML='';
   _ebPaintBulk();
 }
 function ebSel(key,on){ if(on) window._eb.sel[key]=1; else delete window._eb.sel[key];
@@ -6503,13 +6599,21 @@ function _ebPaintBulk(){
   var n=Object.keys(window._eb.sel||{}).length;
   var allKeys=Object.keys(window._eb.groups||{});
   var arch=(window._emailFolder==='Archived'), trash=(window._emailFolder==='Trash');
-  var shown=allKeys.length, range=shown?('<span class="gm-range">1&ndash;'+shown+(window._eb.more?' of many':' of '+shown)+'</span>'):'';
+  var E=window._eb, shown=(E.emails||[]).length, off=E.pg||0, tot=(E.total!=null)?E.total:(off+shown+(E.more?1:0));
+  var range='<span class="gm-range">'+(shown?((off+1)+'&ndash;'+(off+shown)+' of '+(E.total!=null?Number(tot).toLocaleString('en-IN'):'many')):'')+'</span>'
+    +'<button class="gm-ib" title="Newer" aria-label="Newer"'+(off>0?'':' disabled')+' onclick="ebPage(-1)">'+_gmIco('left')+'</button>'
+    +'<button class="gm-ib" title="Older" aria-label="Older"'+(E.more?'':' disabled')+' onclick="ebPage(1)">'+_gmIco('right')+'</button>';
+  var mi=function(fn,l){ return '<button role="menuitem" onclick="'+fn+'">'+l+'</button>'; };
+  var selMenu='<div class="gm-mwrap"><button class="gm-ib gm-caret" title="Select" aria-label="Select options" aria-haspopup="menu" onclick="event.stopPropagation();_gmMenu(this)">'+_gmIco('down')+'</button>'
+    +'<div class="gm-menu" role="menu">'+mi("ebSelBy('all')",'All')+mi('_gmMenuClose();ebSelAll(false)','None')+mi("ebSelBy('read')",'Read')+mi("ebSelBy('unread')",'Unread')+mi("ebSelBy('starred')",'Starred')+mi("ebSelBy('unstarred')",'Unstarred')+'</div></div>';
+  var moreMenu='<div class="gm-mwrap"><button class="gm-ib" title="More" aria-label="More" aria-haspopup="menu" onclick="event.stopPropagation();_gmMenu(this)">'+_gmIco('more')+'</button>'
+    +'<div class="gm-menu" role="menu">'+mi('ebMarkPageRead()','Mark all on this page as read')+'</div></div>';
   var ib=function(act,ico,t){ return '<button class="gm-ib" title="'+t+'" aria-label="'+t+'" onclick="ebBulk(\''+act+'\')">'+_gmIco(ico)+'</button>'; };
-  if(!n){ bar.innerHTML=(shown?'<label class="eb2-all" title="Select all"><input type="checkbox" aria-label="Select all" onchange="ebSelAll(this.checked)"></label>':'')
-      +'<button class="gm-ib" title="Refresh" aria-label="Refresh" onclick="ebRefreshNow(this)">'+_gmIco('refresh')+'</button>'+range;
+  if(!n){ bar.innerHTML=(shown?'<label class="eb2-all" title="Select all"><input type="checkbox" aria-label="Select all" onchange="ebSelAll(this.checked)"></label>'+selMenu:'')
+      +'<button class="gm-ib" title="Refresh" aria-label="Refresh" onclick="ebRefreshNow(this)">'+_gmIco('refresh')+'</button>'+moreMenu+range;
     bar.classList.remove('on'); return; }
   bar.classList.add('on');
-  var head='<label class="eb2-all"><input type="checkbox" checked aria-label="Clear selection" onchange="ebSelAll(this.checked)"> <span>'+n+' selected</span></label>';
+  var head='<label class="eb2-all"><input type="checkbox" checked aria-label="Clear selection" onchange="ebSelAll(this.checked)"></label>'+selMenu+'<span class="gm-nsel">'+n+' selected</span>';
   if(trash){ bar.innerHTML=head+ib('restore','restore','Restore')+range; return; }
   bar.innerHTML=head
     +ib(arch?'unarchive':'archive',arch?'inboxin':'archive',arch?'Move to inbox':'Archive')
@@ -6614,35 +6718,63 @@ function _ebThreadHtml(tr, inPane){
     candHtml='<div class="eb2-candbox none"><span style="flex:1;color:var(--muted,#667085)">Not linked to a candidate.</span>'
       +'<button class="w1-btn" onclick="ebLinkPick('+last.id+')">Link to candidate</button></div>';
   }
-  var tools='<div class="eb2-tools" role="toolbar" aria-label="Conversation actions">'
-    +'<button class="w1-btn pri" onclick="ebReply('+lastIn.id+',false)">&#8617; Reply</button>'
-    +'<button class="w1-btn" onclick="ebReply('+lastIn.id+',true)">Reply all</button>'
-    +'<button class="w1-btn" onclick="ebForward('+lastIn.id+')">&#10150; Forward</button>'
-    +'<span class="eb2-sp"></span>'
-    +'<button class="gm-ib'+(starred?' gm-on':'')+'" title="'+(starred?'Unstar':'Star')+' (s)" aria-label="'+(starred?'Unstar':'Star')+'" onclick="ebThreadAct(\''+(starred?'unstar':'star')+'\')">'+_gmIco('star')+'</button>'
-    +'<button class="gm-ib" title="Mark as unread" aria-label="Mark as unread" onclick="ebThreadAct(\'unread\')">'+_gmIco('mail')+'</button>'
-    +'<button class="gm-ib" title="'+(archived?'Move to inbox':'Archive')+' (e)" aria-label="'+(archived?'Move to inbox':'Archive')+'" onclick="ebThreadAct(\''+(archived?'unarchive':'archive')+'\')">'+_gmIco(archived?'inboxin':'archive')+'</button>'
-    +(window._emailFolder==='Trash'?'<button class="w1-btn" title="Restore (here and in Gmail)" onclick="ebThreadAct(\'restore\')">&#8630; Restore</button>'
-      :'<button class="gm-ib" title="Delete (#) — moves to Trash here and in Gmail" aria-label="Delete" onclick="ebThreadAct(\'delete\')">'+_gmIco('trash')+'</button>')
-    +(inPane?'':'<button class="w1-btn ic" aria-label="Close" onclick="var m=document.getElementById(\'modal-email\');if(m)m.remove()">&#10005;</button>')+'</div>';
+  var tools=inPane==='bar'?'':_ebThreadTools(tr,inPane);
+  var mine=_ebMine();
+  var toWho=function(m){ var L=_ebAddrs((m.to_addr||'')+(m.cc?','+m.cc:'')); if(!L.length) return esc(m.to_addr||'');
+    return L.slice(0,3).map(function(x){ return mine.indexOf(x.toLowerCase())>=0?'me':esc(x.split('@')[0]); }).join(', ')+(L.length>3?' +'+(L.length-3):''); };
   var body=msgs.map(function(m,i){
     var d=m.date_ts?new Date(m.date_ts*1000).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
     var collapsed=(i<msgs.length-1 && msgs.length>2 && m.is_read);
     var att=(m.attachments||[]).map(function(x){
-      return '<span class="eb2-file"><a href="'+API+'/emailbox/attachment/'+x.id+'">&#128206; '+esc(x.filename)+' <span style="color:#98A2B3">('+_ebSize(x.size)+')</span></a>'
-        +((_ebIsCv(x.filename)&&m.folder==='Inbox')?'<button class="eb2-addc" onclick="ebAddCand('+m.id+','+x.id+',this)" title="Read this CV and add the person as a candidate">+ Add as candidate</button>':'')+'</span>';
+      var url=API+'/emailbox/attachment/'+x.id;
+      return '<div class="gm-acard"><a href="'+url+'" title="Download '+esc(x.filename)+'"><div class="gm-athumb">'+_gmFileIco(x.filename)+'</div>'
+        +'<div class="gm-ameta">'+_gmFileIco(x.filename)+'<span class="gm-aname">'+esc(x.filename)+'</span></div><div class="gm-asize">'+_ebSize(x.size)+'</div></a>'
+        +((_ebIsCv(x.filename)&&m.folder==='Inbox')?'<button class="eb2-addc gm-aadd" onclick="ebAddCand('+m.id+','+x.id+',this)" title="Read this CV and add the person as a candidate">+ Add as candidate</button>':'')+'</div>';
     }).join('');
+    var nm=m.from_name||m.from_addr||'';
+    var det='<div class="gm-det" id="gm-det'+m.id+'" hidden><table>'
+      +'<tr><td>from:</td><td><b>'+esc(nm)+'</b> &lt;'+esc(m.from_addr||'')+'&gt;</td></tr>'
+      +'<tr><td>to:</td><td>'+esc(m.to_addr||'')+'</td></tr>'+(m.cc?'<tr><td>cc:</td><td>'+esc(m.cc)+'</td></tr>':'')
+      +'<tr><td>date:</td><td>'+esc(d)+'</td></tr><tr><td>subject:</td><td>'+esc(m.subject||'')+'</td></tr></table></div>';
+    var mi=function(fn,l){ return '<button role="menuitem" onclick="_gmMenuClose();'+fn+'">'+l+'</button>'; };
+    var acts='<span class="gm-macts" onclick="event.stopPropagation()">'
+      +'<button class="gm-ib gm-sm'+(m.is_starred?' gm-on':'')+'" title="'+(m.is_starred?'Unstar':'Star')+'" aria-label="'+(m.is_starred?'Unstar':'Star')+'" onclick="ebMsgStar('+m.id+')">'+_gmIco('star')+'</button>'
+      +'<button class="gm-ib gm-sm" title="Reply" aria-label="Reply" onclick="ebReply('+m.id+',false)">'+_gmIco('reply')+'</button>'
+      +'<span class="gm-mwrap"><button class="gm-ib gm-sm" title="More" aria-label="More options" aria-haspopup="menu" onclick="event.stopPropagation();_gmMenu(this)">'+_gmIco('more')+'</button>'
+      +'<span class="gm-menu" role="menu">'+mi('ebReply('+m.id+',false)','Reply')+mi('ebReply('+m.id+',true)','Reply all')+mi('ebForward('+m.id+')','Forward')+'</span></span></span>';
     return '<article class="eb2-msg'+(m.folder==='Sent'?' sent':'')+(collapsed?' collapsed':'')+'" id="eb2-m'+m.id+'">'
-      +'<header onclick="this.parentElement.classList.toggle(\'collapsed\')"><span class="eb2-av">'+esc((m.from_name||m.from_addr||'?').charAt(0).toUpperCase())+'</span>'
-      +'<div class="eb2-mh"><div><b>'+esc(m.from_name||m.from_addr||'')+'</b> <span class="eb2-addr">&lt;'+esc(m.from_addr||'')+'&gt;</span></div>'
-      +'<div class="eb2-to">to '+esc(m.to_addr||'')+(m.cc?(' &middot; cc '+esc(m.cc)):'')+'</div><div class="eb2-sn">'+esc(m.snippet||'')+'</div></div>'
-      +'<span class="eb2-md">'+esc(d)+'</span></header>'
-      +'<div class="eb2-mb">'+_emailContent(m)+(att?'<div class="eb2-files">'+att+'</div>':'')+'</div></article>';
+      +'<header onclick="this.parentElement.classList.toggle(\'collapsed\')"><span class="eb2-av" style="background:'+_gmAvCol(nm)+'">'+esc(nm.charAt(0).toUpperCase()||'?')+'</span>'
+      +'<div class="eb2-mh"><div><b class="gm-from">'+esc(nm)+'</b> <span class="eb2-addr">&lt;'+esc(m.from_addr||'')+'&gt;</span></div>'
+      +'<div class="eb2-to">to '+toWho(m)+' <button class="gm-detb" title="Show details" aria-label="Show details" onclick="event.stopPropagation();var x=document.getElementById(\'gm-det'+m.id+'\');x.hidden=!x.hidden">'+_gmIco('down')+'</button></div>'
+      +'<div class="eb2-sn">'+esc(m.snippet||'')+'</div></div>'
+      +'<span class="eb2-md">'+esc(d)+' <span class="gm-ago">('+_gmAgo(m.date_ts)+')</span></span>'+acts+'</header>'
+      +det+'<div class="eb2-mb">'+_emailContent(m)+(att?'<div class="gm-atts"><div class="gm-atth">'+(m.attachments.length)+' attachment'+(m.attachments.length>1?'s':'')+'</div><div class="eb2-files">'+att+'</div></div>':'')+'</div></article>';
   }).join('');
-  return '<div class="eb2-thread"><div class="eb2-th-head"><h2>'+esc(subject||'(no subject)')+' <span class="eb2-cnt">'+msgs.length+'</span></h2>'+tools+'</div>'
+  var lbl=(window._emailFolder&&!/^__/.test(window._emailFolder))?'<span class="gm-label">'+esc(window._emailFolder)+'</span>':'';
+  return '<div class="eb2-thread"><div class="eb2-th-head"><h2>'+esc(subject||'(no subject)')+(msgs.length>1?' <span class="eb2-cnt">'+msgs.length+'</span>':'')+lbl+'</h2>'+tools+'</div>'
     +candHtml+body
-    +'<div class="eb2-replybar"><button class="w1-btn" onclick="ebReply('+lastIn.id+',false)">&#8617; Reply</button> <button class="w1-btn" onclick="ebReply('+lastIn.id+',true)">Reply all</button> <button class="w1-btn" onclick="ebForward('+lastIn.id+')">&#10150; Forward</button></div></div>';
+    +'<div class="eb2-replybar"><button class="w1-btn" onclick="ebReply('+lastIn.id+',false)">'+_gmIco('reply')+' Reply</button> <button class="w1-btn" onclick="ebReply('+lastIn.id+',true)">'+_gmIco('reply')+' Reply all</button> <button class="w1-btn" onclick="ebForward('+lastIn.id+')">'+_gmIco('fwd')+' Forward</button></div></div>';
 }
+// Conversation actions as Gmail's icon row (archive, delete, mark unread, star).
+function _ebThreadTools(tr, inPane){
+  var msgs=tr.thread||[];
+  var starred=msgs.some(function(m){return m.is_starred;});
+  var archived=msgs.length && msgs.every(function(m){return m.is_archived;});
+  return '<div class="eb2-tools gm-tools" role="toolbar" aria-label="Conversation actions">'
+    +(window._emailFolder==='Trash'?'<button class="gm-ib" title="Restore (here and in Gmail)" aria-label="Restore" onclick="ebThreadAct(\'restore\')">'+_gmIco('restore')+'</button>'
+      :'<button class="gm-ib" title="'+(archived?'Move to inbox':'Archive')+' (e)" aria-label="'+(archived?'Move to inbox':'Archive')+'" onclick="ebThreadAct(\''+(archived?'unarchive':'archive')+'\')">'+_gmIco(archived?'inboxin':'archive')+'</button>'
+       +'<button class="gm-ib" title="Delete (#) — moves to Trash here and in Gmail" aria-label="Delete" onclick="ebThreadAct(\'delete\')">'+_gmIco('trash')+'</button>')
+    +'<span class="gm-sep"></span>'
+    +'<button class="gm-ib" title="Mark as unread (Shift+u)" aria-label="Mark as unread" onclick="ebThreadAct(\'unread\')">'+_gmIco('mail')+'</button>'
+    +'<button class="gm-ib'+(starred?' gm-on':'')+'" title="'+(starred?'Unstar':'Star')+' (s)" aria-label="'+(starred?'Unstar':'Star')+'" onclick="ebThreadAct(\''+(starred?'unstar':'star')+'\')">'+_gmIco('star')+'</button>'
+    +(inPane?'':'<span class="eb2-sp"></span><button class="gm-ib" aria-label="Close" title="Close" onclick="var m=document.getElementById(\'modal-email\');if(m)m.remove()">&#10005;</button>')+'</div>';
+}
+function _gmAgo(t){ if(!t) return ''; var s=Math.max(0,Date.now()/1000-t);
+  if(s<60) return 'just now'; if(s<3600) return Math.floor(s/60)+' min ago'; if(s<86400) return Math.floor(s/3600)+' hour'+(s<7200?'':'s')+' ago';
+  var d=Math.floor(s/86400); if(d<30) return d+' day'+(d>1?'s':'')+' ago'; var mo=Math.floor(d/30); if(mo<12) return mo+' month'+(mo>1?'s':'')+' ago'; return Math.floor(d/365)+' year'+(d>=730?'s':'')+' ago'; }
+function _gmAvCol(n){ var C=['#1a73e8','#d93025','#188038','#e37400','#9334e6','#12b5cb','#e8710a','#c5221f','#0b8043','#3f51b5'], h=0; n=String(n||'');
+  for(var i=0;i<n.length;i++) h=(h*31+n.charCodeAt(i))|0; return C[Math.abs(h)%C.length]; }
+async function ebMsgStar(id){ var t=_ebMsg(id); var on=!t.is_starred; await ebBulk(on?'star':'unstar',[id]); t.is_starred=on?1:0; _ebRepaintThread(); }
 async function openEmail(id, quiet){
   var tr={}; try{ tr=await req('GET','/emailbox/thread?eid='+id+_ebBoxQ('&')); }catch(e){}
   if(!tr || tr.error || !tr.thread){ if(!quiet) toast('Error',esc((tr&&tr.error)||'Could not open email')); return; }
@@ -6670,7 +6802,7 @@ async function openEmail(id, quiet){
 function _ebClosePane(){ var m=document.getElementById('modal-email'); if(m) m.remove(); }
 function _ebReaderHtml(tr){
   var fl={'':'All mail'}[window._emailFolder||'']||(window._emailFolder||'Inbox');
-  return '<div class="gm-readbar"><button class="gm-ib" title="Back to '+esc(fl)+' (u)" aria-label="Back to '+esc(fl)+'" onclick="_ebBack()">'+_gmIco('back')+'</button><span class="gm-readf">'+esc(fl)+'</span></div>'+_ebThreadHtml(tr,true);
+  return '<div class="gm-readbar"><button class="gm-ib" title="Back to '+esc(fl)+' (u)" aria-label="Back to '+esc(fl)+'" onclick="_ebBack()">'+_gmIco('back')+'</button>'+_ebThreadTools(tr,true)+'</div>'+_ebThreadHtml(tr,'bar');
 }
 // Leave the in-place conversation and show the list again (Gmail's back arrow / "u").
 function _ebBack(){
@@ -6792,7 +6924,26 @@ document.addEventListener('keydown', function(e){
   var th=window._eb.thread&&window._eb.thread.thread, open=!!(window._eb.openId&&th&&th.length);
   var lastIn=open?(th.slice().reverse().find(function(m){ return m.folder==='Inbox'; })||th[th.length-1]):null;
   var k=e.key, done=true;
-  if(k==='c') openCompose();
+  var rows=Array.prototype.slice.call(document.querySelectorAll('#eb-list .eb2-row'));
+  var cur=document.querySelector('#eb-list .eb2-row.gm-cur');
+  var move=function(d){ if(!rows.length) return; var i=cur?rows.indexOf(cur):-1; var n=rows[Math.max(0,Math.min(rows.length-1,i+d))];
+    if(cur) cur.classList.remove('gm-cur'); n.classList.add('gm-cur'); n.focus({preventScroll:true}); n.scrollIntoView({block:'nearest'}); };
+  if(k==='/'){ var si=document.getElementById('eb-search'); if(si){ si.focus(); si.select(); e.stopImmediatePropagation(); } }
+  else if(k==='?') _gmShortcuts();
+  else if((k==='j'||k==='k') && !window._eb.reading) move(k==='j'?1:-1);
+  else if((k==='j'||k==='k') && window._eb.reading && rows.length){   // next / older conversation while reading
+    var oi=rows.findIndex(function(r){ return r.classList.contains('open'); }); var nx=rows[oi+(k==='j'?1:-1)];
+    if(nx) openEmail(+nx.getAttribute('data-id')); }
+  else if((k==='o'||k==='Enter') && cur && !window._eb.reading) cur.click();
+  else if(k==='x' && cur){ var cb=cur.querySelector('.eb2-cb input'); if(cb){ cb.checked=!cb.checked; ebSel(cur.getAttribute('data-key'),cb.checked); } }
+  else if((k==='I'||k==='U') && e.shiftKey){ var act=k==='I'?'read':'unread';
+    if(open && window._eb.reading) ebThreadAct(act==='read'?'read':'unread');
+    else if(Object.keys(window._eb.sel||{}).length) ebBulk(act);
+    else if(cur) ebRowAct(cur.getAttribute('data-key'),act); }
+  else if(k==='s' && cur && !window._eb.reading) ebStarKey(cur.getAttribute('data-key'));
+  else if(k==='e' && cur && !window._eb.reading) ebRowAct(cur.getAttribute('data-key'),window._emailFolder==='Archived'?'unarchive':'archive');
+  else if(k==='#' && cur && !window._eb.reading) ebRowAct(cur.getAttribute('data-key'),'delete');
+  else if(k==='c') openCompose();
   else if((k==='u'||k==='Escape') && window._eb.reading) _ebBack();
   else if(k==='r' && open) ebReply(lastIn.id,false);
   else if(k==='a' && open) ebReply(lastIn.id,true);
@@ -27346,6 +27497,100 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
 .gm-ib:focus-visible{outline:2px solid #0b57d0;outline-offset:1px}
 .gm-ib.spin svg{animation:gmspin .8s linear infinite}
 .gm-ib.gm-on{color:#f4b400}.gm-ib.gm-on svg{fill:#f4b400}
+.gm,.gm-bar{font-family:"Google Sans",Roboto,"Segoe UI",Arial,sans-serif}
+.gm-bar{display:flex;align-items:center;gap:12px;padding:8px 16px 4px 12px;background:#f6f8fc;position:sticky;top:0;z-index:30}
+.gm-brand{flex:0 0 228px;display:flex;align-items:center;gap:8px;min-width:0;padding-left:10px}
+.gm-logo{display:inline-flex;width:34px;height:34px;border-radius:8px;align-items:center;justify-content:center;background:#fff;color:#d93025;box-shadow:0 1px 2px rgba(60,64,67,.2)}
+.gm-logo svg{width:20px;height:20px}
+.gm-bt{font-size:21px;color:#444746;font-weight:400}
+.gm-who{font-size:11.5px;color:#5f6368;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;margin-left:2px}
+.gm-bar .gm-search{flex:1;max-width:720px;margin:0}
+.gm-barr{margin-left:auto;display:flex;align-items:center;gap:4px}
+.gm-boxsel{height:36px;border:1px solid #dadce0;border-radius:18px;background:#fff;padding:0 10px;font-size:13px;color:#202124}
+.gm-mwrap{position:relative;display:inline-flex}
+.gm-menu{display:none;position:absolute;top:100%;right:0;z-index:9500;min-width:200px;background:#fff;border-radius:8px;box-shadow:0 2px 6px 2px rgba(60,64,67,.15),0 1px 2px rgba(60,64,67,.3);padding:6px 0}
+.eb2-bulk .gm-menu{left:0;right:auto}
+.gm-menu.open{display:block}
+.gm-menu button{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:0;background:none;padding:7px 18px;font-size:14px;color:#202124;cursor:pointer;white-space:nowrap}
+.gm-menu button:hover{background:#f1f3f4}
+.gm-menu button svg{width:16px;height:16px;color:#5f6368}
+.gm-mh{font-size:11px;font-weight:700;color:#5f6368;text-transform:uppercase;letter-spacing:.05em;padding:8px 18px 4px}
+.gm-msep{height:1px;background:#e8eaed;margin:6px 0}
+.gm-ctx{position:fixed;display:block}
+.gm-caret{width:20px !important;margin-left:-8px;border-radius:4px !important}
+.gm-caret svg{width:14px;height:14px}
+.gm-ib[disabled]{opacity:.35;cursor:default;background:none}
+.gm-nsel{font-size:13px;color:#202124;margin:0 8px 0 4px}
+.gm-navh{font-size:14px;color:#202124;padding:16px 0 4px 26px;font-weight:500}
+.gm-cats{display:flex;border-bottom:1px solid #f1f3f4;background:#fff}
+.gm-cat{flex:0 1 250px;display:flex;align-items:center;gap:14px;height:52px;padding:0 16px;border:0;background:none;cursor:pointer;color:#5f6368;font-size:14px;position:relative;font-family:inherit}
+.gm-cat:hover{background:#f1f3f4}
+.gm-cat.on{color:#0b57d0;font-weight:600}
+.gm-cat.on::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:3px;border-radius:3px 3px 0 0;background:#0b57d0}
+.gm-cat-updates.on{color:#e37400}.gm-cat-updates.on::after{background:#e37400}
+.gm-cat-promotions.on{color:#188038}.gm-cat-promotions.on::after{background:#188038}
+.gm-catn{font-size:11.5px;font-weight:700;color:#fff;background:#0b57d0;border-radius:10px;padding:1px 8px;white-space:nowrap}
+.gm-cat-updates .gm-catn{background:#e37400}.gm-cat-promotions .gm-catn{background:#188038}
+.gm .eb2-row{flex-wrap:wrap}
+.gm .eb2-row .eb2-main{flex:1 1 0}
+.gm .eb2-row.gm-cur{box-shadow:inset 4px 0 0 #444746}
+.eb2-achips{flex:1 0 100%;display:flex;gap:8px;padding:0 0 9px 248px;margin-top:-6px;min-width:0;overflow:hidden}
+.gm .split .eb2-achips{padding-left:58px;margin-top:-4px}
+.gm-achip{display:inline-flex;align-items:center;gap:6px;max-width:190px;height:30px;border:1px solid #dadce0;border-radius:16px;padding:0 12px 0 6px;font-size:13px;color:#3c4043;background:#fff}
+.gm-an{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gm-amore{font-size:12.5px;color:#5f6368;align-self:center}
+.gm-fico{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:18px;padding:0 3px;border-radius:3px;color:#fff;font-size:9px;font-weight:700;letter-spacing:.02em;font-family:Arial,sans-serif}
+.gm-label{display:inline-block;vertical-align:4px;margin-left:10px;font-size:12px;background:#e8eaed;color:#444746;border-radius:4px;padding:1px 6px;font-weight:400}
+.gm-readbar .gm-tools{display:flex;align-items:center;gap:2px;flex:1}
+.gm-tools .gm-sep{margin:0 8px}
+.gm .eb2-th-head h2{margin-left:46px}
+.gm .eb2-candbox{margin-left:46px}
+.gm .eb2-msg header{align-items:flex-start}
+.gm .eb2-av{color:#fff}
+.gm-from{font-size:14px;color:#1f1f1f}
+.gm .eb2-addr{font-size:12px}
+.gm .eb2-to{display:flex;align-items:center;gap:2px}
+.gm-detb{border:0;background:none;color:#5f6368;cursor:pointer;padding:0 2px;display:inline-flex;border-radius:4px}
+.gm-detb svg{width:14px;height:14px}
+.gm-detb:hover{background:#f1f3f4}
+.gm-det{margin:-6px 0 10px 54px;border:1px solid #dadce0;border-radius:4px;box-shadow:0 2px 6px rgba(60,64,67,.15);padding:8px 12px;font-size:12.5px;color:#3c4043;max-width:560px;background:#fff}
+.gm-det td{padding:2px 6px;vertical-align:top}.gm-det td:first-child{color:#5f6368;text-align:right}
+.gm-ago{color:#5f6368}
+.gm-macts{display:inline-flex;align-items:center;margin-left:6px}
+.gm-ib.gm-sm{width:32px;height:32px}
+.gm-ib.gm-sm svg{width:16px;height:16px}
+.eb2-msg.collapsed .gm-macts .gm-mwrap,.eb2-msg.collapsed .gm-macts .gm-ib:nth-child(2){display:none}
+.gm-atts{margin-top:18px;border-top:1px solid #f1f3f4;padding-top:12px}
+.gm-atth{font-size:13px;color:#5f6368;margin-bottom:10px}
+.gm-acard{position:relative;width:180px;border:1px solid #dadce0;border-radius:6px;overflow:hidden;background:#fff}
+.gm-acard:hover{box-shadow:0 1px 3px rgba(60,64,67,.3)}
+.gm-acard a{display:block;color:#202124;text-decoration:none}
+.gm-athumb{height:90px;background:#f1f3f4;display:flex;align-items:center;justify-content:center}
+.gm-athumb .gm-fico{min-width:44px;height:30px;font-size:13px}
+.gm-ameta{display:flex;align-items:center;gap:6px;padding:8px 10px 0;font-size:12.5px;min-width:0}
+.gm-aname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gm-asize{font-size:11.5px;color:#5f6368;padding:2px 10px 8px}
+.gm-aadd{display:block;width:100%;border:0;border-top:1px solid #dadce0;background:#f8fafd;color:#0b57d0;padding:6px;font-size:12px;cursor:pointer}
+.gm .eb2-replybar .w1-btn{display:inline-flex;align-items:center;gap:8px;border:1px solid #747775;color:#444746;background:#fff;font-weight:500}
+.gm .eb2-replybar .w1-btn svg{width:16px;height:16px}
+.gm .eb2-replybar{margin-left:54px}
+.gm-keys{width:100%;border-collapse:collapse;font-size:13.5px}.gm-keys td{padding:5px 6px;border-bottom:1px solid #f1f3f4}
+.gm-keys kbd{display:inline-block;background:#f1f3f4;border:1px solid #dadce0;border-radius:4px;padding:1px 7px;font-family:inherit;font-size:12.5px}
+@media (max-width: 900px){
+  .gm-brand{display:none}
+  .gm-bar{padding:8px;gap:4px;flex-wrap:nowrap}
+  .gm-bar .gm-search{min-width:0;height:44px}
+  .gm-barr{margin-left:0}
+  .gm-nav{overflow-x:auto;scrollbar-width:none}
+  .gm-nav .gm-folders{flex:0 0 auto;overflow:visible}
+  .gm-catn{padding:1px 6px}
+  .gm-boxsel{max-width:120px}
+  .eb2-achips{padding-left:58px;margin-top:-4px}
+  .gm-cat{flex:1;padding:0 8px;gap:6px;font-size:13px}.gm-cat svg{display:none}
+  .gm .eb2-th-head h2,.gm .eb2-candbox,.gm .eb2-replybar{margin-left:0}
+  .gm-navh{display:none}
+  .gm-det{margin-left:0}
+}
 @keyframes gmspin{to{transform:rotate(360deg)}}
 .gm .eb2-wrap{margin:0;min-height:0}
 .gm .eb2-wrap.gm-full .eb2-listcol{background:#fff;border-radius:16px;overflow:hidden;min-height:calc(100vh - 215px)}
