@@ -26227,7 +26227,46 @@ async function _bdhDone(id, box){
   }
 
   // Skill Engine: the skill spec shows under the breakdown in every state (also when the breakdown failed)
-  function skillSpec(el, m){ try { if (window.SkillEngine) SkillEngine.mountSpec(m.id, el.querySelector('.jb-wrap') || el); } catch (e) {} }
+  function skillSpec(el, m){ try { if (window.SkillEngine) SkillEngine.mountSpec(m.id, el.querySelector('.jb-wrap') || el); } catch (e) {}
+    try { mountScreenRuns(m.id, el.querySelector('.jb-wrap') || el); } catch (e) {} }
+
+  // Naukri screening analyses (modules/screen_runs.py): export one to check it with Claude.
+  async function mountScreenRuns(mid, host){
+    var box = document.createElement('div'); box.className = 'sr-card'; box.id = 'sr-card-' + mid;
+    var old = document.getElementById(box.id); if (old) old.remove();
+    host.appendChild(box);
+    box.innerHTML = '<div class="sr-h">Naukri screening analyses</div><div class="sr-sub">Loading&hellip;</div>';
+    var r = await req('GET', '/screen-runs?mandate_id=' + mid + '&limit=10');
+    var list = (r && r.analyses) || [];
+    var u = function(id, f, dl){ return API + '/screen-runs/' + id + '?format=' + f + (dl ? '&download=1' : ''); };
+    var h = '<div class="sr-h">Naukri screening analyses</div>'
+      + '<div class="sr-sub">Every "Analyze this page" in the extension is kept for ' + ((r && r.keep_days) || 60) + ' days. '
+      + 'Export one and give it to Claude: it checks each verdict, the facts read from the cards and your rules, and suggests fixes. '
+      + 'Claude can also read them through the HireLab connector.</div>';
+    if (!list.length) h += '<div class="sr-empty">No analysis for this job yet. Run <b>Analyze this page</b> on a Naukri search page in the extension.</div>';
+    else h += '<table class="sr-t"><thead><tr><th>When</th><th>By</th><th>Cards</th><th>Open · Maybe · Skip</th><th></th></tr></thead><tbody>'
+      + list.map(function(a){
+          return '<tr><td>' + esc(String(a.started_at || '').replace('T', ' ').slice(0, 16)) + '</td><td>' + esc(a.by || '') + '</td><td>' + (a.n_cards || 0) + '</td>'
+            + '<td><span class="sr-o">' + (a.n_open || 0) + '</span> · <span class="sr-m">' + (a.n_maybe || 0) + '</span> · <span class="sr-s">' + (a.n_skip || 0) + '</span></td>'
+            + '<td class="sr-act"><button class="btn" style="font-size:11.5px" data-sr-copy="' + a.analysis_id + '" title="Copy the analysis, ready to paste into Claude">Copy for Claude</button>'
+            + '<a class="btn btn-o" style="font-size:11.5px" href="' + u(a.analysis_id, 'md', 1) + '" title="Markdown file for Claude">.md</a>'
+            + '<a class="btn btn-o" style="font-size:11.5px" href="' + u(a.analysis_id, 'csv', 1) + '" title="Spreadsheet: one row per card">CSV</a>'
+            + '<a class="btn btn-o" style="font-size:11.5px" href="' + u(a.analysis_id, 'json', 1) + '" title="Everything, as JSON">JSON</a></td></tr>';
+        }).join('') + '</tbody></table>';
+    box.innerHTML = h;
+    box.querySelectorAll('[data-sr-copy]').forEach(function(b){
+      b.onclick = async function(){
+        b.disabled = true; var t = b.textContent; b.textContent = 'Copying…';
+        try {
+          var res = await fetch(u(b.getAttribute('data-sr-copy'), 'md', 0), {credentials: 'same-origin'});
+          var md = await res.text();
+          await navigator.clipboard.writeText(md);
+          toast('OK', 'Copied (' + Math.round(md.length / 1000) + 'k characters). Paste it into Claude.');
+        } catch (e) { toast('ERR', 'Could not copy. Use the .md download instead.'); }
+        b.disabled = false; b.textContent = t;
+      };
+    });
+  }
 
   function paint(el, m, st){
     var d = st.data || {};
@@ -27786,6 +27825,17 @@ a.w1-btn{text-decoration:none !important;color:var(--ink)}
 .gm-gbtn:focus-visible{outline:2px solid #0b57d0;outline-offset:2px}
 .gm-gconn{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;border:1px solid #c6e7d9;background:#effaf5;border-radius:10px;margin-bottom:12px;font-size:12.5px}
 .gm-gconn.off{border-color:#d3e3fd;background:#f3f7fe}
+.sr-card{margin-top:18px;border:1px solid var(--line,#e4e7ec);border-radius:12px;padding:14px 16px;background:#fff}
+.sr-h{font-weight:700;font-size:14.5px;color:#101828}
+.sr-sub{font-size:12px;color:#667085;margin:4px 0 10px;line-height:1.5}
+.sr-empty{font-size:12.5px;color:#667085;padding:10px 0}
+.sr-t{width:100%;border-collapse:collapse;font-size:12.5px}
+.sr-t th{text-align:left;color:#667085;font-weight:600;padding:6px 8px;border-bottom:1px solid #eaecf0}
+.sr-t td{padding:7px 8px;border-bottom:1px solid #f2f4f7;vertical-align:middle}
+.sr-act{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.sr-act .btn{text-decoration:none}
+.sr-o{color:#027a48;font-weight:700}.sr-m{color:#b54708;font-weight:700}.sr-s{color:#b42318;font-weight:700}
+@media (max-width:700px){.sr-t thead{display:none}.sr-t td{display:block;border:0;padding:3px 0}.sr-t tr{display:block;border-bottom:1px solid #eaecf0;padding:8px 0}.sr-act{justify-content:flex-start}}
 .gc-trim{margin:2px 16px 6px;border:0;background:#e8eaed;color:#444746;border-radius:8px;padding:0 8px;height:16px;line-height:14px;font-size:11px;letter-spacing:1px;cursor:pointer;align-self:flex-start}
 .gc-trim:hover{background:#dadce0}
 .gc-quote{margin:0 16px 10px;color:#5f6368;font-size:13px;overflow:auto;max-height:260px}

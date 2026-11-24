@@ -659,6 +659,17 @@ def screen_profiles():
             f = facts.get(r['key']) or {}
             r['facts'] = {'exp': f.get('exp'), 'ctc': f.get('ctc'), 'notice': f.get('notice'),
                           'company': f.get('company'), 'company_name': f.get('company_name')}
+        # Keep the analysis so it can be exported and checked with Claude (modules/screen_runs.py).
+        analysis_id, export_url = 0, ''
+        try:
+            from modules.screen_runs import save_run
+            analysis_id = save_run(conn, m, profiles, clean, results, system, rules, limits)
+            if analysis_id:
+                import os as _os
+                base = (_os.environ.get('PUBLIC_BASE_URL') or request.host_url).rstrip('/')
+                export_url = '%s/api/screen-runs/%s?format=md&download=1' % (base, analysis_id)
+        except Exception as exc:
+            print('[naukri-screen] analysis not kept: %s' % exc)
         cnt = {v: sum(1 for r in results if r['verdict'] == v) for v in VERDICTS}
         try:
             conn.execute('INSERT INTO ext_screen_log (company_id, user_id, mandate_id, kind, n_profiles, n_open, n_maybe, n_skip, created_at) '
@@ -668,7 +679,8 @@ def screen_profiles():
         except Exception as e:
             print('[naukri-screen] log failed: %s' % e)
         return jsonify({'ok': True, 'results': results, 'rules_used': len(rules), 'duplicates': n_dupes,
-                        'mandate_role': m['role'], 'mandate_client': m['client']})
+                        'mandate_role': m['role'], 'mandate_client': m['client'],
+                        'analysis_id': analysis_id, 'export_url': export_url})
     finally:
         conn.close()
 
