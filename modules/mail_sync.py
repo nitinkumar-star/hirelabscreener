@@ -387,7 +387,7 @@ def _imap_try(email_addr, pw):
     except Exception as e:
         return False, 'Could not connect to %s: %s' % (host, e)
     try:
-        M.login(email_addr, pw)
+        _core().imap_login(M, email_addr, pw)
         try:
             M.select('INBOX', readonly=True)
         except Exception:
