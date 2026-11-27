@@ -86,6 +86,7 @@ _MODULE_NAMES = [
     'insight_market',  # Insight Wave 3: Market Intel page + Talent Pulse draft (/market-intel)
     'academy',         # HireLab Academy: every feature explained + ask a question (/academy)
     'skill_engine',    # Skill Engine phase 1: skill dictionary + job skill spec + candidate skill depth
+    'memory',          # Memory: shared business notes for the team + Claude (/api/memory, context briefing)
 ]
 
 _MIGRATIONS = []
