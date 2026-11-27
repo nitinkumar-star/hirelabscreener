@@ -54,22 +54,27 @@ PUT  /api/memory/<id>             update   (writes a history row)
 POST /api/memory/<id>/archive     soft delete
 POST /api/memory/<id>/unarchive   restore
 GET  /api/memory/context          one briefing for client= | mandate_id= | candidate_id=
+GET  /memory-ui.js                the Memory UI script (Wave 3), loaded by index.html
 
 Nothing is ever hard-deleted.
 """
 
+import os
 import re
 import json
 import datetime
 import difflib
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 
 from modules.shared import (get_db, ts, effective_company_id, real_user_id,
                             login_required, log_activity, _core)
 from modules import register_migration
 
 bp = Blueprint('memory', __name__, url_prefix='/api/memory')
+# Wave 3: the Memory UI script (memory-ui.js, repo root), mounted by index.html.
+pages = Blueprint('memory_pages', __name__)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SCOPES = ('general', 'client', 'mandate', 'candidate', 'person', 'team')
 IMPORTANCE = ('high', 'normal', 'low')
@@ -973,3 +978,12 @@ def context():
                         'general_high': general})
     finally:
         conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  UI SCRIPT  (Wave 3)
+# ══════════════════════════════════════════════════════════════════════════
+@pages.route('/memory-ui.js')
+def memory_ui_js():
+    with open(os.path.join(ROOT, 'memory-ui.js'), encoding='utf-8') as fh:
+        return Response(fh.read(), mimetype='application/javascript', headers={'Cache-Control': 'no-cache'})

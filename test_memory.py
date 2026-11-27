@@ -409,3 +409,21 @@ def test_recruiter_write_scope(srv, ctx_notes):
     assert riya.put(f'/api/memory/{own}', json={'entity_id': M_ADMIN}).status_code == 403
     assert riya.post(f'/api/memory/{own}/archive').status_code == 200
     assert riya.post(f'/api/memory/{own}/unarchive').status_code == 200
+
+
+# ── Wave 3: UI wiring ────────────────────────────────────────────────────
+def test_ui_script_is_served(srv):
+    r = srv.app.test_client().get('/memory-ui.js')
+    assert r.status_code == 200 and 'javascript' in r.content_type
+    js = r.get_data(as_text=True)
+    assert 'window.MemUI' in js and 'mountCandidate' in js and 'mountMandate' in js and 'mountClient' in js
+    assert 'onclick=' not in js                      # event delegation only (data-act)
+
+
+def test_index_has_memory_hooks():
+    html = open(os.path.join(ROOT, 'index.html'), encoding='utf-8').read()
+    for hook in ('<script src="/memory-ui.js"></script>', 'id="sb-memory" data-act="mem-nav"',
+                 '<div id="memory-view"', "'memory-view'];", "'sb-memory'];", "['memory-view','memory']",
+                 "'Recruiter Pitch','Notes'];", "if (tabPart === 'notes')", "MemUI.mountMandate(el, S.activeMandate.id)",
+                 "['notes','Notes']", 'id="cp-pane-notes"', "MemUI.mountCandidate(cid)", "MemUI.mountClient(clientId"):
+        assert hook in html, hook

@@ -13,6 +13,7 @@
 <link rel="apple-touch-icon" href="/icon-192.png">
 <script src="/insight-capture.js"></script>
 <script src="/skill-engine.js"></script>
+<script src="/memory-ui.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function(){
@@ -911,6 +912,7 @@ body{font-size:14px !important; line-height:1.5}
     <!-- Command Center retired Oct 2026 -->
     <a href="#jobs" class="sb-gear" id="sb-jobs" onclick="return navClick(event,openJobs)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Jobs</span><span class="sb-nav-sub">All mandates &middot; pipeline</span></span><span class="sb-nav-count w1-only" id="nav-jobs-count"></span></a>
     <a href="#tasks" class="sb-gear" id="sb-tasks" onclick="return navClick(event,openTasks)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12l3 3 5-6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Tasks</span><span class="sb-nav-sub">Reminders &middot; interviews &middot; follow-ups</span></span><span class="sb-nav-badge" id="nav-tasks-badge" style="display:none"></span></a>
+    <a href="#memory" class="sb-gear" id="sb-memory" data-act="mem-nav"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3a6 6 0 00-6 6c0 2.2 1.2 3.6 2.4 4.8.8.8 1.6 1.7 1.6 3.2h4c0-1.5.8-2.4 1.6-3.2C16.8 12.6 18 11.2 18 9a6 6 0 00-6-6zM10 20h4"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Memory</span><span class="sb-nav-sub">Client &amp; team notes</span></span></a>
     <!-- Analytics merged into Home (Oct 2026) -->
     <a href="#crm" class="sb-gear" id="sb-crm" onclick="return navClick(event,openCrm)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M4 21V8l8-5 8 5v13M9 21v-6h6v6"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Clients (CRM)</span><span class="sb-nav-sub">Companies &middot; contacts &middot; org chart</span></span></a>
     <a href="#invoicing" class="sb-gear" id="sb-invoicing" onclick="return navClick(event,openInvoicing)"><svg class="sb-nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M9 13h6M9 17h6M9 9h2"/></svg><span class="sb-nav-txt"><span class="sb-nav-title">Invoicing</span><span class="sb-nav-sub">GST invoices &middot; billing</span></span></a>
@@ -1262,6 +1264,8 @@ body{font-size:14px !important; line-height:1.5}
 
 
   <!-- ═══ Jobs view (all mandates) ═══ -->
+  <!-- Memory (Wave 3): drawn by /memory-ui.js -->
+  <div id="memory-view" style="display:none;flex:1;flex-direction:column;overflow:hidden"></div>
   <div id="jobs-view" style="display:none;flex:1;flex-direction:column;overflow:hidden">
     <div style="padding:9px 16px;border-bottom:0.5px solid #e8e8e8;display:flex;align-items:center;gap:10px;background:#fff;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:10px">
@@ -1793,7 +1797,7 @@ function applyPipelineStages(){
   }
   PIPELINE_STAGES = base.concat(FIXED_STAGES.map(function(f){ return {id:f.id, color:f.color, fixed:true}; }));
 }
-const TABS = ['Mandate Setup','Job Breakdown','Pipeline','Matching Candidates','Candidate Profiles','Recruiter Pitch'];
+const TABS = ['Mandate Setup','Job Breakdown','Pipeline','Matching Candidates','Candidate Profiles','Recruiter Pitch','Notes'];
 let S = {
   currentUser:null, viewingAs:null,
   mandates:[],activeMandate:null,activeTab:'Mandate Setup',settingsOpen:false,settings:{},collapsedStages:{},
@@ -2241,7 +2245,7 @@ var __restoringHash = false;
 var _VIEW_HASH = [['central-view','central'],['ai-view','ai'],['admin-view','admin'],['tasks-view','tasks'],
   ['responses-view','responses'],['settings-view','settings'],['jobs-view','jobs'],['crm-view','crm'],
   ['client-detail-view','crm/client'],['invoicing-view','invoicing'],['email-view','email'],
-  ['analytics-view','analytics'],['freelancers-view','freelancers'],['bd-view','bd']];
+  ['analytics-view','analytics'],['freelancers-view','freelancers'],['bd-view','bd'],['memory-view','memory']];
 function _hashKey(h) { var p = (h || '').split('/'); return p[0] === 'mandate' ? 'mandate/' + (p[1] || '') : p[0]; }
 // One history entry per page, so the browser Back button walks back through
 // the pages you opened; switching tabs inside a page just updates the entry.
@@ -2275,6 +2279,7 @@ function writeHash() {
     else if (tab === 'Recruiter Pitch') h += '/pitch';
     else if (tab === 'Matching Candidates') h += '/matching';
     else if (tab === 'Job Breakdown') h += '/breakdown';
+    else if (tab === 'Notes') h += '/notes';
     else h += '/setup';
     if (S.activeTab === 'Candidate Profiles' && S.selectedCandidateId) {
       h += '/' + S.selectedCandidateId;
@@ -2335,7 +2340,8 @@ async function readHash() {
                        bd: openBd, crm: openCrm,
                        freelancers: openFreelancerAdmin, jobs: openJobs,
                        // #invoicing and #email were written by their pages but never read back, so a refresh landed on Home.
-                       invoicing: openInvoicing, email: openEmailBox, settings: openSettings };
+                       invoicing: openInvoicing, email: openEmailBox, settings: openSettings,
+                       memory: function(){ if (window.MemUI) MemUI.open(); } };
     // Modules this workspace hides (e.g. Invoicing for Corporate) go Home, same as the sidebar.
     if (overlayMap[head] && ((S.ws && S.ws.hidden_modules) || []).indexOf(head) >= 0) { await renderContent(); return; }
     if (overlayMap[head]) {
@@ -2364,6 +2370,7 @@ async function readHash() {
                   : sub === 'pitch' ? 'Recruiter Pitch'
                   : sub === 'matching' ? 'Matching Candidates'
                   : sub === 'breakdown' ? 'Job Breakdown'
+                  : sub === 'notes' ? 'Notes'
                   : 'Mandate Setup';
       // Same view setup as selectMandate(): before this, a refreshed or
       // shared #mandate/... link showed the tab's content under a "Home"
@@ -2406,6 +2413,7 @@ async function restoreFromHash() {
     if (head === 'ai') { openAI(); return true; }
     if (head === 'admin') { if (S.currentUser && S.currentUser.role==='admin') openAdmin(); return true; }
     if (head === 'tasks') { openTasks(); return true; }
+    if (head === 'memory') { if (window.MemUI) MemUI.open(); return true; }
     if (head === 'responses') { openResponses(); return true; }
     if (head === 'settings') { openSettings(); return true; }
     if (head === 'mandate' && parts[1]) {
@@ -2419,6 +2427,7 @@ async function restoreFromHash() {
       else if (tabPart === 'pitch') { S.activeTab = 'Recruiter Pitch'; }
       else if (tabPart === 'matching') { S.activeTab = 'Matching Candidates'; }
       else if (tabPart === 'breakdown') { S.activeTab = 'Job Breakdown'; }
+      else if (tabPart === 'notes') { S.activeTab = 'Notes'; }
       else { S.activeTab = 'Mandate Setup'; }
       renderTabs();
       await renderContent();
@@ -4016,7 +4025,7 @@ function w1OnSummary(){
 function renderTabs(){
   const bar=document.getElementById('tabs');
   var m = S.activeMandate, mid = m ? m.id : '';
-  var subOf = function(t){ return t==='Pipeline'?'pipeline':t==='Matching Candidates'?'matching':t==='Job Breakdown'?'breakdown':t==='Candidate Profiles'?'profiles':t==='Recruiter Pitch'?'pitch':'setup'; };
+  var subOf = function(t){ return t==='Pipeline'?'pipeline':t==='Matching Candidates'?'matching':t==='Job Breakdown'?'breakdown':t==='Candidate Profiles'?'profiles':t==='Recruiter Pitch'?'pitch':t==='Notes'?'notes':'setup'; };
   // The tab NAME is an internal key used for routing and state — never
   // translate it. Only what the user reads is swapped.
   var labelOf = function(t){ return t==='Mandate Setup' ? (T('mandate','Mandate')+' Setup') : t; };
@@ -4068,6 +4077,7 @@ async function renderContent(){
   else if(S.activeTab==='Recruiter Pitch')await renderRecruiterPitch(el);
   else if(S.activeTab==='Matching Candidates')await renderMatchingCandidates(el);
   else if(S.activeTab==='Job Breakdown')await renderJobBreakdown(el);
+  else if(S.activeTab==='Notes'){ if(window.MemUI) MemUI.mountMandate(el, S.activeMandate.id); else el.innerHTML='<div class="mem-empty" style="padding:24px">Notes could not load. Refresh the page.</div>'; }
   writeHash();
 }
 
@@ -8266,7 +8276,7 @@ function renderProfileDetail(c){
 
   // Tab bar (all 8 kept)
   // AI Analysis tab removed and Resume tab folded into the "View CV" button (Oct 2026).
-  var tabs=[['overview','Overview'],['jobs','Job Matching'],['pitch','Pitch'],['billing','Placement &amp; Billing'],['comms','Communications'],['call','Call Analysis'],['agent','&#10024; AI Agent']];
+  var tabs=[['overview','Overview'],['jobs','Job Matching'],['pitch','Pitch'],['billing','Placement &amp; Billing'],['comms','Communications'],['notes','Notes'],['call','Call Analysis'],['agent','&#10024; AI Agent']];
   html+='<div class="cp-tabbar">'+tabs.map(function(t){return '<button class="cp-tab'+(t[0]==='overview'?' active':'')+'" id="cp-tab-'+t[0]+'" data-cptab="'+t[0]+'" onclick="cpTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join('')+'</div>';
 
   // Overview
@@ -8290,6 +8300,7 @@ function renderProfileDetail(c){
   html+='<div class="cp-pane" id="cp-pane-call" style="display:none">'+callCard+'</div>';
   // AI Agent (instruction -> approved e-mail / WhatsApp draft / reminder)
   html+='<div class="cp-pane" id="cp-pane-agent" style="display:none"><div id="cp-agent-'+c.id+'"></div></div>';
+  html+='<div class="cp-pane" id="cp-pane-notes" style="display:none"><div id="cp-memory-'+c.id+'"></div></div>';
   // History pane removed — Candidate Journey now renders inline under Notes in Overview.
 
   el.innerHTML=html;
@@ -8431,7 +8442,7 @@ function w1NextStepFill(cid, rems){
 }
 
 function cpTab(name){
-  ['overview','jobs','pitch','billing','resume','comms','call','agent'].forEach(function(t){
+  ['overview','jobs','pitch','billing','resume','comms','call','agent','notes'].forEach(function(t){
     var p=document.getElementById('cp-pane-'+t); if(p) p.style.display=(t===name)?'block':'none';
     var b=document.getElementById('cp-tab-'+t); if(b) b.classList.toggle('active', t===name);
   });
@@ -8445,6 +8456,7 @@ function cpTab(name){
   if(name==='call'){ loadCallAnalysis(cid); }
   if(name==='billing'){ try{ cpLoadBilling(cid); }catch(e){} }
   if(name==='agent'){ cpLoadAgent(cid); }
+  if(name==='notes'){ if(window.MemUI) MemUI.mountCandidate(cid); }
 }
 
 
@@ -16666,9 +16678,10 @@ var aiActiveTab = 'search';
 // Every open* function calls this first so views can never overlap.
 var _ALL_VIEWS = ['mandate-view','settings-view','central-view','cdb-view',
   'responses-view','tasks-view','admin-view','ai-view','analytics-view',
-  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view','jobs-view','invoicing-view','email-view'];
+  'waai-view','bd-view','crm-view','client-detail-view','freelancers-view','cs-view','pd-view','we-view','jobs-view','invoicing-view','email-view',
+  'memory-view'];
 var _ALL_SB = ['sb-tasks','sb-responses','sb-central','sb-admin','sb-ai',
-  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers','sb-jobs','sb-invoicing','sb-email'];
+  'sb-analytics','sb-waai','sb-bd','sb-crm','sb-freelancers','sb-jobs','sb-invoicing','sb-email','sb-memory'];
 function _hideAllViews(){
   _ALL_VIEWS.forEach(function(id){
     var v=document.getElementById(id); if(v) v.style.display='none';
@@ -19832,6 +19845,8 @@ async function _renderClientDetail(clientId){
   _cdRenderCenter(clientId);
   _cdRenderRight(clientId, contacts);
   _cdLoadGst(clientId, c);
+  // Memory (Wave 3): notes card at the bottom of the left column
+  try{ var _cdAside=document.querySelector('#cd-columns aside.w3-pane'); if(_cdAside && window.MemUI){ var _cdm=document.createElement('div'); _cdm.id='cd-memory-'+clientId; _cdAside.appendChild(_cdm); MemUI.mountClient(clientId, c.name||''); } }catch(e){}
 }
 var _CD_FILTERS=[['all','Activity'],['email','Emails'],['meeting','Meetings'],['call','Calls'],['note','Notes'],['followup','Follow-ups']];
 function _cdTabsHtml(clientId){
