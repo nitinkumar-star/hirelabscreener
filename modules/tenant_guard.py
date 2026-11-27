@@ -114,6 +114,7 @@ _RULES = [(re.compile(p), t, c) for p, t, c in [
     (r'^/api/bd/views/(\d+)(/|$)', 'bd_views', 'company_id'),
     (r'^/api/departments/(\d+)(/|$)', 'departments', 'company_id'),
     (r'^/api/rme/memory/(\d+)(/|$)', 'rme_memories', 'company_id'),
+    (r'^/api/memory/(\d+)(/|$)', 'memory_notes', 'company_id'),
     # people
     (r'^/api/users/(\d+)(/|$)', 'users', 'company_id'),
     (r'^/api/freelancers/(\d+)(/|$)', 'users', 'company_id'),
