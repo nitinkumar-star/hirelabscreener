@@ -257,6 +257,15 @@ def test_dedupe_updates_instead_of_duplicating(srv):
     assert again.status_code == 200 and j['action'] == 'updated' and j['deduped'] and j['id'] == nid
     assert j['note']['content'].endswith('no 10-yr profiles')
     assert a.get(f'/api/memory/{nid}').get_json()['note']['history'][0]['action'] == 'update'
+    # a dedupe update only changes the fields sent (like PUT): importance / tags / client_name stay
+    p1 = a.post('/api/memory', json={'scope': 'person', 'entity_name': 'Dedupe Person', 'client_name': LK,
+                                     'title': 'Wants grade 4', 'content': 'v1', 'importance': 'high',
+                                     'tags': ['dm'], 'dedupe': True}).get_json()
+    p2 = a.post('/api/memory', json={'scope': 'person', 'entity_name': 'Dedupe Person', 'title': 'wants grade 4',
+                                     'content': 'v2', 'dedupe': True}).get_json()
+    assert p2['id'] == p1['id'] and set(p2['changed']) == {'title', 'content'}
+    assert p2['note']['importance'] == 'high' and p2['note']['client_name'] == LK and p2['note']['tags'] == ['dm']
+    a.post(f"/api/memory/{p1['id']}/archive")
     # a different title is a different note
     other = a.post('/api/memory', json={'scope': 'client', 'entity_id': CRM_LK, 'title': 'Interview panel on Fridays',
                                         'content': 'x', 'dedupe': True})

@@ -677,6 +677,17 @@ def create_note():
         if d.get('dedupe') in (True, 1, '1', 'true', 'yes'):
             dup = _find_duplicate(conn, cid, fields, sc)
             if dup is not None and _can_write_note(conn, dup, sc):
+                # Merge like PUT: only the fields the caller sent change. (Scope and
+                # entity already match the duplicate, so they are not re-applied;
+                # otherwise unsent fields such as importance / client_name would be
+                # reset to their defaults.)
+                sent = {k: v for k, v in d.items() if k in _EDITABLE and k not in ('scope', 'entity_id')}
+                try:
+                    fields = _build_fields(conn, cid, sent, base={k: dup[k] for k in dup.keys()})
+                except LookupError as e:
+                    return _err(str(e), 404)
+                except ValueError as e:
+                    return _err(str(e))
                 changed = _apply_update(conn, dup, fields, cid, uid)
                 conn.commit()
                 log_activity('memory_update', f"Memory note updated (dedupe): {fields['title'][:80]}",
